@@ -297,6 +297,20 @@ function openSession(machine: MachineConfig, sessionId: string, workdir?: string
     if (view.terminal) view.terminal.write(`\r\n\x1b[31m[error: ${msg}]\x1b[0m\r\n`);
     if (view.key === activeKey) updateStatusBar(`Error: ${msg}`);
   };
+  client.onNotify = (kind, message) => {
+    // hook 事件把圆点从「有输出」升级为语义状态。活动会话不标记（用户在看）。
+    if (kind === 'idle' || kind === 'waiting') {
+      if (view.key !== activeKey) {
+        view.activity = kind;
+        renderSidebar();
+      }
+      // waiting = 需要用户介入，可选弹桌面通知（移动端伏笔）。
+      if (kind === 'waiting' && notificationsEnabled()) {
+        const title = view.terminal ? (views.get(view.key)?.sessionId || 'ccdesk') : 'ccdesk';
+        notifyDesktop(`${machine.name} · ${title}`, message || 'Claude 需要你的确认');
+      }
+    }
+  };
 
   client.connect();
   const dims = fit.proposeDimensions();
@@ -537,6 +551,25 @@ function wireNewSessionButton() {
     if (workdir === null) return; // cancelled
     openSession(machine, '', workdir);
   });
+}
+
+// --- Desktop notifications (optional, for `waiting` events) ---
+// A simple localStorage flag gates whether we attempt OS notifications. The OS
+// permission itself is separate: a denied permission silently degrades to just
+// the sidebar dot. The machine-manager settings can flip this flag.
+function notificationsEnabled(): boolean {
+  return localStorage.getItem('ccdesk.notifications') !== 'off';
+}
+
+function notifyDesktop(title: string, body: string) {
+  if (!('Notification' in window)) return;
+  if (Notification.permission === 'granted') {
+    new Notification(title, { body });
+  } else if (Notification.permission !== 'denied') {
+    Notification.requestPermission().then((perm) => {
+      if (perm === 'granted') new Notification(title, { body });
+    });
+  }
 }
 
 // --- Boot ---

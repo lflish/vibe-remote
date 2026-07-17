@@ -37,6 +37,7 @@ export class CcdeskClient {
   onExit?: (code: number) => void;
   onError?: (message: string) => void;
   onReady?: (sessionId: string, workdir: string) => void;
+  onNotify?: (kind: string, message?: string) => void;
 
   private ws: WebSocket | null = null;
   private reconnectAttempt = 0;
@@ -202,6 +203,10 @@ export class CcdeskClient {
 
       case FrameType.Error:
         this.onError?.(frame.message);
+        break;
+
+      case FrameType.Notify:
+        this.onNotify?.(frame.kind, frame.message);
         break;
 
       case FrameType.Pong:
