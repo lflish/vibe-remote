@@ -214,6 +214,7 @@ func (m *Manager) Subscribe(sessionID string) (<-chan protocol.NotifyFrame, func
 	unsub := func() {
 		once.Do(func() {
 			m.mu.Lock()
+			defer m.mu.Unlock()
 			subs := m.subs[sessionID]
 			for i, c := range subs {
 				if c == ch {
@@ -224,7 +225,12 @@ func (m *Manager) Subscribe(sessionID string) (<-chan protocol.NotifyFrame, func
 			if len(m.subs[sessionID]) == 0 {
 				delete(m.subs, sessionID)
 			}
-			m.mu.Unlock()
+			// Close under the write lock so it's mutually exclusive with the
+			// sends in PublishEvent (which run under RLock). Otherwise a
+			// concurrent Publish could send on this channel after it's closed
+			// and panic — select's default only guards a full buffer, not a
+			// closed channel. Task 9's forwarder relies on this close to end
+			// its `for f := range ch` loop, so the close must still happen.
 			close(ch)
 		})
 	}
@@ -233,12 +239,15 @@ func (m *Manager) Subscribe(sessionID string) (<-chan protocol.NotifyFrame, func
 
 // PublishEvent broadcasts a notify frame to every subscriber of a session.
 // Non-blocking: if a subscriber's buffer is full, that event is dropped for
-// that subscriber rather than stalling the events endpoint.
+// that subscriber rather than stalling the events endpoint. The send happens
+// under RLock so it's mutually exclusive with unsubscribe's close (which holds
+// the write lock) — this prevents a send-on-closed-channel panic. The select's
+// default keeps every send non-blocking, so holding RLock stays bounded and
+// multiple publishers can proceed concurrently.
 func (m *Manager) PublishEvent(sessionID string, f protocol.NotifyFrame) {
 	m.mu.RLock()
-	subs := append([]chan protocol.NotifyFrame(nil), m.subs[sessionID]...)
-	m.mu.RUnlock()
-	for _, ch := range subs {
+	defer m.mu.RUnlock()
+	for _, ch := range m.subs[sessionID] {
 		select {
 		case ch <- f:
 		default: // subscriber lagging — drop rather than block

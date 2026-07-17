@@ -2,6 +2,7 @@ package session
 
 import (
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -142,4 +143,59 @@ func TestPublishToNoSubscribersIsNoop(t *testing.T) {
 	m := newTestManager()
 	// Must not panic or block.
 	m.PublishEvent("ghost", protocol.NotifyFrame{Kind: "idle"})
+}
+
+// TestPubSubConcurrentPublishUnsubscribe stresses PublishEvent against
+// Subscribe/unsub churn on the same sessionID. It reproduces the
+// send-on-closed-channel race (publisher sends on a channel a concurrent
+// unsub has closed) — before the fix this panics / trips -race; after the
+// fix (close under write lock, send under read lock) it stays green.
+func TestPubSubConcurrentPublishUnsubscribe(t *testing.T) {
+	m := newTestManager()
+	const sid = "s1"
+
+	var wg sync.WaitGroup
+	stop := make(chan struct{})
+
+	// Publishers: hammer PublishEvent concurrently.
+	for i := 0; i < 8; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for {
+				select {
+				case <-stop:
+					return
+				default:
+					m.PublishEvent(sid, protocol.NotifyFrame{Kind: "idle"})
+				}
+			}
+		}()
+	}
+
+	// Subscriber churn: repeatedly Subscribe then immediately unsub, draining
+	// whatever arrived so a full buffer never stalls the loop.
+	for i := 0; i < 8; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for j := 0; j < 2000; j++ {
+				ch, unsub := m.Subscribe(sid)
+				select {
+				case <-ch:
+				default:
+				}
+				unsub()
+			}
+		}()
+	}
+
+	// Let publishers run until the churn goroutines finish, then stop them.
+	go func() {
+		// Wait only for the churn goroutines by observing a separate group.
+		time.Sleep(200 * time.Millisecond)
+		close(stop)
+	}()
+
+	wg.Wait()
 }
