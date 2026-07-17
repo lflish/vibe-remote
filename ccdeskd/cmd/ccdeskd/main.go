@@ -5,6 +5,7 @@ package main
 
 import (
 	"flag"
+	"fmt"
 	"log"
 	"os"
 
@@ -43,6 +44,10 @@ func main() {
 
 	// Create session manager
 	mgr := session.NewManager(cfg.UseTmux, cfg.ClaudeCmd, cfg.UseLoginShell(), cfg.LoginShellPath())
+
+	// Inject the events endpoint URL + token into new sessions' environment so a
+	// claude hook can report out-of-band events back to this daemon.
+	mgr.SetEventEnv(fmt.Sprintf("http://%s:%d/api/v1/events", cfg.BindAddr, cfg.Port), cfg.Token)
 
 	// Start server
 	srv := server.New(cfg, mgr)

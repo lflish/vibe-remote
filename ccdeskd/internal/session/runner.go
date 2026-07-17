@@ -91,6 +91,8 @@ type Runner struct {
 	claudeCmd  string
 	loginShell bool
 	shell      string
+	eventsURL  string
+	token      string
 }
 
 // RunnerConfig holds parameters for creating a new Runner.
@@ -103,6 +105,8 @@ type RunnerConfig struct {
 	Shell      string
 	Cols       uint16
 	Rows       uint16
+	EventsURL  string
+	Token      string
 }
 
 // NewRunner creates and starts a new session.
@@ -115,6 +119,8 @@ func NewRunner(cfg RunnerConfig) (*Runner, error) {
 		claudeCmd:  cfg.ClaudeCmd,
 		loginShell: cfg.LoginShell,
 		shell:      cfg.Shell,
+		eventsURL:  cfg.EventsURL,
+		token:      cfg.Token,
 	}
 
 	if err := r.start(cfg.Cols, cfg.Rows); err != nil {
@@ -165,6 +171,7 @@ func (r *Runner) start(cols, rows uint16) error {
 		"TERM=xterm-256color",
 		"COLORTERM=truecolor",
 	)
+	cmd.Env = append(cmd.Env, r.ccdeskEnv()...)
 
 	// Start in PTY
 	ptmx, err := pty.StartWithSize(cmd, &pty.Winsize{
@@ -212,6 +219,7 @@ func (r *Runner) AttachExisting(cols, rows uint16) error {
 		"TERM=xterm-256color",
 		"COLORTERM=truecolor",
 	)
+	cmd.Env = append(cmd.Env, r.ccdeskEnv()...)
 
 	ptmx, err := pty.StartWithSize(cmd, &pty.Winsize{
 		Rows: rows,
@@ -464,4 +472,19 @@ func titleFrom(name, workdir, id string) string {
 // per-session; Manager.List batches the name read instead (see titleFrom).
 func (r *Runner) displayTitle() string {
 	return titleFrom(r.readName(), r.Workdir, r.ID)
+}
+
+// ccdeskEnv returns the CCDESK_* environment variables injected into the claude
+// process so a hook (claude's child) can report out-of-band events back to this
+// daemon's events endpoint. These are inert unless a hook actually uses them —
+// the hook wiring itself is intentionally out of scope for now (see plan).
+func (r *Runner) ccdeskEnv() []string {
+	env := []string{"CCDESK_SESSION_ID=" + r.ID}
+	if r.eventsURL != "" {
+		env = append(env, "CCDESK_EVENTS_URL="+r.eventsURL)
+	}
+	if r.token != "" {
+		env = append(env, "CCDESK_TOKEN="+r.token)
+	}
+	return env
 }

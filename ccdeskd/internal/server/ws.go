@@ -165,6 +165,22 @@ func (s *Server) wsRelay(ctx context.Context, conn *websocket.Conn, runner *sess
 	// it, so a reconnect that already installed a newer PTY isn't clobbered.
 	epoch := runner.CurrentEpoch()
 
+	// Subscribe to out-of-band notify events for this session and forward them
+	// to the client as notify frames. Unsubscribe on teardown so we don't leak.
+	// coder/websocket serializes concurrent writes internally (only one writer
+	// at a time), so this forwarder writing alongside the PTY→WS goroutine on
+	// the same conn is safe without extra locking. The forwarder exits when
+	// unsub closes notifyCh (close happens under Manager's write lock).
+	notifyCh, unsub := s.mgr.Subscribe(sessionID)
+	defer unsub()
+	go func() {
+		for f := range notifyCh {
+			if err := wsjson.Write(ctx, conn, f); err != nil {
+				return
+			}
+		}
+	}()
+
 	// detaching signals the PTY→WS goroutine that an error it sees is caused by
 	// our own detach (client going away), not a real process exit — so it must
 	// not send a spurious exit frame for a session that's still alive in tmux.

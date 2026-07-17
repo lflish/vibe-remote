@@ -20,6 +20,8 @@ type Manager struct {
 	claudeCmd  string
 	loginShell bool
 	shell      string
+	eventsURL  string
+	token      string
 }
 
 // NewManager creates a session manager.
@@ -32,6 +34,14 @@ func NewManager(useTmux bool, claudeCmd string, loginShell bool, shell string) *
 		loginShell: loginShell,
 		shell:      shell,
 	}
+}
+
+// SetEventEnv configures the events endpoint URL and token injected into new
+// sessions' environment (for hook-based out-of-band reporting). Called once at
+// startup after the bind address/port/token are known.
+func (m *Manager) SetEventEnv(eventsURL, token string) {
+	m.eventsURL = eventsURL
+	m.token = token
 }
 
 // Create starts a new session and registers it.
@@ -47,6 +57,8 @@ func (m *Manager) Create(workdir string, cols, rows uint16) (*Runner, error) {
 		Shell:      m.shell,
 		Cols:       cols,
 		Rows:       rows,
+		EventsURL:  m.eventsURL,
+		Token:      m.token,
 	})
 	if err != nil {
 		return nil, err
