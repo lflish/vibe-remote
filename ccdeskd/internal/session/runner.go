@@ -25,34 +25,48 @@ func tmuxCmd(args ...string) *exec.Cmd {
 	return exec.Command("tmux", append([]string{"-L", tmuxSocket}, args...)...)
 }
 
+// tmuxSessionInfo captures the per-session fields ccdesk needs from a single
+// `tmux list-sessions` query: the working directory and the user-set display
+// name (@ccdesk_name, empty when unset).
+type tmuxSessionInfo struct {
+	workdir string
+	name    string
+}
+
 // liveTmuxSessions returns the ccdesk session IDs that currently have a live
-// tmux session, mapped to each session's current working directory (from
-// tmux's pane_current_path). The bool return is false if the query itself
-// failed (server not running or command error) so callers can distinguish
-// "no sessions" from "couldn't tell" and avoid wrongly discarding live
-// sessions on a transient failure.
-func liveTmuxSessions() (map[string]string, bool) {
-	out, err := tmuxCmd("list-sessions", "-F", "#{session_name}\t#{pane_current_path}").Output()
+// tmux session, mapped to each session's working directory (from tmux's
+// pane_current_path) and user-set name (@ccdesk_name). The bool return is
+// false if the query itself failed (server not running or command error) so
+// callers can distinguish "no sessions" from "couldn't tell" and avoid wrongly
+// discarding live sessions on a transient failure. Pulling name here (rather
+// than a per-session show-options) keeps Manager.List to a single tmux exec.
+func liveTmuxSessions() (map[string]tmuxSessionInfo, bool) {
+	out, err := tmuxCmd("list-sessions", "-F", "#{session_name}\t#{pane_current_path}\t#{@ccdesk_name}").Output()
 	if err != nil {
 		// tmux exits non-zero when the server has no sessions; that's a
 		// legitimate empty set, not a query failure.
 		if _, ok := err.(*exec.ExitError); ok {
-			return map[string]string{}, true
+			return map[string]tmuxSessionInfo{}, true
 		}
 		return nil, false
 	}
-	sessions := make(map[string]string)
+	sessions := make(map[string]tmuxSessionInfo)
 	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
 		if !strings.HasPrefix(line, "ccdesk-") {
 			continue
 		}
-		parts := strings.SplitN(line, "\t", 2)
+		// Fixed 3 fields: name may be empty, so split with a known field count
+		// rather than trimming, which would drop a trailing empty name.
+		parts := strings.SplitN(line, "\t", 3)
 		id := strings.TrimPrefix(parts[0], "ccdesk-")
-		workdir := ""
-		if len(parts) == 2 {
-			workdir = parts[1]
+		info := tmuxSessionInfo{}
+		if len(parts) >= 2 {
+			info.workdir = parts[1]
 		}
-		sessions[id] = workdir
+		if len(parts) >= 3 {
+			info.name = strings.TrimSpace(parts[2])
+		}
+		sessions[id] = info
 	}
 	return sessions, true
 }
@@ -425,14 +439,16 @@ func (r *Runner) readName() string {
 	return strings.TrimSpace(string(out))
 }
 
-// displayTitle resolves the session's display name at read time (not stored):
-// user-set @ccdesk_name → workdir basename → session ID.
-func (r *Runner) displayTitle() string {
-	if name := r.readName(); name != "" {
+// titleFrom applies the three-level display-title fallback given already-known
+// values: user-set name → workdir basename → session ID. Both displayTitle
+// (per-session tmux read) and Manager.List (single batched tmux read) resolve
+// titles through this one function so the fallback semantics can't drift apart.
+func titleFrom(name, workdir, id string) string {
+	if name != "" {
 		return name
 	}
-	if r.Workdir != "" {
-		trimmed := strings.TrimRight(r.Workdir, "/")
+	if workdir != "" {
+		trimmed := strings.TrimRight(workdir, "/")
 		if idx := strings.LastIndex(trimmed, "/"); idx >= 0 && idx+1 < len(trimmed) {
 			return trimmed[idx+1:]
 		}
@@ -440,5 +456,12 @@ func (r *Runner) displayTitle() string {
 			return trimmed
 		}
 	}
-	return r.ID
+	return id
+}
+
+// displayTitle resolves the session's display name at read time (not stored):
+// user-set @ccdesk_name → workdir basename → session ID. This reads the name
+// per-session; Manager.List batches the name read instead (see titleFrom).
+func (r *Runner) displayTitle() string {
+	return titleFrom(r.readName(), r.Workdir, r.ID)
 }

@@ -136,10 +136,16 @@ func (m *Manager) List() []protocol.SessionInfo {
 
 	// In tmux mode, tmux is the source of truth for which sessions exist.
 	// Query once (not per-session) so a transient failure can't wrongly evict
-	// live sessions: on query failure we fall back to the in-memory list.
+	// live sessions: on query failure we fall back to the in-memory list. The
+	// query also brings back @ccdesk_name, so Title assembly below needs no
+	// extra per-session tmux exec (which would block under m.mu).
+	var live map[string]tmuxSessionInfo
+	haveLive := false
 	if m.useTmux {
-		live, ok := liveTmuxSessions()
+		var ok bool
+		live, ok = liveTmuxSessions()
 		if ok {
+			haveLive = true
 			// Prune map entries tmux says are gone.
 			for id := range m.sessions {
 				if _, alive := live[id]; !alive {
@@ -150,16 +156,16 @@ func (m *Manager) List() []protocol.SessionInfo {
 			// not in the map (e.g. the daemon restarted while the tmux session
 			// kept running). Register a recovery entry so it shows up and can
 			// be re-attached, using the working directory tmux reports.
-			for id, workdir := range live {
+			for id, info := range live {
 				if r, exists := m.sessions[id]; exists {
 					// Backfill workdir if we never recorded it (recovered entry).
-					if r.Workdir == "" && workdir != "" {
-						r.Workdir = workdir
+					if r.Workdir == "" && info.workdir != "" {
+						r.Workdir = info.workdir
 					}
 				} else {
 					m.sessions[id] = &Runner{
 						ID:         id,
-						Workdir:    workdir,
+						Workdir:    info.workdir,
 						Created:    time.Now(),
 						useTmux:    m.useTmux,
 						claudeCmd:  m.claudeCmd,
@@ -173,9 +179,18 @@ func (m *Manager) List() []protocol.SessionInfo {
 
 	list := make([]protocol.SessionInfo, 0, len(m.sessions))
 	for _, r := range m.sessions {
+		// Prefer the name from the batched tmux query; only fall back to a
+		// per-session read if we couldn't batch it (query failed / not in the
+		// live set). titleFrom applies the identical three-level fallback.
+		name := ""
+		if haveLive {
+			name = live[r.ID].name
+		} else if r.useTmux {
+			name = r.readName()
+		}
 		list = append(list, protocol.SessionInfo{
 			ID:      r.ID,
-			Title:   r.displayTitle(),
+			Title:   titleFrom(name, r.Workdir, r.ID),
 			Workdir: r.Workdir,
 			Created: r.Created.Format(time.RFC3339),
 		})

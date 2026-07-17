@@ -34,6 +34,29 @@ func TestSanitizeSessionNameTruncates(t *testing.T) {
 	}
 }
 
+func TestTitleFrom(t *testing.T) {
+	tests := []struct {
+		name    string
+		inName  string
+		workdir string
+		id      string
+		want    string
+	}{
+		{"name wins", "custom", "/home/user/proj", "abc", "custom"},
+		{"empty name falls to workdir tail", "", "/home/user/proj", "abc", "proj"},
+		{"empty name trailing slash", "", "/home/user/proj/", "abc", "proj"},
+		{"empty name empty workdir falls to id", "", "", "abc", "abc"},
+		{"whitespace-only workdir root falls to id", "", "/", "abc", "abc"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := titleFrom(tt.inName, tt.workdir, tt.id); got != tt.want {
+				t.Errorf("titleFrom(%q, %q, %q) = %q, want %q", tt.inName, tt.workdir, tt.id, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestDisplayTitleFallback(t *testing.T) {
 	// No tmux available in unit test → readName returns "" → falls back.
 	tests := []struct {
