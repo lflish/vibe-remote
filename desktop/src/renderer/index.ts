@@ -468,25 +468,44 @@ function startInlineRename(machine: MachineConfig, s: SessionInfo, label: HTMLEl
 function updateStatusBar(extra?: string, attempt?: number) {
   const connEl = document.getElementById('status-connection')!;
   const sessionEl = document.getElementById('status-session')!;
+  const tbTitle = document.getElementById('toolbar-title')!;
+  const tbStatus = document.getElementById('toolbar-status')!;
+  const tbStatusText = document.getElementById('toolbar-status-text')!;
   const view = activeKey ? views.get(activeKey) : null;
 
   connEl.className = '';
+  tbStatus.className = '';
+
   if (view) {
+    // Toolbar title: machine name · short session code (SessionView holds no
+    // display name; short code is enough to locate the active session).
+    const shortId = view.sessionId ? view.sessionId.slice(-6) : 'new';
+    tbTitle.textContent = `${view.machine.name} · ${shortId}`;
+
     const st = view.client.state;
     if (st === ConnectionState.Connected) {
       connEl.className = 'connected';
       connEl.textContent = `Connected · ${view.machine.name}`;
+      tbStatus.className = 'connected';
+      tbStatusText.textContent = 'Connected';
     } else if (st === ConnectionState.Reconnecting) {
       connEl.className = 'reconnecting';
       const n = attempt ?? 0;
       connEl.textContent = n > 0 ? `Reconnecting… (attempt ${n})` : 'Reconnecting…';
+      tbStatus.className = 'reconnecting';
+      tbStatusText.textContent = n > 0 ? `Reconnecting… (${n})` : 'Reconnecting…';
     } else {
       connEl.textContent = 'Disconnected';
+      tbStatus.className = 'error';
+      tbStatusText.textContent = 'Disconnected';
     }
   } else {
+    tbTitle.textContent = 'ccdesk';
     const anyOnline = [...machineOnline.values()].some(Boolean);
     connEl.className = anyOnline ? 'connected' : '';
     connEl.textContent = anyOnline ? 'Ready' : 'No connection';
+    tbStatus.className = anyOnline ? 'connected' : '';
+    tbStatusText.textContent = anyOnline ? 'Ready' : 'No connection';
   }
   sessionEl.textContent = extra || (view?.sessionId ? `Session: ${view.sessionId}` : '');
 }
