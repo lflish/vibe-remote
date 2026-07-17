@@ -1,19 +1,21 @@
 /* ccdesk — Claude Desktop-inspired theme */
 
 :root {
-  --bg-primary: #1e1e2e;
-  --bg-secondary: #181825;
-  --bg-sidebar: #11111b;
-  --bg-hover: #313244;
-  --text-primary: #cdd6f4;
-  --text-secondary: #a6adc8;
-  --text-muted: #6c7086;
-  --accent: #89b4fa;
-  --accent-hover: #74c7ec;
-  --border: #313244;
-  --success: #a6e3a1;
-  --warning: #f9e2af;
-  --error: #f38ba8;
+  /* Claude Desktop-inspired warm light theme */
+  --bg-primary: #F5F4EF;      /* app / main background — warm off-white */
+  --bg-secondary: #EFEDE6;    /* status bar / subtle bands */
+  --bg-sidebar: #EDEAE3;      /* sidebar — slightly deeper warm grey */
+  --bg-elevated: #FFFFFF;     /* cards / modal / inputs — raised white */
+  --bg-hover: #E6E1D7;        /* hover */
+  --text-primary: #2B2A28;    /* near-black warm grey */
+  --text-secondary: #6B6862;
+  --text-muted: #9B978E;
+  --accent: #C9645A;          /* Claude terracotta/clay */
+  --accent-hover: #B5564D;
+  --border: #E2DDD3;          /* very faint warm border */
+  --success: #6BA368;         /* muted warm green */
+  --warning: #C98A3C;         /* amber */
+  --error: #C0564B;           /* warm red */
   --radius: 8px;
   --sidebar-width: 240px;
 }
@@ -173,7 +175,7 @@ html, body {
 
 .session-close:hover {
   background: var(--error);
-  color: var(--bg-primary);
+  color: #ffffff;
 }
 
 /* Buttons */
@@ -183,7 +185,7 @@ html, body {
   border: none;
   border-radius: var(--radius);
   background: var(--accent);
-  color: var(--bg-primary);
+  color: #ffffff;
   font-size: 12px;
   font-weight: 600;
   cursor: pointer;
@@ -267,7 +269,7 @@ html, body {
 }
 
 ::-webkit-scrollbar-thumb {
-  background: var(--border);
+  background: #D2CCC0;
   border-radius: 3px;
 }
 
@@ -279,7 +281,7 @@ html, body {
 .modal-overlay {
   position: fixed;
   inset: 0;
-  background: rgba(0, 0, 0, 0.5);
+  background: rgba(43, 42, 40, 0.28);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -290,13 +292,13 @@ html, body {
 .modal {
   width: 480px;
   max-height: 70vh;
-  background: var(--bg-secondary);
+  background: var(--bg-elevated);
   border: 1px solid var(--border);
   border-radius: 12px;
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  box-shadow: 0 12px 48px rgba(0, 0, 0, 0.4);
+  box-shadow: 0 12px 48px rgba(60, 50, 40, 0.18);
 }
 
 .modal-header {
@@ -311,7 +313,7 @@ html, body {
   font-size: 11px;
   font-family: 'SF Mono', monospace;
   color: var(--text-muted);
-  background: var(--bg-sidebar);
+  background: var(--bg-elevated);
   border-bottom: 1px solid var(--border);
   white-space: nowrap;
   overflow-x: auto;
@@ -412,9 +414,13 @@ html, body {
 .form-field { display: flex; flex-direction: column; gap: 4px; }
 .form-field label { font-size: 11px; color: var(--text-muted); }
 .form-field input {
-  background: var(--bg-sidebar); border: 1px solid var(--border);
-  border-radius: 6px; padding: 8px 10px; color: var(--text-primary);
-  font-size: 13px; font-family: inherit;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 8px 10px;
+  color: var(--text-primary);
+  font-size: 13px;
+  font-family: inherit;
 }
 .form-field input:focus { outline: none; border-color: var(--accent); }
 .form-status { font-size: 12px; min-height: 16px; }
@@ -428,21 +434,21 @@ html, body {
   position: absolute; left: 8px; right: 8px; top: 8px; z-index: 10;
   display: flex; align-items: center; justify-content: space-between;
   gap: 12px; padding: 8px 12px; border-radius: 8px;
-  background: rgba(249, 226, 175, 0.12);
-  border: 1px solid rgba(249, 226, 175, 0.35);
-  color: var(--warning); font-size: 12px;
+  background: #FBEFD9;
+  border: 1px solid rgba(201, 138, 60, 0.45);
+  color: #8A5A1E; font-size: 12px;
 }
 .reconnect-banner button {
-  background: transparent; border: 1px solid rgba(249, 226, 175, 0.4);
-  color: var(--warning); border-radius: 6px; font-size: 11px;
+  background: transparent; border: 1px solid rgba(201, 138, 60, 0.5);
+  color: #8A5A1E; border-radius: 6px; font-size: 11px;
   padding: 3px 10px; cursor: pointer;
 }
-.reconnect-banner button:hover { background: rgba(249, 226, 175, 0.18); }
+.reconnect-banner button:hover { background: rgba(201, 138, 60, 0.14); }
 
 /* --- Inline session rename --- */
 .session-rename-input {
   flex: 1; min-width: 0;
-  background: var(--bg-sidebar); border: 1px solid var(--accent);
+  background: var(--bg-elevated); border: 1px solid var(--accent);
   border-radius: 5px; padding: 3px 6px;
   color: var(--text-primary); font-size: 12px; font-family: inherit;
 }
@@ -451,12 +457,12 @@ html, body {
 /* --- Session activity dot --- */
 .session-unread {
   width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0;
-  background: var(--accent); /* 'output' default: accent blue */
+  background: #8C9AA6; /* 'output' default: neutral slate — distinct from idle/waiting */
 }
 .session-unread.idle { background: var(--success); }
 .session-unread.waiting {
   background: var(--warning);
-  box-shadow: 0 0 0 3px rgba(249, 226, 175, 0.12);
+  box-shadow: 0 0 0 3px rgba(201, 138, 60, 0.14);
 }
 .session-unread.hidden { display: none; }
 /* Keep the × from overlapping the dot: dot hides on hover so × takes its slot. */
