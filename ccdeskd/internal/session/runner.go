@@ -358,3 +358,87 @@ func (r *Runner) TmuxSessionExists() bool {
 	err := tmuxCmd("has-session", "-t", tmuxSessionName).Run()
 	return err == nil
 }
+
+// sanitizeSessionName cleans a user-supplied session name before it's stored
+// as a tmux option: strip control characters (including ANSI escape sequences)
+// and trim surrounding whitespace, then cap the length. tmux gets the value as
+// a set-option argument (not a shell string), so this is defense-in-depth
+// against display corruption, not shell injection.
+func sanitizeSessionName(name string) string {
+	var b strings.Builder
+	i := 0
+	for i < len(name) {
+		c := name[i]
+		// Drop an ANSI escape sequence: ESC '[' ... final byte in @-~.
+		if c == 0x1b {
+			i++
+			if i < len(name) && name[i] == '[' {
+				i++
+				for i < len(name) && !(name[i] >= 0x40 && name[i] <= 0x7e) {
+					i++
+				}
+				if i < len(name) {
+					i++ // consume the final byte
+				}
+			}
+			continue
+		}
+		// Drop other control characters (newline, tab, CR, etc.).
+		if c < 0x20 || c == 0x7f {
+			i++
+			continue
+		}
+		b.WriteByte(c)
+		i++
+	}
+	out := strings.TrimSpace(b.String())
+	if len(out) > 200 {
+		out = out[:200]
+	}
+	return out
+}
+
+// SetName stores a user-set display name on the tmux session as a custom user
+// option (@ccdesk_name). Empty name clears it (falls back to the default rule).
+func (r *Runner) SetName(name string) error {
+	if !r.useTmux {
+		return fmt.Errorf("naming requires tmux mode")
+	}
+	tmuxSessionName := fmt.Sprintf("ccdesk-%s", r.ID)
+	if name == "" {
+		// Unset so displayTitle falls back to workdir/id.
+		return tmuxCmd("set-option", "-t", tmuxSessionName, "-u", "@ccdesk_name").Run()
+	}
+	return tmuxCmd("set-option", "-t", tmuxSessionName, "@ccdesk_name", name).Run()
+}
+
+// readName reads the @ccdesk_name user option, or "" if unset / tmux errors.
+func (r *Runner) readName() string {
+	if !r.useTmux {
+		return ""
+	}
+	tmuxSessionName := fmt.Sprintf("ccdesk-%s", r.ID)
+	out, err := tmuxCmd("show-options", "-t", tmuxSessionName, "-qv", "@ccdesk_name").Output()
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(out))
+}
+
+// displayTitle resolves the session's display name at read time (not stored):
+// user-set @ccdesk_name → workdir basename → session ID.
+func (r *Runner) displayTitle() string {
+	if name := r.readName(); name != "" {
+		return name
+	}
+	if r.Workdir != "" {
+		trimmed := strings.TrimRight(r.Workdir, "/")
+		if idx := strings.LastIndex(trimmed, "/"); idx >= 0 && idx+1 < len(trimmed) {
+			return trimmed[idx+1:]
+		}
+		if trimmed != "" {
+			return trimmed
+		}
+	}
+	return r.ID
+}

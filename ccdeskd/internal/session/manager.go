@@ -117,6 +117,18 @@ func (m *Manager) Delete(id string) error {
 	return nil
 }
 
+// Rename sets a user display name on a session (persisted as a tmux option).
+// An empty name clears the custom name, reverting to the default title rule.
+func (m *Manager) Rename(id, name string) error {
+	m.mu.RLock()
+	runner, ok := m.sessions[id]
+	m.mu.RUnlock()
+	if !ok {
+		return fmt.Errorf("session %q not found", id)
+	}
+	return runner.SetName(sanitizeSessionName(name))
+}
+
 // List returns info for all sessions.
 func (m *Manager) List() []protocol.SessionInfo {
 	m.mu.Lock()
@@ -163,7 +175,7 @@ func (m *Manager) List() []protocol.SessionInfo {
 	for _, r := range m.sessions {
 		list = append(list, protocol.SessionInfo{
 			ID:      r.ID,
-			Title:   r.ID, // TODO: allow user-set titles
+			Title:   r.displayTitle(),
 			Workdir: r.Workdir,
 			Created: r.Created.Format(time.RFC3339),
 		})
