@@ -72,8 +72,17 @@ async function init() {
   }
   rebuildRests();
   await refreshAllMachines();
-  // Poll each machine's session list periodically so the sidebar reflects
-  // sessions created elsewhere and machine reachability changes.
+  startPolling();
+}
+
+// startPolling starts the 5s sidebar refresh loop. Idempotent (guarded by a
+// module-level flag) so the empty→non-empty path can start it without ever
+// stacking multiple intervals. Poll each machine's session list periodically so
+// the sidebar reflects sessions created elsewhere and reachability changes.
+let pollingStarted = false;
+function startPolling() {
+  if (pollingStarted) return;
+  pollingStarted = true;
   setInterval(refreshAllMachines, 5000);
 }
 
@@ -97,6 +106,7 @@ function wireManageMachinesButton() {
         machines = updated;
         rebuildRests();
         // Close views belonging to removed machines (does NOT kill remote sessions).
+        let activeRemoved = false;
         for (const rk of removedKeys) {
           for (const [k, v] of [...views]) {
             if (machineKey(v.machine) === rk) {
@@ -104,14 +114,24 @@ function wireManageMachinesButton() {
               v.terminal.dispose();
               v.container.remove();
               views.delete(k);
-              if (activeKey === k) activeKey = null;
+              if (activeKey === k) { activeKey = null; activeRemoved = true; }
             }
           }
+        }
+        // If the active view was removed, fall back to another open view so the
+        // main area doesn't go blank (mirrors closeSession's next-view logic).
+        if (activeRemoved) {
+          const next = views.keys().next();
+          if (!next.done) setActive(next.value);
         }
         if (machines.length === 0) {
           renderEmptyState();
         } else {
+          // Empty→non-empty transition: drop the leftover empty-state box (if any),
+          // then refresh and make sure the poll loop is running.
+          document.querySelector('#terminal-container .empty-state')?.remove();
           refreshAllMachines();
+          startPolling();
         }
       },
     });

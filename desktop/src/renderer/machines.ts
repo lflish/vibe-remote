@@ -64,6 +64,10 @@ export function openMachineManager(opts: ManagerOpts): void {
   const list = el('div', 'modal-list');
   modal.appendChild(list);
 
+  const bar = el('div', 'modal-error');
+  bar.style.display = 'none';
+  modal.appendChild(bar);
+
   const footer = el('div', 'modal-footer');
   const addBtn = el('button', 'btn-secondary');
   addBtn.textContent = '+ Add machine';
@@ -79,9 +83,21 @@ export function openMachineManager(opts: ManagerOpts): void {
     overlay.remove();
   }
 
-  async function commit() {
-    await window.ccdesk.saveMachines(working);
-    opts.onSaved(working.map((m) => ({ ...m })));
+  // commit persists the working list and notifies the caller. Returns whether
+  // the save succeeded; on failure it surfaces a visible error instead of
+  // leaving an unhandled promise rejection, so callers can skip follow-up UI.
+  async function commit(): Promise<boolean> {
+    try {
+      await window.ccdesk.saveMachines(working);
+      bar.style.display = 'none';
+      opts.onSaved(working.map((m) => ({ ...m })));
+      return true;
+    } catch (e) {
+      console.error('saveMachines failed', e);
+      bar.textContent = `Save failed: ${(e as Error).message}`;
+      bar.style.display = 'block';
+      return false;
+    }
   }
 
   function renderList() {
@@ -179,7 +195,7 @@ export function openMachineManager(opts: ManagerOpts): void {
       if (!m) return;
       if (idx >= 0) working[idx] = m;
       else working.push(m);
-      await commit();
+      if (!(await commit())) return; // keep the form open so the error is visible
       form.remove();
       renderList();
     });
