@@ -3,6 +3,9 @@ package session
 import (
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/anthropic/ccdesk/ccdeskd/internal/protocol"
 )
 
 func TestSanitizeSessionName(t *testing.T) {
@@ -75,4 +78,68 @@ func TestDisplayTitleFallback(t *testing.T) {
 			}
 		})
 	}
+}
+
+func newTestManager() *Manager {
+	return &Manager{
+		sessions: map[string]*Runner{},
+		subs:     map[string][]chan protocol.NotifyFrame{},
+	}
+}
+
+func TestPubSubDelivers(t *testing.T) {
+	m := newTestManager()
+	ch, unsub := m.Subscribe("s1")
+	defer unsub()
+
+	m.PublishEvent("s1", protocol.NotifyFrame{Type: protocol.TypeNotify, SessionID: "s1", Kind: "idle"})
+
+	select {
+	case f := <-ch:
+		if f.Kind != "idle" {
+			t.Errorf("kind = %q, want idle", f.Kind)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for event")
+	}
+}
+
+func TestPubSubMultipleSubscribers(t *testing.T) {
+	m := newTestManager()
+	ch1, unsub1 := m.Subscribe("s1")
+	defer unsub1()
+	ch2, unsub2 := m.Subscribe("s1")
+	defer unsub2()
+
+	m.PublishEvent("s1", protocol.NotifyFrame{Kind: "waiting"})
+
+	for i, ch := range []<-chan protocol.NotifyFrame{ch1, ch2} {
+		select {
+		case f := <-ch:
+			if f.Kind != "waiting" {
+				t.Errorf("subscriber %d kind = %q, want waiting", i, f.Kind)
+			}
+		case <-time.After(time.Second):
+			t.Fatalf("subscriber %d timed out", i)
+		}
+	}
+}
+
+func TestPubSubUnsubscribeRemoves(t *testing.T) {
+	m := newTestManager()
+	_, unsub := m.Subscribe("s1")
+	unsub()
+
+	m.mu.RLock()
+	n := len(m.subs["s1"])
+	m.mu.RUnlock()
+	if n != 0 {
+		t.Errorf("after unsubscribe, subs[s1] len = %d, want 0", n)
+	}
+}
+
+func TestPublishToNoSubscribersIsNoop(t *testing.T) {
+	m := newTestManager()
+	// Must not panic or block.
+	m.PublishEvent("ghost", protocol.NotifyFrame{Kind: "idle"})
 }

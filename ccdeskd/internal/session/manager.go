@@ -14,6 +14,7 @@ import (
 type Manager struct {
 	mu       sync.RWMutex
 	sessions map[string]*Runner
+	subs     map[string][]chan protocol.NotifyFrame // sessionID → notify subscribers
 
 	useTmux    bool
 	claudeCmd  string
@@ -25,6 +26,7 @@ type Manager struct {
 func NewManager(useTmux bool, claudeCmd string, loginShell bool, shell string) *Manager {
 	return &Manager{
 		sessions:   make(map[string]*Runner),
+		subs:       make(map[string][]chan protocol.NotifyFrame),
 		useTmux:    useTmux,
 		claudeCmd:  claudeCmd,
 		loginShell: loginShell,
@@ -196,6 +198,52 @@ func (m *Manager) List() []protocol.SessionInfo {
 		})
 	}
 	return list
+}
+
+// Subscribe registers a subscriber for a session's out-of-band notify events.
+// Returns a receive-only channel (buffered so a brief consumer stall doesn't
+// block the publisher) and an idempotent unsubscribe function. A wsRelay
+// subscribes on attach and unsubscribes on teardown.
+func (m *Manager) Subscribe(sessionID string) (<-chan protocol.NotifyFrame, func()) {
+	ch := make(chan protocol.NotifyFrame, 16)
+	m.mu.Lock()
+	m.subs[sessionID] = append(m.subs[sessionID], ch)
+	m.mu.Unlock()
+
+	var once sync.Once
+	unsub := func() {
+		once.Do(func() {
+			m.mu.Lock()
+			subs := m.subs[sessionID]
+			for i, c := range subs {
+				if c == ch {
+					m.subs[sessionID] = append(subs[:i], subs[i+1:]...)
+					break
+				}
+			}
+			if len(m.subs[sessionID]) == 0 {
+				delete(m.subs, sessionID)
+			}
+			m.mu.Unlock()
+			close(ch)
+		})
+	}
+	return ch, unsub
+}
+
+// PublishEvent broadcasts a notify frame to every subscriber of a session.
+// Non-blocking: if a subscriber's buffer is full, that event is dropped for
+// that subscriber rather than stalling the events endpoint.
+func (m *Manager) PublishEvent(sessionID string, f protocol.NotifyFrame) {
+	m.mu.RLock()
+	subs := append([]chan protocol.NotifyFrame(nil), m.subs[sessionID]...)
+	m.mu.RUnlock()
+	for _, ch := range subs {
+		select {
+		case ch <- f:
+		default: // subscriber lagging — drop rather than block
+		}
+	}
 }
 
 // generateID creates a short unique session ID. It combines a millisecond
