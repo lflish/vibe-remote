@@ -1,17 +1,10 @@
 import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import '@xterm/xterm/css/xterm.css';
-import {
-  FrameType,
-  type AuthFrame,
-  type AttachFrame,
-  type DataFrameC2S,
-  type ResizeFrame,
-  type ServerFrame,
-  type MachineConfig,
-  type SessionInfo,
-} from '../shared/protocol';
+import type { MachineConfig, SessionInfo } from '../shared/protocol';
 import { CcdeskClient, ConnectionState } from './client';
+import { CcdeskRest } from './rest';
+import { openDirPicker } from './dirpicker';
 
 // Declared by preload
 declare global {
@@ -23,252 +16,337 @@ declare global {
   }
 }
 
-// App state
-let machines: MachineConfig[] = [];
-let clients: Map<string, CcdeskClient> = new Map(); // machineAddr → client
-let activeClient: CcdeskClient | null = null;
-let activeSessionId: string | null = null;
-let terminal: Terminal | null = null;
-let fitAddon: FitAddon | null = null;
+// A SessionView is one open session: its own WebSocket (CcdeskClient) and its
+// own xterm instance. Multiple sessions stay open simultaneously; switching
+// just shows/hides their terminal containers. tmux keeps unfocused sessions
+// alive server-side regardless.
+interface SessionView {
+  key: string; // `${machineAddr}::${sessionId}`
+  machine: MachineConfig;
+  sessionId: string; // '' until the server assigns one for a new session
+  client: CcdeskClient;
+  terminal: Terminal;
+  fitAddon: FitAddon;
+  container: HTMLElement;
+}
 
-// --- Initialization ---
+// --- App state ---
+// Machine-keyed maps use `addr:port` (machineKey) rather than addr alone, so
+// two ccdeskd instances on the same host but different ports don't collide.
+let machines: MachineConfig[] = [];
+const rests = new Map<string, CcdeskRest>(); // machineKey -> REST client
+const views = new Map<string, SessionView>(); // view key -> open session view
+const machineSessions = new Map<string, SessionInfo[]>(); // machineKey -> sessions (REST)
+const machineOnline = new Map<string, boolean>(); // machineKey -> reachable
+let activeKey: string | null = null;
+
+const machineKey = (m: MachineConfig) => `${m.addr}:${m.port}`;
+const viewKey = (m: MachineConfig, sid: string) => `${machineKey(m)}::${sid}`;
+
+// --- base64 <-> bytes helpers (UTF-8 safe) ---
+// PTY bytes travel as base64; convert to/from raw bytes (not JS strings) so
+// multi-byte UTF-8 sequences (box-drawing, emoji, CJK) survive intact.
+function base64ToBytes(b64: string): Uint8Array {
+  const bin = atob(b64);
+  const bytes = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+  return bytes;
+}
+function bytesToBase64(bytes: Uint8Array): string {
+  let bin = '';
+  for (let i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i]);
+  return btoa(bin);
+}
+
+// --- Init ---
 
 async function init() {
   machines = await window.ccdesk.getMachines();
-
-  // If no machines configured, show placeholder
   if (machines.length === 0) {
     renderEmptyState();
     return;
   }
-
-  initTerminal();
-  renderMachineList();
-  connectAllMachines();
+  for (const m of machines) rests.set(machineKey(m), new CcdeskRest(m));
+  wireNewSessionButton();
+  wireWindowResize();
+  await refreshAllMachines();
+  // Poll each machine's session list periodically so the sidebar reflects
+  // sessions created elsewhere and machine reachability changes.
+  setInterval(refreshAllMachines, 5000);
 }
 
-function initTerminal() {
-  const container = document.getElementById('terminal-container')!;
+// wireWindowResize refits the active terminal when the window resizes, so the
+// visible session's PTY dimensions track the window instead of staying at the
+// size it was first opened at (which would misdraw wrapped lines). Debounced
+// to avoid a resize storm while dragging.
+function wireWindowResize() {
+  let t: ReturnType<typeof setTimeout> | null = null;
+  window.addEventListener('resize', () => {
+    if (t) clearTimeout(t);
+    t = setTimeout(() => {
+      if (!activeKey) return;
+      const view = views.get(activeKey);
+      if (view) view.fitAddon.fit(); // fit() triggers term.onResize → sendResize
+    }, 80);
+  });
+}
 
-  terminal = new Terminal({
+// refreshAllMachines pulls each machine's session list over REST and updates
+// the sidebar + online status.
+async function refreshAllMachines() {
+  await Promise.all(
+    machines.map(async (m) => {
+      const mk = machineKey(m);
+      try {
+        const list = await rests.get(mk)!.listSessions();
+        machineSessions.set(mk, list);
+        machineOnline.set(mk, true);
+      } catch {
+        machineOnline.set(mk, false);
+      }
+    }),
+  );
+  renderSidebar();
+  updateStatusBar();
+}
+
+// --- Session views ---
+
+function makeTerminal(): { term: Terminal; fit: FitAddon } {
+  const term = new Terminal({
     fontSize: 14,
     fontFamily: "'JetBrains Mono', 'SF Mono', 'Fira Code', 'Cascadia Code', monospace",
     theme: {
-      background: '#1e1e2e',
-      foreground: '#cdd6f4',
-      cursor: '#f5e0dc',
+      background: '#1e1e2e', foreground: '#cdd6f4', cursor: '#f5e0dc',
       selectionBackground: '#45475a',
-      black: '#45475a',
-      red: '#f38ba8',
-      green: '#a6e3a1',
-      yellow: '#f9e2af',
-      blue: '#89b4fa',
-      magenta: '#cba6f7',
-      cyan: '#94e2d5',
-      white: '#bac2de',
-      brightBlack: '#585b70',
-      brightRed: '#f38ba8',
-      brightGreen: '#a6e3a1',
-      brightYellow: '#f9e2af',
-      brightBlue: '#89b4fa',
-      brightMagenta: '#cba6f7',
-      brightCyan: '#94e2d5',
-      brightWhite: '#a6adc8',
+      black: '#45475a', red: '#f38ba8', green: '#a6e3a1', yellow: '#f9e2af',
+      blue: '#89b4fa', magenta: '#cba6f7', cyan: '#94e2d5', white: '#bac2de',
+      brightBlack: '#585b70', brightRed: '#f38ba8', brightGreen: '#a6e3a1',
+      brightYellow: '#f9e2af', brightBlue: '#89b4fa', brightMagenta: '#cba6f7',
+      brightCyan: '#94e2d5', brightWhite: '#a6adc8',
     },
-    cursorBlink: true,
-    scrollback: 10000,
-    allowProposedApi: true,
+    cursorBlink: true, scrollback: 10000, allowProposedApi: true,
   });
-
-  fitAddon = new FitAddon();
-  terminal.loadAddon(fitAddon);
-  terminal.open(container);
-  fitAddon.fit();
-
-  // Handle terminal input → send to server
-  terminal.onData((data: string) => {
-    if (activeClient && activeSessionId) {
-      const encoded = btoa(data);
-      activeClient.sendData(encoded);
-    }
-  });
-
-  // Handle resize
-  const resizeObserver = new ResizeObserver(() => {
-    if (fitAddon) {
-      fitAddon.fit();
-    }
-  });
-  resizeObserver.observe(container);
-
-  terminal.onResize(({ cols, rows }) => {
-    if (activeClient && activeSessionId) {
-      activeClient.sendResize(cols, rows);
-    }
-  });
+  const fit = new FitAddon();
+  term.loadAddon(fit);
+  return { term, fit };
 }
 
-// --- Machine connections ---
-
-function connectAllMachines() {
-  for (const machine of machines) {
-    const client = new CcdeskClient(machine);
-
-    client.onStateChange = (state) => {
-      updateMachineStatus(machine.addr, state);
-      updateStatusBar();
-    };
-
-    client.onData = (payload: string) => {
-      if (terminal && client === activeClient) {
-        const decoded = atob(payload);
-        terminal.write(decoded);
-      }
-    };
-
-    client.onSessionList = (sessions: SessionInfo[]) => {
-      renderSessionsForMachine(machine.addr, sessions);
-    };
-
-    client.onExit = (code: number) => {
-      updateStatusBar(`Session exited (code ${code})`);
-    };
-
-    client.onError = (msg: string) => {
-      console.error(`[${machine.name}] error: ${msg}`);
-    };
-
-    clients.set(machine.addr, client);
-    client.connect();
+// openSession creates a new SessionView (its own WS + xterm) and attaches.
+// sessionId '' means create a brand-new session with the given workdir.
+function openSession(machine: MachineConfig, sessionId: string, workdir?: string): SessionView {
+  const key = viewKey(machine, sessionId);
+  const existing = views.get(key);
+  if (existing) {
+    setActive(key);
+    return existing;
   }
+
+  const wrap = document.getElementById('terminal-container')!;
+  const container = document.createElement('div');
+  container.className = 'term-instance';
+  container.style.display = 'none';
+  wrap.appendChild(container);
+
+  const { term, fit } = makeTerminal();
+  term.open(container);
+
+  const client = new CcdeskClient(machine);
+  const view: SessionView = { key, machine, sessionId, client, terminal: term, fitAddon: fit, container };
+  views.set(key, view);
+
+  // Terminal input → server
+  term.onData((data: string) => {
+    client.sendData(bytesToBase64(new TextEncoder().encode(data)));
+  });
+  term.onResize(({ cols, rows }) => client.sendResize(cols, rows));
+
+  // Server PTY bytes → terminal (Uint8Array so xterm decodes UTF-8 itself)
+  client.onData = (payload: string) => term.write(base64ToBytes(payload));
+
+  client.onReady = (sid: string) => {
+    // A new session gets its real id here; re-key the view and refresh sidebar.
+    if (view.sessionId !== sid) {
+      views.delete(view.key);
+      view.sessionId = sid;
+      view.key = viewKey(machine, sid);
+      views.set(view.key, view);
+      if (activeKey === key) activeKey = view.key;
+    }
+    term.clear(); // clean base for the tmux full repaint on (re)attach
+    refreshAllMachines();
+    updateStatusBar();
+  };
+
+  client.onStateChange = () => updateStatusBar();
+  client.onExit = (code) => {
+    // Write a visible marker into the terminal and surface it in the status bar
+    // so a dead session isn't just a frozen screen.
+    if (view.terminal) view.terminal.write(`\r\n\x1b[33m[session exited, code ${code}]\x1b[0m\r\n`);
+    updateStatusBar(`Session exited (code ${code})`);
+    refreshAllMachines();
+  };
+  client.onError = (msg) => {
+    console.error(`[${machine.name}]`, msg);
+    // Show the error to the user instead of leaving a blank terminal.
+    if (view.terminal) view.terminal.write(`\r\n\x1b[31m[error: ${msg}]\x1b[0m\r\n`);
+    if (view.key === activeKey) updateStatusBar(`Error: ${msg}`);
+  };
+
+  client.connect();
+  const dims = fit.proposeDimensions();
+  client.attach(sessionId, dims?.cols || 80, dims?.rows || 24, workdir);
+
+  setActive(view.key);
+  return view;
 }
 
-// --- UI rendering ---
+// setActive shows one session view and hides the rest, then fits + focuses it.
+function setActive(key: string) {
+  activeKey = key;
+  for (const [k, v] of views) {
+    v.container.style.display = k === key ? 'block' : 'none';
+  }
+  const view = views.get(key);
+  if (view) {
+    requestAnimationFrame(() => {
+      view.fitAddon.fit();
+      view.terminal.focus();
+    });
+  }
+  renderSidebar();
+  updateStatusBar();
+}
 
-function renderMachineList() {
+// --- Sidebar ---
+
+function renderSidebar() {
   const container = document.getElementById('machine-list')!;
-  container.innerHTML = '';
+  container.textContent = '';
 
   for (const machine of machines) {
     const group = document.createElement('div');
     group.className = 'machine-group';
-    group.innerHTML = `
-      <div class="machine-name" data-addr="${machine.addr}">
-        <span class="machine-status" id="status-${machine.addr}"></span>
-        <span>${machine.name}</span>
-      </div>
-      <div class="session-list" id="sessions-${machine.addr}"></div>
-    `;
+
+    const nameRow = document.createElement('div');
+    nameRow.className = 'machine-name';
+    const dot = document.createElement('span');
+    dot.className = 'machine-status' + (machineOnline.get(machineKey(machine)) ? ' connected' : ' error');
+    const nameSpan = document.createElement('span');
+    nameSpan.textContent = machine.name;
+    nameRow.append(dot, nameSpan);
+
+    const list = document.createElement('div');
+    list.className = 'session-list';
+
+    const sessions = machineSessions.get(machineKey(machine)) || [];
+    for (const s of sessions) {
+      const key = viewKey(machine, s.id);
+      const item = document.createElement('div');
+      item.className = 'session-item' + (key === activeKey ? ' active' : '');
+
+      const label = document.createElement('span');
+      label.className = 'session-label';
+      label.textContent = (s.workdir ? s.workdir.split('/').pop() : '') || s.id;
+      label.title = s.workdir || s.id;
+      label.addEventListener('click', () => openSession(machine, s.id));
+
+      const close = document.createElement('span');
+      close.className = 'session-close';
+      close.textContent = '×';
+      close.title = 'Close session (kills remote claude)';
+      close.addEventListener('click', (e) => { e.stopPropagation(); closeSession(machine, s.id); });
+
+      item.append(label, close);
+      list.appendChild(item);
+    }
+
+    group.append(nameRow, list);
     container.appendChild(group);
   }
-}
-
-function renderSessionsForMachine(addr: string, sessions: SessionInfo[]) {
-  const container = document.getElementById(`sessions-${addr}`);
-  if (!container) return;
-
-  container.innerHTML = '';
-  for (const session of sessions) {
-    const item = document.createElement('div');
-    item.className = `session-item${session.id === activeSessionId ? ' active' : ''}`;
-    item.dataset.sessionId = session.id;
-    item.dataset.machineAddr = addr;
-
-    // Show a short label: workdir basename or session id
-    const label = session.workdir
-      ? session.workdir.split('/').pop() || session.id
-      : session.id;
-    item.textContent = label;
-
-    item.addEventListener('click', () => switchToSession(addr, session.id));
-    container.appendChild(item);
-  }
-}
-
-function updateMachineStatus(addr: string, state: ConnectionState) {
-  const dot = document.getElementById(`status-${addr}`);
-  if (!dot) return;
-  dot.className = 'machine-status';
-  if (state === ConnectionState.Connected) dot.classList.add('connected');
-  else if (state === ConnectionState.Reconnecting) dot.classList.add('reconnecting');
-  else if (state === ConnectionState.Error) dot.classList.add('error');
 }
 
 function updateStatusBar(extra?: string) {
   const connEl = document.getElementById('status-connection')!;
   const sessionEl = document.getElementById('status-session')!;
+  const view = activeKey ? views.get(activeKey) : null;
 
-  if (activeClient) {
-    const state = activeClient.state;
-    connEl.className = '';
-    if (state === ConnectionState.Connected) {
+  connEl.className = '';
+  if (view) {
+    const st = view.client.state;
+    if (st === ConnectionState.Connected) {
       connEl.className = 'connected';
-      connEl.textContent = `Connected to ${activeClient.machine.name}`;
-    } else if (state === ConnectionState.Reconnecting) {
+      connEl.textContent = `Connected · ${view.machine.name}`;
+    } else if (st === ConnectionState.Reconnecting) {
       connEl.className = 'reconnecting';
-      connEl.textContent = 'Reconnecting...';
+      connEl.textContent = 'Reconnecting…';
     } else {
       connEl.textContent = 'Disconnected';
     }
   } else {
-    connEl.textContent = 'No connection';
+    const anyOnline = [...machineOnline.values()].some(Boolean);
+    connEl.className = anyOnline ? 'connected' : '';
+    connEl.textContent = anyOnline ? 'Ready' : 'No connection';
   }
+  sessionEl.textContent = extra || (view?.sessionId ? `Session: ${view.sessionId}` : '');
+}
 
-  sessionEl.textContent = extra || (activeSessionId ? `Session: ${activeSessionId}` : '');
+// closeSession kills the remote session (tmux + claude) and removes its view.
+async function closeSession(machine: MachineConfig, sessionId: string) {
+  try {
+    await rests.get(machineKey(machine))!.deleteSession(sessionId);
+  } catch (e) {
+    console.error('delete session failed', e);
+  }
+  const key = viewKey(machine, sessionId);
+  const view = views.get(key);
+  if (view) {
+    view.client.disconnect();
+    view.terminal.dispose();
+    view.container.remove();
+    views.delete(key);
+    if (activeKey === key) {
+      activeKey = null;
+      const next = views.keys().next();
+      if (!next.done) setActive(next.value);
+    }
+  }
+  refreshAllMachines();
 }
 
 function renderEmptyState() {
   const container = document.getElementById('terminal-container')!;
-  container.innerHTML = `
-    <div style="display:flex;align-items:center;justify-content:center;height:100%;color:var(--text-muted);flex-direction:column;gap:12px;">
-      <p>No machines configured.</p>
-      <p style="font-size:11px;">Add machines to <code>machines.json</code> in the app data folder.</p>
-    </div>
-  `;
-}
-
-// --- Session switching ---
-
-function switchToSession(machineAddr: string, sessionId: string) {
-  const client = clients.get(machineAddr);
-  if (!client) return;
-
-  activeClient = client;
-  activeSessionId = sessionId;
-
-  // Clear terminal and re-attach
-  if (terminal) {
-    terminal.clear();
-  }
-
-  // Attach to the session
-  if (fitAddon && terminal) {
-    const dims = fitAddon.proposeDimensions();
-    client.attach(sessionId, dims?.cols || 80, dims?.rows || 24);
-  }
-
-  updateStatusBar();
-  renderMachineList(); // refresh active state
+  const box = document.createElement('div');
+  box.className = 'empty-state';
+  const p1 = document.createElement('p');
+  p1.textContent = 'No machines configured.';
+  const p2 = document.createElement('p');
+  p2.style.fontSize = '11px';
+  p2.textContent = 'Add machines to machines.json in the app data folder.';
+  box.append(p1, p2);
+  container.appendChild(box);
 }
 
 // --- New session button ---
 
-document.getElementById('btn-new-session')?.addEventListener('click', () => {
-  if (machines.length === 0) return;
-
-  // For now, create on first machine with default workdir
-  const machine = machines[0];
-  const client = clients.get(machine.addr);
-  if (!client) return;
-
-  activeClient = client;
-
-  if (terminal && fitAddon) {
-    terminal.clear();
-    const dims = fitAddon.proposeDimensions();
-    client.attach('', dims?.cols || 80, dims?.rows || 24);
-  }
-});
+function wireNewSessionButton() {
+  document.getElementById('btn-new-session')?.addEventListener('click', async () => {
+    if (machines.length === 0) return;
+    // Choose the machine of the active session, else the first machine.
+    const active = activeKey ? views.get(activeKey) : null;
+    const machine = active?.machine || machines[0];
+    const workdir = await openDirPicker(machine);
+    if (workdir === null) return; // cancelled
+    openSession(machine, '', workdir);
+  });
+}
 
 // --- Boot ---
-document.addEventListener('DOMContentLoaded', init);
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', init);
+} else {
+  init();
+}
+
+
+

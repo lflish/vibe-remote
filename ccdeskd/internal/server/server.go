@@ -47,7 +47,25 @@ func (s *Server) routes() {
 func (s *Server) ListenAndServe() error {
 	addr := fmt.Sprintf("%s:%d", s.cfg.BindAddr, s.cfg.Port)
 	log.Printf("ccdeskd listening on %s", addr)
-	return http.ListenAndServe(addr, s.mux)
+	return http.ListenAndServe(addr, withCORS(s.mux))
+}
+
+// withCORS adds permissive CORS headers so the Electron renderer (which loads
+// from file:// or the Vite dev server, a different origin) can call the REST
+// API via fetch. This is safe here: ccdeskd is tailnet-only and every REST
+// endpoint still requires the Bearer token. WebSocket upgrades bypass CORS and
+// are unaffected. Preflight OPTIONS requests are answered directly.
+func withCORS(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Access-Control-Allow-Origin", "*")
+		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS")
+		w.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type")
+		if r.Method == http.MethodOptions {
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
 }
 
 // --- REST handlers ---

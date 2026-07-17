@@ -5,5 +5,8 @@
   "default_workdir": "/home/user",
   "allowed_roots": ["/home/user"],
   "use_tmux": true,
-  "claude_cmd": "claude"
+  "claude_cmd": "claude --dangerously-skip-permissions",
+  "login_shell": true,
+  "shell": "",
+  "allow_insecure_bind": false
 }

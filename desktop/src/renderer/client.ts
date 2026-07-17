@@ -43,7 +43,11 @@ export class CcdeskClient {
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private pingTimer: ReturnType<typeof setInterval> | null = null;
   private currentSessionId: string | null = null;
-  private pendingAttach: { sessionId: string; cols: number; rows: number } | null = null;
+  private pendingAttach: { sessionId: string; cols: number; rows: number; workdir?: string } | null = null;
+  // Last known terminal size, so a reconnect re-attaches at the correct
+  // dimensions instead of a default 80x24 (which would misdraw until resize).
+  private lastCols = 80;
+  private lastRows = 24;
 
   constructor(machine: MachineConfig) {
     this.machine = machine;
@@ -61,19 +65,23 @@ export class CcdeskClient {
     this.ws = new WebSocket(url);
 
     this.ws.onopen = () => {
-      this.reconnectAttempt = 0;
+      // Note: reconnectAttempt is reset on `ready` (a proven-healthy
+      // connection), not here — otherwise a server that accepts the socket
+      // then immediately closes it (bad token, attach failure) would reset the
+      // backoff every cycle and hammer the server once per second forever.
       // Send auth immediately
       this.send<AuthFrame>({ type: FrameType.Auth, token: this.machine.token });
       this.setState(ConnectionState.Connected);
       this.startPing();
 
-      // If we have a pending attach (reconnect scenario), send it
+      // If we have a pending attach (initial connect or reconnect), send it
       if (this.pendingAttach) {
         this.send<AttachFrame>({
           type: FrameType.Attach,
-          sessionId: this.pendingAttach.sessionId,
+          sessionId: this.pendingAttach.sessionId || undefined,
           cols: this.pendingAttach.cols,
           rows: this.pendingAttach.rows,
+          workdir: this.pendingAttach.workdir,
         });
         this.pendingAttach = null;
       }
@@ -113,6 +121,8 @@ export class CcdeskClient {
   /** Attach to a session (empty sessionId = create new). */
   attach(sessionId: string, cols: number, rows: number, workdir?: string) {
     this.currentSessionId = sessionId || null;
+    this.lastCols = cols;
+    this.lastRows = rows;
 
     if (this.state === ConnectionState.Connected && this.ws) {
       this.send<AttachFrame>({
@@ -123,8 +133,10 @@ export class CcdeskClient {
         workdir,
       });
     } else {
-      // Store for when connection is established
-      this.pendingAttach = { sessionId, cols, rows };
+      // Connection not ready yet — store the full attach (including workdir)
+      // to send on open. Dropping workdir here is what made new sessions
+      // always land in the default dir instead of the chosen one.
+      this.pendingAttach = { sessionId, cols, rows, workdir };
     }
   }
 
@@ -135,6 +147,8 @@ export class CcdeskClient {
 
   /** Send resize event. */
   sendResize(cols: number, rows: number) {
+    this.lastCols = cols;
+    this.lastRows = rows;
     this.send<ResizeFrame>({ type: FrameType.Resize, cols, rows });
   }
 
@@ -150,6 +164,9 @@ export class CcdeskClient {
 
     switch (frame.type) {
       case FrameType.Ready:
+        // A ready frame means auth + attach succeeded — the connection is
+        // healthy, so it's safe to reset the backoff counter now.
+        this.reconnectAttempt = 0;
         this.currentSessionId = frame.sessionId;
         this.onReady?.(frame.sessionId, frame.workdir);
         break;
@@ -196,9 +213,14 @@ export class CcdeskClient {
     this.reconnectAttempt++;
 
     this.reconnectTimer = setTimeout(() => {
-      // Set up pending attach for reconnect (re-attach same session)
+      // Re-attach the same session at the last known size so the restored
+      // screen draws correctly instead of at a default 80x24.
       if (this.currentSessionId) {
-        this.pendingAttach = { sessionId: this.currentSessionId, cols: 80, rows: 24 };
+        this.pendingAttach = {
+          sessionId: this.currentSessionId,
+          cols: this.lastCols,
+          rows: this.lastRows,
+        };
       }
       this.connect();
     }, delay);

@@ -1,0 +1,9 @@
+{
+  "bind_addr": "127.0.0.1",
+  "port": 8765,
+  "token": "smoke-test-token",
+  "default_workdir": "/Users/mac/github/ccdesk",
+  "allowed_roots": ["/Users/mac/github/ccdesk", "/Users/mac"],
+  "use_tmux": false,
+  "claude_cmd": "/bin/bash"
+}

@@ -4,8 +4,10 @@ package config
 import (
 	"encoding/json"
 	"fmt"
+	"net"
 	"os"
 	"path/filepath"
+	"strings"
 )
 
 // Config holds the daemon configuration.
@@ -24,6 +26,33 @@ type Config struct {
 	UseTmux bool `json:"use_tmux"`
 	// Claude command (default: "claude").
 	ClaudeCmd string `json:"claude_cmd"`
+	// Launch claude through a login shell so the user's shell environment
+	// (PATH, node version managers like fnm/nvm, etc.) is loaded — matching
+	// what the user gets when running claude interactively. Default true.
+	LoginShell *bool `json:"login_shell,omitempty"`
+	// Shell to use for login-shell launch (default: $SHELL, else /bin/bash).
+	Shell string `json:"shell,omitempty"`
+	// Escape hatch: allow binding to a non-tailscale address (LAN IP, etc.).
+	// Off by default so a misconfig can't silently expose the daemon beyond
+	// the tailnet. Wildcard addresses (0.0.0.0 / ::) are always rejected.
+	AllowInsecureBind bool `json:"allow_insecure_bind,omitempty"`
+}
+
+// UseLoginShell reports whether claude should be launched via a login shell.
+// Defaults to true when unset.
+func (c *Config) UseLoginShell() bool {
+	return c.LoginShell == nil || *c.LoginShell
+}
+
+// LoginShellPath returns the shell to use for login-shell launch.
+func (c *Config) LoginShellPath() string {
+	if c.Shell != "" {
+		return c.Shell
+	}
+	if sh := os.Getenv("SHELL"); sh != "" {
+		return sh
+	}
+	return "/bin/bash"
 }
 
 // DefaultConfig returns a config with sensible defaults.
@@ -61,8 +90,8 @@ func Load(path string) (*Config, error) {
 
 // Validate checks that the config is usable.
 func (c *Config) Validate() error {
-	if c.BindAddr == "" || c.BindAddr == "0.0.0.0" {
-		return fmt.Errorf("bind_addr must be a specific tailscale IP, not empty or 0.0.0.0")
+	if err := validateBindAddr(c.BindAddr, c.AllowInsecureBind); err != nil {
+		return err
 	}
 	if c.Port <= 0 || c.Port > 65535 {
 		return fmt.Errorf("port must be between 1 and 65535")
@@ -80,6 +109,43 @@ func (c *Config) Validate() error {
 	return nil
 }
 
+// validateBindAddr enforces the tailnet-only assumption the rest of the
+// security model rests on (skipped WS Origin check, permissive CORS). It
+// rejects empty and wildcard addresses outright, and non-tailscale addresses
+// unless allowInsecure is set as an explicit escape hatch.
+func validateBindAddr(addr string, allowInsecure bool) error {
+	if addr == "" {
+		return fmt.Errorf("bind_addr must be set (to a tailscale IP)")
+	}
+	ip := net.ParseIP(addr)
+	if ip == nil {
+		return fmt.Errorf("bind_addr %q is not a valid IP address", addr)
+	}
+	// Wildcards bind every interface — never allowed, even with the escape hatch.
+	if ip.IsUnspecified() {
+		return fmt.Errorf("bind_addr %q binds all interfaces; use a specific tailscale IP", addr)
+	}
+	if allowInsecure {
+		return nil
+	}
+	if !isTailscaleIP(ip) {
+		return fmt.Errorf("bind_addr %q is not a tailscale address (100.64.0.0/10 or fd7a:115c:a1e0::/48); "+
+			"set allow_insecure_bind:true to override", addr)
+	}
+	return nil
+}
+
+// isTailscaleIP reports whether ip is in the tailscale CGNAT v4 range
+// (100.64.0.0/10) or the tailscale ULA v6 range (fd7a:115c:a1e0::/48).
+func isTailscaleIP(ip net.IP) bool {
+	if v4 := ip.To4(); v4 != nil {
+		return v4[0] == 100 && v4[1] >= 64 && v4[1] <= 127
+	}
+	tsULA := net.IP{0xfd, 0x7a, 0x11, 0x5c, 0xa1, 0xe0}
+	return len(ip) == net.IPv6len && ip[0] == tsULA[0] && ip[1] == tsULA[1] &&
+		ip[2] == tsULA[2] && ip[3] == tsULA[3] && ip[4] == tsULA[4] && ip[5] == tsULA[5]
+}
+
 // IsAllowedWorkdir checks if a path falls within the allowed roots.
 func (c *Config) IsAllowedWorkdir(dir string) bool {
 	abs, err := filepath.Abs(dir)
@@ -95,11 +161,11 @@ func (c *Config) IsAllowedWorkdir(dir string) bool {
 		if err != nil {
 			continue
 		}
-		// Must not escape the root (no leading "..")
-		if len(rel) >= 2 && rel[:2] == ".." {
-			continue
-		}
-		if rel == ".." {
+		// rel == "." means dir IS the root (allowed).
+		// A leading ".." component means dir escapes the root (rejected).
+		// Check for exactly ".." or a "../" prefix — not just a ".." substring,
+		// so a directory literally named "..foo" isn't wrongly rejected.
+		if rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
 			continue
 		}
 		return true

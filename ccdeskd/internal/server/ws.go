@@ -7,6 +7,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"sync/atomic"
 	"time"
 
 	"github.com/anthropic/ccdesk/ccdeskd/internal/protocol"
@@ -18,7 +19,9 @@ import (
 // handleWS upgrades to WebSocket and manages the session lifecycle.
 func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
 	conn, err := websocket.Accept(w, r, &websocket.AcceptOptions{
-		// Allow all origins for now (tailnet-only, not public)
+		// Origin check is skipped: ccdeskd is tailnet-only (not public) and
+		// the Electron client connects from a different origin (file:// or the
+		// Vite dev server). WireGuard + the static token are the real guards.
 		InsecureSkipVerify: true,
 	})
 	if err != nil {
@@ -26,6 +29,11 @@ func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer conn.CloseNow()
+
+	// Raise the read limit well above the 32 KiB default: a large terminal
+	// paste arrives as one base64 `data` frame and would otherwise trip the
+	// limit and drop the connection mid-paste. 4 MiB covers realistic pastes.
+	conn.SetReadLimit(4 << 20)
 
 	ctx := r.Context()
 
@@ -66,22 +74,33 @@ func (s *Server) wsAuth(ctx context.Context, conn *websocket.Conn) bool {
 	return true
 }
 
-// wsAttach handles the attach frame: creates or resumes a session.
+// wsAttach waits for an attach frame and creates or resumes a session.
+// After auth the client may stay idle (browsing sessions) before attaching,
+// so there is no short timeout here — the connection lives until the client
+// sends attach or disconnects. ping/pong frames received while waiting are
+// answered so keepalive works during the idle window.
 func (s *Server) wsAttach(ctx context.Context, conn *websocket.Conn) (*session.Runner, string) {
-	attachCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
-	defer cancel()
+	// Push the current session list so the client can populate its sidebar
+	// and let the user pick a session (or create a new one) before attaching.
+	wsjson.Write(ctx, conn, protocol.SessionsFrame{
+		Type: protocol.TypeSessions,
+		List: s.mgr.List(),
+	})
 
 	var frame protocol.AttachFrame
-	if err := wsjson.Read(attachCtx, conn, &frame); err != nil {
-		sendError(ctx, conn, "attach timeout or invalid frame")
-		conn.Close(websocket.StatusInvalidFramePayloadData, "bad attach")
-		return nil, ""
-	}
-
-	if frame.Type != protocol.TypeAttach {
-		sendError(ctx, conn, "expected attach frame")
-		conn.Close(websocket.StatusInvalidFramePayloadData, "expected attach")
-		return nil, ""
+	for {
+		if err := wsjson.Read(ctx, conn, &frame); err != nil {
+			// Client disconnected while idle — expected, not an error.
+			return nil, ""
+		}
+		if frame.Type == protocol.TypePing {
+			wsjson.Write(ctx, conn, protocol.Frame{Type: protocol.TypePong})
+			continue
+		}
+		if frame.Type == protocol.TypeAttach {
+			break
+		}
+		// Ignore other frames while waiting for attach.
 	}
 
 	var runner *session.Runner
@@ -90,6 +109,7 @@ func (s *Server) wsAttach(ctx context.Context, conn *websocket.Conn) (*session.R
 	if frame.SessionID == "" {
 		// New session — resolve workdir
 		workdir := frame.Workdir
+		log.Printf("attach new session: requested workdir=%q", frame.Workdir)
 		if workdir == "" {
 			workdir = s.cfg.DefaultWorkdir
 		}
@@ -126,6 +146,13 @@ func (s *Server) wsAttach(ctx context.Context, conn *websocket.Conn) (*session.R
 		return nil, ""
 	}
 
+	// Push the current session list so the client's sidebar stays in sync
+	// without needing a separate REST poll after each attach.
+	wsjson.Write(ctx, conn, protocol.SessionsFrame{
+		Type: protocol.TypeSessions,
+		List: s.mgr.List(),
+	})
+
 	return runner, runner.ID
 }
 
@@ -133,7 +160,19 @@ func (s *Server) wsAttach(ctx context.Context, conn *websocket.Conn) (*session.R
 func (s *Server) wsRelay(ctx context.Context, conn *websocket.Conn, runner *session.Runner, sessionID string) {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
-	defer runner.Detach()
+
+	// Capture the PTY epoch we own. On teardown we only detach if we still own
+	// it, so a reconnect that already installed a newer PTY isn't clobbered.
+	epoch := runner.CurrentEpoch()
+
+	// detaching signals the PTY→WS goroutine that an error it sees is caused by
+	// our own detach (client going away), not a real process exit — so it must
+	// not send a spurious exit frame for a session that's still alive in tmux.
+	var detaching atomic.Bool
+	defer func() {
+		detaching.Store(true)
+		runner.DetachEpoch(epoch)
+	}()
 
 	// PTY → WebSocket (read from PTY, send to client)
 	go func() {
@@ -142,14 +181,18 @@ func (s *Server) wsRelay(ctx context.Context, conn *websocket.Conn, runner *sess
 		for {
 			n, err := runner.Read(buf)
 			if err != nil {
+				if detaching.Load() || ctx.Err() != nil {
+					// PTY closed by our own teardown — session lives on in tmux,
+					// this is not a process exit.
+					return
+				}
 				if err != io.EOF {
 					log.Printf("pty read [%s]: %v", sessionID, err)
 				}
-				// Send exit frame
-				exitCode := runner.Wait()
+				// Genuine process exit: report it.
 				wsjson.Write(ctx, conn, protocol.ExitFrame{
 					Type: protocol.TypeExit,
-					Code: exitCode,
+					Code: runner.Wait(),
 				})
 				return
 			}
@@ -159,7 +202,8 @@ func (s *Server) wsRelay(ctx context.Context, conn *websocket.Conn, runner *sess
 					Payload: base64.StdEncoding.EncodeToString(buf[:n]),
 				}
 				if err := wsjson.Write(ctx, conn, dataFrame); err != nil {
-					log.Printf("ws write data [%s]: %v", sessionID, err)
+					// Write failure means the client went away — expected on
+					// disconnect. Stop the pump quietly; ctx cancel handles the rest.
 					return
 				}
 			}
@@ -170,7 +214,18 @@ func (s *Server) wsRelay(ctx context.Context, conn *websocket.Conn, runner *sess
 	for {
 		_, data, err := conn.Read(ctx)
 		if err != nil {
-			log.Printf("ws read [%s]: %v", sessionID, err)
+			// Normal client disconnect (close frame, context cancel, or closed
+			// conn) is expected — the tmux session stays alive for reconnect.
+			// Only log genuinely unexpected errors.
+			status := websocket.CloseStatus(err)
+			if status == websocket.StatusNormalClosure ||
+				status == websocket.StatusGoingAway ||
+				status == websocket.StatusNoStatusRcvd ||
+				ctx.Err() != nil {
+				log.Printf("ws closed [%s] (client disconnect)", sessionID)
+			} else {
+				log.Printf("ws read [%s]: %v", sessionID, err)
+			}
 			return
 		}
 

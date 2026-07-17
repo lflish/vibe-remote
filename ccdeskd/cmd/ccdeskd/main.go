@@ -42,7 +42,7 @@ func main() {
 		cfg.BindAddr, cfg.Port, cfg.UseTmux, cfg.DefaultWorkdir)
 
 	// Create session manager
-	mgr := session.NewManager(cfg.UseTmux, cfg.ClaudeCmd)
+	mgr := session.NewManager(cfg.UseTmux, cfg.ClaudeCmd, cfg.UseLoginShell(), cfg.LoginShellPath())
 
 	// Start server
 	srv := server.New(cfg, mgr)

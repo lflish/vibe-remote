@@ -1,20 +1,25 @@
 import { defineConfig } from 'vite';
 import electron from 'vite-plugin-electron';
-import { resolve } from 'path';
+import { resolve, dirname } from 'path';
+import { fileURLToPath } from 'url';
+
+const __dirname = dirname(fileURLToPath(import.meta.url));
+const r = (p: string) => resolve(__dirname, p);
 
 export default defineConfig({
-  root: 'src/renderer',
+  root: r('src/renderer'),
   build: {
-    outDir: '../../dist/renderer',
+    outDir: r('dist/renderer'),
     emptyOutDir: true,
   },
   plugins: [
     electron([
       {
-        entry: 'src/main/index.ts',
+        // Main process
+        entry: r('src/main/index.ts'),
         vite: {
           build: {
-            outDir: 'dist/main',
+            outDir: r('dist/main'),
             rollupOptions: {
               external: ['electron'],
             },
@@ -22,13 +27,14 @@ export default defineConfig({
         },
       },
       {
-        entry: 'src/main/preload.ts',
+        // Preload script
+        entry: r('src/main/preload.ts'),
         onstart(args) {
           args.reload();
         },
         vite: {
           build: {
-            outDir: 'dist/main',
+            outDir: r('dist/main'),
             rollupOptions: {
               external: ['electron'],
             },
