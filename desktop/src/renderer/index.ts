@@ -41,6 +41,11 @@ const views = new Map<string, SessionView>(); // view key -> open session view
 const machineSessions = new Map<string, SessionInfo[]>(); // machineKey -> sessions (REST)
 const machineOnline = new Map<string, boolean>(); // machineKey -> reachable
 let activeKey: string | null = null;
+// While an inline rename input is open we suppress full sidebar rebuilds:
+// the 5s poll (and onReady/onExit) call renderSidebar(), which wipes and
+// recreates the whole sidebar DOM — that would delete the focused input and
+// its blur would silently commit half-typed text. Paused during editing.
+let renamingActive = false;
 
 const machineKey = (m: MachineConfig) => `${m.addr}:${m.port}`;
 const viewKey = (m: MachineConfig, sid: string) => `${machineKey(m)}::${sid}`;
@@ -305,6 +310,8 @@ function setActive(key: string) {
 // --- Sidebar ---
 
 function renderSidebar() {
+  // Skip rebuilds while an inline rename is in progress (see renamingActive).
+  if (renamingActive) return;
   const container = document.getElementById('machine-list')!;
   container.textContent = '';
 
@@ -333,9 +340,24 @@ function renderSidebar() {
       label.className = 'session-label';
       label.textContent = s.title || (s.workdir ? s.workdir.split('/').pop() : '') || s.id;
       label.title = s.workdir || s.id;
-      label.addEventListener('click', () => openSession(machine, s.id));
+      // Click vs dblclick: dblclick=rename. A dblclick fires as click→click→
+      // dblclick, so a naive click handler would open (and WS-connect) an
+      // unopened session before the rename even starts. Only unopened sessions
+      // pay a short delay so an incoming dblclick can cancel the open; already-
+      // open sessions switch instantly (openSession is an idempotent setActive,
+      // no side effects), keeping the primary interaction zero-latency.
+      let openTimer: number | undefined;
+      label.addEventListener('click', () => {
+        if (views.has(key)) {
+          openSession(machine, s.id); // already open: instant, no delay
+        } else {
+          window.clearTimeout(openTimer);
+          openTimer = window.setTimeout(() => openSession(machine, s.id), 220);
+        }
+      });
       label.addEventListener('dblclick', (e) => {
         e.stopPropagation();
+        window.clearTimeout(openTimer); // cancel any pending open for this label
         startInlineRename(machine, s, label);
       });
 
@@ -363,14 +385,21 @@ function startInlineRename(machine: MachineConfig, s: SessionInfo, label: HTMLEl
   input.className = 'session-rename-input';
   input.value = s.title || '';
   label.replaceWith(input);
+  renamingActive = true; // pause sidebar rebuilds while editing (see flag docs)
   input.focus();
   input.select();
 
   let done = false;
   const commit = async () => {
     if (done) return;
+    // If the input is no longer in the document, this blur came from the DOM
+    // being torn down (not a deliberate user focus change) — treat as cancel,
+    // never commit half-typed text. (Belt-and-suspenders with renamingActive.)
+    if (!document.body.contains(input)) { done = true; renamingActive = false; return; }
     done = true;
     const name = input.value.trim();
+    // Clear before refresh so the subsequent renderSidebar() actually rebuilds.
+    renamingActive = false;
     try {
       await rests.get(machineKey(machine))!.renameSession(s.id, name);
     } catch (e) {
@@ -381,6 +410,7 @@ function startInlineRename(machine: MachineConfig, s: SessionInfo, label: HTMLEl
   const cancel = () => {
     if (done) return;
     done = true;
+    renamingActive = false; // clear before renderSidebar so it rebuilds
     renderSidebar();
   };
 
