@@ -39,6 +39,7 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /api/v1/info", s.handleInfo)
 	s.mux.HandleFunc("GET /api/v1/sessions", s.handleListSessions)
 	s.mux.HandleFunc("DELETE /api/v1/sessions/{id}", s.handleDeleteSession)
+	s.mux.HandleFunc("POST /api/v1/sessions/{id}/rename", s.handleRenameSession)
 	s.mux.HandleFunc("GET /api/v1/fs", s.handleFS)
 	s.mux.HandleFunc("/ws", s.handleWS)
 }
@@ -111,6 +112,30 @@ func (s *Server) handleDeleteSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := s.mgr.Delete(id); err != nil {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": err.Error()})
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// handleRenameSession sets a user display name on a session.
+func (s *Server) handleRenameSession(w http.ResponseWriter, r *http.Request) {
+	if !s.checkToken(r, w) {
+		return
+	}
+	id := r.PathValue("id")
+	if id == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "missing session id"})
+		return
+	}
+	var body struct {
+		Name string `json:"name"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid body"})
+		return
+	}
+	if err := s.mgr.Rename(id, body.Name); err != nil {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": err.Error()})
 		return
 	}

@@ -133,6 +133,7 @@ PTY 字节流，base64 编码。
 | GET | `/api/v1/info` | 机器信息（主机名、tmux 状态、默认目录等） |
 | GET | `/api/v1/sessions` | 会话列表 |
 | DELETE | `/api/v1/sessions/{id}` | 关闭指定会话 |
+| POST | `/api/v1/sessions/{id}/rename` | 重命名会话，body `{"name":"..."}`，名字存 tmux 用户选项 |
 | GET | `/api/v1/fs?path=<dir>` | 列目录（仅目录项），供远程目录选择器用 |
 
 ## 安全
