@@ -5,6 +5,7 @@ import type { MachineConfig, SessionInfo } from '../shared/protocol';
 import { CcdeskClient, ConnectionState } from './client';
 import { CcdeskRest } from './rest';
 import { openDirPicker } from './dirpicker';
+import { openMachineManager } from './machines';
 
 // Declared by preload
 declare global {
@@ -62,17 +63,59 @@ function bytesToBase64(bytes: Uint8Array): string {
 
 async function init() {
   machines = await window.ccdesk.getMachines();
+  wireManageMachinesButton();
+  wireNewSessionButton();
+  wireWindowResize();
   if (machines.length === 0) {
     renderEmptyState();
     return;
   }
-  for (const m of machines) rests.set(machineKey(m), new CcdeskRest(m));
-  wireNewSessionButton();
-  wireWindowResize();
+  rebuildRests();
   await refreshAllMachines();
   // Poll each machine's session list periodically so the sidebar reflects
   // sessions created elsewhere and machine reachability changes.
   setInterval(refreshAllMachines, 5000);
+}
+
+// rebuildRests rebuilds the machineKey→REST map after the machine list changes
+// (add/edit/delete via the manager). Existing session WebSockets are untouched.
+function rebuildRests() {
+  rests.clear();
+  for (const m of machines) rests.set(machineKey(m), new CcdeskRest(m));
+}
+
+// wireManageMachinesButton opens the machine manager and hot-reloads on save:
+// rebuild REST clients, close views for machines that no longer exist, refresh.
+function wireManageMachinesButton() {
+  document.getElementById('btn-manage-machines')?.addEventListener('click', () => {
+    openMachineManager({
+      machines,
+      onSaved: (updated) => {
+        const removedKeys = machines
+          .filter((old) => !updated.some((u) => machineKey(u) === machineKey(old)))
+          .map(machineKey);
+        machines = updated;
+        rebuildRests();
+        // Close views belonging to removed machines (does NOT kill remote sessions).
+        for (const rk of removedKeys) {
+          for (const [k, v] of [...views]) {
+            if (machineKey(v.machine) === rk) {
+              v.client.disconnect();
+              v.terminal.dispose();
+              v.container.remove();
+              views.delete(k);
+              if (activeKey === k) activeKey = null;
+            }
+          }
+        }
+        if (machines.length === 0) {
+          renderEmptyState();
+        } else {
+          refreshAllMachines();
+        }
+      },
+    });
+  });
 }
 
 // wireWindowResize refits the active terminal when the window resizes, so the
@@ -316,14 +359,26 @@ async function closeSession(machine: MachineConfig, sessionId: string) {
 
 function renderEmptyState() {
   const container = document.getElementById('terminal-container')!;
+  container.textContent = '';
   const box = document.createElement('div');
   box.className = 'empty-state';
-  const p1 = document.createElement('p');
-  p1.textContent = 'No machines configured.';
-  const p2 = document.createElement('p');
-  p2.style.fontSize = '11px';
-  p2.textContent = 'Add machines to machines.json in the app data folder.';
-  box.append(p1, p2);
+  const h = document.createElement('p');
+  h.textContent = 'Add your first machine';
+  h.style.fontSize = '16px';
+  h.style.color = 'var(--text-secondary)';
+  const p = document.createElement('p');
+  p.style.fontSize = '12px';
+  p.textContent = 'The machine must be on the same tailnet and running ccdeskd.';
+  const btn = document.createElement('button');
+  btn.className = 'btn-primary';
+  btn.style.width = 'auto';
+  btn.style.marginTop = '8px';
+  btn.textContent = 'Add machine';
+  btn.addEventListener('click', () => document.getElementById('btn-manage-machines')?.dispatchEvent(new MouseEvent('click')));
+  const hint = document.createElement('p');
+  hint.style.fontSize = '11px';
+  hint.textContent = 'Address: tailscale IP (100.x) or MagicDNS name · Token: matches ccdeskd config';
+  box.append(h, p, btn, hint);
   container.appendChild(box);
 }
 

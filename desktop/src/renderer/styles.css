@@ -388,3 +388,37 @@ html, body {
 .modal-footer .btn-primary {
   width: auto;
 }
+
+/* --- Machine manager --- */
+.icon-btn {
+  background: transparent; border: none; color: var(--text-muted);
+  font-size: 16px; cursor: pointer; -webkit-app-region: no-drag;
+  padding: 2px 6px; border-radius: 6px;
+}
+.icon-btn:hover { background: var(--bg-hover); color: var(--text-primary); }
+.sidebar-header { display: flex; align-items: center; justify-content: space-between; }
+
+.machine-row {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 10px 12px; border-radius: var(--radius); gap: 12px;
+}
+.machine-row:hover { background: var(--bg-hover); }
+.machine-row-name { font-size: 13px; color: var(--text-primary); font-weight: 500; }
+.machine-row-addr { font-size: 11px; color: var(--text-muted); font-family: 'SF Mono', monospace; }
+.machine-row-actions { display: flex; gap: 6px; }
+.machine-row-actions .btn-secondary { padding: 4px 10px; font-size: 11px; }
+
+.machine-form { padding: 8px; display: flex; flex-direction: column; gap: 12px; }
+.form-field { display: flex; flex-direction: column; gap: 4px; }
+.form-field label { font-size: 11px; color: var(--text-muted); }
+.form-field input {
+  background: var(--bg-sidebar); border: 1px solid var(--border);
+  border-radius: 6px; padding: 8px 10px; color: var(--text-primary);
+  font-size: 13px; font-family: inherit;
+}
+.form-field input:focus { outline: none; border-color: var(--accent); }
+.form-status { font-size: 12px; min-height: 16px; }
+.form-status.ok { color: var(--success); }
+.form-status.error { color: var(--error); }
+.form-actions { display: flex; justify-content: flex-end; gap: 8px; }
+.form-actions .btn-primary { width: auto; }
