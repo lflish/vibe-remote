@@ -30,6 +30,8 @@ interface SessionView {
   fitAddon: FitAddon;
   container: HTMLElement;
   banner: HTMLElement; // reconnect banner overlay, hidden by default
+  activity: 'none' | 'output' | 'idle' | 'waiting'; // sidebar dot state
+  suppressUntil: number; // ms timestamp: ignore onData activity until then (attach repaint)
 }
 
 // --- App state ---
@@ -224,7 +226,7 @@ function openSession(machine: MachineConfig, sessionId: string, workdir?: string
   const banner = document.createElement('div');
   banner.className = 'reconnect-banner';
   banner.style.display = 'none';
-  const view: SessionView = { key, machine, sessionId, client, terminal: term, fitAddon: fit, container, banner };
+  const view: SessionView = { key, machine, sessionId, client, terminal: term, fitAddon: fit, container, banner, activity: 'none', suppressUntil: 0 };
   views.set(key, view);
 
   const bannerText = document.createElement('span');
@@ -242,7 +244,18 @@ function openSession(machine: MachineConfig, sessionId: string, workdir?: string
   term.onResize(({ cols, rows }) => client.sendResize(cols, rows));
 
   // Server PTY bytes → terminal (Uint8Array so xterm decodes UTF-8 itself)
-  client.onData = (payload: string) => term.write(base64ToBytes(payload));
+  client.onData = (payload: string) => {
+    term.write(base64ToBytes(payload));
+    // Mark background activity as a dot — but not during the post-attach
+    // suppression window (tmux full repaint would false-trigger it), and not
+    // for the session the user is actively viewing.
+    if (view.key !== activeKey && Date.now() >= view.suppressUntil) {
+      if (view.activity === 'none') {
+        view.activity = 'output';
+        renderSidebar();
+      }
+    }
+  };
 
   client.onReady = (sid: string) => {
     view.banner.style.display = 'none';
@@ -255,6 +268,9 @@ function openSession(machine: MachineConfig, sessionId: string, workdir?: string
       if (activeKey === key) activeKey = view.key;
     }
     term.clear(); // clean base for the tmux full repaint on (re)attach
+    // Suppress activity marking briefly so the tmux full repaint on (re)attach
+    // doesn't false-light the dot. 500ms is an empirical, tunable value.
+    view.suppressUntil = Date.now() + 500;
     refreshAllMachines();
     updateStatusBar();
   };
@@ -293,6 +309,10 @@ function openSession(machine: MachineConfig, sessionId: string, workdir?: string
 // setActive shows one session view and hides the rest, then fits + focuses it.
 function setActive(key: string) {
   activeKey = key;
+  const activeView = views.get(key);
+  if (activeView && activeView.activity !== 'none') {
+    activeView.activity = 'none';
+  }
   for (const [k, v] of views) {
     v.container.style.display = k === key ? 'block' : 'none';
   }
@@ -361,13 +381,23 @@ function renderSidebar() {
         startInlineRename(machine, s, label);
       });
 
+      const dot = document.createElement('span');
+      dot.className = 'session-unread';
+      const openView = views.get(key);
+      const act = openView?.activity ?? 'none';
+      if (act === 'none' || key === activeKey) {
+        dot.classList.add('hidden');
+      } else {
+        dot.classList.add(act); // 'output' | 'idle' | 'waiting'
+      }
+
       const close = document.createElement('span');
       close.className = 'session-close';
       close.textContent = '×';
       close.title = 'Close session (kills remote claude)';
       close.addEventListener('click', (e) => { e.stopPropagation(); closeSession(machine, s.id); });
 
-      item.append(label, close);
+      item.append(label, dot, close);
       list.appendChild(item);
     }
 

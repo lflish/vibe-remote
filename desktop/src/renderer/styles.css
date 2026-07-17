@@ -447,3 +447,17 @@ html, body {
   color: var(--text-primary); font-size: 12px; font-family: inherit;
 }
 .session-rename-input:focus { outline: none; }
+
+/* --- Session activity dot --- */
+.session-unread {
+  width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0;
+  background: var(--accent); /* 'output' default: accent blue */
+}
+.session-unread.idle { background: var(--success); }
+.session-unread.waiting {
+  background: var(--warning);
+  box-shadow: 0 0 0 3px rgba(249, 226, 175, 0.12);
+}
+.session-unread.hidden { display: none; }
+/* Keep the × from overlapping the dot: dot hides on hover so × takes its slot. */
+.session-item:hover .session-unread { display: none; }
