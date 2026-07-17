@@ -1,0 +1,21 @@
+# Build output
+bin/
+desktop/dist/
+desktop/node_modules/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Config with secrets
+ccdeskd.json
+desktop/src/main/machines.json
+
+# Go
+*.exe

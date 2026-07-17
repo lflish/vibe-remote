@@ -1,0 +1,9 @@
+{
+  "bind_addr": "100.100.100.100",
+  "port": 8765,
+  "token": "change-me-to-a-secure-token",
+  "default_workdir": "/home/user",
+  "allowed_roots": ["/home/user"],
+  "use_tmux": true,
+  "claude_cmd": "claude"
+}

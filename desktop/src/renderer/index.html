@@ -1,0 +1,35 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>ccdesk</title>
+  <link rel="stylesheet" href="./styles.css" />
+</head>
+<body>
+  <div id="app">
+    <!-- Sidebar: machines & sessions -->
+    <aside id="sidebar">
+      <div class="sidebar-header">
+        <h1>ccdesk</h1>
+      </div>
+      <div id="machine-list" class="sidebar-content">
+        <!-- Populated dynamically -->
+      </div>
+      <div class="sidebar-footer">
+        <button id="btn-new-session" class="btn-primary">+ New Session</button>
+      </div>
+    </aside>
+
+    <!-- Main terminal area -->
+    <main id="main-area">
+      <div id="terminal-container"></div>
+      <div id="status-bar">
+        <span id="status-connection">Disconnected</span>
+        <span id="status-session"></span>
+      </div>
+    </main>
+  </div>
+  <script type="module" src="./index.ts"></script>
+</body>
+</html>
