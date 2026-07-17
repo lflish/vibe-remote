@@ -29,6 +29,7 @@ interface SessionView {
   terminal: Terminal;
   fitAddon: FitAddon;
   container: HTMLElement;
+  banner: HTMLElement; // reconnect banner overlay, hidden by default
 }
 
 // --- App state ---
@@ -215,8 +216,19 @@ function openSession(machine: MachineConfig, sessionId: string, workdir?: string
   term.open(container);
 
   const client = new CcdeskClient(machine);
-  const view: SessionView = { key, machine, sessionId, client, terminal: term, fitAddon: fit, container };
+  const banner = document.createElement('div');
+  banner.className = 'reconnect-banner';
+  banner.style.display = 'none';
+  const view: SessionView = { key, machine, sessionId, client, terminal: term, fitAddon: fit, container, banner };
   views.set(key, view);
+
+  const bannerText = document.createElement('span');
+  bannerText.textContent = 'Connection lost, reconnecting…';
+  const retryBtn = document.createElement('button');
+  retryBtn.textContent = 'Retry now';
+  retryBtn.addEventListener('click', () => view.client.reconnectNow());
+  banner.append(bannerText, retryBtn);
+  container.appendChild(banner);
 
   // Terminal input → server
   term.onData((data: string) => {
@@ -228,6 +240,7 @@ function openSession(machine: MachineConfig, sessionId: string, workdir?: string
   client.onData = (payload: string) => term.write(base64ToBytes(payload));
 
   client.onReady = (sid: string) => {
+    view.banner.style.display = 'none';
     // A new session gets its real id here; re-key the view and refresh sidebar.
     if (view.sessionId !== sid) {
       views.delete(view.key);
@@ -241,7 +254,15 @@ function openSession(machine: MachineConfig, sessionId: string, workdir?: string
     updateStatusBar();
   };
 
-  client.onStateChange = () => updateStatusBar();
+  client.onStateChange = (state, attempt) => {
+    // Banner shows only on the active session; non-active disconnects don't nag.
+    if (state === ConnectionState.Reconnecting) {
+      view.banner.style.display = 'flex';
+    } else if (state === ConnectionState.Connected) {
+      view.banner.style.display = 'none';
+    }
+    if (view.key === activeKey) updateStatusBar(undefined, attempt);
+  };
   client.onExit = (code) => {
     // Write a visible marker into the terminal and surface it in the status bar
     // so a dead session isn't just a frozen screen.
@@ -329,7 +350,7 @@ function renderSidebar() {
   }
 }
 
-function updateStatusBar(extra?: string) {
+function updateStatusBar(extra?: string, attempt?: number) {
   const connEl = document.getElementById('status-connection')!;
   const sessionEl = document.getElementById('status-session')!;
   const view = activeKey ? views.get(activeKey) : null;
@@ -342,7 +363,8 @@ function updateStatusBar(extra?: string) {
       connEl.textContent = `Connected · ${view.machine.name}`;
     } else if (st === ConnectionState.Reconnecting) {
       connEl.className = 'reconnecting';
-      connEl.textContent = 'Reconnecting…';
+      const n = attempt ?? 0;
+      connEl.textContent = n > 0 ? `Reconnecting… (attempt ${n})` : 'Reconnecting…';
     } else {
       connEl.textContent = 'Disconnected';
     }

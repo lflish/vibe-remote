@@ -422,3 +422,19 @@ html, body {
 .form-status.error { color: var(--error); }
 .form-actions { display: flex; justify-content: flex-end; gap: 8px; }
 .form-actions .btn-primary { width: auto; }
+
+/* --- Reconnect banner --- */
+.reconnect-banner {
+  position: absolute; left: 8px; right: 8px; top: 8px; z-index: 10;
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 12px; padding: 8px 12px; border-radius: 8px;
+  background: rgba(249, 226, 175, 0.12);
+  border: 1px solid rgba(249, 226, 175, 0.35);
+  color: var(--warning); font-size: 12px;
+}
+.reconnect-banner button {
+  background: transparent; border: 1px solid rgba(249, 226, 175, 0.4);
+  color: var(--warning); border-radius: 6px; font-size: 11px;
+  padding: 3px 10px; cursor: pointer;
+}
+.reconnect-banner button:hover { background: rgba(249, 226, 175, 0.18); }

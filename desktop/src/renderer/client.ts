@@ -31,7 +31,7 @@ export class CcdeskClient {
   state: ConnectionState = ConnectionState.Disconnected;
 
   // Callbacks
-  onStateChange?: (state: ConnectionState) => void;
+  onStateChange?: (state: ConnectionState, attempt: number) => void;
   onData?: (payload: string) => void;
   onSessionList?: (sessions: SessionInfo[]) => void;
   onExit?: (code: number) => void;
@@ -118,6 +118,22 @@ export class CcdeskClient {
     }
   }
 
+  /** Skip the backoff wait and reconnect immediately (manual retry). */
+  reconnectNow() {
+    if (this.reconnectTimer) {
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = null;
+    }
+    if (this.currentSessionId) {
+      this.pendingAttach = {
+        sessionId: this.currentSessionId,
+        cols: this.lastCols,
+        rows: this.lastRows,
+      };
+    }
+    this.connect();
+  }
+
   /** Attach to a session (empty sessionId = create new). */
   attach(sessionId: string, cols: number, rows: number, workdir?: string) {
     this.currentSessionId = sessionId || null;
@@ -202,7 +218,7 @@ export class CcdeskClient {
 
   private setState(state: ConnectionState) {
     this.state = state;
-    this.onStateChange?.(state);
+    this.onStateChange?.(state, this.reconnectAttempt);
   }
 
   private scheduleReconnect() {
