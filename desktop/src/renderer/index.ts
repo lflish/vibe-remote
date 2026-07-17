@@ -331,9 +331,13 @@ function renderSidebar() {
 
       const label = document.createElement('span');
       label.className = 'session-label';
-      label.textContent = (s.workdir ? s.workdir.split('/').pop() : '') || s.id;
+      label.textContent = s.title || (s.workdir ? s.workdir.split('/').pop() : '') || s.id;
       label.title = s.workdir || s.id;
       label.addEventListener('click', () => openSession(machine, s.id));
+      label.addEventListener('dblclick', (e) => {
+        e.stopPropagation();
+        startInlineRename(machine, s, label);
+      });
 
       const close = document.createElement('span');
       close.className = 'session-close';
@@ -348,6 +352,43 @@ function renderSidebar() {
     group.append(nameRow, list);
     container.appendChild(group);
   }
+}
+
+// startInlineRename replaces a session label with an input for in-place rename.
+// Enter/blur commits, Esc cancels. Empty input clears the custom name (server
+// falls back to the default title). After commit we refresh from the server so
+// the authoritative title is shown (keeps multi-client views consistent).
+function startInlineRename(machine: MachineConfig, s: SessionInfo, label: HTMLElement) {
+  const input = document.createElement('input');
+  input.className = 'session-rename-input';
+  input.value = s.title || '';
+  label.replaceWith(input);
+  input.focus();
+  input.select();
+
+  let done = false;
+  const commit = async () => {
+    if (done) return;
+    done = true;
+    const name = input.value.trim();
+    try {
+      await rests.get(machineKey(machine))!.renameSession(s.id, name);
+    } catch (e) {
+      console.error('rename failed', e);
+    }
+    refreshAllMachines();
+  };
+  const cancel = () => {
+    if (done) return;
+    done = true;
+    renderSidebar();
+  };
+
+  input.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') { e.preventDefault(); commit(); }
+    else if (e.key === 'Escape') { e.preventDefault(); cancel(); }
+  });
+  input.addEventListener('blur', commit);
 }
 
 function updateStatusBar(extra?: string, attempt?: number) {

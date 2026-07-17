@@ -36,6 +36,15 @@ export class CcdeskRest {
     if (!res.ok && res.status !== 204) throw new Error(`delete failed: ${res.status}`);
   }
 
+  async renameSession(id: string, name: string): Promise<void> {
+    const res = await fetch(`${this.base()}/api/v1/sessions/${id}/rename`, {
+      method: 'POST',
+      headers: { ...this.headers(), 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name }),
+    });
+    if (!res.ok && res.status !== 204) throw new Error(`rename failed: ${res.status}`);
+  }
+
   /** List directory entries (directories only) for the remote picker. */
   async listDir(path?: string): Promise<DirListing> {
     const url = new URL(`${this.base()}/api/v1/fs`);

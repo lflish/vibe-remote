@@ -438,3 +438,12 @@ html, body {
   padding: 3px 10px; cursor: pointer;
 }
 .reconnect-banner button:hover { background: rgba(249, 226, 175, 0.18); }
+
+/* --- Inline session rename --- */
+.session-rename-input {
+  flex: 1; min-width: 0;
+  background: var(--bg-sidebar); border: 1px solid var(--accent);
+  border-radius: 5px; padding: 3px 6px;
+  color: var(--text-primary); font-size: 12px; font-family: inherit;
+}
+.session-rename-input:focus { outline: none; }
