@@ -123,6 +123,17 @@ PTY 字节流，base64 编码。
 {"type": "error", "message": "session not found"}
 ```
 
+### notify (S→C)
+
+带外会话事件（如 claude hook 经 events 端点上报）。`kind` 为开放枚举，客户端忽略不认识的 kind。
+
+```json
+{"type": "notify", "sessionId": "1720000000000", "kind": "waiting", "message": "需要确认权限"}
+```
+
+- `kind: "idle"`：claude 完成一次响应（Stop hook）
+- `kind: "waiting"`：claude 需要权限确认/等待输入（Notification hook）
+
 ## 辅助 REST API
 
 每台 ccdeskd 各自暴露，鉴权方式：`Authorization: Bearer <token>`
@@ -135,6 +146,7 @@ PTY 字节流，base64 编码。
 | DELETE | `/api/v1/sessions/{id}` | 关闭指定会话 |
 | POST | `/api/v1/sessions/{id}/rename` | 重命名会话，body `{"name":"..."}`，名字存 tmux 用户选项 |
 | GET | `/api/v1/fs?path=<dir>` | 列目录（仅目录项），供远程目录选择器用 |
+| POST | `/api/v1/events` | 带外事件上报，body `{sessionId,kind,message?}`，路由为该会话的 notify 帧 |
 
 ## 安全
 

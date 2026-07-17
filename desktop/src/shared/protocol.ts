@@ -11,6 +11,7 @@ export const FrameType = {
   Pong: 'pong',
   Exit: 'exit',
   Error: 'error',
+  Notify: 'notify',
 } as const;
 
 export type FrameTypeValue = (typeof FrameType)[keyof typeof FrameType];
@@ -84,6 +85,13 @@ export interface PongFrame {
   type: typeof FrameType.Pong;
 }
 
+export interface NotifyFrame {
+  type: typeof FrameType.Notify;
+  sessionId: string;
+  kind: string; // 'idle' | 'waiting' | future kinds (open enum)
+  message?: string;
+}
+
 // Union of all server→client frames
 export type ServerFrame =
   | ReadyFrame
@@ -91,7 +99,8 @@ export type ServerFrame =
   | SessionsFrame
   | ExitFrame
   | ErrorFrame
-  | PongFrame;
+  | PongFrame
+  | NotifyFrame;
 
 // Union of all client→server frames
 export type ClientFrame =

@@ -13,6 +13,7 @@ const (
 	TypePong     = "pong"
 	TypeExit     = "exit"
 	TypeError    = "error"
+	TypeNotify   = "notify"
 )
 
 // Frame is the envelope for all WebSocket messages.
@@ -79,4 +80,23 @@ type ExitFrame struct {
 type ErrorFrame struct {
 	Type    string `json:"type"`
 	Message string `json:"message"`
+}
+
+// NotifyFrame carries an out-of-band session event to the client (e.g. from a
+// claude hook via the events endpoint). Kind is an open string ("idle",
+// "waiting", or future kinds); clients ignore kinds they don't recognize.
+type NotifyFrame struct {
+	Type      string `json:"type"`
+	SessionID string `json:"sessionId"`
+	Kind      string `json:"kind"`
+	Message   string `json:"message,omitempty"`
+}
+
+// EventRequest is the JSON body posted to POST /api/v1/events by hooks (or any
+// tailnet-local reporter). Transport reuses the existing HTTP server + Bearer
+// auth + tailscale binding. Kind is an open enum for forward-compatibility.
+type EventRequest struct {
+	SessionID string `json:"sessionId"`
+	Kind      string `json:"kind"`
+	Message   string `json:"message,omitempty"`
 }
