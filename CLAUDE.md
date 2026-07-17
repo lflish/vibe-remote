@@ -102,3 +102,14 @@ JSON 分帧 WebSocket，帧靠 `type` 区分，PTY 字节走 base64（`data` 帧
 ## 状态
 
 第一期（Mac 桌面可用版）验收 7 项全部真机通过，`.dmg` 已交付。未做（可选）：代码签名、app 图标、侧边栏轮询改推送、codex 多 agent 产品化（config 多 agent 列表 + attach 带 `agent` 字段 + UI 选择）。完整进展见 `REQUIREMENTS.md` 和插件计划文件。
+
+### 第二批体验增强（已完成）
+
+- 机器管理 app 内 UI（CRUD + 空状态引导 + 测试连接），不再手改 machines.json。
+- 会话命名：默认名跟随 workdir，双击侧边栏内联重命名，名字存 tmux 用户选项 `@ccdesk_name`（跟随 tmux 生命周期，重启/多端一致）。
+- 后台会话提示：A 圆点兜底（非活动会话有字节到达即亮蓝点，任何 agent 通用）+ C hook 事件增强（notify 帧把圆点升级为 idle 绿/waiting 黄 + 可选桌面通知）。
+- 重连体验：状态栏显示重连尝试次数 + 活动会话终端顶部断线横幅 + Retry now。
+
+**事件基建（通用可扩展）**：`POST /api/v1/events`（Bearer 鉴权，body `{sessionId,kind,message?}`）+ Manager pub/sub 路由表 + notify 帧。`kind` 为开放枚举，未来带外事件（token 用量等）复用此通道。claude 进程已注入 `CCDESK_SESSION_ID`/`CCDESK_EVENTS_URL`/`CCDESK_TOKEN`。
+
+**⚠️ 故意留空（本期不实现）**：ccdeskd 自动生成 hook 配置让 claude 带上（`--settings` 注入方式需真机验证 claude 版本合并语义）。当前靠手动配 hook 或手动 curl events 端点即可验证全链路；日后补「自动注入」一小段，前面基建全不用动。
