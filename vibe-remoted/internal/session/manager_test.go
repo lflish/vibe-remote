@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/anthropic/ccdesk/ccdeskd/internal/protocol"
+	"github.com/anthropic/vibe-remote/vibe-remoted/internal/protocol"
 )
 
 func TestSanitizeSessionName(t *testing.T) {

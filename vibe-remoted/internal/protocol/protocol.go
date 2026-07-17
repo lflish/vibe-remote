@@ -1,4 +1,4 @@
-// Package protocol defines the JSON frame types for the ccdesk WebSocket protocol.
+// Package protocol defines the JSON frame types for the vibe-remote WebSocket protocol.
 package protocol
 
 // Frame types exchanged between client and server.

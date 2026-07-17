@@ -7,9 +7,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/anthropic/ccdesk/ccdeskd/internal/config"
-	"github.com/anthropic/ccdesk/ccdeskd/internal/protocol"
-	"github.com/anthropic/ccdesk/ccdeskd/internal/session"
+	"github.com/anthropic/vibe-remote/vibe-remoted/internal/config"
+	"github.com/anthropic/vibe-remote/vibe-remoted/internal/protocol"
+	"github.com/anthropic/vibe-remote/vibe-remoted/internal/session"
 )
 
 func newTestServer() *Server {

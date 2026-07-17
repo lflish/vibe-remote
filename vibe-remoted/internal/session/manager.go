@@ -7,7 +7,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/anthropic/ccdesk/ccdeskd/internal/protocol"
+	"github.com/anthropic/vibe-remote/vibe-remoted/internal/protocol"
 )
 
 // Manager tracks all sessions on this machine.
@@ -151,7 +151,7 @@ func (m *Manager) List() []protocol.SessionInfo {
 	// In tmux mode, tmux is the source of truth for which sessions exist.
 	// Query once (not per-session) so a transient failure can't wrongly evict
 	// live sessions: on query failure we fall back to the in-memory list. The
-	// query also brings back @ccdesk_name, so Title assembly below needs no
+	// query also brings back @vibe_remote_name, so Title assembly below needs no
 	// extra per-session tmux exec (which would block under m.mu).
 	var live map[string]tmuxSessionInfo
 	haveLive := false

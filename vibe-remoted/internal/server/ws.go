@@ -10,8 +10,8 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/anthropic/ccdesk/ccdeskd/internal/protocol"
-	"github.com/anthropic/ccdesk/ccdeskd/internal/session"
+	"github.com/anthropic/vibe-remote/vibe-remoted/internal/protocol"
+	"github.com/anthropic/vibe-remote/vibe-remoted/internal/session"
 	"github.com/coder/websocket"
 	"github.com/coder/websocket/wsjson"
 )
@@ -19,7 +19,7 @@ import (
 // handleWS upgrades to WebSocket and manages the session lifecycle.
 func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
 	conn, err := websocket.Accept(w, r, &websocket.AcceptOptions{
-		// Origin check is skipped: ccdeskd is tailnet-only (not public) and
+		// Origin check is skipped: vibe-remoted is tailnet-only (not public) and
 		// the Electron client connects from a different origin (file:// or the
 		// Vite dev server). WireGuard + the static token are the real guards.
 		InsecureSkipVerify: true,

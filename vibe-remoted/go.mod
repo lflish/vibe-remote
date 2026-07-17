@@ -1,4 +1,4 @@
-module github.com/anthropic/ccdesk/ccdeskd
+module github.com/anthropic/vibe-remote/vibe-remoted
 
 go 1.22
 

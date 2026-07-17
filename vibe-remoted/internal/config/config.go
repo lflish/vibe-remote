@@ -1,4 +1,4 @@
-// Package config handles loading and validating ccdeskd configuration.
+// Package config handles loading and validating vibe-remoted configuration.
 package config
 
 import (

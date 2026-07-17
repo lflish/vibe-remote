@@ -14,34 +14,34 @@ import (
 	"github.com/creack/pty"
 )
 
-// tmuxSocket is the dedicated tmux server socket name for ccdesk.
-// Using a separate server isolates ccdesk sessions from the user's own tmux,
+// tmuxSocket is the dedicated tmux server socket name for vibe-remote.
+// Using a separate server isolates vibe-remote sessions from the user's own tmux,
 // lets us disable the status bar globally (so claude gets full PTY height),
 // and makes cleanup safe.
-const tmuxSocket = "ccdesk"
+const tmuxSocket = "vibe-remote"
 
-// tmuxCmd builds a tmux command on the dedicated ccdesk socket.
+// tmuxCmd builds a tmux command on the dedicated vibe-remote socket.
 func tmuxCmd(args ...string) *exec.Cmd {
 	return exec.Command("tmux", append([]string{"-L", tmuxSocket}, args...)...)
 }
 
-// tmuxSessionInfo captures the per-session fields ccdesk needs from a single
+// tmuxSessionInfo captures the per-session fields vibe-remote needs from a single
 // `tmux list-sessions` query: the working directory and the user-set display
-// name (@ccdesk_name, empty when unset).
+// name (@vibe_remote_name, empty when unset).
 type tmuxSessionInfo struct {
 	workdir string
 	name    string
 }
 
-// liveTmuxSessions returns the ccdesk session IDs that currently have a live
+// liveTmuxSessions returns the vibe-remote session IDs that currently have a live
 // tmux session, mapped to each session's working directory (from tmux's
-// pane_current_path) and user-set name (@ccdesk_name). The bool return is
+// pane_current_path) and user-set name (@vibe_remote_name). The bool return is
 // false if the query itself failed (server not running or command error) so
 // callers can distinguish "no sessions" from "couldn't tell" and avoid wrongly
 // discarding live sessions on a transient failure. Pulling name here (rather
 // than a per-session show-options) keeps Manager.List to a single tmux exec.
 func liveTmuxSessions() (map[string]tmuxSessionInfo, bool) {
-	out, err := tmuxCmd("list-sessions", "-F", "#{session_name}\t#{pane_current_path}\t#{@ccdesk_name}").Output()
+	out, err := tmuxCmd("list-sessions", "-F", "#{session_name}\t#{pane_current_path}\t#{@vibe_remote_name}").Output()
 	if err != nil {
 		// tmux exits non-zero when the server has no sessions; that's a
 		// legitimate empty set, not a query failure.
@@ -52,13 +52,13 @@ func liveTmuxSessions() (map[string]tmuxSessionInfo, bool) {
 	}
 	sessions := make(map[string]tmuxSessionInfo)
 	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
-		if !strings.HasPrefix(line, "ccdesk-") {
+		if !strings.HasPrefix(line, "vibe-remote-") {
 			continue
 		}
 		// Fixed 3 fields: name may be empty, so split with a known field count
 		// rather than trimming, which would drop a trailing empty name.
 		parts := strings.SplitN(line, "\t", 3)
-		id := strings.TrimPrefix(parts[0], "ccdesk-")
+		id := strings.TrimPrefix(parts[0], "vibe-remote-")
 		info := tmuxSessionInfo{}
 		if len(parts) >= 2 {
 			info.workdir = parts[1]
@@ -150,7 +150,7 @@ func (r *Runner) launchCommand() []string {
 func (r *Runner) start(cols, rows uint16) error {
 	var cmd *exec.Cmd
 
-	tmuxSessionName := fmt.Sprintf("ccdesk-%s", r.ID)
+	tmuxSessionName := fmt.Sprintf("vibe-remote-%s", r.ID)
 
 	launch := r.launchCommand()
 
@@ -171,7 +171,7 @@ func (r *Runner) start(cols, rows uint16) error {
 		"TERM=xterm-256color",
 		"COLORTERM=truecolor",
 	)
-	cmd.Env = append(cmd.Env, r.ccdeskEnv()...)
+	cmd.Env = append(cmd.Env, r.vibeRemoteEnv()...)
 
 	// Start in PTY
 	ptmx, err := pty.StartWithSize(cmd, &pty.Winsize{
@@ -187,7 +187,7 @@ func (r *Runner) start(cols, rows uint16) error {
 	r.epoch++
 
 	if r.useTmux {
-		// Disable the status bar on the ccdesk tmux server so claude gets the
+		// Disable the status bar on the vibe-remote tmux server so claude gets the
 		// full PTY height (tmux reserves 1 row for the status bar by default).
 		// Runs slightly delayed so the server/session exists first.
 		go func() {
@@ -211,7 +211,7 @@ func (r *Runner) AttachExisting(cols, rows uint16) error {
 		r.ptmx.Close()
 	}
 
-	tmuxSessionName := fmt.Sprintf("ccdesk-%s", r.ID)
+	tmuxSessionName := fmt.Sprintf("vibe-remote-%s", r.ID)
 
 	// tmux attach-session -t <name>
 	cmd := tmuxCmd("attach-session", "-t", tmuxSessionName)
@@ -219,7 +219,7 @@ func (r *Runner) AttachExisting(cols, rows uint16) error {
 		"TERM=xterm-256color",
 		"COLORTERM=truecolor",
 	)
-	cmd.Env = append(cmd.Env, r.ccdeskEnv()...)
+	cmd.Env = append(cmd.Env, r.vibeRemoteEnv()...)
 
 	ptmx, err := pty.StartWithSize(cmd, &pty.Winsize{
 		Rows: rows,
@@ -298,7 +298,7 @@ func (r *Runner) Resize(cols, rows uint16) error {
 
 	// Also tell tmux to refresh if applicable
 	if r.useTmux {
-		tmuxSessionName := fmt.Sprintf("ccdesk-%s", r.ID)
+		tmuxSessionName := fmt.Sprintf("vibe-remote-%s", r.ID)
 		tmuxCmd("refresh-client", "-t", tmuxSessionName).Run()
 	}
 
@@ -348,7 +348,7 @@ func (r *Runner) Kill() {
 	}
 
 	if r.useTmux {
-		tmuxSessionName := fmt.Sprintf("ccdesk-%s", r.ID)
+		tmuxSessionName := fmt.Sprintf("vibe-remote-%s", r.ID)
 		if err := tmuxCmd("kill-session", "-t", tmuxSessionName).Run(); err != nil {
 			log.Printf("warning: failed to kill tmux session %s: %v", tmuxSessionName, err)
 		}
@@ -376,7 +376,7 @@ func (r *Runner) Wait() int {
 
 // TmuxSessionExists checks if the tmux session for this runner still exists.
 func (r *Runner) TmuxSessionExists() bool {
-	tmuxSessionName := fmt.Sprintf("ccdesk-%s", r.ID)
+	tmuxSessionName := fmt.Sprintf("vibe-remote-%s", r.ID)
 	err := tmuxCmd("has-session", "-t", tmuxSessionName).Run()
 	return err == nil
 }
@@ -421,26 +421,26 @@ func sanitizeSessionName(name string) string {
 }
 
 // SetName stores a user-set display name on the tmux session as a custom user
-// option (@ccdesk_name). Empty name clears it (falls back to the default rule).
+// option (@vibe_remote_name). Empty name clears it (falls back to the default rule).
 func (r *Runner) SetName(name string) error {
 	if !r.useTmux {
 		return fmt.Errorf("naming requires tmux mode")
 	}
-	tmuxSessionName := fmt.Sprintf("ccdesk-%s", r.ID)
+	tmuxSessionName := fmt.Sprintf("vibe-remote-%s", r.ID)
 	if name == "" {
 		// Unset so displayTitle falls back to workdir/id.
-		return tmuxCmd("set-option", "-t", tmuxSessionName, "-u", "@ccdesk_name").Run()
+		return tmuxCmd("set-option", "-t", tmuxSessionName, "-u", "@vibe_remote_name").Run()
 	}
-	return tmuxCmd("set-option", "-t", tmuxSessionName, "@ccdesk_name", name).Run()
+	return tmuxCmd("set-option", "-t", tmuxSessionName, "@vibe_remote_name", name).Run()
 }
 
-// readName reads the @ccdesk_name user option, or "" if unset / tmux errors.
+// readName reads the @vibe_remote_name user option, or "" if unset / tmux errors.
 func (r *Runner) readName() string {
 	if !r.useTmux {
 		return ""
 	}
-	tmuxSessionName := fmt.Sprintf("ccdesk-%s", r.ID)
-	out, err := tmuxCmd("show-options", "-t", tmuxSessionName, "-qv", "@ccdesk_name").Output()
+	tmuxSessionName := fmt.Sprintf("vibe-remote-%s", r.ID)
+	out, err := tmuxCmd("show-options", "-t", tmuxSessionName, "-qv", "@vibe_remote_name").Output()
 	if err != nil {
 		return ""
 	}
@@ -468,23 +468,23 @@ func titleFrom(name, workdir, id string) string {
 }
 
 // displayTitle resolves the session's display name at read time (not stored):
-// user-set @ccdesk_name → workdir basename → session ID. This reads the name
+// user-set @vibe_remote_name → workdir basename → session ID. This reads the name
 // per-session; Manager.List batches the name read instead (see titleFrom).
 func (r *Runner) displayTitle() string {
 	return titleFrom(r.readName(), r.Workdir, r.ID)
 }
 
-// ccdeskEnv returns the CCDESK_* environment variables injected into the claude
+// vibeRemoteEnv returns the VIBE_REMOTE_* environment variables injected into the claude
 // process so a hook (claude's child) can report out-of-band events back to this
 // daemon's events endpoint. These are inert unless a hook actually uses them —
 // the hook wiring itself is intentionally out of scope for now (see plan).
-func (r *Runner) ccdeskEnv() []string {
-	env := []string{"CCDESK_SESSION_ID=" + r.ID}
+func (r *Runner) vibeRemoteEnv() []string {
+	env := []string{"VIBE_REMOTE_SESSION_ID=" + r.ID}
 	if r.eventsURL != "" {
-		env = append(env, "CCDESK_EVENTS_URL="+r.eventsURL)
+		env = append(env, "VIBE_REMOTE_EVENTS_URL="+r.eventsURL)
 	}
 	if r.token != "" {
-		env = append(env, "CCDESK_TOKEN="+r.token)
+		env = append(env, "VIBE_REMOTE_TOKEN="+r.token)
 	}
 	return env
 }

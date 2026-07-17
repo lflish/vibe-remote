@@ -6,10 +6,10 @@ all: server desktop
 # --- Server (Go) ---
 
 server:
-	cd ccdeskd && go build -o ../bin/ccdeskd ./cmd/ccdeskd
+	cd vibe-remoted && go build -o ../bin/vibe-remoted ./cmd/vibe-remoted
 
 dev-server:
-	cd ccdeskd && go run ./cmd/ccdeskd --config ../ccdeskd.json
+	cd vibe-remoted && go run ./cmd/vibe-remoted --config ../vibe-remoted.json
 
 # Self-test on this machine: bind THIS host's tailscale IP (no insecure hatch),
 # run tmux + real claude. Use for local end-to-end verification when you have
@@ -19,9 +19,9 @@ dev-local:
 	if [ -z "$$TS_IP" ]; then \
 		echo "ERROR: no tailscale IPv4 address (run 'tailscale up' first)"; exit 1; \
 	fi; \
-	echo "==> ccdeskd self-test on $$TS_IP:8765 (token: local-selftest-token)"; \
+	echo "==> vibe-remoted self-test on $$TS_IP:8765 (token: local-selftest-token)"; \
 	echo "==> add this machine in the desktop client: addr=$$TS_IP port=8765"; \
-	cd ccdeskd && CCDESKD_BIND_ADDR=$$TS_IP go run ./cmd/ccdeskd --config ../ccdeskd.local-tmux.json
+	cd vibe-remoted && VIBE_REMOTED_BIND_ADDR=$$TS_IP go run ./cmd/vibe-remoted --config ../vibe-remoted.local-tmux.json
 
 # --- Desktop (Electron) ---
 
@@ -46,8 +46,8 @@ smoke:
 
 # Format
 fmt:
-	cd ccdeskd && go fmt ./...
+	cd vibe-remoted && go fmt ./...
 
 # Vet
 vet:
-	cd ccdeskd && go vet ./...
+	cd vibe-remoted && go vet ./...

@@ -1,4 +1,4 @@
-// ccdeskd is the remote Claude terminal daemon.
+// vibe-remoted is the remote Claude terminal daemon.
 // It runs on each Linux machine, manages PTY→tmux→claude sessions,
 // and exposes a WebSocket + REST API for desktop clients.
 package main
@@ -9,17 +9,17 @@ import (
 	"log"
 	"os"
 
-	"github.com/anthropic/ccdesk/ccdeskd/internal/config"
-	"github.com/anthropic/ccdesk/ccdeskd/internal/server"
-	"github.com/anthropic/ccdesk/ccdeskd/internal/session"
+	"github.com/anthropic/vibe-remote/vibe-remoted/internal/config"
+	"github.com/anthropic/vibe-remote/vibe-remoted/internal/server"
+	"github.com/anthropic/vibe-remote/vibe-remoted/internal/session"
 )
 
 func main() {
-	configPath := flag.String("config", "ccdeskd.json", "path to config file")
+	configPath := flag.String("config", "vibe-remoted.json", "path to config file")
 	flag.Parse()
 
 	log.SetFlags(log.LstdFlags | log.Lshortfile)
-	log.Println("ccdeskd starting...")
+	log.Println("vibe-remoted starting...")
 
 	// Load config
 	cfg, err := config.Load(*configPath)
@@ -28,10 +28,10 @@ func main() {
 	}
 
 	// Allow env overrides for quick setup
-	if addr := os.Getenv("CCDESKD_BIND_ADDR"); addr != "" {
+	if addr := os.Getenv("VIBE_REMOTED_BIND_ADDR"); addr != "" {
 		cfg.BindAddr = addr
 	}
-	if token := os.Getenv("CCDESKD_TOKEN"); token != "" {
+	if token := os.Getenv("VIBE_REMOTED_TOKEN"); token != "" {
 		cfg.Token = token
 	}
 

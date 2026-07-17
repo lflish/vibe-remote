@@ -1,4 +1,4 @@
-// Package server implements the HTTP and WebSocket server for ccdeskd.
+// Package server implements the HTTP and WebSocket server for vibe-remoted.
 package server
 
 import (
@@ -10,9 +10,9 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/anthropic/ccdesk/ccdeskd/internal/config"
-	"github.com/anthropic/ccdesk/ccdeskd/internal/protocol"
-	"github.com/anthropic/ccdesk/ccdeskd/internal/session"
+	"github.com/anthropic/vibe-remote/vibe-remoted/internal/config"
+	"github.com/anthropic/vibe-remote/vibe-remoted/internal/protocol"
+	"github.com/anthropic/vibe-remote/vibe-remoted/internal/session"
 )
 
 // Server holds the HTTP server and dependencies.
@@ -48,13 +48,13 @@ func (s *Server) routes() {
 // ListenAndServe starts the server on the configured bind address.
 func (s *Server) ListenAndServe() error {
 	addr := fmt.Sprintf("%s:%d", s.cfg.BindAddr, s.cfg.Port)
-	log.Printf("ccdeskd listening on %s", addr)
+	log.Printf("vibe-remoted listening on %s", addr)
 	return http.ListenAndServe(addr, withCORS(s.mux))
 }
 
 // withCORS adds permissive CORS headers so the Electron renderer (which loads
 // from file:// or the Vite dev server, a different origin) can call the REST
-// API via fetch. This is safe here: ccdeskd is tailnet-only and every REST
+// API via fetch. This is safe here: vibe-remoted is tailnet-only and every REST
 // endpoint still requires the Bearer token. WebSocket upgrades bypass CORS and
 // are unaffected. Preflight OPTIONS requests are answered directly.
 func withCORS(next http.Handler) http.Handler {
