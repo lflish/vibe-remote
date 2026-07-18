@@ -114,3 +114,15 @@ npm run build    # tsc + vite build + electron-builder
 
 macOS 本身有 PTY + tmux，可本地起 vibe-remoted 冒烟。用 `claude_cmd: "/bin/bash"` 代跑即可验证透传链路
 （纯字节透传不关心跑什么命令）。
+
+### 本机自连自测（make dev-local）
+
+Mac 同时当服务端与客户端，跑真 `claude` 走完整链路：
+
+```bash
+make dev-local   # 动态取本机 tailscale IP，绑真地址启动（不走 allow_insecure_bind）
+```
+
+它会打印客户端要填的 `addr:port`（本机 tailscale IP + 8765）。在桌面端「机器管理」里
+添加这台机器（token 见 `vibe-remoted.local-tmux.json`），即可端到端验证透传 / tmux 持久化 / 重连。
+前提：本机已 `tailscale up` 且装有 `tmux` + `claude`。
