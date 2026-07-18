@@ -1,4 +1,4 @@
-# ccdesk
+# vibe-remote
 
 一个跨端的「远程 Claude 终端」客户端：远程 Linux 机器上跑 Claude Code CLI，
 桌面端像用本地 shell 一样连上去交互，体验跟直接在 shell 里敲 `claude` 完全一致。
@@ -8,35 +8,35 @@
 ## 架构
 
 ```
-桌面端 (Electron + xterm.js)  ──ws(JSON分帧)──►  ccdeskd (Go)  ──►  PTY→tmux→claude
+桌面端 (Electron + xterm.js)  ──ws(JSON分帧)──►  vibe-remoted (Go)  ──►  PTY→tmux→claude
     「哑终端」，纯字节透传                          每台机器一个        字节流双向透传
 ```
 
 - **纯字节透传**：不解析 claude 输出，PTY 字节流原样双向透传，流式/颜色/光标 0 失真还原。
 - **tmux 持久化**：客户端断开后 claude 会话存活，重连恢复现场。
-- **无中心 Hub**：每台机器各跑一个 ccdeskd，客户端直连；NAT 穿透/加密交给 Tailscale。
+- **无中心 Hub**：每台机器各跑一个 vibe-remoted，客户端直连；NAT 穿透/加密交给 Tailscale。
 
 ## 目录结构
 
 ```
-ccdeskd/    Go 服务端（单二进制）
+vibe-remoted/    Go 服务端（单二进制）
 desktop/    Electron + xterm.js 客户端
 docs/       协议文档
 ```
 
-## 服务端 ccdeskd
+## 服务端 vibe-remoted
 
 ### 构建
 
 ```bash
-make server          # 产出 bin/ccdeskd
+make server          # 产出 bin/vibe-remoted
 # 或
-cd ccdeskd && go build -o ../bin/ccdeskd ./cmd/ccdeskd
+cd vibe-remoted && go build -o ../bin/vibe-remoted ./cmd/vibe-remoted
 ```
 
 ### 配置
 
-复制 `ccdeskd.example.json` 并按机器修改：
+复制 `vibe-remoted.example.json` 并按机器修改：
 
 ```json
 {
@@ -58,18 +58,18 @@ cd ccdeskd && go build -o ../bin/ccdeskd ./cmd/ccdeskd
 `"claude_cmd": "claude --dangerously-skip-permissions -c"`。因为通过登录 shell
 以 `<shell> -lic 'exec <claude_cmd>'` 启动，参数按 shell 规则解析。
 
-也可用环境变量覆盖：`CCDESKD_BIND_ADDR`、`CCDESKD_TOKEN`。
+也可用环境变量覆盖：`VIBE_REMOTED_BIND_ADDR`、`VIBE_REMOTED_TOKEN`。
 
 ### 运行
 
 ```bash
-./bin/ccdeskd --config ccdeskd.json
+./bin/vibe-remoted --config vibe-remoted.json
 ```
 
 ### 测试
 
 ```bash
-cd ccdeskd && go test ./...   # 单元测试（含路径越权防护）
+cd vibe-remoted && go test ./...   # 单元测试（含路径越权防护）
 ```
 
 ## 客户端 desktop
@@ -96,7 +96,7 @@ npm run dev      # Vite + Electron 热重载
 ]
 ```
 
-macOS 路径通常为 `~/Library/Application Support/ccdesk/machines.json`。
+macOS 路径通常为 `~/Library/Application Support/vibe-remote/machines.json`。
 
 ### 打包 (.dmg)
 
@@ -112,5 +112,5 @@ npm run build    # tsc + vite build + electron-builder
 
 ## 本地开发冒烟（无需远程机）
 
-macOS 本身有 PTY + tmux，可本地起 ccdeskd 冒烟。用 `claude_cmd: "/bin/bash"` 代跑即可验证透传链路
+macOS 本身有 PTY + tmux，可本地起 vibe-remoted 冒烟。用 `claude_cmd: "/bin/bash"` 代跑即可验证透传链路
 （纯字节透传不关心跑什么命令）。

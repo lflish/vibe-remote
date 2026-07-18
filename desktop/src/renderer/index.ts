@@ -2,22 +2,22 @@ import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import '@xterm/xterm/css/xterm.css';
 import type { MachineConfig, SessionInfo } from '../shared/protocol';
-import { CcdeskClient, ConnectionState } from './client';
-import { CcdeskRest } from './rest';
+import { VibeRemoteClient, ConnectionState } from './client';
+import { VibeRemoteRest } from './rest';
 import { openDirPicker } from './dirpicker';
 import { openMachineManager } from './machines';
 
 // Declared by preload
 declare global {
   interface Window {
-    ccdesk: {
+    vibeRemote: {
       getMachines(): Promise<MachineConfig[]>;
       saveMachines(machines: MachineConfig[]): Promise<boolean>;
     };
   }
 }
 
-// A SessionView is one open session: its own WebSocket (CcdeskClient) and its
+// A SessionView is one open session: its own WebSocket (VibeRemoteClient) and its
 // own xterm instance. Multiple sessions stay open simultaneously; switching
 // just shows/hides their terminal containers. tmux keeps unfocused sessions
 // alive server-side regardless.
@@ -25,7 +25,7 @@ interface SessionView {
   key: string; // `${machineAddr}::${sessionId}`
   machine: MachineConfig;
   sessionId: string; // '' until the server assigns one for a new session
-  client: CcdeskClient;
+  client: VibeRemoteClient;
   terminal: Terminal;
   fitAddon: FitAddon;
   container: HTMLElement;
@@ -36,9 +36,9 @@ interface SessionView {
 
 // --- App state ---
 // Machine-keyed maps use `addr:port` (machineKey) rather than addr alone, so
-// two ccdeskd instances on the same host but different ports don't collide.
+// two vibe-remoted instances on the same host but different ports don't collide.
 let machines: MachineConfig[] = [];
-const rests = new Map<string, CcdeskRest>(); // machineKey -> REST client
+const rests = new Map<string, VibeRemoteRest>(); // machineKey -> REST client
 const views = new Map<string, SessionView>(); // view key -> open session view
 const machineSessions = new Map<string, SessionInfo[]>(); // machineKey -> sessions (REST)
 const machineOnline = new Map<string, boolean>(); // machineKey -> reachable
@@ -70,7 +70,7 @@ function bytesToBase64(bytes: Uint8Array): string {
 // --- Init ---
 
 async function init() {
-  machines = await window.ccdesk.getMachines();
+  machines = await window.vibeRemote.getMachines();
   wireManageMachinesButton();
   wireNewSessionButton();
   wireWindowResize();
@@ -98,7 +98,7 @@ function startPolling() {
 // (add/edit/delete via the manager). Existing session WebSockets are untouched.
 function rebuildRests() {
   rests.clear();
-  for (const m of machines) rests.set(machineKey(m), new CcdeskRest(m));
+  for (const m of machines) rests.set(machineKey(m), new VibeRemoteRest(m));
 }
 
 // wireManageMachinesButton opens the machine manager and hot-reloads on save:
@@ -222,7 +222,7 @@ function openSession(machine: MachineConfig, sessionId: string, workdir?: string
   const { term, fit } = makeTerminal();
   term.open(container);
 
-  const client = new CcdeskClient(machine);
+  const client = new VibeRemoteClient(machine);
   const banner = document.createElement('div');
   banner.className = 'reconnect-banner';
   banner.style.display = 'none';
@@ -306,7 +306,7 @@ function openSession(machine: MachineConfig, sessionId: string, workdir?: string
       }
       // waiting = 需要用户介入，可选弹桌面通知（移动端伏笔）。
       if (kind === 'waiting' && notificationsEnabled()) {
-        const title = view.terminal ? (views.get(view.key)?.sessionId || 'ccdesk') : 'ccdesk';
+        const title = view.terminal ? (views.get(view.key)?.sessionId || 'vibe-remote') : 'vibe-remote';
         notifyDesktop(`${machine.name} · ${title}`, message || 'Claude 需要你的确认');
       }
     }
@@ -500,7 +500,7 @@ function updateStatusBar(extra?: string, attempt?: number) {
       tbStatusText.textContent = 'Disconnected';
     }
   } else {
-    tbTitle.textContent = 'ccdesk';
+    tbTitle.textContent = 'vibe-remote';
     const anyOnline = [...machineOnline.values()].some(Boolean);
     connEl.className = anyOnline ? 'connected' : '';
     connEl.textContent = anyOnline ? 'Ready' : 'No connection';
@@ -544,7 +544,7 @@ function renderEmptyState() {
   h.style.color = 'var(--text-secondary)';
   const p = document.createElement('p');
   p.style.fontSize = '12px';
-  p.textContent = 'The machine must be on the same tailnet and running ccdeskd.';
+  p.textContent = 'The machine must be on the same tailnet and running vibe-remoted.';
   const btn = document.createElement('button');
   btn.className = 'btn-primary';
   btn.style.width = 'auto';
@@ -553,7 +553,7 @@ function renderEmptyState() {
   btn.addEventListener('click', () => document.getElementById('btn-manage-machines')?.dispatchEvent(new MouseEvent('click')));
   const hint = document.createElement('p');
   hint.style.fontSize = '11px';
-  hint.textContent = 'Address: tailscale IP (100.x) or MagicDNS name · Token: matches ccdeskd config';
+  hint.textContent = 'Address: tailscale IP (100.x) or MagicDNS name · Token: matches vibe-remoted config';
   box.append(h, p, btn, hint);
   container.appendChild(box);
 }
@@ -577,7 +577,7 @@ function wireNewSessionButton() {
 // permission itself is separate: a denied permission silently degrades to just
 // the sidebar dot. The machine-manager settings can flip this flag.
 function notificationsEnabled(): boolean {
-  return localStorage.getItem('ccdesk.notifications') !== 'off';
+  return localStorage.getItem('vibe-remote.notifications') !== 'off';
 }
 
 function notifyDesktop(title: string, body: string) {

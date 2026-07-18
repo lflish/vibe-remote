@@ -1,4 +1,4 @@
-// Protocol frame types — mirrors ccdeskd/internal/protocol/protocol.go
+// Protocol frame types — mirrors vibe-remoted/internal/protocol/protocol.go
 
 export const FrameType = {
   Auth: 'auth',

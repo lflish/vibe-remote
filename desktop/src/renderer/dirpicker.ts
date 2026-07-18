@@ -1,4 +1,4 @@
-import { CcdeskRest, type DirEntry } from './rest';
+import { VibeRemoteRest, type DirEntry } from './rest';
 import type { MachineConfig } from '../shared/protocol';
 
 /**
@@ -11,7 +11,7 @@ import type { MachineConfig } from '../shared/protocol';
  */
 export function openDirPicker(machine: MachineConfig): Promise<string | null> {
   return new Promise((resolve) => {
-    const rest = new CcdeskRest(machine);
+    const rest = new VibeRemoteRest(machine);
     let currentPath = '';
 
     // --- Build modal DOM ---

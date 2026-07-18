@@ -1,4 +1,4 @@
-# ccdesk 需求文档
+# vibe-remote 需求文档
 
 ## 一句话定义
 
@@ -41,11 +41,11 @@
 | 项 | 决策 | 理由 |
 |----|------|------|
 | **连接方式** | 自写 **Go 服务端 + WebSocket**（不走 SSH） | 协议自定义、可扩展；WebSocket 天然全双工，适配终端双向交互 |
-| **网络拓扑** | **Tailscale 直连**，每台 Linux 各跑一个 `ccdeskd`，**无中心 Hub** | 用户所有机器都在同一 tailnet，Tailscale(WireGuard) 已解决 NAT 穿透、点对点加密、移动端外网可达 |
+| **网络拓扑** | **Tailscale 直连**，每台 Linux 各跑一个 `vibe-remoted`，**无中心 Hub** | 用户所有机器都在同一 tailnet，Tailscale(WireGuard) 已解决 NAT 穿透、点对点加密、移动端外网可达 |
 | **会话保留** | **第一期就上 tmux 兜底** | 移动端锁屏/切后台易断网，断线重连恢复现场是刚需 |
 | **会话模型** | **多会话 / 多机器**，后端数据结构一开始就按此抽象 | 用户明确要求"多机器上的多 claude 管理" |
 | **机器发现** | 第一期**客户端手动机器清单**；第二期接 Tailscale API 自动发现 | 先能用，后优化 |
-| **鉴权/加密** | `ccdeskd` **只绑 tailscale 网卡地址**（不暴露公网）+ **静态 token** 双保险；传输加密由 WireGuard 提供 | 安全暴露面收敛到 tailnet 内 |
+| **鉴权/加密** | `vibe-remoted` **只绑 tailscale 网卡地址**（不暴露公网）+ **静态 token** 双保险；传输加密由 WireGuard 提供 | 安全暴露面收敛到 tailnet 内 |
 | **桌面外壳** | **Electron** | Windows 生态最稳；客户端是纯 xterm.js 哑终端，选型差异小 |
 | **终端组件** | **xterm.js** | 网页终端事实标准 |
 | **服务端语言** | **Go** | 单文件二进制、部署零依赖 |
@@ -54,18 +54,18 @@
 
 ## 四、多机器多 Claude 管理（核心能力）
 
-- **每台机器**跑一个 `ccdeskd`，只管自己这台，可承载**多个 claude 会话**。
+- **每台机器**跑一个 `vibe-remoted`，只管自己这台，可承载**多个 claude 会话**。
 - **客户端维护一份机器清单**：`[{名字, tailscale地址/MagicDNS, token}]`。
-- 客户端遍历清单里各机器的 `ccdeskd`，汇总各自会话，形成 **"多机器 × 多 claude" 总览**。
+- 客户端遍历清单里各机器的 `vibe-remoted`，汇总各自会话，形成 **"多机器 × 多 claude" 总览**。
 - 每台机器对等，客户端直连，**无中心 Hub**。
 
 ```
               Tailscale tailnet (WireGuard 点对点加密)
 ┌────────────────────────┐                    ┌──────────────────────────┐
-│ 桌面端 (Mac→Win→移动)    │  ws(JSON分帧)      │ 机器1  ccdeskd             │
+│ 桌面端 (Mac→Win→移动)    │  ws(JSON分帧)      │ 机器1  vibe-remoted             │
 │  Electron + xterm.js    │ ──键盘/resize──►   │   └ 会话×N: PTY→tmux→claude│──►Claude
 │  (哑终端 + 机器清单)     │ ◄─PTY字节流──────  ├──────────────────────────┤
-│                         │ ── 直连机器2/3 ──► │ 机器2/3 ... 各跑一个 ccdeskd │
+│                         │ ── 直连机器2/3 ──► │ 机器2/3 ... 各跑一个 vibe-remoted │
 └────────────────────────┘                    └──────────────────────────┘
 ```
 
@@ -85,16 +85,16 @@
 
 - 一套**与客户端解耦的 JSON 分帧 WebSocket 协议**，任何端（桌面/移动/网页）都能接，移动端后期复用**后端零改动**。
 - 消息类型至少覆盖：`auth`（鉴权）、`attach`（打开/恢复会话）、`data`（键盘输入/PTY输出，base64）、`resize`、`ping/pong`、`ready`、`sessions`（会话列表）、`exit`、`error`。
-- 辅助 REST（每台 ccdeskd 各自暴露）：`GET /api/v1/info`、`GET /api/v1/sessions`、`DELETE /api/v1/sessions/{id}`、`GET /healthz`。
+- 辅助 REST（每台 vibe-remoted 各自暴露）：`GET /api/v1/info`、`GET /api/v1/sessions`、`DELETE /api/v1/sessions/{id}`、`GET /healthz`。
 
 ---
 
 ## 七、安全需求
 
-1. `ccdeskd` **只监听 tailscale 网卡地址**，不绑 `0.0.0.0`，不暴露公网。
+1. `vibe-remoted` **只监听 tailscale 网卡地址**，不绑 `0.0.0.0`，不暴露公网。
 2. 传输加密由 **Tailscale(WireGuard)** 提供；可选再叠 `wss`。
 3. **静态 token** 鉴权（`auth` 帧校验通过才允许 attach）双保险。
-4. 建议 `ccdeskd` 以**专用受限用户 / 容器**运行（`claude` 带 Bash 工具 = 可执行任意命令）。
+4. 建议 `vibe-remoted` 以**专用受限用户 / 容器**运行（`claude` 带 Bash 工具 = 可执行任意命令）。
 5. config 预留 per-machine 工作目录/权限约束。
 6. 第二期可选用 `tailscale whois` 做 tailnet 身份鉴权。
 

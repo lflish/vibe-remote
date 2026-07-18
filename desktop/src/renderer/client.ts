@@ -23,10 +23,10 @@ const RECONNECT_MAX_DELAY = 30000; // 30s
 const PING_INTERVAL = 25000; // 25s
 
 /**
- * CcdeskClient manages the WebSocket connection to a single ccdeskd instance.
+ * VibeRemoteClient manages the WebSocket connection to a single vibe-remoted instance.
  * Handles auth, attach, data relay, ping/pong, and auto-reconnect.
  */
-export class CcdeskClient {
+export class VibeRemoteClient {
   machine: MachineConfig;
   state: ConnectionState = ConnectionState.Disconnected;
 

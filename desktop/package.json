@@ -1,5 +1,5 @@
 {
-  "name": "ccdesk",
+  "name": "vibe-remote",
   "version": "0.1.0",
   "description": "Remote Claude terminal manager",
   "main": "dist/main/index.js",
@@ -21,8 +21,8 @@
     "vite-plugin-electron": "^0.28.0"
   },
   "build": {
-    "appId": "com.ccdesk.app",
-    "productName": "ccdesk",
+    "appId": "com.vibe-remote.app",
+    "productName": "vibe-remote",
     "mac": {
       "target": "dmg",
       "category": "public.app-category.developer-tools"

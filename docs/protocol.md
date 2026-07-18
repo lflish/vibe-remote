@@ -1,8 +1,8 @@
-# ccdesk 通信协议 v1
+# vibe-remote 通信协议 v1
 
 ## 概述
 
-ccdesk 使用 **JSON 分帧 WebSocket** 实现桌面客户端与远程 `ccdeskd` 之间的双向通信。
+vibe-remote 使用 **JSON 分帧 WebSocket** 实现桌面客户端与远程 `vibe-remoted` 之间的双向通信。
 每条 WebSocket 消息是一个 JSON 对象，以 `type` 字段区分消息类型。
 PTY 字节数据使用 base64 编码传输（`data` 帧）。
 
@@ -11,7 +11,7 @@ PTY 字节数据使用 base64 编码传输（`data` 帧）。
 ## 连接生命周期
 
 ```
-Client                              Server (ccdeskd)
+Client                              Server (vibe-remoted)
   |                                    |
   |--- WebSocket connect ------------->|
   |                                    |
@@ -136,7 +136,7 @@ PTY 字节流，base64 编码。
 
 ## 辅助 REST API
 
-每台 ccdeskd 各自暴露，鉴权方式：`Authorization: Bearer <token>`
+每台 vibe-remoted 各自暴露，鉴权方式：`Authorization: Bearer <token>`
 
 | Method | Path | 说明 |
 |--------|------|------|
@@ -150,7 +150,7 @@ PTY 字节流，base64 编码。
 
 ## 安全
 
-- ccdeskd 仅绑定 tailscale 网卡地址，不暴露公网
+- vibe-remoted 仅绑定 tailscale 网卡地址，不暴露公网
 - 传输加密由 Tailscale(WireGuard) 提供
 - WebSocket 使用 `ws://`（非 `wss://`），因在 WireGuard 隧道内
 - 静态 token 双保险（auth 帧 + REST Bearer token）

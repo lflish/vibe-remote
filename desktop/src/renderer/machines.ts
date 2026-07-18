@@ -1,10 +1,10 @@
 import type { MachineConfig } from '../shared/protocol';
-import { CcdeskRest } from './rest';
+import { VibeRemoteRest } from './rest';
 
 /**
  * Machine manager modal — app-internal CRUD for the machine list, replacing
- * hand-editing machines.json. Persists via window.ccdesk.saveMachines (main
- * process is the only writer). Test-connection hits the target ccdeskd
+ * hand-editing machines.json. Persists via window.vibeRemote.saveMachines (main
+ * process is the only writer). Test-connection hits the target vibe-remoted
  * directly (healthz + info), not the main process.
  *
  * Safe DOM construction (textContent / createElement) throughout — never
@@ -29,7 +29,7 @@ export async function testConnection(machine: MachineConfig): Promise<TestResult
     return { ok: false, error: `unreachable (${(e as Error).message})` };
   }
   try {
-    const rest = new CcdeskRest(machine);
+    const rest = new VibeRemoteRest(machine);
     const info = await rest.info();
     return { ok: true, hostname: info.hostname };
   } catch {
@@ -49,7 +49,7 @@ interface ManagerOpts {
 }
 
 // openMachineManager renders the list + inline add/edit form. Works on a local
-// copy of the machine array; commits via window.ccdesk.saveMachines on save,
+// copy of the machine array; commits via window.vibeRemote.saveMachines on save,
 // then calls onSaved so the caller can hot-reload without restarting the app.
 export function openMachineManager(opts: ManagerOpts): void {
   const working: MachineConfig[] = opts.machines.map((m) => ({ ...m }));
@@ -88,7 +88,7 @@ export function openMachineManager(opts: ManagerOpts): void {
   // leaving an unhandled promise rejection, so callers can skip follow-up UI.
   async function commit(): Promise<boolean> {
     try {
-      await window.ccdesk.saveMachines(working);
+      await window.vibeRemote.saveMachines(working);
       bar.style.display = 'none';
       opts.onSaved(working.map((m) => ({ ...m })));
       return true;

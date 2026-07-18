@@ -5,10 +5,10 @@ import type { MachineConfig } from '../shared/protocol';
 
 let mainWindow: BrowserWindow | null = null;
 
-// Dev-only: open a CDP endpoint when CCDESK_DEBUG_PORT is set, so the renderer
+// Dev-only: open a CDP endpoint when VIBE_REMOTE_DEBUG_PORT is set, so the renderer
 // can be driven/inspected by tooling. Must be set before app is ready.
-if (process.env.CCDESK_DEBUG_PORT) {
-  app.commandLine.appendSwitch('remote-debugging-port', process.env.CCDESK_DEBUG_PORT);
+if (process.env.VIBE_REMOTE_DEBUG_PORT) {
+  app.commandLine.appendSwitch('remote-debugging-port', process.env.VIBE_REMOTE_DEBUG_PORT);
   app.commandLine.appendSwitch('remote-allow-origins', '*');
 }
 
@@ -36,8 +36,8 @@ function createWindow() {
   }
 
   // In dev, forward renderer console to the main process stdout and open
-  // DevTools for easier debugging. Set CCDESK_NO_DEVTOOLS=1 to suppress.
-  if (process.env.VITE_DEV_SERVER_URL && !process.env.CCDESK_NO_DEVTOOLS) {
+  // DevTools for easier debugging. Set VIBE_REMOTE_NO_DEVTOOLS=1 to suppress.
+  if (process.env.VITE_DEV_SERVER_URL && !process.env.VIBE_REMOTE_NO_DEVTOOLS) {
     mainWindow.webContents.on('console-message', (_e, level, message, line, source) => {
       console.log(`[renderer:${level}] ${message} (${source}:${line})`);
     });

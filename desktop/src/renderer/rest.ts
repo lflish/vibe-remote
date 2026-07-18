@@ -1,10 +1,10 @@
 import type { MachineConfig, SessionInfo } from '../shared/protocol';
 
 /**
- * REST client for a ccdeskd instance. Complements the WebSocket connection
+ * REST client for a vibe-remoted instance. Complements the WebSocket connection
  * with the auxiliary HTTP endpoints (info, sessions list, delete, fs browse).
  */
-export class CcdeskRest {
+export class VibeRemoteRest {
   constructor(private machine: MachineConfig) {}
 
   private base(): string {
