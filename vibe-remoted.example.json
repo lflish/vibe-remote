@@ -5,7 +5,11 @@
   "default_workdir": "/home/user",
   "allowed_roots": ["/home/user"],
   "use_tmux": true,
-  "claude_cmd": "claude --dangerously-skip-permissions",
+  "claude_cmd": "claude",
+  "claude_flags": [
+    { "id": "continue",   "label": "续上次会话 (-c)",   "arg": "-c",                             "default": false },
+    { "id": "skip-perms", "label": "跳过权限确认",       "arg": "--dangerously-skip-permissions", "default": false }
+  ],
   "login_shell": true,
   "shell": "",
   "allow_insecure_bind": false
