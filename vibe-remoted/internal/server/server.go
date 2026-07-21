@@ -85,11 +85,22 @@ func (s *Server) handleInfo(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	hostname, _ := os.Hostname()
+	// Expose only id/label/default to the client — never Arg (an internal
+	// server-side concatenation detail).
+	flags := make([]map[string]any, 0, len(s.cfg.ClaudeFlags))
+	for _, f := range s.cfg.ClaudeFlags {
+		flags = append(flags, map[string]any{
+			"id":      f.ID,
+			"label":   f.Label,
+			"default": f.Default,
+		})
+	}
 	info := map[string]any{
 		"hostname":        hostname,
 		"tmux_enabled":    s.cfg.UseTmux,
 		"default_workdir": s.cfg.DefaultWorkdir,
 		"allowed_roots":   s.cfg.AllowedRoots,
+		"claude_flags":    flags,
 	}
 	writeJSON(w, http.StatusOK, info)
 }
