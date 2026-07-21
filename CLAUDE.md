@@ -80,10 +80,10 @@ JSON 分帧 WebSocket，帧靠 `type` 区分，PTY 字节走 base64（`data` 帧
 
 ## 安全模型
 
-- vibe-remoted **只绑 tailscale 地址**：`config.validateBindAddr` 强制校验 CGNAT 段（100.64.0.0/10 或 fd7a:115c:a1e0::/48），拒绝所有通配地址（`0.0.0.0`/`::`）。`allow_insecure_bind: true` 是显式逃生舱。
-- 静态 token 双保险：WS `auth` 帧 + REST `Authorization: Bearer`。
+- vibe-remoted **绑私有网段地址**：`config.validateBindAddr` 放行 RFC1918 / loopback / link-local / IPv6 ULA / tailscale CGNAT 段（`isPrivateBindIP`，用 `net.IP.IsPrivate` + CGNAT 补丁），拒绝**公网 IP**（需 `allow_insecure_bind: true` 逃生舱）和**所有通配地址**（`0.0.0.0`/`::`，恒拒，逃生舱也不放行）。
+- **静态 token 是准入核心边界**：WS `auth` 帧 + REST `Authorization: Bearer`，均用 `crypto/subtle.ConstantTimeCompare` 常量时间校验（token 现在是主防线，防时序侧信道）。
 - workdir 白名单：`config.IsAllowedWorkdir` 用 `filepath.Rel` + `..` 前缀检查防路径越权；`/api/v1/fs` 和 attach 的 workdir 都受约束。
-- 传输加密交给 Tailscale(WireGuard)，故 WS 用 `ws://` 而非 `wss://`；Origin 检查跳过（tailnet-only）。
+- 传输为明文 `ws://`（无 `wss://`）：绑 tailscale IP 时由 WireGuard 加密，绑 LAN IP 时为明文——**仅在可信网络使用**。Origin 检查跳过（Electron 跨 origin）+ permissive CORS，均以 token + 私有网段不可达公网为前提。**Tailscale 仍是推荐方案**（自带加密+跨网），只是不再强制。
 
 ## 配置
 

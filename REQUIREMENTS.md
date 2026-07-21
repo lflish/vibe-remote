@@ -45,7 +45,7 @@
 | **会话保留** | **第一期就上 tmux 兜底** | 移动端锁屏/切后台易断网，断线重连恢复现场是刚需 |
 | **会话模型** | **多会话 / 多机器**，后端数据结构一开始就按此抽象 | 用户明确要求"多机器上的多 claude 管理" |
 | **机器发现** | 第一期**客户端手动机器清单**；第二期接 Tailscale API 自动发现 | 先能用，后优化 |
-| **鉴权/加密** | `vibe-remoted` **只绑 tailscale 网卡地址**（不暴露公网）+ **静态 token** 双保险；传输加密由 WireGuard 提供 | 安全暴露面收敛到 tailnet 内 |
+| **鉴权/加密** | `vibe-remoted` **绑私有网段地址**（拒公网+wildcard，不暴露公网）+ **静态 token** 准入核心（常量时间校验）；绑 tailscale IP 时 WireGuard 加密，LAN 为明文 | 安全暴露面收敛到私有网络内，token 为主防线 |
 | **桌面外壳** | **Electron** | Windows 生态最稳；客户端是纯 xterm.js 哑终端，选型差异小 |
 | **终端组件** | **xterm.js** | 网页终端事实标准 |
 | **服务端语言** | **Go** | 单文件二进制、部署零依赖 |
@@ -91,9 +91,11 @@
 
 ## 七、安全需求
 
-1. `vibe-remoted` **只监听 tailscale 网卡地址**，不绑 `0.0.0.0`，不暴露公网。
-2. 传输加密由 **Tailscale(WireGuard)** 提供；可选再叠 `wss`。
-3. **静态 token** 鉴权（`auth` 帧校验通过才允许 attach）双保险。
+> 注：安全模型已放宽（见 CLAUDE.md「安全模型」）——从「只绑 tailscale」改为「绑私有网段 + token 准入」，以支持可信 LAN 直连。Tailscale 仍为推荐方案。
+
+1. `vibe-remoted` **只监听私有网段地址**（RFC1918 / loopback / link-local / tailscale CGNAT），拒绝公网 IP（需 `allow_insecure_bind`）和 wildcard（`0.0.0.0`/`::`，恒拒），不暴露公网。
+2. 传输：绑 tailscale IP 时由 **WireGuard** 加密；绑 LAN IP 时为 `ws://` 明文，仅在可信网络使用；可选再叠 `wss`。
+3. **静态 token** 是准入核心边界（`auth` 帧 + REST Bearer，常量时间校验）。
 4. 建议 `vibe-remoted` 以**专用受限用户 / 容器**运行（`claude` 带 Bash 工具 = 可执行任意命令）。
 5. config 预留 per-machine 工作目录/权限约束。
 6. 第二期可选用 `tailscale whois` 做 tailnet 身份鉴权。

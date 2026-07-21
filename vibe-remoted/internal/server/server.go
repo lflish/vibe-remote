@@ -2,6 +2,7 @@
 package server
 
 import (
+	"crypto/subtle"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -54,9 +55,11 @@ func (s *Server) ListenAndServe() error {
 
 // withCORS adds permissive CORS headers so the Electron renderer (which loads
 // from file:// or the Vite dev server, a different origin) can call the REST
-// API via fetch. This is safe here: vibe-remoted is tailnet-only and every REST
-// endpoint still requires the Bearer token. WebSocket upgrades bypass CORS and
-// are unaffected. Preflight OPTIONS requests are answered directly.
+// API via fetch. The daemon binds a private-network address (not the public
+// internet) and every REST endpoint still requires the constant-time Bearer
+// token check, so a wildcard origin does not itself grant access. WebSocket
+// upgrades bypass CORS and are unaffected. Preflight OPTIONS are answered
+// directly.
 func withCORS(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Access-Control-Allow-Origin", "*")
@@ -216,11 +219,20 @@ func (s *Server) handleFS(w http.ResponseWriter, r *http.Request) {
 func (s *Server) checkToken(r *http.Request, w http.ResponseWriter) bool {
 	auth := r.Header.Get("Authorization")
 	expected := "Bearer " + s.cfg.Token
-	if auth != expected {
+	if !tokenEqual(auth, expected) {
 		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
 		return false
 	}
 	return true
+}
+
+// tokenEqual compares two token strings in constant time. Since the static
+// token is the primary access boundary (the daemon may bind a plaintext LAN
+// address, not only a tailnet IP), this avoids leaking token length or a prefix
+// match through response timing. Empty tokens are already rejected at config
+// validation, so callers never pass an empty expected value.
+func tokenEqual(got, expected string) bool {
+	return subtle.ConstantTimeCompare([]byte(got), []byte(expected)) == 1
 }
 
 // writeJSON encodes a value as JSON and writes it to the response.

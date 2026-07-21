@@ -40,9 +40,10 @@ cd vibe-remoted && go build -o ../bin/vibe-remoted ./cmd/vibe-remoted
 
 ```json
 {
-  "bind_addr": "100.x.x.x",        // tailscale 地址(100.64.0.0/10)，校验强制
+  "bind_addr": "192.168.x.x",      // 私有网段地址(RFC1918/loopback/link-local
+                                    //   /tailscale 100.64.0.0/10)，校验强制
   "port": 8765,
-  "token": "your-secure-token",     // 静态鉴权 token
+  "token": "your-secure-token",     // 静态鉴权 token，准入核心边界（常量时间校验）
   "default_workdir": "/home/user",
   "allowed_roots": ["/home/user"],  // workdir 白名单，防越权
   "use_tmux": true,                 // false = 降级直跑 claude（无持久化）
@@ -50,7 +51,7 @@ cd vibe-remoted && go build -o ../bin/vibe-remoted ./cmd/vibe-remoted
   "login_shell": true,              // 通过登录 shell 启动，加载用户环境
                                     //   （PATH、fnm/nvm 等），默认 true
   "shell": "",                      // 登录 shell 路径，空=用 $SHELL 或 /bin/bash
-  "allow_insecure_bind": false      // true 才允许绑非 tailscale 地址(不建议)
+  "allow_insecure_bind": false      // true 才允许绑公网地址(不建议)；wildcard 恒拒
 }
 ```
 
@@ -106,9 +107,10 @@ npm run build    # tsc + vite build + electron-builder
 
 ## 前置条件
 
-- 所有机器（含客户端）在同一 Tailscale tailnet。
+- 客户端与目标机网络互通即可：同一 **Tailscale tailnet**（推荐，自带加密+跨网）
+  或同一**可信局域网**（LAN 内 `ws://` 明文，仅在可信网络使用）。
 - 目标 Linux 具备 `claude`、`tmux`、`go`。
-- Mac 端 Tailscale 需运行（`tailscale up`）。
+- 走 Tailscale 时，Mac 端需运行（`tailscale up`）。
 
 ## 本地开发冒烟（无需远程机）
 

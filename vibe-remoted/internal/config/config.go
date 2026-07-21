@@ -32,9 +32,11 @@ type Config struct {
 	LoginShell *bool `json:"login_shell,omitempty"`
 	// Shell to use for login-shell launch (default: $SHELL, else /bin/bash).
 	Shell string `json:"shell,omitempty"`
-	// Escape hatch: allow binding to a non-tailscale address (LAN IP, etc.).
-	// Off by default so a misconfig can't silently expose the daemon beyond
-	// the tailnet. Wildcard addresses (0.0.0.0 / ::) are always rejected.
+	// Escape hatch: allow binding to a public (non-private) address. Off by
+	// default so a misconfig can't silently expose the daemon to the internet.
+	// Private-network addresses (RFC1918 / loopback / link-local / tailscale
+	// CGNAT) are allowed without this. Wildcard addresses (0.0.0.0 / ::) are
+	// always rejected, even with this set.
 	AllowInsecureBind bool `json:"allow_insecure_bind,omitempty"`
 }
 
@@ -109,13 +111,15 @@ func (c *Config) Validate() error {
 	return nil
 }
 
-// validateBindAddr enforces the tailnet-only assumption the rest of the
-// security model rests on (skipped WS Origin check, permissive CORS). It
-// rejects empty and wildcard addresses outright, and non-tailscale addresses
-// unless allowInsecure is set as an explicit escape hatch.
+// validateBindAddr keeps token the primary access boundary while preventing an
+// accidental public exposure. The security model still relies on the daemon not
+// being reachable from the open internet (skipped WS Origin check, permissive
+// CORS, plaintext ws://), so it allows any private-network address by default,
+// rejects public addresses unless allowInsecure is set as an explicit escape
+// hatch, and rejects empty and wildcard addresses outright.
 func validateBindAddr(addr string, allowInsecure bool) error {
 	if addr == "" {
-		return fmt.Errorf("bind_addr must be set (to a tailscale IP)")
+		return fmt.Errorf("bind_addr must be set (to a private-network IP)")
 	}
 	ip := net.ParseIP(addr)
 	if ip == nil {
@@ -123,27 +127,32 @@ func validateBindAddr(addr string, allowInsecure bool) error {
 	}
 	// Wildcards bind every interface — never allowed, even with the escape hatch.
 	if ip.IsUnspecified() {
-		return fmt.Errorf("bind_addr %q binds all interfaces; use a specific tailscale IP", addr)
+		return fmt.Errorf("bind_addr %q binds all interfaces; use a specific private-network IP", addr)
 	}
 	if allowInsecure {
 		return nil
 	}
-	if !isTailscaleIP(ip) {
-		return fmt.Errorf("bind_addr %q is not a tailscale address (100.64.0.0/10 or fd7a:115c:a1e0::/48); "+
-			"set allow_insecure_bind:true to override", addr)
+	if !isPrivateBindIP(ip) {
+		return fmt.Errorf("bind_addr %q is a public address; bind a private-network IP "+
+			"(RFC1918 / loopback / link-local / tailscale 100.64.0.0/10), "+
+			"or set allow_insecure_bind:true to bind a public address", addr)
 	}
 	return nil
 }
 
-// isTailscaleIP reports whether ip is in the tailscale CGNAT v4 range
-// (100.64.0.0/10) or the tailscale ULA v6 range (fd7a:115c:a1e0::/48).
-func isTailscaleIP(ip net.IP) bool {
-	if v4 := ip.To4(); v4 != nil {
+// isPrivateBindIP reports whether ip is safe to bind without the insecure
+// escape hatch: RFC1918 / IPv6 ULA (via net.IP.IsPrivate), loopback, and
+// link-local, plus the tailscale CGNAT range 100.64.0.0/10 (which IsPrivate
+// does NOT cover). tailscale's IPv6 ULA fd7a:115c:a1e0::/48 is already covered
+// by IsPrivate (fc00::/7).
+func isPrivateBindIP(ip net.IP) bool {
+	if ip.IsPrivate() || ip.IsLoopback() || ip.IsLinkLocalUnicast() {
+		return true
+	}
+	if v4 := ip.To4(); v4 != nil { // tailscale CGNAT 100.64.0.0/10
 		return v4[0] == 100 && v4[1] >= 64 && v4[1] <= 127
 	}
-	tsULA := net.IP{0xfd, 0x7a, 0x11, 0x5c, 0xa1, 0xe0}
-	return len(ip) == net.IPv6len && ip[0] == tsULA[0] && ip[1] == tsULA[1] &&
-		ip[2] == tsULA[2] && ip[3] == tsULA[3] && ip[4] == tsULA[4] && ip[5] == tsULA[5]
+	return false
 }
 
 // IsAllowedWorkdir checks if a path falls within the allowed roots.

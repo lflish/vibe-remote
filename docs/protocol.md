@@ -6,7 +6,7 @@ vibe-remote 使用 **JSON 分帧 WebSocket** 实现桌面客户端与远程 `vib
 每条 WebSocket 消息是一个 JSON 对象，以 `type` 字段区分消息类型。
 PTY 字节数据使用 base64 编码传输（`data` 帧）。
 
-连接地址：`ws://<tailscale-ip>:<port>/ws`
+连接地址：`ws://<host-ip>:<port>/ws`（`<host-ip>` 为服务端所绑私有网段地址，如 tailscale IP 或 LAN IP）
 
 ## 连接生命周期
 
@@ -150,7 +150,8 @@ PTY 字节流，base64 编码。
 
 ## 安全
 
-- vibe-remoted 仅绑定 tailscale 网卡地址，不暴露公网
-- 传输加密由 Tailscale(WireGuard) 提供
-- WebSocket 使用 `ws://`（非 `wss://`），因在 WireGuard 隧道内
-- 静态 token 双保险（auth 帧 + REST Bearer token）
+- vibe-remoted 绑定私有网段地址（RFC1918 / loopback / link-local / tailscale
+  100.64.0.0/10），拒绝公网 IP（需 `allow_insecure_bind`）和 wildcard（恒拒），不暴露公网
+- 静态 token 是准入核心边界：WS `auth` 帧 + REST `Authorization: Bearer`，均常量时间校验
+- WebSocket 使用 `ws://`（明文）：走 Tailscale 时由 WireGuard 加密；LAN 内为明文，仅在可信网络使用
+- 推荐叠 Tailscale(WireGuard) 获得传输加密与跨网可达

@@ -19,9 +19,10 @@ import (
 // handleWS upgrades to WebSocket and manages the session lifecycle.
 func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
 	conn, err := websocket.Accept(w, r, &websocket.AcceptOptions{
-		// Origin check is skipped: vibe-remoted is tailnet-only (not public) and
-		// the Electron client connects from a different origin (file:// or the
-		// Vite dev server). WireGuard + the static token are the real guards.
+		// Origin check is skipped: the Electron client connects from a different
+		// origin (file:// or the Vite dev server), and the daemon binds a
+		// private-network address, not the public internet. The static token is
+		// the primary guard (plus WireGuard when bound to a tailscale IP).
 		InsecureSkipVerify: true,
 	})
 	if err != nil {
@@ -65,7 +66,7 @@ func (s *Server) wsAuth(ctx context.Context, conn *websocket.Conn) bool {
 		return false
 	}
 
-	if frame.Type != protocol.TypeAuth || frame.Token != s.cfg.Token {
+	if frame.Type != protocol.TypeAuth || !tokenEqual(frame.Token, s.cfg.Token) {
 		sendError(ctx, conn, "invalid token")
 		conn.Close(websocket.StatusPolicyViolation, "auth failed")
 		return false
