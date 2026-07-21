@@ -9,10 +9,13 @@ import type { MachineConfig } from '../shared/protocol';
  * Uses safe DOM construction (textContent / createElement) — never innerHTML
  * with server-provided names.
  */
-export function openDirPicker(machine: MachineConfig): Promise<string | null> {
+export function openDirPicker(
+  machine: MachineConfig,
+): Promise<{ workdir: string; flags: string[] } | null> {
   return new Promise((resolve) => {
     const rest = new VibeRemoteRest(machine);
     let currentPath = '';
+    const flagChecks: Array<{ id: string; input: HTMLInputElement }> = [];
 
     // --- Build modal DOM ---
     const overlay = el('div', 'modal-overlay');
@@ -28,6 +31,36 @@ export function openDirPicker(machine: MachineConfig): Promise<string | null> {
     const list = el('div', 'modal-list');
     modal.appendChild(list);
 
+    const flagsBox = el('div', 'modal-flags');
+    modal.appendChild(flagsBox);
+
+    // Load selectable launch flags from the machine's info endpoint. Rendered as
+    // checkboxes below the directory list; the picker still works (workdir only)
+    // if info fails or the machine has no claude_flags configured.
+    rest
+      .info()
+      .then((info) => {
+        const flags = info.claude_flags || [];
+        if (flags.length === 0) return;
+        const title = el('div', 'modal-flags-title');
+        title.textContent = 'Launch options';
+        flagsBox.appendChild(title);
+        for (const f of flags) {
+          const row = el('label', 'modal-flag');
+          const input = document.createElement('input');
+          input.type = 'checkbox';
+          input.checked = f.default === true;
+          const span = document.createElement('span');
+          span.textContent = f.label; // safe: textContent, not innerHTML
+          row.append(input, span);
+          flagsBox.appendChild(row);
+          flagChecks.push({ id: f.id, input });
+        }
+      })
+      .catch(() => {
+        /* info failed: no flags shown, workdir selection still works */
+      });
+
     const footer = el('div', 'modal-footer');
     const cancelBtn = el('button', 'btn-secondary');
     cancelBtn.textContent = 'Cancel';
@@ -40,7 +73,7 @@ export function openDirPicker(machine: MachineConfig): Promise<string | null> {
     document.body.appendChild(overlay);
 
     // --- Behavior ---
-    function close(result: string | null) {
+    function close(result: { workdir: string; flags: string[] } | null) {
       overlay.remove();
       resolve(result);
     }
@@ -95,7 +128,10 @@ export function openDirPicker(machine: MachineConfig): Promise<string | null> {
     }
 
     cancelBtn.addEventListener('click', () => close(null));
-    selectBtn.addEventListener('click', () => close(currentPath));
+    selectBtn.addEventListener('click', () => {
+      const flags = flagChecks.filter((c) => c.input.checked).map((c) => c.id);
+      close({ workdir: currentPath, flags });
+    });
     overlay.addEventListener('click', (e) => {
       if (e.target === overlay) close(null);
     });

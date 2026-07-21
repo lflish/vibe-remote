@@ -218,7 +218,7 @@ function makeTerminal(): { term: Terminal; fit: FitAddon } {
 
 // openSession creates a new SessionView (its own WS + xterm) and attaches.
 // sessionId '' means create a brand-new session with the given workdir.
-function openSession(machine: MachineConfig, sessionId: string, workdir?: string): SessionView {
+function openSession(machine: MachineConfig, sessionId: string, workdir?: string, flags?: string[]): SessionView {
   const key = viewKey(machine, sessionId);
   const existing = views.get(key);
   if (existing) {
@@ -327,7 +327,7 @@ function openSession(machine: MachineConfig, sessionId: string, workdir?: string
 
   client.connect();
   const dims = fit.proposeDimensions();
-  client.attach(sessionId, dims?.cols || 80, dims?.rows || 24, workdir);
+  client.attach(sessionId, dims?.cols || 80, dims?.rows || 24, workdir, flags);
 
   setActive(view.key);
   return view;
@@ -592,9 +592,9 @@ function wireNewSessionButton() {
       ? machines.find((m) => machineKey(m) === selectedMachineKey)
       : null;
     const machine = active?.machine || selected || machines[0];
-    const workdir = await openDirPicker(machine);
-    if (workdir === null) return; // cancelled
-    openSession(machine, '', workdir);
+    const picked = await openDirPicker(machine);
+    if (picked === null) return; // cancelled
+    openSession(machine, '', picked.workdir, picked.flags);
   });
 }
 

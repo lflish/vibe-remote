@@ -529,3 +529,25 @@ html, body {
   animation: pulse 1.5s ease-in-out infinite;
 }
 #toolbar-status.error::before { background: var(--error); }
+
+/* Launch-flag checkboxes in the new-session directory picker */
+.modal-flags {
+  padding: 8px 12px;
+  border-top: 1px solid var(--border);
+}
+.modal-flags-title {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  color: var(--text-muted);
+  margin-bottom: 6px;
+}
+.modal-flag {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 3px 0;
+  font-size: 13px;
+  color: var(--text-primary);
+  cursor: pointer;
+}
