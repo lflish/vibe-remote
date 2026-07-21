@@ -44,15 +44,22 @@ func (m *Manager) SetEventEnv(eventsURL, token string) {
 	m.token = token
 }
 
-// Create starts a new session and registers it.
-func (m *Manager) Create(workdir string, cols, rows uint16) (*Runner, error) {
+// Create starts a new session and registers it. claudeCmdOverride, when
+// non-empty, replaces the manager's default claude command for this session
+// only (used to inject per-session flags resolved from the client's selection).
+func (m *Manager) Create(workdir string, cols, rows uint16, claudeCmdOverride string) (*Runner, error) {
 	id := generateID()
+
+	claudeCmd := m.claudeCmd
+	if claudeCmdOverride != "" {
+		claudeCmd = claudeCmdOverride
+	}
 
 	runner, err := NewRunner(RunnerConfig{
 		ID:         id,
 		Workdir:    workdir,
 		UseTmux:    m.useTmux,
-		ClaudeCmd:  m.claudeCmd,
+		ClaudeCmd:  claudeCmd,
 		LoginShell: m.loginShell,
 		Shell:      m.shell,
 		Cols:       cols,

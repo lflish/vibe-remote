@@ -120,7 +120,8 @@ func (s *Server) wsAttach(ctx context.Context, conn *websocket.Conn) (*session.R
 			return nil, ""
 		}
 
-		runner, err = s.mgr.Create(workdir, frame.Cols, frame.Rows)
+		claudeCmd := s.cfg.ResolveClaudeCmd(frame.Flags)
+		runner, err = s.mgr.Create(workdir, frame.Cols, frame.Rows, claudeCmd)
 		if err != nil {
 			sendError(ctx, conn, "create session: "+err.Error())
 			conn.Close(websocket.StatusInternalError, "create failed")
