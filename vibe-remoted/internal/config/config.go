@@ -26,6 +26,10 @@ type Config struct {
 	UseTmux bool `json:"use_tmux"`
 	// Claude command (default: "claude").
 	ClaudeCmd string `json:"claude_cmd"`
+	// Optional whitelist of selectable launch flags. When set, clients can
+	// pick flags per-session (by id); the server appends each selected flag's
+	// Arg to ClaudeCmd. Empty = feature off (ClaudeCmd used as-is).
+	ClaudeFlags []ClaudeFlag `json:"claude_flags,omitempty"`
 	// Launch claude through a login shell so the user's shell environment
 	// (PATH, node version managers like fnm/nvm, etc.) is loaded — matching
 	// what the user gets when running claude interactively. Default true.
@@ -180,4 +184,37 @@ func (c *Config) IsAllowedWorkdir(dir string) bool {
 		return true
 	}
 	return false
+}
+
+// ClaudeFlag is one selectable launch flag offered to clients. ID is the stable
+// key the client sends back; Label is shown in the picker; Arg is the actual
+// command-line fragment appended to ClaudeCmd; Default controls initial checked
+// state in the client UI.
+type ClaudeFlag struct {
+	ID      string `json:"id"`
+	Label   string `json:"label"`
+	Arg     string `json:"arg"`
+	Default bool   `json:"default,omitempty"`
+}
+
+// ResolveClaudeCmd returns the full claude command for a new session: ClaudeCmd
+// plus the Arg of every configured flag whose id is in ids. Flags are appended
+// in ClaudeFlags declaration order (not the order ids arrives in), so ordering
+// is server-controlled. Ids not present in ClaudeFlags are ignored — the client
+// can only ever select from the whitelist, never inject arbitrary args.
+func (c *Config) ResolveClaudeCmd(ids []string) string {
+	if len(ids) == 0 || len(c.ClaudeFlags) == 0 {
+		return c.ClaudeCmd
+	}
+	selected := make(map[string]int) // id -> count (allow dupes to append multiple times)
+	for _, id := range ids {
+		selected[id]++
+	}
+	cmd := c.ClaudeCmd
+	for _, f := range c.ClaudeFlags {
+		for n := 0; n < selected[f.ID]; n++ {
+			cmd += " " + f.Arg
+		}
+	}
+	return cmd
 }

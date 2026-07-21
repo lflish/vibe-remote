@@ -154,3 +154,42 @@ func TestValidateBindAddr(t *testing.T) {
 		})
 	}
 }
+
+func TestResolveClaudeCmd(t *testing.T) {
+	cfg := &Config{
+		ClaudeCmd: "claude",
+		ClaudeFlags: []ClaudeFlag{
+			{ID: "continue", Label: "续会话", Arg: "-c", Default: false},
+			{ID: "skip", Label: "跳过权限", Arg: "--dangerously-skip-permissions", Default: true},
+			{ID: "model", Label: "opus", Arg: "--model opus", Default: false},
+		},
+	}
+	tests := []struct {
+		name string
+		ids  []string
+		want string
+	}{
+		{"no flags", nil, "claude"},
+		{"empty slice", []string{}, "claude"},
+		{"one flag", []string{"continue"}, "claude -c"},
+		{"two flags keep declared order", []string{"model", "continue"}, "claude -c --model opus"},
+		{"unknown id ignored", []string{"continue", "bogus"}, "claude -c"},
+		{"all unknown falls back", []string{"nope"}, "claude"},
+		{"duplicate id not deduped by us", []string{"continue", "continue"}, "claude -c -c"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := cfg.ResolveClaudeCmd(tt.ids)
+			if got != tt.want {
+				t.Errorf("ResolveClaudeCmd(%v) = %q, want %q", tt.ids, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestResolveClaudeCmdNoFlagsConfigured(t *testing.T) {
+	cfg := &Config{ClaudeCmd: "claude -c"}
+	if got := cfg.ResolveClaudeCmd([]string{"anything"}); got != "claude -c" {
+		t.Errorf("with no ClaudeFlags configured, want unchanged %q, got %q", "claude -c", got)
+	}
+}
