@@ -86,13 +86,26 @@ html, body {
   align-items: center;
   gap: 8px;
   padding: 4px 8px 8px;
-  cursor: default;
+  cursor: pointer;
   font-size: 11px;
   font-weight: 600;
   letter-spacing: 0.4px;
   text-transform: uppercase;
   color: var(--text-muted);
   user-select: none;
+  border-left: 2px solid transparent;
+}
+
+.machine-name:hover {
+  color: var(--text-primary);
+}
+
+/* Selected = this machine is the new-session target. Deliberately lighter than
+   .session-item.active (a full accent block): just a left accent bar + brighter
+   text, so a machine header never outweighs the selected session. */
+.machine-name.selected {
+  color: var(--text-primary);
+  border-left-color: var(--accent);
 }
 
 .machine-status {

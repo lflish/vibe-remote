@@ -43,6 +43,11 @@ const views = new Map<string, SessionView>(); // view key -> open session view
 const machineSessions = new Map<string, SessionInfo[]>(); // machineKey -> sessions (REST)
 const machineOnline = new Map<string, boolean>(); // machineKey -> reachable
 let activeKey: string | null = null;
+// The machine a new session targets when there is no active session to inherit
+// from. Set by clicking a machine header in the sidebar. Must be module-level
+// state (not a DOM marker) because renderSidebar rebuilds the whole sidebar DOM
+// on every 5s poll — a DOM flag would be wiped each rebuild.
+let selectedMachineKey: string | null = null;
 // While an inline rename input is open we suppress full sidebar rebuilds:
 // the 5s poll (and onReady/onExit) call renderSidebar(), which wipes and
 // recreates the whole sidebar DOM — that would delete the focused input and
@@ -78,6 +83,9 @@ async function init() {
     renderEmptyState();
     return;
   }
+  // Default the new-session target to the first machine so the selection is
+  // always visible and "new session" is predictable before any click.
+  selectedMachineKey = machineKey(machines[0]);
   rebuildRests();
   await refreshAllMachines();
   startPolling();
@@ -112,6 +120,11 @@ function wireManageMachinesButton() {
           .filter((old) => !updated.some((u) => machineKey(u) === machineKey(old)))
           .map(machineKey);
         machines = updated;
+        // Drop a selection that points at a now-removed machine so the
+        // highlight (and new-session target) never dangles.
+        if (selectedMachineKey && !machines.some((m) => machineKey(m) === selectedMachineKey)) {
+          selectedMachineKey = machines.length > 0 ? machineKey(machines[0]) : null;
+        }
         rebuildRests();
         // Close views belonging to removed machines (does NOT kill remote sessions).
         let activeRemoved = false;
@@ -354,12 +367,20 @@ function renderSidebar() {
     group.className = 'machine-group';
 
     const nameRow = document.createElement('div');
-    nameRow.className = 'machine-name';
+    const mKey = machineKey(machine);
+    nameRow.className = 'machine-name' + (mKey === selectedMachineKey ? ' selected' : '');
     const dot = document.createElement('span');
-    dot.className = 'machine-status' + (machineOnline.get(machineKey(machine)) ? ' connected' : ' error');
+    dot.className = 'machine-status' + (machineOnline.get(mKey) ? ' connected' : ' error');
     const nameSpan = document.createElement('span');
     nameSpan.textContent = machine.name;
     nameRow.append(dot, nameSpan);
+    // Click selects this machine as the new-session target (does NOT open a
+    // session — that's what clicking a session item does). Re-render to move
+    // the selected highlight.
+    nameRow.addEventListener('click', () => {
+      selectedMachineKey = mKey;
+      renderSidebar();
+    });
 
     const list = document.createElement('div');
     list.className = 'session-list';
@@ -563,9 +584,14 @@ function renderEmptyState() {
 function wireNewSessionButton() {
   document.getElementById('btn-new-session')?.addEventListener('click', async () => {
     if (machines.length === 0) return;
-    // Choose the machine of the active session, else the first machine.
+    // Target machine priority: active session's machine → sidebar-selected
+    // machine → first machine. Active wins so "new session" inside a session
+    // stays on the same machine; selection covers the no-active-session case.
     const active = activeKey ? views.get(activeKey) : null;
-    const machine = active?.machine || machines[0];
+    const selected = selectedMachineKey
+      ? machines.find((m) => machineKey(m) === selectedMachineKey)
+      : null;
+    const machine = active?.machine || selected || machines[0];
     const workdir = await openDirPicker(machine);
     if (workdir === null) return; // cancelled
     openSession(machine, '', workdir);
