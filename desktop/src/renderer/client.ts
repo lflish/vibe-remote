@@ -44,7 +44,7 @@ export class VibeRemoteClient {
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private pingTimer: ReturnType<typeof setInterval> | null = null;
   private currentSessionId: string | null = null;
-  private pendingAttach: { sessionId: string; cols: number; rows: number; workdir?: string } | null = null;
+  private pendingAttach: { sessionId: string; cols: number; rows: number; workdir?: string; flags?: string[] } | null = null;
   // Last known terminal size, so a reconnect re-attaches at the correct
   // dimensions instead of a default 80x24 (which would misdraw until resize).
   private lastCols = 80;
@@ -83,6 +83,7 @@ export class VibeRemoteClient {
           cols: this.pendingAttach.cols,
           rows: this.pendingAttach.rows,
           workdir: this.pendingAttach.workdir,
+          flags: this.pendingAttach.flags,
         });
         this.pendingAttach = null;
       }
@@ -136,7 +137,7 @@ export class VibeRemoteClient {
   }
 
   /** Attach to a session (empty sessionId = create new). */
-  attach(sessionId: string, cols: number, rows: number, workdir?: string) {
+  attach(sessionId: string, cols: number, rows: number, workdir?: string, flags?: string[]) {
     this.currentSessionId = sessionId || null;
     this.lastCols = cols;
     this.lastRows = rows;
@@ -148,12 +149,13 @@ export class VibeRemoteClient {
         cols,
         rows,
         workdir,
+        flags,
       });
     } else {
-      // Connection not ready yet — store the full attach (including workdir)
+      // Connection not ready yet — store the full attach (including workdir/flags)
       // to send on open. Dropping workdir here is what made new sessions
       // always land in the default dir instead of the chosen one.
-      this.pendingAttach = { sessionId, cols, rows, workdir };
+      this.pendingAttach = { sessionId, cols, rows, workdir, flags };
     }
   }
 

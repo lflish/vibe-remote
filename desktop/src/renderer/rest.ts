@@ -55,11 +55,18 @@ export class VibeRemoteRest {
   }
 }
 
+export interface ClaudeFlagInfo {
+  id: string;
+  label: string;
+  default?: boolean;
+}
+
 export interface MachineInfo {
   hostname: string;
   tmux_enabled: boolean;
   default_workdir: string;
   allowed_roots: string[];
+  claude_flags?: ClaudeFlagInfo[];
 }
 
 export interface DirEntry {
