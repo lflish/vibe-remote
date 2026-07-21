@@ -51,12 +51,14 @@ Client                              Server (vibe-remoted)
   "sessionId": "1720000000000",
   "cols": 120,
   "rows": 40,
-  "workdir": "/home/user/project"
+  "workdir": "/home/user/project",
+  "flags": ["continue", "skip-perms"]
 }
 ```
 
 - `sessionId` 为空字符串或省略：创建新会话
 - `workdir`：仅新建时有效，指定 claude 工作目录。省略则用服务端默认值
+- `flags`：可选，仅新建会话有效。客户端勾选的 claude 启动 flag id 列表；服务端按 `claude_flags` 白名单查表，把对应参数拼到 `claude_cmd` 后（未知 id 忽略）
 
 ### ready (S→C)
 

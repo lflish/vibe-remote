@@ -29,11 +29,12 @@ type AuthFrame struct {
 
 // AttachFrame requests opening or resuming a session.
 type AttachFrame struct {
-	Type      string `json:"type"`
-	SessionID string `json:"sessionId,omitempty"` // empty = create new
-	Cols      uint16 `json:"cols"`
-	Rows      uint16 `json:"rows"`
-	Workdir   string `json:"workdir,omitempty"` // working directory for new sessions
+	Type      string   `json:"type"`
+	SessionID string   `json:"sessionId,omitempty"` // empty = create new
+	Cols      uint16   `json:"cols"`
+	Rows      uint16   `json:"rows"`
+	Workdir   string   `json:"workdir,omitempty"` // working directory for new sessions
+	Flags     []string `json:"flags,omitempty"`   // selected claude_flags ids (new session only)
 }
 
 // ReadyFrame confirms attach success.

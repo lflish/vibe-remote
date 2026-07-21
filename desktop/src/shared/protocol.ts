@@ -29,6 +29,7 @@ export interface AttachFrame {
   cols: number;
   rows: number;
   workdir?: string; // working directory for new sessions
+  flags?: string[]; // selected claude_flags ids (new session only)
 }
 
 export interface DataFrameC2S {
