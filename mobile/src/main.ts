@@ -2,6 +2,7 @@ import './styles.css';
 import { VibeRemoteClient, ConnectionState } from '@net/client';
 import { VibeRemoteRest } from '@net/rest';
 import { ChatController } from './chat';
+import { makeLineSplitter } from './lines';
 import { makeMachineStore, defaultKV } from './storage';
 import type { MachineConfig, SessionInfo } from '@shared/protocol';
 
@@ -23,17 +24,7 @@ function base64ToText(b64: string): string {
 }
 
 // NDJSON can arrive split across frames; buffer partial lines per client.
-function makeLineSplitter(onLine: (line: string) => void) {
-  let buf = '';
-  return (chunk: string) => {
-    buf += chunk;
-    let idx: number;
-    while ((idx = buf.indexOf('\n')) >= 0) {
-      onLine(buf.slice(0, idx));
-      buf = buf.slice(idx + 1);
-    }
-  };
-}
+// (splitter logic lives in ./lines so it can be unit-tested independently)
 
 async function renderMachineList() {
   const machines = await store.getMachines();
@@ -53,12 +44,12 @@ async function renderMachineList() {
     }
     const header = document.createElement('div');
     header.className = 'list-item';
-    header.innerHTML = `<div class="title">${m.name}</div><div class="sub">${m.addr}:${m.port} · ${sessions.length} sessions</div>`;
+    header.innerHTML = `<div class="title">${escapeHtml(m.name)}</div><div class="sub">${escapeHtml(m.addr)}:${m.port} · ${sessions.length} sessions</div>`;
     list.appendChild(header);
     for (const s of sessions) {
       const item = document.createElement('div');
       item.className = 'list-item';
-      item.innerHTML = `<div class="title">${s.title}</div><div class="sub">${s.workdir}</div>`;
+      item.innerHTML = `<div class="title">${escapeHtml(s.title)}</div><div class="sub">${escapeHtml(s.workdir)}</div>`;
       item.onclick = () => openChat(m, s);
       list.appendChild(item);
     }
