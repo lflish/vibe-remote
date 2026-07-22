@@ -2,6 +2,8 @@
   "name": "vibe-remote",
   "version": "0.1.0",
   "description": "Remote Claude terminal manager",
+  "license": "MIT",
+  "author": "lflish",
   "main": "dist/main/index.js",
   "scripts": {
     "dev": "vite",

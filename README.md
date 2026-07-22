@@ -1,150 +1,161 @@
 # vibe-remote
 
-一个跨端的「远程 Claude 终端」客户端：远程 Linux 机器上跑 Claude Code CLI，
-桌面端像用本地 shell 一样连上去交互，体验跟直接在 shell 里敲 `claude` 完全一致。
+**English** ｜ [简体中文](./README.zh-CN.md)
 
-详见 [REQUIREMENTS.md](./REQUIREMENTS.md) 和 [docs/protocol.md](./docs/protocol.md)。
+A cross-platform "remote Claude terminal" client: Claude Code CLI runs on a
+remote Linux machine while the desktop app connects to it like a local shell —
+the experience is identical to typing `claude` in a shell directly.
 
-## 架构
+See [REQUIREMENTS.md](./REQUIREMENTS.md) and [docs/protocol.md](./docs/protocol.md) for details.
 
-```
-桌面端 (Electron + xterm.js)  ──ws(JSON分帧)──►  vibe-remoted (Go)  ──►  PTY→tmux→claude
-    「哑终端」，纯字节透传                          每台机器一个        字节流双向透传
-```
-
-- **纯字节透传**：不解析 claude 输出，PTY 字节流原样双向透传，流式/颜色/光标 0 失真还原。
-- **tmux 持久化**：客户端断开后 claude 会话存活，重连恢复现场。
-- **无中心 Hub**：每台机器各跑一个 vibe-remoted，客户端直连。服务端绑私有网段地址（LAN / tailscale），静态 token 为准入核心；跨网/加密可交给 Tailscale。
-
-## 主要特性
-
-- **多机多会话**：侧边栏按机器分组管理会话，点选机器决定新建会话落在哪台。
-- **会话命名 / 后台提示**：双击重命名，后台会话有输出/待输入时侧边栏亮圆点。
-- **断线重连**：状态栏显示重连进度，活动会话顶部断线横幅 + Retry。
-- **claude 参数预设**：服务端配 `claude_flags` 白名单，新建会话时页面多选（如 `-c` 续会话、跳过权限），per-session 生效。
-- **app 内机器管理**：增删改机器 + 测试连接，不用手改 `machines.json`。
-
-## 目录结构
+## Architecture
 
 ```
-vibe-remoted/    Go 服务端（单二进制）
-desktop/    Electron + xterm.js 客户端
-docs/       协议文档
+Desktop (Electron + xterm.js)  ──ws (JSON frames)──►  vibe-remoted (Go)  ──►  PTY→tmux→claude
+    "dumb terminal", raw byte passthrough              one per machine       bidirectional bytes
 ```
 
-## 服务端 vibe-remoted
+- **Raw byte passthrough**: the client never parses claude's output. PTY bytes are relayed verbatim in both directions, so streaming / colors / cursor render with zero loss.
+- **tmux persistence**: the claude session survives client disconnects and is restored on reconnect.
+- **No central hub**: each machine runs its own vibe-remoted and the client connects directly. The server binds a private-network address (LAN / tailscale) with a static token as the primary access boundary; cross-network reach and encryption can be delegated to Tailscale.
 
-### 构建
+## Features
+
+- **Multi-machine, multi-session**: sessions grouped by machine in the sidebar; click a machine to choose where a new session lands.
+- **Session naming / background hints**: double-click to rename; a sidebar dot lights up when a background session has output or is waiting for input.
+- **Reconnection**: the status bar shows reconnect progress, with a disconnect banner + Retry on the active session.
+- **claude flag presets**: the server defines a `claude_flags` whitelist; on new-session you multi-select flags (e.g. `-c` to continue, skip-permissions) — applied per-session.
+- **In-app machine management**: add / edit / remove machines + test connection, no need to hand-edit `machines.json`.
+
+## Layout
+
+```
+vibe-remoted/    Go server (single binary)
+desktop/         Electron + xterm.js client
+docs/            protocol docs
+```
+
+## Server: vibe-remoted
+
+### Build
 
 ```bash
-make server          # 产出 bin/vibe-remoted
-# 或
+make server          # produces bin/vibe-remoted
+# or
 cd vibe-remoted && go build -o ../bin/vibe-remoted ./cmd/vibe-remoted
 ```
 
-### 配置
+### Configuration
 
-复制 `vibe-remoted.example.json` 并按机器修改：
+Copy `vibe-remoted.example.json` and adjust per machine:
 
 ```json
 {
-  "bind_addr": "192.168.x.x",      // 私有网段地址(RFC1918/loopback/link-local
-                                    //   /tailscale 100.64.0.0/10)，校验强制
+  "bind_addr": "192.168.x.x",      // private-network address (RFC1918 / loopback /
+                                    //   link-local / tailscale 100.64.0.0/10); enforced
   "port": 8765,
-  "token": "your-secure-token",     // 静态鉴权 token，准入核心边界（常量时间校验）
+  "token": "your-secure-token",     // static auth token, the core access boundary (constant-time compare)
   "default_workdir": "/home/user",
-  "allowed_roots": ["/home/user"],  // workdir 白名单，防越权
-  "use_tmux": true,                 // false = 降级直跑 claude（无持久化）
-  "claude_cmd": "claude",           // 基础命令，整串传给 shell
-  "claude_flags": [                 // 可选：客户端新建会话时可多选的启动参数
-    { "id": "continue",   "label": "续上次会话 (-c)", "arg": "-c",                             "default": false },
-    { "id": "skip-perms", "label": "跳过权限确认",     "arg": "--dangerously-skip-permissions", "default": false }
+  "allowed_roots": ["/home/user"],  // workdir whitelist, prevents path escape
+  "use_tmux": true,                 // false = run claude directly (no persistence)
+  "claude_cmd": "claude",           // base command, passed as one string to the shell
+  "claude_flags": [                 // optional: flags the client can multi-select on new session
+    { "id": "continue",   "label": "Continue last session (-c)", "arg": "-c",                             "default": false },
+    { "id": "skip-perms", "label": "Skip permission prompts",    "arg": "--dangerously-skip-permissions", "default": false }
   ],
-  "login_shell": true,              // 通过登录 shell 启动，加载用户环境
-                                    //   （PATH、fnm/nvm 等），默认 true
-  "shell": "",                      // 登录 shell 路径，空=用 $SHELL 或 /bin/bash
-  "allow_insecure_bind": false      // true 才允许绑公网地址(不建议)；wildcard 恒拒
+  "login_shell": true,              // launch via login shell to load user env
+                                    //   (PATH, fnm/nvm, etc.); default true
+  "shell": "",                      // login shell path; empty = $SHELL or /bin/bash
+  "allow_insecure_bind": false      // true allows binding a public address (not recommended); wildcards always rejected
 }
 ```
 
-**追加启动参数**：`claude_cmd` 是整条命令串，直接追加参数即可，例如
-`"claude_cmd": "claude --dangerously-skip-permissions -c"`。因为通过登录 shell
-以 `<shell> -lic 'exec <claude_cmd>'` 启动，参数按 shell 规则解析。
+**Appending launch args**: `claude_cmd` is a full command string — append args directly, e.g.
+`"claude_cmd": "claude --dangerously-skip-permissions -c"`. It launches via a login shell as
+`<shell> -lic 'exec <claude_cmd>'`, so args are parsed by shell rules.
 
-**参数预设（`claude_flags`）**：可选。配一组 `{id, label, arg, default}`，客户端新建会话时
-在目录选择器里按 `label` 多选，服务端按 `id` 查白名单把 `arg` 拼到 `claude_cmd` 后
-（**per-session**，每个会话独立）。客户端只传 id、服务端查表 = 零命令注入；`default` 控制初始勾选。
-不配则退化为直接用 `claude_cmd`。
+**Flag presets (`claude_flags`)**: optional. Define a list of `{id, label, arg, default}`; on new
+session the client multi-selects by `label`, and the server looks up each `id` in the whitelist and
+appends its `arg` to `claude_cmd` (**per-session**, independent for each session). The client only
+sends ids and the server resolves them from the table = zero command injection; `default` controls the
+initial checked state. If unset, `claude_cmd` is used as-is.
 
-也可用环境变量覆盖：`VIBE_REMOTED_BIND_ADDR`、`VIBE_REMOTED_TOKEN`。
+Environment overrides: `VIBE_REMOTED_BIND_ADDR`, `VIBE_REMOTED_TOKEN`.
 
-### 运行
+### Run
 
 ```bash
 ./bin/vibe-remoted --config vibe-remoted.json
 ```
 
-### 测试
+### Test
 
 ```bash
-cd vibe-remoted && go test ./...   # 单元测试（含路径越权防护）
+cd vibe-remoted && go test ./...   # unit tests (incl. path-escape protection)
 ```
 
-## 客户端 desktop
+## Client: desktop
 
-### 安装依赖
+### Install deps
 
 ```bash
 cd desktop && npm install
 ```
 
-### 开发运行
+### Dev run
 
 ```bash
-npm run dev      # Vite + Electron 热重载
+npm run dev      # Vite + Electron hot reload
 ```
 
-### 机器管理
+### Machine management
 
-首次运行后，点侧边栏「机器管理」在 app 内增删改机器 + 测试连接（推荐）。每台填
-`name / addr / port / token`。多台机器时，点侧边栏机器名选中它，新建会话即落在选中的机器上。
+On first run, click "machine management" in the sidebar to add / edit / remove machines and test
+connections in-app (recommended). Each machine takes `name / addr / port / token`. With multiple
+machines, click a machine name in the sidebar to select it — new sessions then land on the selected machine.
 
-配置底层存于 Electron userData 下的 `machines.json`（一般无需手改）：
+The list is stored under the Electron userData dir as `machines.json` (rarely edited by hand):
 
 ```json
 [
-  { "name": "机器A", "addr": "192.168.1.x 或 100.x.x.x", "port": 8765, "token": "your-secure-token" }
+  { "name": "machine-a", "addr": "192.168.1.x or 100.x.x.x", "port": 8765, "token": "your-secure-token" }
 ]
 ```
 
-macOS 路径通常为 `~/Library/Application Support/vibe-remote/machines.json`。
+macOS path is typically `~/Library/Application Support/vibe-remote/machines.json`.
 
-### 打包 (.dmg)
+### Package (.dmg)
 
 ```bash
 npm run build    # tsc + vite build + electron-builder
 ```
 
-## 前置条件
+## Prerequisites
 
-- 客户端与目标机网络互通即可：同一 **Tailscale tailnet**（推荐，自带加密+跨网）
-  或同一**可信局域网**（LAN 内 `ws://` 明文，仅在可信网络使用）。
-- 目标 Linux 具备 `claude`、`tmux`、`go`。
-- 走 Tailscale 时，Mac 端需运行（`tailscale up`）。
+- The client and target machine just need network reachability: same **Tailscale tailnet**
+  (recommended — built-in encryption + cross-network) or the same **trusted LAN**
+  (plaintext `ws://` on the LAN; use only on trusted networks).
+- The target Linux host has `claude`, `tmux`, `go`.
+- When using Tailscale, the Mac must be up (`tailscale up`).
 
-## 本地开发冒烟（无需远程机）
+## Local smoke test (no remote machine)
 
-macOS 本身有 PTY + tmux，可本地起 vibe-remoted 冒烟。用 `claude_cmd: "/bin/bash"` 代跑即可验证透传链路
-（纯字节透传不关心跑什么命令）。
+macOS has PTY + tmux, so you can run vibe-remoted locally for a smoke test. Use `claude_cmd: "/bin/bash"`
+as a stand-in to verify the passthrough chain (raw passthrough doesn't care what command runs).
 
-### 本机自连自测（make dev-local）
+### Self-connect test (make dev-local)
 
-Mac 同时当服务端与客户端，跑真 `claude` 走完整链路：
+The Mac acts as both server and client, running real `claude` through the full chain:
 
 ```bash
-make dev-local   # 动态取本机 tailscale IP，绑真地址启动（不走 allow_insecure_bind）
+make dev-local   # binds this host's tailscale IP with a real address (no allow_insecure_bind)
 ```
 
-它会打印客户端要填的 `addr:port`（本机 tailscale IP + 8765）。在桌面端「机器管理」里
-添加这台机器（token 见 `vibe-remoted.local-tmux.json`），即可端到端验证透传 / tmux 持久化 / 重连。
-前提：本机已 `tailscale up` 且装有 `tmux` + `claude`。
+It prints the `addr:port` to fill in on the client (this host's tailscale IP + 8765). In the desktop
+"machine management", add this machine (token is in `vibe-remoted.local-tmux.json`) to verify
+passthrough / tmux persistence / reconnect end-to-end. Requires `tailscale up` and `tmux` + `claude`
+installed locally.
+
+## License
+
+[MIT](./LICENSE) © 2026 lflish
