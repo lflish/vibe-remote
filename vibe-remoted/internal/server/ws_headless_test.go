@@ -89,8 +89,10 @@ func TestWSHeadlessRelay(t *testing.T) {
 	if !sawReady {
 		t.Fatal("never received ready frame")
 	}
-	if len(gotLines) < 2 || gotLines[0] != `{"type":"stream_event"}` {
-		t.Fatalf("unexpected NDJSON data frames: %v", gotLines)
+	// The server must re-add the trailing '\n' that bufio.Scanner strips, so the
+	// client's NDJSON line-splitter can find line boundaries across frames.
+	if len(gotLines) < 2 || gotLines[0] != "{\"type\":\"stream_event\"}\n" {
+		t.Fatalf("unexpected NDJSON data frames: %q", gotLines)
 	}
 	_ = os.Stdout
 }

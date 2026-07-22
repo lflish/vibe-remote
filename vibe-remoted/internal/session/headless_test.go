@@ -42,6 +42,24 @@ func TestHeadlessRunnerRunTurn(t *testing.T) {
 	}
 }
 
+func TestHeadlessRunnerScanErrPropagates(t *testing.T) {
+	// A single stdout line larger than the 4MB scanner buffer trips
+	// bufio.ErrTooLong. Without the scanner.Err() check, Scan() returns false
+	// silently and RunTurn would report a clean exit; with it, the error must
+	// surface so wsHeadless can send an error frame instead of a truncated turn.
+	// 5MB of 'a' with no newline = one over-long line.
+	stub := `sh -c 'head -c 5000000 /dev/zero | tr "\\0" a'`
+	h := NewHeadlessRunner("/tmp", stub, true, "/bin/sh", nil)
+
+	_, err := h.RunTurn(context.Background(), "x", func(line []byte) {})
+	if err == nil {
+		t.Fatal("expected scan error for over-long line, got nil")
+	}
+	if !strings.Contains(err.Error(), "stdout scan") {
+		t.Fatalf("expected wrapped stdout scan error, got: %v", err)
+	}
+}
+
 func TestHeadlessRunnerCancel(t *testing.T) {
 	// A command that would block forever must be killed by ctx cancel.
 	h := NewHeadlessRunner("/tmp", "cat", true, "/bin/sh", nil)

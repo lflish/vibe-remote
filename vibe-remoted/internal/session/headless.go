@@ -100,6 +100,17 @@ func (h *HeadlessRunner) RunTurn(ctx context.Context, prompt string, onLine func
 		copy(cp, line)
 		onLine(cp)
 	}
+	// A scan error (a line exceeding the 4MB buffer → bufio.ErrTooLong, or a
+	// read failure) makes Scan return false silently: the stream is truncated
+	// mid-turn. Propagate it so wsHeadless sends an error frame instead of
+	// stopping half-way and returning exit 0. Kill first, then reap: with a
+	// StdoutPipe the child may still be blocked writing to the now-undrained
+	// pipe, so a bare cmd.Wait() would deadlock — Kill unblocks the writer.
+	if err := scanner.Err(); err != nil {
+		cmd.Process.Kill()
+		cmd.Wait()
+		return -1, fmt.Errorf("stdout scan: %w", err)
+	}
 
 	err = cmd.Wait()
 	if err != nil {

@@ -353,9 +353,14 @@ func (s *Server) wsHeadless(ctx context.Context, conn *websocket.Conn, frame pro
 			go func() {
 				defer busy.Store(false)
 				_, runErr := runner.RunTurn(ctx, string(prompt), func(line []byte) {
+					// bufio.Scanner (ScanLines) strips the trailing '\n'; restore it
+					// so the client's NDJSON line-splitter can find line boundaries
+					// across frames. `line` is a per-line copy (see RunTurn's onLine),
+					// so appending here does not touch the scanner's buffer. Pure
+					// transport: we re-add the delimiter, never parse the content.
 					wsjson.Write(ctx, conn, protocol.DataFrame{
 						Type:    protocol.TypeData,
-						Payload: base64.StdEncoding.EncodeToString(line),
+						Payload: base64.StdEncoding.EncodeToString(append(line, '\n')),
 					})
 				})
 				if runErr != nil {
