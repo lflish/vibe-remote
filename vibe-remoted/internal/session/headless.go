@@ -7,7 +7,6 @@ import (
 	"io"
 	"os"
 	"os/exec"
-	"strings"
 )
 
 // HeadlessRunner runs one `claude -c -p` turn per RunTurn call (line B: the
@@ -48,16 +47,18 @@ const headlessFlags = "-c -p --output-format stream-json --include-partial-messa
 func (h *HeadlessRunner) buildCmd(ctx context.Context) *exec.Cmd {
 	full := h.claudeCmd + " " + headlessFlags
 	var cmd *exec.Cmd
+	sh := h.shell
+	if sh == "" {
+		sh = "/bin/bash"
+	}
 	if h.loginShell {
-		sh := h.shell
-		if sh == "" {
-			sh = "/bin/bash"
-		}
 		cmd = exec.CommandContext(ctx, sh, "-lic", "exec "+full)
 	} else {
-		// Non-login: split on spaces (base command has no quoted args in practice).
-		parts := strings.Fields(full)
-		cmd = exec.CommandContext(ctx, parts[0], parts[1:]...)
+		// Non-login: still run through the shell (no login/interactive) so the
+		// command string is parsed by shell rules (quotes, etc.), matching the
+		// documented claude_cmd contract ("按 shell 规则解析"). `exec` replaces the
+		// shell with claude so there's no extra wrapper process.
+		cmd = exec.CommandContext(ctx, sh, "-c", "exec "+full)
 	}
 	cmd.Dir = h.workdir
 	cmd.Env = append(os.Environ(), h.env...)

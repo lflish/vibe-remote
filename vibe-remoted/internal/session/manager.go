@@ -274,6 +274,22 @@ func (m *Manager) PublishEvent(sessionID string, f protocol.NotifyFrame) {
 	}
 }
 
+// NewHeadless builds a HeadlessRunner for the given workdir using the manager's
+// configured claude command, login-shell settings, and events environment. It
+// does not register anything in the session map — headless turns are stateless
+// (continuity is claude's own -c over the shared jsonl), so there is nothing to
+// track between turns.
+func (m *Manager) NewHeadless(workdir string) *HeadlessRunner {
+	var env []string
+	if m.eventsURL != "" {
+		env = append(env, "VIBE_REMOTE_EVENTS_URL="+m.eventsURL)
+	}
+	if m.token != "" {
+		env = append(env, "VIBE_REMOTE_TOKEN="+m.token)
+	}
+	return NewHeadlessRunner(workdir, m.claudeCmd, m.loginShell, m.shell, env)
+}
+
 // generateID creates a short unique session ID. It combines a millisecond
 // timestamp (keeps IDs roughly sortable by creation time) with a random
 // suffix, so two sessions created in the same millisecond don't collide —
