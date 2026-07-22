@@ -1617,7 +1617,7 @@ git commit -m "feat(mobile): 聊天 UI 装配 + client.ts attach 支持 headless
 import type { CapacitorConfig } from '@capacitor/cli';
 
 const config: CapacitorConfig = {
-  appId: 'com.vibe-remote.mobile',
+  appId: 'com.viberemote.mobile', // Java-package form: no hyphens (Capacitor rejects them)
   appName: 'vibe-remote',
   webDir: 'dist',
   server: {
