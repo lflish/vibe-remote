@@ -44,11 +44,12 @@ export class VibeRemoteClient {
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private pingTimer: ReturnType<typeof setInterval> | null = null;
   private currentSessionId: string | null = null;
-  private pendingAttach: { sessionId: string; cols: number; rows: number; workdir?: string; flags?: string[] } | null = null;
+  private pendingAttach: { sessionId: string; cols: number; rows: number; workdir?: string; flags?: string[]; mode?: 'tui' | 'headless' } | null = null;
   // Last known terminal size, so a reconnect re-attaches at the correct
   // dimensions instead of a default 80x24 (which would misdraw until resize).
   private lastCols = 80;
   private lastRows = 24;
+  private lastMode: 'tui' | 'headless' | undefined = undefined;
 
   constructor(machine: MachineConfig) {
     this.machine = machine;
@@ -84,6 +85,7 @@ export class VibeRemoteClient {
           rows: this.pendingAttach.rows,
           workdir: this.pendingAttach.workdir,
           flags: this.pendingAttach.flags,
+          mode: this.pendingAttach.mode,
         });
         this.pendingAttach = null;
       }
@@ -131,16 +133,18 @@ export class VibeRemoteClient {
         sessionId: this.currentSessionId,
         cols: this.lastCols,
         rows: this.lastRows,
+        mode: this.lastMode,
       };
     }
     this.connect();
   }
 
   /** Attach to a session (empty sessionId = create new). */
-  attach(sessionId: string, cols: number, rows: number, workdir?: string, flags?: string[]) {
+  attach(sessionId: string, cols: number, rows: number, workdir?: string, flags?: string[], mode?: 'tui' | 'headless') {
     this.currentSessionId = sessionId || null;
     this.lastCols = cols;
     this.lastRows = rows;
+    this.lastMode = mode;
 
     if (this.state === ConnectionState.Connected && this.ws) {
       this.send<AttachFrame>({
@@ -150,12 +154,13 @@ export class VibeRemoteClient {
         rows,
         workdir,
         flags,
+        mode,
       });
     } else {
       // Connection not ready yet — store the full attach (including workdir/flags)
       // to send on open. Dropping workdir here is what made new sessions
       // always land in the default dir instead of the chosen one.
-      this.pendingAttach = { sessionId, cols, rows, workdir, flags };
+      this.pendingAttach = { sessionId, cols, rows, workdir, flags, mode };
     }
   }
 
@@ -243,6 +248,7 @@ export class VibeRemoteClient {
           sessionId: this.currentSessionId,
           cols: this.lastCols,
           rows: this.lastRows,
+          mode: this.lastMode,
         };
       }
       this.connect();
