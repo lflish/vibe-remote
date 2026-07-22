@@ -30,6 +30,7 @@ export interface AttachFrame {
   rows: number;
   workdir?: string; // working directory for new sessions
   flags?: string[]; // selected claude_flags ids (new session only)
+  mode?: 'tui' | 'headless'; // omitted = tui (desktop path unchanged)
 }
 
 export interface DataFrameC2S {

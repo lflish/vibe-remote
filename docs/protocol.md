@@ -60,6 +60,16 @@ Client                              Server (vibe-remoted)
 - `workdir`：仅新建时有效，指定 claude 工作目录。省略则用服务端默认值
 - `flags`：可选，仅新建会话有效。客户端勾选的 claude 启动 flag id 列表；服务端按 `claude_flags` 白名单查表，把对应参数拼到 `claude_cmd` 后（未知 id 忽略）
 
+### attach 帧的 mode 字段（headless 线）
+
+`attach` 帧可带 `mode` 字段：
+- 省略或 `"tui"`：现有行为，创建/续接 PTY→tmux→claude TUI 会话。
+- `"headless"`：进入 headless 聊天线。服务端不启 tmux，而是每收到一个 `data` 帧
+  （base64 编码的用户 prompt）就在 `workdir` 下起一次
+  `claude -c -p --output-format stream-json --include-partial-messages --verbose`
+  （prompt 经 stdin 传入），把 claude 的 NDJSON 输出**按行**作为 `data` 帧转发；
+  进程退出后等待下一个 `data` 帧。workdir 仍受 allowed_roots 白名单约束。
+
 ### ready (S→C)
 
 确认 attach 成功。
