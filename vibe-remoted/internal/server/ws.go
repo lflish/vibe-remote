@@ -10,8 +10,8 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/anthropic/vibe-remote/vibe-remoted/internal/protocol"
-	"github.com/anthropic/vibe-remote/vibe-remoted/internal/session"
+	"github.com/lflish/vibe-remote/vibe-remoted/internal/protocol"
+	"github.com/lflish/vibe-remote/vibe-remoted/internal/session"
 	"github.com/coder/websocket"
 	"github.com/coder/websocket/wsjson"
 )

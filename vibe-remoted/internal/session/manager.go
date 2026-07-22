@@ -7,7 +7,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/anthropic/vibe-remote/vibe-remoted/internal/protocol"
+	"github.com/lflish/vibe-remote/vibe-remoted/internal/protocol"
 )
 
 // Manager tracks all sessions on this machine.

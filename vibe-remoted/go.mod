@@ -1,4 +1,4 @@
-module github.com/anthropic/vibe-remote/vibe-remoted
+module github.com/lflish/vibe-remote/vibe-remoted
 
 go 1.22
 

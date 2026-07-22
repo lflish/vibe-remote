@@ -9,9 +9,9 @@ import (
 	"log"
 	"os"
 
-	"github.com/anthropic/vibe-remote/vibe-remoted/internal/config"
-	"github.com/anthropic/vibe-remote/vibe-remoted/internal/server"
-	"github.com/anthropic/vibe-remote/vibe-remoted/internal/session"
+	"github.com/lflish/vibe-remote/vibe-remoted/internal/config"
+	"github.com/lflish/vibe-remote/vibe-remoted/internal/server"
+	"github.com/lflish/vibe-remote/vibe-remoted/internal/session"
 )
 
 func main() {
