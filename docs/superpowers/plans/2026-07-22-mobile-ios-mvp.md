@@ -188,10 +188,13 @@ import (
 )
 
 func TestHeadlessRunnerRunTurn(t *testing.T) {
-	// Stub "claude": echo two NDJSON lines, and echo back stdin so we can
+	// Stub "claude": echo two NDJSON lines, then echo back stdin so we can
 	// assert the prompt was delivered via stdin (never via the command line).
-	// login shell wrapping is exercised (loginShell=true).
-	stub := `printf '{"type":"stream_event"}\n{"type":"result"}\n'; cat`
+	// Wrapped in its own `sh -c '...'` so the appended headlessFlags bind to
+	// this inner sh (which ignores extra positional args) instead of breaking
+	// the printf/cat pipeline — mirroring how a real `claude` binary absorbs
+	// the flags. login shell wrapping is exercised (loginShell=true).
+	stub := `sh -c 'printf "{\"type\":\"stream_event\"}\n{\"type\":\"result\"}\n"; cat'`
 	h := NewHeadlessRunner("/tmp", stub, true, "/bin/sh", nil)
 
 	var lines []string
