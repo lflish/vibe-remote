@@ -1,16 +1,15 @@
 import './styles.css';
-import { VibeRemoteClient, ConnectionState } from '@net/client';
+import { VibeRemoteClient } from '@net/client';
 import { VibeRemoteRest } from '@net/rest';
-import { ChatController } from './chat';
+import { ChatController, type ChatMessage } from './chat';
 import { makeLineSplitter } from './lines';
 import { makeMachineStore, defaultKV } from './storage';
+import { renderMarkdown } from './render';
 import type { MachineConfig, SessionInfo } from '@shared/protocol';
 
 const app = document.getElementById('app')!;
 const store = makeMachineStore(defaultKV());
 
-// base64 <-> bytes (UTF-8 safe) — mobile only needs the encode direction for
-// sending prompts and decode for receiving NDJSON lines.
 function bytesToBase64(bytes: Uint8Array): string {
   let bin = '';
   for (const b of bytes) bin += String.fromCharCode(b);
@@ -23,8 +22,20 @@ function base64ToText(b64: string): string {
   return new TextDecoder().decode(bytes);
 }
 
-// NDJSON can arrive split across frames; buffer partial lines per client.
-// (splitter logic lives in ./lines so it can be unit-tested independently)
+function escapeHtml(s: string): string {
+  return s.replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]!));
+}
+
+// Render one chat message. assistant → markdown (sanitized); user/tool → escaped.
+function renderMessage(msg: ChatMessage): string {
+  if (msg.role === 'assistant') {
+    return `<div class="bubble assistant"><div class="md">${renderMarkdown(msg.text)}</div></div>`;
+  }
+  if (msg.role === 'tool') {
+    return `<div class="bubble tool">🔧 ${escapeHtml(msg.text)}</div>`;
+  }
+  return `<div class="bubble user">${escapeHtml(msg.text)}</div>`;
+}
 
 async function renderMachineList() {
   const machines = await store.getMachines();
@@ -59,7 +70,7 @@ async function renderMachineList() {
 function openChat(machine: MachineConfig, session: SessionInfo) {
   const controller = new ChatController();
   app.innerHTML = `
-    <div class="header"><button class="back" id="back">‹ 返回</button><span>${session.title}</span></div>
+    <div class="header"><button class="back" id="back">‹ 返回</button><span>${escapeHtml(session.title)}</span></div>
     <div class="chat" id="chat"></div>
     <div class="cost" id="cost"></div>
     <div class="composer">
@@ -71,36 +82,84 @@ function openChat(machine: MachineConfig, session: SessionInfo) {
   const input = document.getElementById('input') as HTMLTextAreaElement;
 
   controller.onUpdate = () => {
-    chat.innerHTML = controller.messages
-      .map((msg) => `<div class="bubble ${msg.role}">${escapeHtml(msg.text)}</div>`)
-      .join('') + (controller.loading ? `<div class="loading">思考中…</div>` : '');
-    cost.textContent = controller.lastCostUsd != null ? `本轮成本 $${controller.lastCostUsd.toFixed(4)}` : '';
+    const loadingText = controller.activity ? `${controller.activity}…` : '思考中…';
+    chat.innerHTML =
+      controller.messages.map(renderMessage).join('') +
+      (controller.loading ? `<div class="loading">${escapeHtml(loadingText)}</div>` : '');
+    const parts: string[] = [];
+    if (controller.lastCostUsd != null) parts.push(`$${controller.lastCostUsd.toFixed(4)}`);
+    if (controller.lastInputTokens != null && controller.lastOutputTokens != null) {
+      parts.push(`${controller.lastInputTokens}→${controller.lastOutputTokens} tok`);
+    }
+    cost.textContent = parts.join(' · ');
     chat.scrollTop = chat.scrollHeight;
   };
+
+  // Load prior history so opening a session shows what happened before.
+  const rest = new VibeRemoteRest(machine);
+  rest.history(session.workdir, 50)
+    .then((turns) => {
+      if (controller.messages.length === 0) {
+        controller.setHistory(turns.map((t) => ({ role: t.role, text: t.text }) as ChatMessage));
+      }
+    })
+    .catch(() => { /* history is best-effort; empty chat is fine */ });
 
   const client = new VibeRemoteClient(machine);
   const feed = makeLineSplitter((line) => controller.applyLine(line));
   client.onData = (payload) => feed(base64ToText(payload));
-  client.onError = (m) => controller.applyLine(JSON.stringify({ type: 'result' })); // end loading on error
+  client.onError = () => controller.applyLine(JSON.stringify({ type: 'result' }));
   client.connect();
-  // Headless attach: key on workdir, empty sessionId, mode headless.
   client.attach('', 80, 24, session.workdir, undefined, 'headless');
 
-  document.getElementById('send')!.onclick = () => {
+  // Auto-grow textarea (32→120px) as the user types.
+  const autoGrow = () => {
+    input.style.height = 'auto';
+    input.style.height = Math.min(input.scrollHeight, 120) + 'px';
+  };
+  input.addEventListener('input', autoGrow);
+
+  const send = () => {
     const text = input.value.trim();
-    if (!text) return;
+    if (!text || controller.loading) return; // don't send while a turn streams
     controller.startUserTurn(text);
     client.sendData(bytesToBase64(new TextEncoder().encode(text)));
     input.value = '';
+    autoGrow();
   };
+  document.getElementById('send')!.onclick = send;
+
   document.getElementById('back')!.onclick = () => {
     client.disconnect();
+    detachKeyboardAvoidance();
     renderMachineList();
   };
+
+  attachKeyboardAvoidance();
 }
 
-function escapeHtml(s: string): string {
-  return s.replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]!));
+// Keyboard avoidance: when the soft keyboard shows, visualViewport shrinks;
+// push the composer up by the covered height via the --keyboard-height token.
+let vvHandler: (() => void) | null = null;
+function attachKeyboardAvoidance() {
+  const vv = window.visualViewport;
+  if (!vv) return;
+  vvHandler = () => {
+    const covered = Math.max(0, window.innerHeight - vv.height - vv.offsetTop);
+    document.documentElement.style.setProperty('--keyboard-height', covered + 'px');
+  };
+  vv.addEventListener('resize', vvHandler);
+  vv.addEventListener('scroll', vvHandler);
+  vvHandler();
+}
+function detachKeyboardAvoidance() {
+  const vv = window.visualViewport;
+  if (vv && vvHandler) {
+    vv.removeEventListener('resize', vvHandler);
+    vv.removeEventListener('scroll', vvHandler);
+  }
+  vvHandler = null;
+  document.documentElement.style.setProperty('--keyboard-height', '0px');
 }
 
 renderMachineList();
