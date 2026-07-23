@@ -160,6 +160,15 @@ PTY 字节流，base64 编码。
 | GET | `/api/v1/fs?path=<dir>` | 列目录（仅目录项），供远程目录选择器用 |
 | POST | `/api/v1/events` | 带外事件上报，body `{sessionId,kind,message?}`，路由为该会话的 notify 帧 |
 
+### GET /api/v1/history（会话历史，headless 聊天线）
+
+`GET /api/v1/history?path=<workdir>&limit=<n>`（Bearer 鉴权 + workdir 白名单）。
+读取该 workdir 对应 claude 会话 jsonl（`~/.claude/projects/<编码目录>/*.jsonl`，取最近修改的一个），
+返回最近 `limit`（默认 50）轮对话，oldest-first：
+`{"turns":[{"role":"user"|"assistant","text":"..."}]}`。
+仅提取 user 纯文本 prompt 与 assistant 的 text 片段（tool_result / thinking / 附件等跳过）。
+无会话时返回 `{"turns":[]}`。
+
 ## 安全
 
 - vibe-remoted 绑定私有网段地址（RFC1918 / loopback / link-local / tailscale
