@@ -16,6 +16,12 @@ const (
 	TypeNotify   = "notify"
 )
 
+// Attach modes. Empty Mode is treated as ModeTUI for back-compat.
+const (
+	ModeTUI      = "tui"
+	ModeHeadless = "headless"
+)
+
 // Frame is the envelope for all WebSocket messages.
 type Frame struct {
 	Type string `json:"type"`
@@ -35,6 +41,7 @@ type AttachFrame struct {
 	Rows      uint16   `json:"rows"`
 	Workdir   string   `json:"workdir,omitempty"` // working directory for new sessions
 	Flags     []string `json:"flags,omitempty"`   // selected claude_flags ids (new session only)
+	Mode      string   `json:"mode,omitempty"`    // "" | "tui" | "headless"; empty = tui
 }
 
 // ReadyFrame confirms attach success.

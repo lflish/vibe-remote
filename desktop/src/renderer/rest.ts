@@ -53,6 +53,17 @@ export class VibeRemoteRest {
     if (!res.ok) throw new Error(`fs failed: ${res.status}`);
     return res.json();
   }
+
+  /** Fetch recent conversation turns for a workdir (mobile chat history). */
+  async history(workdir: string, limit = 50): Promise<HistoryTurn[]> {
+    const url = new URL(`${this.base()}/api/v1/history`);
+    url.searchParams.set('path', workdir);
+    url.searchParams.set('limit', String(limit));
+    const res = await fetch(url.toString(), { headers: this.headers() });
+    if (!res.ok) throw new Error(`history failed: ${res.status}`);
+    const data = await res.json();
+    return data.turns || [];
+  }
 }
 
 export interface ClaudeFlagInfo {
@@ -77,4 +88,9 @@ export interface DirEntry {
 export interface DirListing {
   path: string;
   entries: DirEntry[];
+}
+
+export interface HistoryTurn {
+  role: 'user' | 'assistant';
+  text: string;
 }

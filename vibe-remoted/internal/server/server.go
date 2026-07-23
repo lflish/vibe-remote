@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"github.com/lflish/vibe-remote/vibe-remoted/internal/config"
@@ -43,6 +44,7 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("POST /api/v1/sessions/{id}/rename", s.handleRenameSession)
 	s.mux.HandleFunc("POST /api/v1/events", s.handleEvents)
 	s.mux.HandleFunc("GET /api/v1/fs", s.handleFS)
+	s.mux.HandleFunc("GET /api/v1/history", s.handleHistory)
 	s.mux.HandleFunc("/ws", s.handleWS)
 }
 
@@ -224,6 +226,35 @@ func (s *Server) handleFS(w http.ResponseWriter, r *http.Request) {
 		"path":    absPath,
 		"entries": dirs,
 	})
+}
+
+// handleHistory returns recent conversation turns for a workdir's claude
+// session, read from the shared jsonl. Same Bearer auth + workdir whitelist as
+// every other endpoint. Powers the mobile chat's "show prior context on open".
+func (s *Server) handleHistory(w http.ResponseWriter, r *http.Request) {
+	if !s.checkToken(r, w) {
+		return
+	}
+	workdir := r.URL.Query().Get("path")
+	if workdir == "" {
+		workdir = s.cfg.DefaultWorkdir
+	}
+	if !s.cfg.IsAllowedWorkdir(workdir) {
+		writeJSON(w, http.StatusForbidden, map[string]string{"error": "path not in allowed roots"})
+		return
+	}
+	limit := 50
+	if v := r.URL.Query().Get("limit"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			limit = n
+		}
+	}
+	turns, err := session.ReadHistory(workdir, limit)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"turns": turns})
 }
 
 // checkToken validates the Bearer token from the Authorization header.

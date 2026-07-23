@@ -43,13 +43,23 @@ func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Phase 2: Attach
-	runner, sessionID := s.wsAttach(ctx, conn)
-	if runner == nil {
+	// Phase 2: Read attach (push sessions list, answer pings while idle)
+	frame, ok := s.wsReadAttach(ctx, conn)
+	if !ok {
 		return
 	}
 
-	// Phase 3: Bidirectional data relay
+	// Phase 3: Dispatch by mode. Headless (line B) runs a stateless chat loop;
+	// the default TUI mode (line A) opens a PTY→tmux→claude session and relays.
+	if frame.Mode == protocol.ModeHeadless {
+		s.wsHeadless(ctx, conn, frame)
+		return
+	}
+
+	runner, sessionID := s.wsOpenTUI(ctx, conn, frame)
+	if runner == nil {
+		return
+	}
 	s.wsRelay(ctx, conn, runner, sessionID)
 }
 
@@ -75,12 +85,10 @@ func (s *Server) wsAuth(ctx context.Context, conn *websocket.Conn) bool {
 	return true
 }
 
-// wsAttach waits for an attach frame and creates or resumes a session.
-// After auth the client may stay idle (browsing sessions) before attaching,
-// so there is no short timeout here — the connection lives until the client
-// sends attach or disconnects. ping/pong frames received while waiting are
-// answered so keepalive works during the idle window.
-func (s *Server) wsAttach(ctx context.Context, conn *websocket.Conn) (*session.Runner, string) {
+// wsReadAttach pushes the session list, then reads frames until an attach
+// arrives (answering pings during the idle browse window). Returns the attach
+// frame, or ok=false if the client disconnected first.
+func (s *Server) wsReadAttach(ctx context.Context, conn *websocket.Conn) (protocol.AttachFrame, bool) {
 	// Push the current session list so the client can populate its sidebar
 	// and let the user pick a session (or create a new one) before attaching.
 	wsjson.Write(ctx, conn, protocol.SessionsFrame{
@@ -92,18 +100,22 @@ func (s *Server) wsAttach(ctx context.Context, conn *websocket.Conn) (*session.R
 	for {
 		if err := wsjson.Read(ctx, conn, &frame); err != nil {
 			// Client disconnected while idle — expected, not an error.
-			return nil, ""
+			return protocol.AttachFrame{}, false
 		}
 		if frame.Type == protocol.TypePing {
 			wsjson.Write(ctx, conn, protocol.Frame{Type: protocol.TypePong})
 			continue
 		}
 		if frame.Type == protocol.TypeAttach {
-			break
+			return frame, true
 		}
 		// Ignore other frames while waiting for attach.
 	}
+}
 
+// wsOpenTUI creates or resumes a PTY→tmux→claude session (line A) and sends the
+// ready + refreshed sessions frames. Returns (nil, "") on failure.
+func (s *Server) wsOpenTUI(ctx context.Context, conn *websocket.Conn, frame protocol.AttachFrame) (*session.Runner, string) {
 	var runner *session.Runner
 	var err error
 
@@ -277,6 +289,90 @@ func (s *Server) wsRelay(ctx context.Context, conn *websocket.Conn, runner *sess
 
 		default:
 			log.Printf("ws unknown frame type [%s]: %s", sessionID, frame.Type)
+		}
+	}
+}
+
+// wsHeadless drives the headless chat line (line B). Each data frame from the
+// client is a user prompt (base64 text); the server runs one `claude -c -p`
+// turn in the workdir and forwards claude's NDJSON stdout line-by-line as data
+// frames. The turn runs in a goroutine so the read loop keeps answering pings
+// and can cancel the turn if the client disconnects. Stateless by design:
+// continuity is claude's own -c over the shared jsonl ("refresh = -c").
+func (s *Server) wsHeadless(ctx context.Context, conn *websocket.Conn, frame protocol.AttachFrame) {
+	workdir := frame.Workdir
+	if workdir == "" {
+		workdir = s.cfg.DefaultWorkdir
+	}
+	if !s.cfg.IsAllowedWorkdir(workdir) {
+		sendError(ctx, conn, "workdir not in allowed roots")
+		conn.Close(websocket.StatusPolicyViolation, "bad workdir")
+		return
+	}
+
+	// Identity for headless is just the workdir; echo it back so the client
+	// shows the chat for this directory.
+	wsjson.Write(ctx, conn, protocol.ReadyFrame{
+		Type:      protocol.TypeReady,
+		SessionID: frame.SessionID, // may be empty; workdir is the real key
+		Workdir:   workdir,
+	})
+
+	runner := s.mgr.NewHeadless(workdir)
+
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
+	var busy atomic.Bool
+
+	for {
+		_, data, err := conn.Read(ctx)
+		if err != nil {
+			// Client disconnected — cancel any in-flight turn and return.
+			return
+		}
+		var f protocol.Frame
+		if err := json.Unmarshal(data, &f); err != nil {
+			continue
+		}
+		switch f.Type {
+		case protocol.TypeData:
+			if busy.Load() {
+				// One turn at a time; ignore input while a turn is streaming.
+				continue
+			}
+			var df protocol.DataFrame
+			if err := json.Unmarshal(data, &df); err != nil {
+				continue
+			}
+			prompt, err := base64.StdEncoding.DecodeString(df.Payload)
+			if err != nil {
+				continue
+			}
+			busy.Store(true)
+			go func() {
+				defer busy.Store(false)
+				_, runErr := runner.RunTurn(ctx, string(prompt), func(line []byte) {
+					// bufio.Scanner (ScanLines) strips the trailing '\n'; restore it
+					// so the client's NDJSON line-splitter can find line boundaries
+					// across frames. `line` is a per-line copy (see RunTurn's onLine),
+					// so appending here does not touch the scanner's buffer. Pure
+					// transport: we re-add the delimiter, never parse the content.
+					wsjson.Write(ctx, conn, protocol.DataFrame{
+						Type:    protocol.TypeData,
+						Payload: base64.StdEncoding.EncodeToString(append(line, '\n')),
+					})
+				})
+				if runErr != nil {
+					sendError(ctx, conn, "headless turn: "+runErr.Error())
+				}
+			}()
+
+		case protocol.TypePing:
+			wsjson.Write(ctx, conn, protocol.Frame{Type: protocol.TypePong})
+
+		default:
+			// ignore
 		}
 	}
 }
