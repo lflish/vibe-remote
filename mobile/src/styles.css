@@ -59,3 +59,47 @@ body { margin: 0; font-family: -apple-system, system-ui, sans-serif; background:
 .composer button { background: var(--color-accent); color: var(--color-bg); border: none; border-radius: var(--radius-sm); padding: 0 var(--space-4); font-weight: 600; }
 
 .cost { font-size: var(--text-xs); color: var(--color-text-dim); text-align: center; padding: var(--space-1); }
+
+/* Header enhancements */
+.header-title { flex: 1; }
+.header-btn { background: none; border: none; color: var(--color-text-dim); font-size: 20px; padding: 4px 8px; }
+
+/* Session list items with chevron */
+.session-item { display: flex; align-items: center; cursor: pointer; }
+.session-item:active { background: var(--color-surface); }
+.session-info { flex: 1; }
+.chevron { color: var(--color-text-dim); font-size: 20px; padding-left: var(--space-2); }
+
+/* Machine header in session list */
+.machine-header { background: var(--color-surface); border-bottom: 1px solid var(--color-border); }
+
+/* Empty state guide */
+.empty-guide { display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 60px var(--space-4); text-align: center; }
+.empty-icon { font-size: 48px; margin-bottom: var(--space-4); }
+.empty-title { font-size: 18px; font-weight: 600; margin-bottom: var(--space-2); }
+.empty-sub { font-size: var(--text-sm); color: var(--color-text-dim); line-height: 1.5; margin-bottom: 24px; }
+
+/* Machine manager */
+.mm-footer { padding: var(--space-3) var(--space-4); padding-bottom: max(env(safe-area-inset-bottom), var(--space-3)); border-top: 1px solid var(--color-border); }
+.machine-item { display: flex; align-items: center; }
+.machine-info { flex: 1; }
+.machine-actions { display: flex; gap: var(--space-2); }
+
+/* Form page */
+.form-body { flex: 1; overflow-y: auto; padding: var(--space-4); }
+.form-field { margin-bottom: var(--space-4); }
+.form-field label { display: block; font-size: var(--text-sm); color: var(--color-text-dim); margin-bottom: var(--space-1); }
+.form-field input { width: 100%; background: var(--color-surface); color: var(--color-text); border: 1px solid #444; border-radius: var(--radius-sm); padding: 10px var(--space-3); font-size: var(--text-lg); }
+.form-field input:focus { border-color: var(--color-accent); outline: none; }
+.form-status { font-size: var(--text-sm); padding: var(--space-2) 0; min-height: 24px; }
+.form-status.ok { color: #a6e3a1; }
+.form-status.error { color: #f38ba8; }
+.form-actions { display: flex; gap: var(--space-2); margin-top: var(--space-4); }
+
+/* Buttons */
+.btn-primary { background: var(--color-accent); color: var(--color-bg); border: none; border-radius: var(--radius-sm); padding: 12px var(--space-4); font-weight: 600; font-size: var(--text-lg); cursor: pointer; }
+.btn-secondary { background: var(--color-surface-alt); color: var(--color-text); border: none; border-radius: var(--radius-sm); padding: 10px var(--space-3); font-size: var(--text-md); cursor: pointer; }
+.btn-full { width: 100%; }
+.btn-sm { background: var(--color-surface-alt); color: var(--color-text); border: none; border-radius: var(--radius-sm); padding: 6px 12px; font-size: var(--text-sm); cursor: pointer; }
+.btn-danger { color: #f38ba8; }
+

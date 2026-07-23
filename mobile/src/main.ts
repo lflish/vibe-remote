@@ -5,6 +5,7 @@ import { ChatController, type ChatMessage } from './chat';
 import { makeLineSplitter } from './lines';
 import { makeMachineStore, defaultKV } from './storage';
 import { renderMarkdown } from './render';
+import { openMachineManager } from './machines';
 import type { MachineConfig, SessionInfo } from '@shared/protocol';
 
 const app = document.getElementById('app')!;
@@ -39,10 +40,39 @@ function renderMessage(msg: ChatMessage): string {
 
 async function renderMachineList() {
   const machines = await store.getMachines();
-  app.innerHTML = `<div class="header">vibe-remote</div><div class="list" id="list"></div>`;
+  app.innerHTML = `
+    <div class="header">
+      <span class="header-title">vibe-remote</span>
+      <button class="header-btn" id="settings-btn">⚙</button>
+    </div>
+    <div class="list" id="list"></div>`;
   const list = document.getElementById('list')!;
+
+  document.getElementById('settings-btn')!.onclick = () => {
+    openMachineManager({
+      app,
+      getMachines: () => store.getMachines(),
+      saveMachines: (m) => store.saveMachines(m),
+      onDone: () => renderMachineList(),
+    });
+  };
+
   if (machines.length === 0) {
-    list.innerHTML = `<div class="list-item"><div class="sub">machines.json 为空。请在设备上预置机器清单（name/addr/port/token）。</div></div>`;
+    list.innerHTML = `
+      <div class="empty-guide">
+        <div class="empty-icon">📡</div>
+        <div class="empty-title">尚未添加机器</div>
+        <div class="empty-sub">连接你的远程 vibe-remoted 服务器，<br/>开始移动端 Claude 体验</div>
+        <button class="btn-primary btn-full" id="empty-add">+ 添加第一台机器</button>
+      </div>`;
+    document.getElementById('empty-add')!.onclick = () => {
+      openMachineManager({
+        app,
+        getMachines: () => store.getMachines(),
+        saveMachines: (m) => store.saveMachines(m),
+        onDone: () => renderMachineList(),
+      });
+    };
     return;
   }
   for (const m of machines) {
@@ -54,13 +84,13 @@ async function renderMachineList() {
       // machine unreachable — show it but empty
     }
     const header = document.createElement('div');
-    header.className = 'list-item';
-    header.innerHTML = `<div class="title">${escapeHtml(m.name)}</div><div class="sub">${escapeHtml(m.addr)}:${m.port} · ${sessions.length} sessions</div>`;
+    header.className = 'list-item machine-header';
+    header.innerHTML = `<div class="title">${escapeHtml(m.name)}</div><div class="sub">${escapeHtml(m.addr)}:${m.port} · ${sessions.length} 个会话</div>`;
     list.appendChild(header);
     for (const s of sessions) {
       const item = document.createElement('div');
-      item.className = 'list-item';
-      item.innerHTML = `<div class="title">${escapeHtml(s.title)}</div><div class="sub">${escapeHtml(s.workdir)}</div>`;
+      item.className = 'list-item session-item';
+      item.innerHTML = `<div class="session-info"><div class="title">${escapeHtml(s.title)}</div><div class="sub">${escapeHtml(s.workdir)}</div></div><div class="chevron">›</div>`;
       item.onclick = () => openChat(m, s);
       list.appendChild(item);
     }
