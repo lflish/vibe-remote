@@ -6,7 +6,7 @@ import { makeLineSplitter } from './lines';
 import { makeMachineStore, defaultKV } from './storage';
 import { renderMarkdown } from './render';
 import { openMachineManager } from './machines';
-import type { MachineConfig, SessionInfo } from '@shared/protocol';
+import type { MachineConfig } from '@shared/protocol';
 
 const app = document.getElementById('app')!;
 const store = makeMachineStore(defaultKV());
@@ -82,16 +82,31 @@ async function renderMachineList() {
     // asynchronously and fill in below the header once they arrive.
     const header = document.createElement('div');
     header.className = 'list-item machine-header';
-    header.innerHTML = `<div class="title">${escapeHtml(m.name)}</div><div class="sub">${escapeHtml(m.addr)}:${m.port} · <span class="mcount">连接中…</span></div>`;
+    header.innerHTML = `
+      <div class="machine-head-row">
+        <div class="machine-info"><div class="title">${escapeHtml(m.name)}</div><div class="sub">${escapeHtml(m.addr)}:${m.port} · <span class="mcount">连接中…</span></div></div>
+        <button class="btn-sm new-session-btn" disabled>+ 新建</button>
+      </div>`;
     list.appendChild(header);
     const countEl = header.querySelector('.mcount')!;
+    const newBtn = header.querySelector('.new-session-btn') as HTMLButtonElement;
 
     const rest = new VibeRemoteRest(m);
-    // Race listSessions against a timeout: the browser fetch has no default
+    // Race a promise against a timeout: the browser fetch has no default
     // timeout, so an unreachable host would leave "连接中…" spinning forever.
     // 6s → mark offline. (rest.ts is shared with desktop; we cap here, not there.)
     const withTimeout = <T>(p: Promise<T>, ms: number) =>
       Promise.race([p, new Promise<never>((_, rej) => setTimeout(() => rej(new Error('timeout')), ms))]);
+
+    // Fetch info to learn the default workdir, then enable "新建会话".
+    withTimeout(rest.info(), 6000)
+      .then((info) => {
+        const workdir = info.default_workdir;
+        newBtn.disabled = false;
+        newBtn.onclick = () => openChat(m, workdir, '新会话');
+      })
+      .catch(() => { /* offline handled below */ });
+
     withTimeout(rest.listSessions(), 6000)
       .then((sessions) => {
         countEl.textContent = `${sessions.length} 个会话`;
@@ -99,7 +114,7 @@ async function renderMachineList() {
           const item = document.createElement('div');
           item.className = 'list-item session-item';
           item.innerHTML = `<div class="session-info"><div class="title">${escapeHtml(s.title)}</div><div class="sub">${escapeHtml(s.workdir)}</div></div><div class="chevron">›</div>`;
-          item.onclick = () => openChat(m, s);
+          item.onclick = () => openChat(m, s.workdir, s.title);
           header.insertAdjacentElement('afterend', item);
         }
       })
@@ -110,10 +125,14 @@ async function renderMachineList() {
   }
 }
 
-function openChat(machine: MachineConfig, session: SessionInfo) {
+// openChat opens the headless chat view for a workdir on a machine. Because
+// headless keys purely on workdir (server runs `claude -c -p` there), opening
+// an existing session and starting a new one are the same path: `-c` continues
+// the dir's most recent conversation, or starts fresh if none exists.
+function openChat(machine: MachineConfig, workdir: string, title: string) {
   const controller = new ChatController();
   app.innerHTML = `
-    <div class="header"><button class="back" id="back">‹ 返回</button><span>${escapeHtml(session.title)}</span></div>
+    <div class="header"><button class="back" id="back">‹ 返回</button><span>${escapeHtml(title)}</span></div>
     <div class="chat" id="chat"></div>
     <div class="cost" id="cost"></div>
     <div class="composer">
@@ -140,7 +159,7 @@ function openChat(machine: MachineConfig, session: SessionInfo) {
 
   // Load prior history so opening a session shows what happened before.
   const rest = new VibeRemoteRest(machine);
-  rest.history(session.workdir, 50)
+  rest.history(workdir, 50)
     .then((turns) => {
       if (controller.messages.length === 0) {
         controller.setHistory(turns.map((t) => ({ role: t.role, text: t.text }) as ChatMessage));
@@ -153,7 +172,7 @@ function openChat(machine: MachineConfig, session: SessionInfo) {
   client.onData = (payload) => feed(base64ToText(payload));
   client.onError = () => controller.applyLine(JSON.stringify({ type: 'result' }));
   client.connect();
-  client.attach('', 80, 24, session.workdir, undefined, 'headless');
+  client.attach('', 80, 24, workdir, undefined, 'headless');
 
   // Auto-grow textarea (32→120px) as the user types.
   const autoGrow = () => {
