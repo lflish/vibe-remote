@@ -76,24 +76,37 @@ async function renderMachineList() {
     return;
   }
   for (const m of machines) {
-    const rest = new VibeRemoteRest(m);
-    let sessions: SessionInfo[] = [];
-    try {
-      sessions = await rest.listSessions();
-    } catch {
-      // machine unreachable — show it but empty
-    }
+    // Render the machine header synchronously so a just-added machine is
+    // visible immediately — do NOT block on listSessions (an unreachable or
+    // slow machine would otherwise leave the whole list blank). Sessions load
+    // asynchronously and fill in below the header once they arrive.
     const header = document.createElement('div');
     header.className = 'list-item machine-header';
-    header.innerHTML = `<div class="title">${escapeHtml(m.name)}</div><div class="sub">${escapeHtml(m.addr)}:${m.port} · ${sessions.length} 个会话</div>`;
+    header.innerHTML = `<div class="title">${escapeHtml(m.name)}</div><div class="sub">${escapeHtml(m.addr)}:${m.port} · <span class="mcount">连接中…</span></div>`;
     list.appendChild(header);
-    for (const s of sessions) {
-      const item = document.createElement('div');
-      item.className = 'list-item session-item';
-      item.innerHTML = `<div class="session-info"><div class="title">${escapeHtml(s.title)}</div><div class="sub">${escapeHtml(s.workdir)}</div></div><div class="chevron">›</div>`;
-      item.onclick = () => openChat(m, s);
-      list.appendChild(item);
-    }
+    const countEl = header.querySelector('.mcount')!;
+
+    const rest = new VibeRemoteRest(m);
+    // Race listSessions against a timeout: the browser fetch has no default
+    // timeout, so an unreachable host would leave "连接中…" spinning forever.
+    // 6s → mark offline. (rest.ts is shared with desktop; we cap here, not there.)
+    const withTimeout = <T>(p: Promise<T>, ms: number) =>
+      Promise.race([p, new Promise<never>((_, rej) => setTimeout(() => rej(new Error('timeout')), ms))]);
+    withTimeout(rest.listSessions(), 6000)
+      .then((sessions) => {
+        countEl.textContent = `${sessions.length} 个会话`;
+        for (const s of sessions) {
+          const item = document.createElement('div');
+          item.className = 'list-item session-item';
+          item.innerHTML = `<div class="session-info"><div class="title">${escapeHtml(s.title)}</div><div class="sub">${escapeHtml(s.workdir)}</div></div><div class="chevron">›</div>`;
+          item.onclick = () => openChat(m, s);
+          header.insertAdjacentElement('afterend', item);
+        }
+      })
+      .catch(() => {
+        countEl.textContent = '离线';
+        (countEl as HTMLElement).style.color = '#f38ba8';
+      });
   }
 }
 
