@@ -30,7 +30,7 @@ func TestHandleHistory(t *testing.T) {
 		DefaultWorkdir: workdir, AllowedRoots: []string{home},
 		UseTmux: false, ClaudeCmd: "true",
 	}
-	mgr := session.NewManager(false, "true", false, "/bin/sh")
+	mgr := session.NewManager("true", false, "/bin/sh")
 	srv := New(cfg, mgr)
 	ts := httptest.NewServer(withCORS(srv.mux))
 	defer ts.Close()

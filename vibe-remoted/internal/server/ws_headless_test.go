@@ -29,7 +29,7 @@ func TestWSHeadlessRelay(t *testing.T) {
 	}
 	lf := false
 	cfg.LoginShell = &lf
-	mgr := session.NewManager(cfg.UseTmux, cfg.ClaudeCmd, cfg.UseLoginShell(), cfg.LoginShellPath())
+	mgr := session.NewManager(cfg.ClaudeCmd, cfg.UseLoginShell(), cfg.LoginShellPath())
 	srv := New(cfg, mgr)
 
 	ts := httptest.NewServer(withCORS(srv.mux))
@@ -48,10 +48,9 @@ func TestWSHeadlessRelay(t *testing.T) {
 	// auth
 	wsjson.Write(ctx, conn, protocol.AuthFrame{Type: protocol.TypeAuth, Token: "tok"})
 
-	// The server pushes a sessions frame first; read and ignore until we can attach.
-	// attach headless
+	// attach (headless is the only line now)
 	wsjson.Write(ctx, conn, protocol.AttachFrame{
-		Type: protocol.TypeAttach, Workdir: tmp, Mode: protocol.ModeHeadless,
+		Type: protocol.TypeAttach, Workdir: tmp,
 	})
 
 	// Expect a ready frame, then send a prompt, then receive NDJSON data frames.
@@ -106,7 +105,7 @@ func TestWSHeadlessWorkdirRejected(t *testing.T) {
 	}
 	lf := false
 	cfg.LoginShell = &lf
-	mgr := session.NewManager(cfg.UseTmux, cfg.ClaudeCmd, cfg.UseLoginShell(), cfg.LoginShellPath())
+	mgr := session.NewManager(cfg.ClaudeCmd, cfg.UseLoginShell(), cfg.LoginShellPath())
 	srv := New(cfg, mgr)
 	ts := httptest.NewServer(withCORS(srv.mux))
 	defer ts.Close()
@@ -122,7 +121,7 @@ func TestWSHeadlessWorkdirRejected(t *testing.T) {
 
 	wsjson.Write(ctx, conn, protocol.AuthFrame{Type: protocol.TypeAuth, Token: "tok"})
 	wsjson.Write(ctx, conn, protocol.AttachFrame{
-		Type: protocol.TypeAttach, Workdir: "/etc", Mode: protocol.ModeHeadless,
+		Type: protocol.TypeAttach, Workdir: "/etc",
 	})
 
 	// Expect an error frame (workdir not allowed).

@@ -5,29 +5,23 @@ import (
 	"testing"
 )
 
-func TestAttachFrameMode(t *testing.T) {
-	// headless mode round-trips
-	raw := `{"type":"attach","workdir":"/tmp","mode":"headless"}`
+func TestAttachFrameRoundTrip(t *testing.T) {
+	// workdir + flags round-trip
+	raw := `{"type":"attach","workdir":"/tmp","flags":["a","b"]}`
 	var f AttachFrame
 	if err := json.Unmarshal([]byte(raw), &f); err != nil {
 		t.Fatalf("unmarshal: %v", err)
 	}
-	if f.Mode != ModeHeadless {
-		t.Fatalf("Mode = %q, want %q", f.Mode, ModeHeadless)
+	if f.Workdir != "/tmp" {
+		t.Fatalf("Workdir = %q, want %q", f.Workdir, "/tmp")
+	}
+	if len(f.Flags) != 2 || f.Flags[0] != "a" || f.Flags[1] != "b" {
+		t.Fatalf("Flags = %v, want [a b]", f.Flags)
 	}
 
-	// omitted mode stays empty (caller treats empty as tui)
-	var f2 AttachFrame
-	if err := json.Unmarshal([]byte(`{"type":"attach"}`), &f2); err != nil {
-		t.Fatalf("unmarshal: %v", err)
-	}
-	if f2.Mode != "" {
-		t.Fatalf("Mode = %q, want empty", f2.Mode)
-	}
-
-	// empty Mode is omitted from output (back-compat: desktop frames unchanged)
+	// empty workdir + flags are omitted from output (headless-only shape)
 	out, _ := json.Marshal(AttachFrame{Type: TypeAttach})
-	if string(out) != `{"type":"attach","cols":0,"rows":0}` {
+	if string(out) != `{"type":"attach"}` {
 		t.Fatalf("marshal = %s", out)
 	}
 }

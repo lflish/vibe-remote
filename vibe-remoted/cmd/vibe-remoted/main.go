@@ -39,11 +39,11 @@ func main() {
 		log.Fatalf("config validation: %v", err)
 	}
 
-	log.Printf("bind=%s:%d tmux=%v workdir=%s",
-		cfg.BindAddr, cfg.Port, cfg.UseTmux, cfg.DefaultWorkdir)
+	log.Printf("bind=%s:%d workdir=%s",
+		cfg.BindAddr, cfg.Port, cfg.DefaultWorkdir)
 
 	// Create session manager
-	mgr := session.NewManager(cfg.UseTmux, cfg.ClaudeCmd, cfg.UseLoginShell(), cfg.LoginShellPath())
+	mgr := session.NewManager(cfg.ClaudeCmd, cfg.UseLoginShell(), cfg.LoginShellPath())
 
 	// Inject the events endpoint URL + token into new sessions' environment so a
 	// claude hook can report out-of-band events back to this daemon.

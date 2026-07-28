@@ -13,7 +13,6 @@ import (
 	"strings"
 
 	"github.com/lflish/vibe-remote/vibe-remoted/internal/config"
-	"github.com/lflish/vibe-remote/vibe-remoted/internal/protocol"
 	"github.com/lflish/vibe-remote/vibe-remoted/internal/session"
 )
 
@@ -39,10 +38,6 @@ func New(cfg *config.Config, mgr *session.Manager) *Server {
 func (s *Server) routes() {
 	s.mux.HandleFunc("GET /healthz", s.handleHealthz)
 	s.mux.HandleFunc("GET /api/v1/info", s.handleInfo)
-	s.mux.HandleFunc("GET /api/v1/sessions", s.handleListSessions)
-	s.mux.HandleFunc("DELETE /api/v1/sessions/{id}", s.handleDeleteSession)
-	s.mux.HandleFunc("POST /api/v1/sessions/{id}/rename", s.handleRenameSession)
-	s.mux.HandleFunc("POST /api/v1/events", s.handleEvents)
 	s.mux.HandleFunc("GET /api/v1/fs", s.handleFS)
 	s.mux.HandleFunc("GET /api/v1/history", s.handleHistory)
 	s.mux.HandleFunc("/ws", s.handleWS)
@@ -105,83 +100,6 @@ func (s *Server) handleInfo(w http.ResponseWriter, r *http.Request) {
 		"claude_flags":    flags,
 	}
 	writeJSON(w, http.StatusOK, info)
-}
-
-func (s *Server) handleListSessions(w http.ResponseWriter, r *http.Request) {
-	if !s.checkToken(r, w) {
-		return
-	}
-	list := s.mgr.List()
-	frame := protocol.SessionsFrame{
-		Type: protocol.TypeSessions,
-		List: list,
-	}
-	writeJSON(w, http.StatusOK, frame)
-}
-
-func (s *Server) handleDeleteSession(w http.ResponseWriter, r *http.Request) {
-	if !s.checkToken(r, w) {
-		return
-	}
-	id := r.PathValue("id")
-	if id == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "missing session id"})
-		return
-	}
-	if err := s.mgr.Delete(id); err != nil {
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": err.Error()})
-		return
-	}
-	w.WriteHeader(http.StatusNoContent)
-}
-
-// handleRenameSession sets a user display name on a session.
-func (s *Server) handleRenameSession(w http.ResponseWriter, r *http.Request) {
-	if !s.checkToken(r, w) {
-		return
-	}
-	id := r.PathValue("id")
-	if id == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "missing session id"})
-		return
-	}
-	var body struct {
-		Name string `json:"name"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid body"})
-		return
-	}
-	if err := s.mgr.Rename(id, body.Name); err != nil {
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": err.Error()})
-		return
-	}
-	w.WriteHeader(http.StatusNoContent)
-}
-
-// handleEvents receives an out-of-band session event (from a claude hook or any
-// tailnet-local reporter) and routes it to the session's WS subscribers as a
-// notify frame. Reuses the same Bearer auth as every other REST endpoint.
-func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
-	if !s.checkToken(r, w) {
-		return
-	}
-	var body protocol.EventRequest
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid body"})
-		return
-	}
-	if body.SessionID == "" || body.Kind == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "sessionId and kind required"})
-		return
-	}
-	s.mgr.PublishEvent(body.SessionID, protocol.NotifyFrame{
-		Type:      protocol.TypeNotify,
-		SessionID: body.SessionID,
-		Kind:      body.Kind,
-		Message:   body.Message,
-	})
-	w.WriteHeader(http.StatusNoContent)
 }
 
 // handleFS lists directory entries for the remote directory picker.
