@@ -1,2 +1,4 @@
 import { createRoot } from 'react-dom/client';
-createRoot(document.getElementById('root')!).render(<div>vibe-remote web</div>);
+import { App } from './App';
+
+createRoot(document.getElementById('root')!).render(<App />);
