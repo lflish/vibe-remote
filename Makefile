@@ -1,4 +1,4 @@
-.PHONY: all server desktop clean dev-server dev-desktop dev-local
+.PHONY: all server desktop clean dev-server dev-desktop dev-local portal dev-portal
 
 # Default: build both
 all: server desktop
@@ -51,3 +51,14 @@ fmt:
 # Vet
 vet:
 	cd vibe-remoted && go vet ./...
+
+# --- Web portal (Go static server hosting the web/ SPA) ---
+
+portal:
+	cd web && npm run build
+	@rm -rf vibe-remoted/cmd/vibe-portal/dist
+	@cp -R web/dist vibe-remoted/cmd/vibe-portal/dist
+	cd vibe-remoted && go build -o ../bin/vibe-portal ./cmd/vibe-portal
+
+dev-portal:
+	cd web && npm run dev
