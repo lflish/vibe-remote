@@ -3,7 +3,7 @@ import { VibeRemoteClient, VibeRemoteRest, type MachineConfig, type Message } fr
 import { mountChat } from '@vibe-remote/ui';
 import '@vibe-remote/ui/styles.css';
 
-// 单个 headless 聊天。会话=workdir：attach 用 mode:'headless'、sessionId 空、workdir=选中目录。
+// 单个 headless 聊天。会话=workdir：attach 直接传 workdir。
 // 命令式 mountChat 封进 React：useEffect 挂载、卸载时 dispose + 断开 WS。
 export function ChatPane({ machine, workdir, onBack }: { machine: MachineConfig; workdir: string; onBack: () => void }) {
   const hostRef = useRef<HTMLDivElement>(null);
@@ -29,7 +29,7 @@ export function ChatPane({ machine, workdir, onBack }: { machine: MachineConfig;
 
     client.onData = (payload) => mount.feed(payload);
     client.connect();
-    client.attach('', 80, 24, workdir, undefined, 'headless');
+    client.attach(workdir);
 
     return () => {
       cancelled = true;

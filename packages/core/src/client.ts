@@ -3,10 +3,8 @@ import {
   type AuthFrame,
   type AttachFrame,
   type DataFrameC2S,
-  type ResizeFrame,
   type PingFrame,
   type ServerFrame,
-  type SessionInfo,
   type MachineConfig,
 } from './protocol';
 
@@ -25,6 +23,8 @@ const PING_INTERVAL = 25000; // 25s
 /**
  * VibeRemoteClient manages the WebSocket connection to a single vibe-remoted instance.
  * Handles auth, attach, data relay, ping/pong, and auto-reconnect.
+ *
+ * headless 唯一线：会话 = workdir，无 sessionId/cols/rows/resize/mode。
  */
 export class VibeRemoteClient {
   machine: MachineConfig;
@@ -33,23 +33,18 @@ export class VibeRemoteClient {
   // Callbacks
   onStateChange?: (state: ConnectionState, attempt: number) => void;
   onData?: (payload: string) => void;
-  onSessionList?: (sessions: SessionInfo[]) => void;
   onExit?: (code: number) => void;
   onError?: (message: string) => void;
-  onReady?: (sessionId: string, workdir: string) => void;
-  onNotify?: (kind: string, message?: string) => void;
+  onReady?: (workdir: string) => void;
 
   private ws: WebSocket | null = null;
   private reconnectAttempt = 0;
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private pingTimer: ReturnType<typeof setInterval> | null = null;
-  private currentSessionId: string | null = null;
-  private pendingAttach: { sessionId: string; cols: number; rows: number; workdir?: string; flags?: string[]; mode?: 'tui' | 'headless' } | null = null;
-  // Last known terminal size, so a reconnect re-attaches at the correct
-  // dimensions instead of a default 80x24 (which would misdraw until resize).
-  private lastCols = 80;
-  private lastRows = 24;
-  private lastMode: 'tui' | 'headless' | undefined = undefined;
+  private pendingAttach: { workdir?: string; flags?: string[] } | null = null;
+  // Last attach args, so a reconnect re-attaches the same workdir instead of
+  // falling back to the default dir (dropping workdir on reconnect was a past bug).
+  private lastAttach: { workdir?: string; flags?: string[] } | null = null;
 
   constructor(machine: MachineConfig) {
     this.machine = machine;
@@ -80,12 +75,8 @@ export class VibeRemoteClient {
       if (this.pendingAttach) {
         this.send<AttachFrame>({
           type: FrameType.Attach,
-          sessionId: this.pendingAttach.sessionId || undefined,
-          cols: this.pendingAttach.cols,
-          rows: this.pendingAttach.rows,
           workdir: this.pendingAttach.workdir,
           flags: this.pendingAttach.flags,
-          mode: this.pendingAttach.mode,
         });
         this.pendingAttach = null;
       }
@@ -128,52 +119,29 @@ export class VibeRemoteClient {
       clearTimeout(this.reconnectTimer);
       this.reconnectTimer = null;
     }
-    if (this.currentSessionId) {
-      this.pendingAttach = {
-        sessionId: this.currentSessionId,
-        cols: this.lastCols,
-        rows: this.lastRows,
-        mode: this.lastMode,
-      };
+    if (this.lastAttach) {
+      this.pendingAttach = { workdir: this.lastAttach.workdir, flags: this.lastAttach.flags };
     }
     this.connect();
   }
 
-  /** Attach to a session (empty sessionId = create new). */
-  attach(sessionId: string, cols: number, rows: number, workdir?: string, flags?: string[], mode?: 'tui' | 'headless') {
-    this.currentSessionId = sessionId || null;
-    this.lastCols = cols;
-    this.lastRows = rows;
-    this.lastMode = mode;
+  /** Attach to a session by workdir (headless 唯一线). */
+  attach(workdir?: string, flags?: string[]) {
+    this.lastAttach = { workdir, flags };
 
     if (this.state === ConnectionState.Connected && this.ws) {
-      this.send<AttachFrame>({
-        type: FrameType.Attach,
-        sessionId: sessionId || undefined,
-        cols,
-        rows,
-        workdir,
-        flags,
-        mode,
-      });
+      this.send<AttachFrame>({ type: FrameType.Attach, workdir, flags });
     } else {
-      // Connection not ready yet — store the full attach (including workdir/flags)
+      // Connection not ready yet — store the attach (including workdir/flags)
       // to send on open. Dropping workdir here is what made new sessions
       // always land in the default dir instead of the chosen one.
-      this.pendingAttach = { sessionId, cols, rows, workdir, flags, mode };
+      this.pendingAttach = { workdir, flags };
     }
   }
 
   /** Send terminal data (keyboard input). */
   sendData(base64Payload: string) {
     this.send<DataFrameC2S>({ type: FrameType.Data, payload: base64Payload });
-  }
-
-  /** Send resize event. */
-  sendResize(cols: number, rows: number) {
-    this.lastCols = cols;
-    this.lastRows = rows;
-    this.send<ResizeFrame>({ type: FrameType.Resize, cols, rows });
   }
 
   // --- Private ---
@@ -191,29 +159,19 @@ export class VibeRemoteClient {
         // A ready frame means auth + attach succeeded — the connection is
         // healthy, so it's safe to reset the backoff counter now.
         this.reconnectAttempt = 0;
-        this.currentSessionId = frame.sessionId;
-        this.onReady?.(frame.sessionId, frame.workdir);
+        this.onReady?.(frame.workdir);
         break;
 
       case FrameType.Data:
         this.onData?.(frame.payload);
         break;
 
-      case FrameType.Sessions:
-        this.onSessionList?.(frame.list);
-        break;
-
       case FrameType.Exit:
         this.onExit?.(frame.code);
-        this.currentSessionId = null;
         break;
 
       case FrameType.Error:
         this.onError?.(frame.message);
-        break;
-
-      case FrameType.Notify:
-        this.onNotify?.(frame.kind, frame.message);
         break;
 
       case FrameType.Pong:
@@ -241,15 +199,10 @@ export class VibeRemoteClient {
     this.reconnectAttempt++;
 
     this.reconnectTimer = setTimeout(() => {
-      // Re-attach the same session at the last known size so the restored
-      // screen draws correctly instead of at a default 80x24.
-      if (this.currentSessionId) {
-        this.pendingAttach = {
-          sessionId: this.currentSessionId,
-          cols: this.lastCols,
-          rows: this.lastRows,
-          mode: this.lastMode,
-        };
+      // Re-attach the same workdir so the restored session resumes the right
+      // conversation instead of landing in the default dir.
+      if (this.lastAttach) {
+        this.pendingAttach = { workdir: this.lastAttach.workdir, flags: this.lastAttach.flags };
       }
       this.connect();
     }, delay);

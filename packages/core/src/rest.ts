@@ -1,8 +1,7 @@
-import type { MachineConfig, SessionInfo } from './protocol';
+import type { MachineConfig } from './protocol';
 
 /**
- * REST client for a vibe-remoted instance. Complements the WebSocket connection
- * with the auxiliary HTTP endpoints (info, sessions list, delete, fs browse).
+ * REST client for a vibe-remoted instance.
  */
 export class VibeRemoteRest {
   constructor(private machine: MachineConfig) {}
@@ -21,30 +20,6 @@ export class VibeRemoteRest {
     return res.json();
   }
 
-  async listSessions(): Promise<SessionInfo[]> {
-    const res = await fetch(`${this.base()}/api/v1/sessions`, { headers: this.headers() });
-    if (!res.ok) throw new Error(`sessions failed: ${res.status}`);
-    const data = await res.json();
-    return data.list || [];
-  }
-
-  async deleteSession(id: string): Promise<void> {
-    const res = await fetch(`${this.base()}/api/v1/sessions/${id}`, {
-      method: 'DELETE',
-      headers: this.headers(),
-    });
-    if (!res.ok && res.status !== 204) throw new Error(`delete failed: ${res.status}`);
-  }
-
-  async renameSession(id: string, name: string): Promise<void> {
-    const res = await fetch(`${this.base()}/api/v1/sessions/${id}/rename`, {
-      method: 'POST',
-      headers: { ...this.headers(), 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name }),
-    });
-    if (!res.ok && res.status !== 204) throw new Error(`rename failed: ${res.status}`);
-  }
-
   /** List directory entries (directories only) for the remote picker. */
   async listDir(path?: string): Promise<DirListing> {
     const url = new URL(`${this.base()}/api/v1/fs`);
@@ -54,7 +29,7 @@ export class VibeRemoteRest {
     return res.json();
   }
 
-  /** Fetch recent conversation turns for a workdir (mobile chat history). */
+  /** Fetch recent conversation turns for a workdir (for history backfill). */
   async history(workdir: string, limit = 50): Promise<HistoryTurn[]> {
     const url = new URL(`${this.base()}/api/v1/history`);
     url.searchParams.set('path', workdir);

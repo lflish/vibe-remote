@@ -1,24 +1,20 @@
-// Protocol frame types — 单一事实来源之一，与 vibe-remoted/internal/protocol/protocol.go 手动保持对齐。
-// 从 desktop/src/shared/protocol.ts 上提到 @vibe-remote/core（阶段 0a）。
+// Protocol frame types — 与 vibe-remoted/internal/protocol/protocol.go 手工对齐。
+// 单一事实来源 TS 端在此。desktop/src/shared/protocol.ts 只是 re-export 薄壳。
 
 export const FrameType = {
   Auth: 'auth',
   Attach: 'attach',
   Ready: 'ready',
   Data: 'data',
-  Resize: 'resize',
-  Sessions: 'sessions',
   Ping: 'ping',
   Pong: 'pong',
   Exit: 'exit',
   Error: 'error',
-  Notify: 'notify',
 } as const;
 
 export type FrameTypeValue = (typeof FrameType)[keyof typeof FrameType];
 
 // --- Client → Server ---
-
 export interface AuthFrame {
   type: typeof FrameType.Auth;
   token: string;
@@ -26,12 +22,8 @@ export interface AuthFrame {
 
 export interface AttachFrame {
   type: typeof FrameType.Attach;
-  sessionId?: string; // empty = create new
-  cols: number;
-  rows: number;
-  workdir?: string; // working directory for new sessions
-  flags?: string[]; // selected claude_flags ids (new session only)
-  mode?: 'tui' | 'headless'; // omitted = tui (desktop path unchanged)
+  workdir?: string;  // 会话 = workdir（headless 唯一线）
+  flags?: string[];  // 选中的 claude_flags id 列表
 }
 
 export interface DataFrameC2S {
@@ -39,39 +31,19 @@ export interface DataFrameC2S {
   payload: string; // base64
 }
 
-export interface ResizeFrame {
-  type: typeof FrameType.Resize;
-  cols: number;
-  rows: number;
-}
-
 export interface PingFrame {
   type: typeof FrameType.Ping;
 }
 
 // --- Server → Client ---
-
 export interface ReadyFrame {
   type: typeof FrameType.Ready;
-  sessionId: string;
   workdir: string;
 }
 
 export interface DataFrameS2C {
   type: typeof FrameType.Data;
   payload: string; // base64
-}
-
-export interface SessionInfo {
-  id: string;
-  title: string;
-  workdir: string;
-  created: string;
-}
-
-export interface SessionsFrame {
-  type: typeof FrameType.Sessions;
-  list: SessionInfo[];
 }
 
 export interface ExitFrame {
@@ -88,36 +60,13 @@ export interface PongFrame {
   type: typeof FrameType.Pong;
 }
 
-export interface NotifyFrame {
-  type: typeof FrameType.Notify;
-  sessionId: string;
-  kind: string; // 'idle' | 'waiting' | future kinds (open enum)
-  message?: string;
-}
-
-// Union of all server→client frames
-export type ServerFrame =
-  | ReadyFrame
-  | DataFrameS2C
-  | SessionsFrame
-  | ExitFrame
-  | ErrorFrame
-  | PongFrame
-  | NotifyFrame;
-
-// Union of all client→server frames
-export type ClientFrame =
-  | AuthFrame
-  | AttachFrame
-  | DataFrameC2S
-  | ResizeFrame
-  | PingFrame;
+export type ServerFrame = ReadyFrame | DataFrameS2C | ExitFrame | ErrorFrame | PongFrame;
+export type ClientFrame = AuthFrame | AttachFrame | DataFrameC2S | PingFrame;
 
 // --- Machine config (client-side) ---
-
 export interface MachineConfig {
   name: string;
-  addr: string; // tailscale IP or MagicDNS name
+  addr: string;
   port: number;
   token: string;
 }
