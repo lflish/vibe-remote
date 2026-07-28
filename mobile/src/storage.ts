@@ -29,6 +29,21 @@ export function makeMachineStore(kv: KV) {
     async saveMachines(machines: MachineConfig[]): Promise<void> {
       await kv.set(KEY, JSON.stringify(machines));
     },
+    async getWorkdirs(machineKey: string): Promise<string[]> {
+      const raw = await kv.get(`vibe-remote.workdirs.${machineKey}`);
+      if (!raw) return [];
+      try {
+        const parsed = JSON.parse(raw);
+        return Array.isArray(parsed) ? (parsed as string[]) : [];
+      } catch {
+        return [];
+      }
+    },
+    async addWorkdir(machineKey: string, dir: string): Promise<void> {
+      const cur = await this.getWorkdirs(machineKey);
+      if (cur.includes(dir)) return;
+      await kv.set(`vibe-remote.workdirs.${machineKey}`, JSON.stringify([...cur, dir]));
+    },
   };
 }
 

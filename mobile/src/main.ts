@@ -15,6 +15,10 @@ function escapeHtml(s: string): string {
   return s.replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]!));
 }
 
+function machineKey(m: MachineConfig): string {
+  return `${m.addr}:${m.port}`;
+}
+
 async function renderMachineList() {
   const machines = await store.getMachines();
   app.innerHTML = `
@@ -54,9 +58,11 @@ async function renderMachineList() {
   }
   for (const m of machines) {
     // Render the machine header synchronously so a just-added machine is
-    // visible immediately — do NOT block on listSessions (an unreachable or
-    // slow machine would otherwise leave the whole list blank). Sessions load
-    // asynchronously and fill in below the header once they arrive.
+    // visible immediately — do NOT block on info() (an unreachable or slow
+    // machine would otherwise leave the whole list blank). Reachability probe
+    // and workdir list fill in below the header once they arrive.
+    const key = machineKey(m);
+    const workdirs = await store.getWorkdirs(key);
     const header = document.createElement('div');
     header.className = 'list-item machine-header';
     header.innerHTML = `
@@ -68,6 +74,17 @@ async function renderMachineList() {
     const countEl = header.querySelector('.mcount')!;
     const newBtn = header.querySelector('.new-session-btn') as HTMLButtonElement;
 
+    // Render existing workdir list-items right away so cached entries show even
+    // when the machine is offline — one click reopens the last conversation
+    // there (headless `claude -c` resumes it).
+    for (const dir of workdirs) {
+      const item = document.createElement('div');
+      item.className = 'list-item session-item';
+      item.innerHTML = `<div class="session-info"><div class="title">${escapeHtml(dir)}</div></div><div class="chevron">›</div>`;
+      item.onclick = () => openChat(m, dir, dir);
+      list.appendChild(item);
+    }
+
     const rest = new VibeRemoteRest(m);
     // Race a promise against a timeout: the browser fetch has no default
     // timeout, so an unreachable host would leave "连接中…" spinning forever.
@@ -75,25 +92,17 @@ async function renderMachineList() {
     const withTimeout = <T>(p: Promise<T>, ms: number) =>
       Promise.race([p, new Promise<never>((_, rej) => setTimeout(() => rej(new Error('timeout')), ms))]);
 
-    // Fetch info to learn the default workdir, then enable "新建会话".
+    // Fetch info to learn the default workdir, then enable "+ 新建".
     withTimeout(rest.info(), 6000)
       .then((info) => {
-        const workdir = info.default_workdir;
+        countEl.textContent = `${workdirs.length} 个 workdir`;
         newBtn.disabled = false;
-        newBtn.onclick = () => openChat(m, workdir, '新会话');
-      })
-      .catch(() => { /* offline handled below */ });
-
-    withTimeout(rest.listSessions(), 6000)
-      .then((sessions) => {
-        countEl.textContent = `${sessions.length} 个会话`;
-        for (const s of sessions) {
-          const item = document.createElement('div');
-          item.className = 'list-item session-item';
-          item.innerHTML = `<div class="session-info"><div class="title">${escapeHtml(s.title)}</div><div class="sub">${escapeHtml(s.workdir)}</div></div><div class="chevron">›</div>`;
-          item.onclick = () => openChat(m, s.workdir, s.title);
-          header.insertAdjacentElement('afterend', item);
-        }
+        newBtn.onclick = async () => {
+          const dir = window.prompt('输入 workdir 路径:', info.default_workdir);
+          if (!dir) return;
+          await store.addWorkdir(key, dir);
+          renderMachineList();
+        };
       })
       .catch(() => {
         countEl.textContent = '离线';
@@ -135,7 +144,7 @@ function openChat(machine: MachineConfig, workdir: string, title: string) {
   client.onData = (payload) => mount.feed(payload);
   client.onError = () => { /* error 帧：结束当前 turn 由 result 帧处理；此处忽略 */ };
   client.connect();
-  client.attach('', 80, 24, workdir, undefined, 'headless');
+  client.attach(workdir);
 
   document.getElementById('back')!.onclick = () => {
     client.disconnect();
