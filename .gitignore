@@ -1,11 +1,19 @@
+# Dependencies (monorepo: 依赖提升到根 node_modules)
+node_modules/
+
 # Build output
 bin/
+dist/
 desktop/dist/
-desktop/node_modules/
 mobile/dist/
-mobile/node_modules/
+web/dist/
 mobile/ios/App/Pods/
 mobile/ios/App/build/
+vibe-remoted/cmd/vibe-portal/dist
+
+# Test/tool caches
+.vite/
+.playwright-mcp/
 
 # OS
 .DS_Store
