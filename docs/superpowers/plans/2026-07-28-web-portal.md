@@ -946,10 +946,10 @@ func main() {
 }
 ```
 
-- [ ] **Step 2: 把 web/dist 链到 vibe-remoted/cmd/vibe-portal 以便 embed**
+- [ ] **Step 2: 把 web/dist 复制到 vibe-remoted/cmd/vibe-portal/dist 以便 embed**
 
-Go embed 只能读同包目录及其子目录，`web/dist` 在仓库另一处。用**符号链接**桥接（Makefile 自动化）：
-Skip this manual step — Makefile 的 `portal` target 会：build web → `ln -sfn ../../../../web/dist vibe-remoted/cmd/vibe-portal/dist` → go build。此 step 无需手动操作，Step 4 会跑通。
+Go embed 只能读同包目录及其子目录，`web/dist` 在仓库另一处。
+⚠️ **实施修正（Task 7 真机验证）**：`//go:embed` **不支持符号链接**（会报 `cannot embed irregular file`，与路径层级无关，是 embed 硬限制）。因此用**构建期复制**（非 symlink）桥接：Makefile 的 `portal` target 会 build web → `cp -R web/dist vibe-remoted/cmd/vibe-portal/dist` → go build。`dist` 保持 gitignore、每次 `make portal` 重建，效果与原设计一致。此 step 无需手动操作，Step 4 会跑通。
 
 - [ ] **Step 3: 在 Makefile 加 portal target**
 
@@ -960,12 +960,15 @@ Modify `Makefile`，`.PHONY` 加 `portal`；在文件末尾加：
 
 portal:
 	cd web && npm run build
-	@ln -sfn ../../../../web/dist vibe-remoted/cmd/vibe-portal/dist
+	@rm -rf vibe-remoted/cmd/vibe-portal/dist
+	@cp -R web/dist vibe-remoted/cmd/vibe-portal/dist
 	cd vibe-remoted && go build -o ../bin/vibe-portal ./cmd/vibe-portal
 
 dev-portal:
 	cd web && npm run dev
 ```
+
+⚠️ **注意**：这里用 `cp -R` 而非 symlink（`ln -sfn`）——Go embed 硬拒 symlink（`cannot embed irregular file`）。`dist` gitignore、每次 make portal 重建，效果与 symlink 方案一致。
 
 同时把 `.PHONY: all server desktop clean dev-server dev-desktop dev-local` 改为 `.PHONY: all server desktop clean dev-server dev-desktop dev-local portal dev-portal`。
 
