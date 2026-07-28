@@ -223,16 +223,20 @@ html, body {
 
 #terminal-container {
   flex: 1;
-  padding: 10px 14px;
   overflow: hidden;
   position: relative;
 }
 
-/* Each open session's terminal stacks in the same area; only the active one
-   is shown. Absolute fill so xterm's fit addon measures the full region. */
+/* 每个打开会话的聊天视图叠在同一区域；只显示活动的那个。
+   绝对填满区域，聊天视图（.vr-chat）内部用 flex 布局自适应。 */
 .term-instance {
   position: absolute;
-  inset: 10px 14px;
+  inset: 0;
+}
+
+/* 聊天内容区挂载点：撑满会话容器，供 React ChatView 填充。 */
+.chat-host {
+  height: 100%;
 }
 
 .empty-state {

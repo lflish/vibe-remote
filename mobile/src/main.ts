@@ -1,41 +1,18 @@
 import './styles.css';
 import { VibeRemoteClient } from '@net/client';
 import { VibeRemoteRest } from '@net/rest';
-import { ChatController, type ChatMessage } from './chat';
-import { makeLineSplitter } from './lines';
+import type { Message } from '@vibe-remote/core';
+import { mountChat } from '@vibe-remote/ui';
+import '@vibe-remote/ui/styles.css';
 import { makeMachineStore, defaultKV } from './storage';
-import { renderMarkdown } from './render';
 import { openMachineManager } from './machines';
 import type { MachineConfig } from '@shared/protocol';
 
 const app = document.getElementById('app')!;
 const store = makeMachineStore(defaultKV());
 
-function bytesToBase64(bytes: Uint8Array): string {
-  let bin = '';
-  for (const b of bytes) bin += String.fromCharCode(b);
-  return btoa(bin);
-}
-function base64ToText(b64: string): string {
-  const bin = atob(b64);
-  const bytes = new Uint8Array(bin.length);
-  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
-  return new TextDecoder().decode(bytes);
-}
-
 function escapeHtml(s: string): string {
   return s.replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]!));
-}
-
-// Render one chat message. assistant → markdown (sanitized); user/tool → escaped.
-function renderMessage(msg: ChatMessage): string {
-  if (msg.role === 'assistant') {
-    return `<div class="bubble assistant"><div class="md">${renderMarkdown(msg.text)}</div></div>`;
-  }
-  if (msg.role === 'tool') {
-    return `<div class="bubble tool">🔧 ${escapeHtml(msg.text)}</div>`;
-  }
-  return `<div class="bubble user">${escapeHtml(msg.text)}</div>`;
 }
 
 async function renderMachineList() {
@@ -129,70 +106,40 @@ async function renderMachineList() {
 // headless keys purely on workdir (server runs `claude -c -p` there), opening
 // an existing session and starting a new one are the same path: `-c` continues
 // the dir's most recent conversation, or starts fresh if none exists.
+// 阶段 2：改用共享 core ChatSession + ui ChatView（mountChat），与桌面同一套逻辑/视图。
 function openChat(machine: MachineConfig, workdir: string, title: string) {
-  const controller = new ChatController();
   app.innerHTML = `
     <div class="header"><button class="back" id="back">‹ 返回</button><span>${escapeHtml(title)}</span></div>
-    <div class="chat" id="chat"></div>
-    <div class="cost" id="cost"></div>
-    <div class="composer">
-      <textarea id="input" rows="1" placeholder="发消息…"></textarea>
-      <button id="send">发送</button>
-    </div>`;
-  const chat = document.getElementById('chat')!;
-  const cost = document.getElementById('cost')!;
-  const input = document.getElementById('input') as HTMLTextAreaElement;
+    <div class="chat-host" id="chat-host"></div>`;
+  const host = document.getElementById('chat-host')!;
 
-  controller.onUpdate = () => {
-    const loadingText = controller.activity ? `${controller.activity}…` : '思考中…';
-    chat.innerHTML =
-      controller.messages.map(renderMessage).join('') +
-      (controller.loading ? `<div class="loading">${escapeHtml(loadingText)}</div>` : '');
-    const parts: string[] = [];
-    if (controller.lastCostUsd != null) parts.push(`$${controller.lastCostUsd.toFixed(4)}`);
-    if (controller.lastInputTokens != null && controller.lastOutputTokens != null) {
-      parts.push(`${controller.lastInputTokens}→${controller.lastOutputTokens} tok`);
-    }
-    cost.textContent = parts.join(' · ');
-    chat.scrollTop = chat.scrollHeight;
-  };
+  const client = new VibeRemoteClient(machine);
+  const mount = mountChat(host, {
+    onSend: (payload) => client.sendData(payload),
+    // onStop：interrupt 帧待 headless 双向化（阶段 4）落地后接入。
+  });
 
-  // Load prior history so opening a session shows what happened before.
+  // 加载历史，把旧的 {role,text} 回合转成 core Message（纯文本 part）。
   const rest = new VibeRemoteRest(machine);
   rest.history(workdir, 50)
     .then((turns) => {
-      if (controller.messages.length === 0) {
-        controller.setHistory(turns.map((t) => ({ role: t.role, text: t.text }) as ChatMessage));
-      }
+      const msgs: Message[] = turns.map((t) =>
+        t.role === 'assistant'
+          ? { role: 'assistant', parts: [{ type: 'text', text: t.text }], streaming: false }
+          : { role: 'user', parts: [{ type: 'text', text: t.text }] },
+      );
+      if (msgs.length) mount.setHistory(msgs);
     })
     .catch(() => { /* history is best-effort; empty chat is fine */ });
 
-  const client = new VibeRemoteClient(machine);
-  const feed = makeLineSplitter((line) => controller.applyLine(line));
-  client.onData = (payload) => feed(base64ToText(payload));
-  client.onError = () => controller.applyLine(JSON.stringify({ type: 'result' }));
+  client.onData = (payload) => mount.feed(payload);
+  client.onError = () => { /* error 帧：结束当前 turn 由 result 帧处理；此处忽略 */ };
   client.connect();
   client.attach('', 80, 24, workdir, undefined, 'headless');
 
-  // Auto-grow textarea (32→120px) as the user types.
-  const autoGrow = () => {
-    input.style.height = 'auto';
-    input.style.height = Math.min(input.scrollHeight, 120) + 'px';
-  };
-  input.addEventListener('input', autoGrow);
-
-  const send = () => {
-    const text = input.value.trim();
-    if (!text || controller.loading) return; // don't send while a turn streams
-    controller.startUserTurn(text);
-    client.sendData(bytesToBase64(new TextEncoder().encode(text)));
-    input.value = '';
-    autoGrow();
-  };
-  document.getElementById('send')!.onclick = send;
-
   document.getElementById('back')!.onclick = () => {
     client.disconnect();
+    mount.dispose();
     detachKeyboardAvoidance();
     renderMachineList();
   };

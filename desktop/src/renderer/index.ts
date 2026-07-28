@@ -1,11 +1,10 @@
-import { Terminal } from '@xterm/xterm';
-import { FitAddon } from '@xterm/addon-fit';
-import '@xterm/xterm/css/xterm.css';
 import type { MachineConfig, SessionInfo } from '../shared/protocol';
 import { VibeRemoteClient, ConnectionState } from './client';
 import { VibeRemoteRest } from './rest';
 import { openDirPicker } from './dirpicker';
 import { openMachineManager } from './machines';
+import { mountChat, type ChatMount } from '@vibe-remote/ui';
+import '@vibe-remote/ui/styles.css';
 
 // Declared by preload
 declare global {
@@ -18,20 +17,18 @@ declare global {
 }
 
 // A SessionView is one open session: its own WebSocket (VibeRemoteClient) and its
-// own xterm instance. Multiple sessions stay open simultaneously; switching
-// just shows/hides their terminal containers. tmux keeps unfocused sessions
-// alive server-side regardless.
+// own chat view (core ChatSession + ui ChatView, mounted via ChatMount).
+// 阶段 1b：内容区从 xterm 换成结构化聊天 UI，走 headless 线。多会话同时打开，
+// 切换只显隐各自容器；tmux/headless 会话在服务端各自保活。
 interface SessionView {
   key: string; // `${machineAddr}::${sessionId}`
   machine: MachineConfig;
   sessionId: string; // '' until the server assigns one for a new session
   client: VibeRemoteClient;
-  terminal: Terminal;
-  fitAddon: FitAddon;
+  chat: ChatMount; // core ChatSession + ui ChatView 挂载
   container: HTMLElement;
   banner: HTMLElement; // reconnect banner overlay, hidden by default
   activity: 'none' | 'output' | 'idle' | 'waiting'; // sidebar dot state
-  suppressUntil: number; // ms timestamp: ignore onData activity until then (attach repaint)
 }
 
 // --- App state ---
@@ -56,21 +53,6 @@ let renamingActive = false;
 
 const machineKey = (m: MachineConfig) => `${m.addr}:${m.port}`;
 const viewKey = (m: MachineConfig, sid: string) => `${machineKey(m)}::${sid}`;
-
-// --- base64 <-> bytes helpers (UTF-8 safe) ---
-// PTY bytes travel as base64; convert to/from raw bytes (not JS strings) so
-// multi-byte UTF-8 sequences (box-drawing, emoji, CJK) survive intact.
-function base64ToBytes(b64: string): Uint8Array {
-  const bin = atob(b64);
-  const bytes = new Uint8Array(bin.length);
-  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
-  return bytes;
-}
-function bytesToBase64(bytes: Uint8Array): string {
-  let bin = '';
-  for (let i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i]);
-  return btoa(bin);
-}
 
 // --- Init ---
 
@@ -132,7 +114,7 @@ function wireManageMachinesButton() {
           for (const [k, v] of [...views]) {
             if (machineKey(v.machine) === rk) {
               v.client.disconnect();
-              v.terminal.dispose();
+              v.chat.dispose();
               v.container.remove();
               views.delete(k);
               if (activeKey === k) { activeKey = null; activeRemoved = true; }
@@ -159,20 +141,10 @@ function wireManageMachinesButton() {
   });
 }
 
-// wireWindowResize refits the active terminal when the window resizes, so the
-// visible session's PTY dimensions track the window instead of staying at the
-// size it was first opened at (which would misdraw wrapped lines). Debounced
-// to avoid a resize storm while dragging.
+// 阶段 1b：headless 聊天 UI 用 CSS 布局自适应窗口，无需 xterm 的 fit/resize。
+// 保留空函数占位以免调用处报错；后续可彻底删除调用点。
 function wireWindowResize() {
-  let t: ReturnType<typeof setTimeout> | null = null;
-  window.addEventListener('resize', () => {
-    if (t) clearTimeout(t);
-    t = setTimeout(() => {
-      if (!activeKey) return;
-      const view = views.get(activeKey);
-      if (view) view.fitAddon.fit(); // fit() triggers term.onResize → sendResize
-    }, 80);
-  });
+  /* no-op：结构化聊天视图靠 CSS flex 自适应，不再需要按窗口 resize 重算 PTY 尺寸 */
 }
 
 // refreshAllMachines pulls each machine's session list over REST and updates
@@ -196,27 +168,7 @@ async function refreshAllMachines() {
 
 // --- Session views ---
 
-function makeTerminal(): { term: Terminal; fit: FitAddon } {
-  const term = new Terminal({
-    fontSize: 14,
-    fontFamily: "'JetBrains Mono', 'SF Mono', 'Fira Code', 'Cascadia Code', monospace",
-    theme: {
-      background: '#F5F4EF', foreground: '#2B2A28', cursor: '#C9645A',
-      selectionBackground: '#DCD6C9',
-      black: '#3B3A37', red: '#C0564B', green: '#5E8C58', yellow: '#B07D2E',
-      blue: '#4A72B0', magenta: '#9A5BA0', cyan: '#3E8C8C', white: '#6B6862',
-      brightBlack: '#9B978E', brightRed: '#C0564B', brightGreen: '#5E8C58',
-      brightYellow: '#B07D2E', brightBlue: '#4A72B0', brightMagenta: '#9A5BA0',
-      brightCyan: '#3E8C8C', brightWhite: '#2B2A28',
-    },
-    cursorBlink: true, scrollback: 10000, allowProposedApi: true,
-  });
-  const fit = new FitAddon();
-  term.loadAddon(fit);
-  return { term, fit };
-}
-
-// openSession creates a new SessionView (its own WS + xterm) and attaches.
+// openSession creates a new SessionView (its own WS + chat view) and attaches (headless).
 // sessionId '' means create a brand-new session with the given workdir.
 function openSession(machine: MachineConfig, sessionId: string, workdir?: string, flags?: string[]): SessionView {
   const key = viewKey(machine, sessionId);
@@ -232,14 +184,21 @@ function openSession(machine: MachineConfig, sessionId: string, workdir?: string
   container.style.display = 'none';
   wrap.appendChild(container);
 
-  const { term, fit } = makeTerminal();
-  term.open(container);
-
   const client = new VibeRemoteClient(machine);
+
+  // 聊天内容区：用户发消息 → 编码为 data 帧发出（headless 线里 data 帧承载 prompt 文本）。
+  const chatHost = document.createElement('div');
+  chatHost.className = 'chat-host';
+  container.appendChild(chatHost);
+  const chat = mountChat(chatHost, {
+    onSend: (payload: string) => client.sendData(payload),
+    // onStop：interrupt 帧待阶段 0b（headless 双向化）落地后接入。
+  });
+
   const banner = document.createElement('div');
   banner.className = 'reconnect-banner';
   banner.style.display = 'none';
-  const view: SessionView = { key, machine, sessionId, client, terminal: term, fitAddon: fit, container, banner, activity: 'none', suppressUntil: 0 };
+  const view: SessionView = { key, machine, sessionId, client, chat, container, banner, activity: 'none' };
   views.set(key, view);
 
   const bannerText = document.createElement('span');
@@ -250,23 +209,14 @@ function openSession(machine: MachineConfig, sessionId: string, workdir?: string
   banner.append(bannerText, retryBtn);
   container.appendChild(banner);
 
-  // Terminal input → server
-  term.onData((data: string) => {
-    client.sendData(bytesToBase64(new TextEncoder().encode(data)));
-  });
-  term.onResize(({ cols, rows }) => client.sendResize(cols, rows));
-
-  // Server PTY bytes → terminal (Uint8Array so xterm decodes UTF-8 itself)
+  // Server NDJSON (headless stream-json) → 结构化 chat。data 帧 payload 是 base64 的
+  // NDJSON 文本；ChatMount.feed 内部做行缓冲 + 解析 + 状态累积。
   client.onData = (payload: string) => {
-    term.write(base64ToBytes(payload));
-    // Mark background activity as a dot — but not during the post-attach
-    // suppression window (tmux full repaint would false-trigger it), and not
-    // for the session the user is actively viewing.
-    if (view.key !== activeKey && Date.now() >= view.suppressUntil) {
-      if (view.activity === 'none') {
-        view.activity = 'output';
-        renderSidebar();
-      }
+    chat.feed(payload);
+    // 后台会话有输出即点亮圆点（活动会话不标记，用户在看）。
+    if (view.key !== activeKey && view.activity === 'none') {
+      view.activity = 'output';
+      renderSidebar();
     }
   };
 
@@ -280,10 +230,6 @@ function openSession(machine: MachineConfig, sessionId: string, workdir?: string
       views.set(view.key, view);
       if (activeKey === key) activeKey = view.key;
     }
-    term.clear(); // clean base for the tmux full repaint on (re)attach
-    // Suppress activity marking briefly so the tmux full repaint on (re)attach
-    // doesn't false-light the dot. 500ms is an empirical, tunable value.
-    view.suppressUntil = Date.now() + 500;
     refreshAllMachines();
     updateStatusBar();
   };
@@ -298,16 +244,11 @@ function openSession(machine: MachineConfig, sessionId: string, workdir?: string
     if (view.key === activeKey) updateStatusBar(undefined, attempt);
   };
   client.onExit = (code) => {
-    // Write a visible marker into the terminal and surface it in the status bar
-    // so a dead session isn't just a frozen screen.
-    if (view.terminal) view.terminal.write(`\r\n\x1b[33m[session exited, code ${code}]\x1b[0m\r\n`);
     updateStatusBar(`Session exited (code ${code})`);
     refreshAllMachines();
   };
   client.onError = (msg) => {
     console.error(`[${machine.name}]`, msg);
-    // Show the error to the user instead of leaving a blank terminal.
-    if (view.terminal) view.terminal.write(`\r\n\x1b[31m[error: ${msg}]\x1b[0m\r\n`);
     if (view.key === activeKey) updateStatusBar(`Error: ${msg}`);
   };
   client.onNotify = (kind, message) => {
@@ -319,15 +260,15 @@ function openSession(machine: MachineConfig, sessionId: string, workdir?: string
       }
       // waiting = 需要用户介入，可选弹桌面通知（移动端伏笔）。
       if (kind === 'waiting' && notificationsEnabled()) {
-        const title = view.terminal ? (views.get(view.key)?.sessionId || 'vibe-remote') : 'vibe-remote';
+        const title = views.get(view.key)?.sessionId || 'vibe-remote';
         notifyDesktop(`${machine.name} · ${title}`, message || 'Claude 需要你的确认');
       }
     }
   };
 
   client.connect();
-  const dims = fit.proposeDimensions();
-  client.attach(sessionId, dims?.cols || 80, dims?.rows || 24, workdir, flags);
+  // 走 headless 结构化线（cols/rows 对 headless 无意义，传占位值）。
+  client.attach(sessionId, 80, 24, workdir, flags, 'headless');
 
   setActive(view.key);
   return view;
@@ -342,13 +283,6 @@ function setActive(key: string) {
   }
   for (const [k, v] of views) {
     v.container.style.display = k === key ? 'block' : 'none';
-  }
-  const view = views.get(key);
-  if (view) {
-    requestAnimationFrame(() => {
-      view.fitAddon.fit();
-      view.terminal.focus();
-    });
   }
   renderSidebar();
   updateStatusBar();
@@ -542,7 +476,7 @@ async function closeSession(machine: MachineConfig, sessionId: string) {
   const view = views.get(key);
   if (view) {
     view.client.disconnect();
-    view.terminal.dispose();
+    view.chat.dispose();
     view.container.remove();
     views.delete(key);
     if (activeKey === key) {

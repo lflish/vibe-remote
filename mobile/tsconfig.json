@@ -7,11 +7,12 @@
     "esModuleInterop": true,
     "skipLibCheck": true,
     "noEmit": true,
+    "jsx": "react-jsx",
     "lib": ["ES2020", "DOM", "DOM.Iterable"],
     "baseUrl": ".",
     "paths": {
-      "@net/*": ["../desktop/src/renderer/*"],
-      "@shared/*": ["../desktop/src/shared/*"]
+      "@net/*": ["../packages/core/src/*"],
+      "@shared/*": ["../packages/core/src/*"]
     }
   },
   "include": ["src"]
