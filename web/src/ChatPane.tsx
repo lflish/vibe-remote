@@ -9,6 +9,7 @@ export function ChatPane({ machine, workdir, onBack }: { machine: MachineConfig;
   const hostRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
+    let cancelled = false;
     const host = hostRef.current!;
     const client = new VibeRemoteClient(machine);
     const mount = mountChat(host, { onSend: (payload) => client.sendData(payload) });
@@ -22,7 +23,7 @@ export function ChatPane({ machine, workdir, onBack }: { machine: MachineConfig;
             ? { role: 'assistant', parts: [{ type: 'text', text: t.text }], streaming: false }
             : { role: 'user', parts: [{ type: 'text', text: t.text }] },
         );
-        if (msgs.length) mount.setHistory(msgs);
+        if (!cancelled && msgs.length) mount.setHistory(msgs);
       })
       .catch(() => { /* history best-effort */ });
 
@@ -31,6 +32,7 @@ export function ChatPane({ machine, workdir, onBack }: { machine: MachineConfig;
     client.attach('', 80, 24, workdir, undefined, 'headless');
 
     return () => {
+      cancelled = true;
       client.disconnect();
       mount.dispose();
     };

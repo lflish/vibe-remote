@@ -49,6 +49,11 @@ export function mountChat(
     session,
     feed: (base64Payload: string) => splitter(base64ToText(base64Payload)),
     setHistory: (messages: Message[]) => session.setHistory(messages),
-    dispose: () => root.unmount(),
+    dispose: () => {
+      // React 19 禁止在另一组件 render/commit 周期内同步 unmount root。
+      // 桌面/web/iOS 卸载聊天视图（React useEffect cleanup 或命令式移除）都经此，
+      // 用 queueMicrotask 推迟到当前周期结束后 unmount。
+      queueMicrotask(() => root.unmount());
+    },
   };
 }
