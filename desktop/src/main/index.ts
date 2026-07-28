@@ -71,6 +71,28 @@ function saveMachines(machines: MachineConfig[]): void {
   fs.writeFileSync(configPath, JSON.stringify(machines, null, 2));
 }
 
+// Workdir list persistence (userData/workdirs.json). Keyed by machineKey
+// (`addr:port`) → dirs[]. This is the desktop equivalent of the web's
+// localStorage workdir store: 会话 = workdir, so each machine remembers the
+// workdirs the user has opened chats in.
+function getWorkdirsConfigPath(): string {
+  return path.join(app.getPath('userData'), 'workdirs.json');
+}
+
+function readAllWorkdirs(): Record<string, string[]> {
+  try {
+    return JSON.parse(fs.readFileSync(getWorkdirsConfigPath(), 'utf-8'));
+  } catch {
+    return {};
+  }
+}
+
+function writeAllWorkdirs(all: Record<string, string[]>): void {
+  const configPath = getWorkdirsConfigPath();
+  fs.mkdirSync(path.dirname(configPath), { recursive: true });
+  fs.writeFileSync(configPath, JSON.stringify(all, null, 2));
+}
+
 // IPC handlers for renderer process
 ipcMain.handle('get-machines', () => {
   return loadMachines();
@@ -79,6 +101,17 @@ ipcMain.handle('get-machines', () => {
 ipcMain.handle('save-machines', (_event, machines: MachineConfig[]) => {
   saveMachines(machines);
   return true;
+});
+
+ipcMain.handle('workdirs:get', (_event, machineKey: string): string[] => {
+  return readAllWorkdirs()[machineKey] ?? [];
+});
+
+ipcMain.handle('workdirs:add', (_event, args: { machineKey: string; dir: string }) => {
+  const all = readAllWorkdirs();
+  const cur = all[args.machineKey] ?? [];
+  if (!cur.includes(args.dir)) all[args.machineKey] = [...cur, args.dir];
+  writeAllWorkdirs(all);
 });
 
 // App lifecycle

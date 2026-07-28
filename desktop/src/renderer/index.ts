@@ -1,4 +1,4 @@
-import type { MachineConfig, SessionInfo } from '../shared/protocol';
+import type { MachineConfig } from '../shared/protocol';
 import { VibeRemoteClient, ConnectionState } from './client';
 import { VibeRemoteRest } from './rest';
 import { openDirPicker } from './dirpicker';
@@ -6,29 +6,35 @@ import { openMachineManager } from './machines';
 import { mountChat, type ChatMount } from '@vibe-remote/ui';
 import '@vibe-remote/ui/styles.css';
 
-// Declared by preload
+// Declared by preload. `getWorkdirs`/`addWorkdir` persist the workdir list
+// per machine to Electron userData (`workdirs.json`) — desktop's equivalent
+// of the web's localStorage store. Workdir *is* the session identity here
+// (headless 唯一线：会话=workdir); we no longer list tmux sessions from the
+// server.
 declare global {
   interface Window {
     vibeRemote: {
       getMachines(): Promise<MachineConfig[]>;
       saveMachines(machines: MachineConfig[]): Promise<boolean>;
+      getWorkdirs(machineKey: string): Promise<string[]>;
+      addWorkdir(machineKey: string, dir: string): Promise<void>;
     };
   }
 }
 
-// A SessionView is one open session: its own WebSocket (VibeRemoteClient) and its
-// own chat view (core ChatSession + ui ChatView, mounted via ChatMount).
-// 阶段 1b：内容区从 xterm 换成结构化聊天 UI，走 headless 线。多会话同时打开，
-// 切换只显隐各自容器；tmux/headless 会话在服务端各自保活。
+// A SessionView is one open workdir on one machine: its own WebSocket
+// (VibeRemoteClient) and its own chat view (core ChatSession + ui ChatView,
+// mounted via ChatMount). Multiple views can coexist; switching = showing
+// one container and hiding the rest.
 interface SessionView {
-  key: string; // `${machineAddr}::${sessionId}`
+  key: string; // `${machineKey}::${workdir}`
   machine: MachineConfig;
-  sessionId: string; // '' until the server assigns one for a new session
+  workdir: string;
   client: VibeRemoteClient;
-  chat: ChatMount; // core ChatSession + ui ChatView 挂载
+  chat: ChatMount;
   container: HTMLElement;
   banner: HTMLElement; // reconnect banner overlay, hidden by default
-  activity: 'none' | 'output' | 'idle' | 'waiting'; // sidebar dot state
+  activity: 'none' | 'output'; // sidebar dot: has-unread-output
 }
 
 // --- App state ---
@@ -37,22 +43,15 @@ interface SessionView {
 let machines: MachineConfig[] = [];
 const rests = new Map<string, VibeRemoteRest>(); // machineKey -> REST client
 const views = new Map<string, SessionView>(); // view key -> open session view
-const machineSessions = new Map<string, SessionInfo[]>(); // machineKey -> sessions (REST)
 const machineOnline = new Map<string, boolean>(); // machineKey -> reachable
+const machineWorkdirs = new Map<string, string[]>(); // machineKey -> workdirs
 let activeKey: string | null = null;
 // The machine a new session targets when there is no active session to inherit
-// from. Set by clicking a machine header in the sidebar. Must be module-level
-// state (not a DOM marker) because renderSidebar rebuilds the whole sidebar DOM
-// on every 5s poll — a DOM flag would be wiped each rebuild.
+// from. Set by clicking a machine header in the sidebar.
 let selectedMachineKey: string | null = null;
-// While an inline rename input is open we suppress full sidebar rebuilds:
-// the 5s poll (and onReady/onExit) call renderSidebar(), which wipes and
-// recreates the whole sidebar DOM — that would delete the focused input and
-// its blur would silently commit half-typed text. Paused during editing.
-let renamingActive = false;
 
 const machineKey = (m: MachineConfig) => `${m.addr}:${m.port}`;
-const viewKey = (m: MachineConfig, sid: string) => `${machineKey(m)}::${sid}`;
+const viewKey = (m: MachineConfig, workdir: string) => `${machineKey(m)}::${workdir}`;
 
 // --- Init ---
 
@@ -60,23 +59,18 @@ async function init() {
   machines = await window.vibeRemote.getMachines();
   wireManageMachinesButton();
   wireNewSessionButton();
-  wireWindowResize();
   if (machines.length === 0) {
     renderEmptyState();
     return;
   }
-  // Default the new-session target to the first machine so the selection is
-  // always visible and "new session" is predictable before any click.
   selectedMachineKey = machineKey(machines[0]);
   rebuildRests();
   await refreshAllMachines();
   startPolling();
 }
 
-// startPolling starts the 5s sidebar refresh loop. Idempotent (guarded by a
-// module-level flag) so the empty→non-empty path can start it without ever
-// stacking multiple intervals. Poll each machine's session list periodically so
-// the sidebar reflects sessions created elsewhere and reachability changes.
+// startPolling starts the 5s sidebar refresh loop (probes each machine's
+// reachability + reloads its workdir list from userData). Idempotent.
 let pollingStarted = false;
 function startPolling() {
   if (pollingStarted) return;
@@ -84,8 +78,6 @@ function startPolling() {
   setInterval(refreshAllMachines, 5000);
 }
 
-// rebuildRests rebuilds the machineKey→REST map after the machine list changes
-// (add/edit/delete via the manager). Existing session WebSockets are untouched.
 function rebuildRests() {
   rests.clear();
   for (const m of machines) rests.set(machineKey(m), new VibeRemoteRest(m));
@@ -102,13 +94,10 @@ function wireManageMachinesButton() {
           .filter((old) => !updated.some((u) => machineKey(u) === machineKey(old)))
           .map(machineKey);
         machines = updated;
-        // Drop a selection that points at a now-removed machine so the
-        // highlight (and new-session target) never dangles.
         if (selectedMachineKey && !machines.some((m) => machineKey(m) === selectedMachineKey)) {
           selectedMachineKey = machines.length > 0 ? machineKey(machines[0]) : null;
         }
         rebuildRests();
-        // Close views belonging to removed machines (does NOT kill remote sessions).
         let activeRemoved = false;
         for (const rk of removedKeys) {
           for (const [k, v] of [...views]) {
@@ -121,8 +110,6 @@ function wireManageMachinesButton() {
             }
           }
         }
-        // If the active view was removed, fall back to another open view so the
-        // main area doesn't go blank (mirrors closeSession's next-view logic).
         if (activeRemoved) {
           const next = views.keys().next();
           if (!next.done) setActive(next.value);
@@ -130,8 +117,6 @@ function wireManageMachinesButton() {
         if (machines.length === 0) {
           renderEmptyState();
         } else {
-          // Empty→non-empty transition: drop the leftover empty-state box (if any),
-          // then refresh and make sure the poll loop is running.
           document.querySelector('#terminal-container .empty-state')?.remove();
           refreshAllMachines();
           startPolling();
@@ -141,25 +126,21 @@ function wireManageMachinesButton() {
   });
 }
 
-// 阶段 1b：headless 聊天 UI 用 CSS 布局自适应窗口，无需 xterm 的 fit/resize。
-// 保留空函数占位以免调用处报错；后续可彻底删除调用点。
-function wireWindowResize() {
-  /* no-op：结构化聊天视图靠 CSS flex 自适应，不再需要按窗口 resize 重算 PTY 尺寸 */
-}
-
-// refreshAllMachines pulls each machine's session list over REST and updates
-// the sidebar + online status.
+// refreshAllMachines probes each machine (via /info) for reachability and
+// reloads its workdir list from Electron userData. Sidebar content = workdir
+// list, so no server-side session listing is needed anymore.
 async function refreshAllMachines() {
   await Promise.all(
     machines.map(async (m) => {
       const mk = machineKey(m);
       try {
-        const list = await rests.get(mk)!.listSessions();
-        machineSessions.set(mk, list);
+        await rests.get(mk)!.info();
         machineOnline.set(mk, true);
       } catch {
         machineOnline.set(mk, false);
       }
+      const dirs = await window.vibeRemote.getWorkdirs(mk);
+      machineWorkdirs.set(mk, dirs);
     }),
   );
   renderSidebar();
@@ -168,10 +149,11 @@ async function refreshAllMachines() {
 
 // --- Session views ---
 
-// openSession creates a new SessionView (its own WS + chat view) and attaches (headless).
-// sessionId '' means create a brand-new session with the given workdir.
-function openSession(machine: MachineConfig, sessionId: string, workdir?: string, flags?: string[]): SessionView {
-  const key = viewKey(machine, sessionId);
+// openSession opens (or focuses) a SessionView keyed by (machine, workdir).
+// One WebSocket + one chat mount per workdir; further clicks on the same
+// workdir just switch to the existing view.
+function openSession(machine: MachineConfig, workdir: string, flags?: string[]): SessionView {
+  const key = viewKey(machine, workdir);
   const existing = views.get(key);
   if (existing) {
     setActive(key);
@@ -186,19 +168,17 @@ function openSession(machine: MachineConfig, sessionId: string, workdir?: string
 
   const client = new VibeRemoteClient(machine);
 
-  // 聊天内容区：用户发消息 → 编码为 data 帧发出（headless 线里 data 帧承载 prompt 文本）。
   const chatHost = document.createElement('div');
   chatHost.className = 'chat-host';
   container.appendChild(chatHost);
   const chat = mountChat(chatHost, {
     onSend: (payload: string) => client.sendData(payload),
-    // onStop：interrupt 帧待阶段 0b（headless 双向化）落地后接入。
   });
 
   const banner = document.createElement('div');
   banner.className = 'reconnect-banner';
   banner.style.display = 'none';
-  const view: SessionView = { key, machine, sessionId, client, chat, container, banner, activity: 'none' };
+  const view: SessionView = { key, machine, workdir, client, chat, container, banner, activity: 'none' };
   views.set(key, view);
 
   const bannerText = document.createElement('span');
@@ -209,33 +189,38 @@ function openSession(machine: MachineConfig, sessionId: string, workdir?: string
   banner.append(bannerText, retryBtn);
   container.appendChild(banner);
 
-  // Server NDJSON (headless stream-json) → 结构化 chat。data 帧 payload 是 base64 的
-  // NDJSON 文本；ChatMount.feed 内部做行缓冲 + 解析 + 状态累积。
+  // Best-effort history backfill from the jsonl-backed REST endpoint. Runs in
+  // parallel with the WS connect; if it fails we just show a live-only chat.
+  rests.get(machineKey(machine))!
+    .history(workdir, 50)
+    .then((turns) => {
+      const msgs = turns.map((t) =>
+        t.role === 'assistant'
+          ? { role: 'assistant' as const, parts: [{ type: 'text' as const, text: t.text }], streaming: false }
+          : { role: 'user' as const, parts: [{ type: 'text' as const, text: t.text }] },
+      );
+      if (msgs.length) chat.setHistory(msgs);
+    })
+    .catch(() => { /* history best-effort */ });
+
+  // Server NDJSON (headless stream-json) → structured chat. `feed` handles
+  // base64 → text → line splitting → session state.
   client.onData = (payload: string) => {
     chat.feed(payload);
-    // 后台会话有输出即点亮圆点（活动会话不标记，用户在看）。
     if (view.key !== activeKey && view.activity === 'none') {
       view.activity = 'output';
       renderSidebar();
     }
   };
 
-  client.onReady = (sid: string) => {
+  client.onReady = (_readyWorkdir: string) => {
+    // Session identity is the requested workdir; the server's ready frame just
+    // confirms attach succeeded. No re-key.
     view.banner.style.display = 'none';
-    // A new session gets its real id here; re-key the view and refresh sidebar.
-    if (view.sessionId !== sid) {
-      views.delete(view.key);
-      view.sessionId = sid;
-      view.key = viewKey(machine, sid);
-      views.set(view.key, view);
-      if (activeKey === key) activeKey = view.key;
-    }
-    refreshAllMachines();
     updateStatusBar();
   };
 
   client.onStateChange = (state, attempt) => {
-    // Banner shows only on the active session; non-active disconnects don't nag.
     if (state === ConnectionState.Reconnecting) {
       view.banner.style.display = 'flex';
     } else if (state === ConnectionState.Connected) {
@@ -245,36 +230,19 @@ function openSession(machine: MachineConfig, sessionId: string, workdir?: string
   };
   client.onExit = (code) => {
     updateStatusBar(`Session exited (code ${code})`);
-    refreshAllMachines();
   };
   client.onError = (msg) => {
     console.error(`[${machine.name}]`, msg);
     if (view.key === activeKey) updateStatusBar(`Error: ${msg}`);
   };
-  client.onNotify = (kind, message) => {
-    // hook 事件把圆点从「有输出」升级为语义状态。活动会话不标记（用户在看）。
-    if (kind === 'idle' || kind === 'waiting') {
-      if (view.key !== activeKey) {
-        view.activity = kind;
-        renderSidebar();
-      }
-      // waiting = 需要用户介入，可选弹桌面通知（移动端伏笔）。
-      if (kind === 'waiting' && notificationsEnabled()) {
-        const title = views.get(view.key)?.sessionId || 'vibe-remote';
-        notifyDesktop(`${machine.name} · ${title}`, message || 'Claude 需要你的确认');
-      }
-    }
-  };
 
   client.connect();
-  // 走 headless 结构化线（cols/rows 对 headless 无意义，传占位值）。
-  client.attach(sessionId, 80, 24, workdir, flags, 'headless');
+  client.attach(workdir, flags);
 
   setActive(view.key);
   return view;
 }
 
-// setActive shows one session view and hides the rest, then fits + focuses it.
 function setActive(key: string) {
   activeKey = key;
   const activeView = views.get(key);
@@ -291,8 +259,6 @@ function setActive(key: string) {
 // --- Sidebar ---
 
 function renderSidebar() {
-  // Skip rebuilds while an inline rename is in progress (see renamingActive).
-  if (renamingActive) return;
   const container = document.getElementById('machine-list')!;
   container.textContent = '';
 
@@ -303,14 +269,11 @@ function renderSidebar() {
     const nameRow = document.createElement('div');
     const mKey = machineKey(machine);
     nameRow.className = 'machine-name' + (mKey === selectedMachineKey ? ' selected' : '');
-    const dot = document.createElement('span');
-    dot.className = 'machine-status' + (machineOnline.get(mKey) ? ' connected' : ' error');
+    const statusDot = document.createElement('span');
+    statusDot.className = 'machine-status' + (machineOnline.get(mKey) ? ' connected' : ' error');
     const nameSpan = document.createElement('span');
     nameSpan.textContent = machine.name;
-    nameRow.append(dot, nameSpan);
-    // Click selects this machine as the new-session target (does NOT open a
-    // session — that's what clicking a session item does). Re-render to move
-    // the selected highlight.
+    nameRow.append(statusDot, nameSpan);
     nameRow.addEventListener('click', () => {
       selectedMachineKey = mKey;
       renderSidebar();
@@ -319,36 +282,20 @@ function renderSidebar() {
     const list = document.createElement('div');
     list.className = 'session-list';
 
-    const sessions = machineSessions.get(machineKey(machine)) || [];
-    for (const s of sessions) {
-      const key = viewKey(machine, s.id);
+    const dirs = machineWorkdirs.get(mKey) || [];
+    for (const dir of dirs) {
+      const key = viewKey(machine, dir);
       const item = document.createElement('div');
       item.className = 'session-item' + (key === activeKey ? ' active' : '');
 
       const label = document.createElement('span');
       label.className = 'session-label';
-      label.textContent = s.title || (s.workdir ? s.workdir.split('/').pop() : '') || s.id;
-      label.title = s.workdir || s.id;
-      // Click vs dblclick: dblclick=rename. A dblclick fires as click→click→
-      // dblclick, so a naive click handler would open (and WS-connect) an
-      // unopened session before the rename even starts. Only unopened sessions
-      // pay a short delay so an incoming dblclick can cancel the open; already-
-      // open sessions switch instantly (openSession is an idempotent setActive,
-      // no side effects), keeping the primary interaction zero-latency.
-      let openTimer: number | undefined;
-      label.addEventListener('click', () => {
-        if (views.has(key)) {
-          openSession(machine, s.id); // already open: instant, no delay
-        } else {
-          window.clearTimeout(openTimer);
-          openTimer = window.setTimeout(() => openSession(machine, s.id), 220);
-        }
-      });
-      label.addEventListener('dblclick', (e) => {
-        e.stopPropagation();
-        window.clearTimeout(openTimer); // cancel any pending open for this label
-        startInlineRename(machine, s, label);
-      });
+      // Show trailing path segment (matches how tmux session titles used to
+      // read); full path in title tooltip.
+      const short = dir.split('/').filter(Boolean).pop() || dir;
+      label.textContent = short;
+      label.title = dir;
+      label.addEventListener('click', () => openSession(machine, dir));
 
       const dot = document.createElement('span');
       dot.className = 'session-unread';
@@ -357,67 +304,16 @@ function renderSidebar() {
       if (act === 'none' || key === activeKey) {
         dot.classList.add('hidden');
       } else {
-        dot.classList.add(act); // 'output' | 'idle' | 'waiting'
+        dot.classList.add(act);
       }
 
-      const close = document.createElement('span');
-      close.className = 'session-close';
-      close.textContent = '×';
-      close.title = 'Close session (kills remote claude)';
-      close.addEventListener('click', (e) => { e.stopPropagation(); closeSession(machine, s.id); });
-
-      item.append(label, dot, close);
+      item.append(label, dot);
       list.appendChild(item);
     }
 
     group.append(nameRow, list);
     container.appendChild(group);
   }
-}
-
-// startInlineRename replaces a session label with an input for in-place rename.
-// Enter/blur commits, Esc cancels. Empty input clears the custom name (server
-// falls back to the default title). After commit we refresh from the server so
-// the authoritative title is shown (keeps multi-client views consistent).
-function startInlineRename(machine: MachineConfig, s: SessionInfo, label: HTMLElement) {
-  const input = document.createElement('input');
-  input.className = 'session-rename-input';
-  input.value = s.title || '';
-  label.replaceWith(input);
-  renamingActive = true; // pause sidebar rebuilds while editing (see flag docs)
-  input.focus();
-  input.select();
-
-  let done = false;
-  const commit = async () => {
-    if (done) return;
-    // If the input is no longer in the document, this blur came from the DOM
-    // being torn down (not a deliberate user focus change) — treat as cancel,
-    // never commit half-typed text. (Belt-and-suspenders with renamingActive.)
-    if (!document.body.contains(input)) { done = true; renamingActive = false; return; }
-    done = true;
-    const name = input.value.trim();
-    // Clear before refresh so the subsequent renderSidebar() actually rebuilds.
-    renamingActive = false;
-    try {
-      await rests.get(machineKey(machine))!.renameSession(s.id, name);
-    } catch (e) {
-      console.error('rename failed', e);
-    }
-    refreshAllMachines();
-  };
-  const cancel = () => {
-    if (done) return;
-    done = true;
-    renamingActive = false; // clear before renderSidebar so it rebuilds
-    renderSidebar();
-  };
-
-  input.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter') { e.preventDefault(); commit(); }
-    else if (e.key === 'Escape') { e.preventDefault(); cancel(); }
-  });
-  input.addEventListener('blur', commit);
 }
 
 function updateStatusBar(extra?: string, attempt?: number) {
@@ -432,10 +328,8 @@ function updateStatusBar(extra?: string, attempt?: number) {
   tbStatus.className = '';
 
   if (view) {
-    // Toolbar title: machine name · short session code (SessionView holds no
-    // display name; short code is enough to locate the active session).
-    const shortId = view.sessionId ? view.sessionId.slice(-6) : 'new';
-    tbTitle.textContent = `${view.machine.name} · ${shortId}`;
+    const short = view.workdir.split('/').filter(Boolean).pop() || view.workdir;
+    tbTitle.textContent = `${view.machine.name} · ${short}`;
 
     const st = view.client.state;
     if (st === ConnectionState.Connected) {
@@ -462,30 +356,7 @@ function updateStatusBar(extra?: string, attempt?: number) {
     tbStatus.className = anyOnline ? 'connected' : '';
     tbStatusText.textContent = anyOnline ? 'Ready' : 'No connection';
   }
-  sessionEl.textContent = extra || (view?.sessionId ? `Session: ${view.sessionId}` : '');
-}
-
-// closeSession kills the remote session (tmux + claude) and removes its view.
-async function closeSession(machine: MachineConfig, sessionId: string) {
-  try {
-    await rests.get(machineKey(machine))!.deleteSession(sessionId);
-  } catch (e) {
-    console.error('delete session failed', e);
-  }
-  const key = viewKey(machine, sessionId);
-  const view = views.get(key);
-  if (view) {
-    view.client.disconnect();
-    view.chat.dispose();
-    view.container.remove();
-    views.delete(key);
-    if (activeKey === key) {
-      activeKey = null;
-      const next = views.keys().next();
-      if (!next.done) setActive(next.value);
-    }
-  }
-  refreshAllMachines();
+  sessionEl.textContent = extra || (view ? `Workdir: ${view.workdir}` : '');
 }
 
 function renderEmptyState() {
@@ -515,40 +386,23 @@ function renderEmptyState() {
 
 // --- New session button ---
 
+// The "+ New Session" footer button picks a directory on the target machine
+// (openDirPicker returns the chosen path + selected launch flags), records
+// the workdir into userData so it shows up in the sidebar, then opens it.
 function wireNewSessionButton() {
   document.getElementById('btn-new-session')?.addEventListener('click', async () => {
     if (machines.length === 0) return;
-    // Target machine priority: active session's machine → sidebar-selected
-    // machine → first machine. Active wins so "new session" inside a session
-    // stays on the same machine; selection covers the no-active-session case.
     const active = activeKey ? views.get(activeKey) : null;
     const selected = selectedMachineKey
       ? machines.find((m) => machineKey(m) === selectedMachineKey)
       : null;
     const machine = active?.machine || selected || machines[0];
     const picked = await openDirPicker(machine);
-    if (picked === null) return; // cancelled
-    openSession(machine, '', picked.workdir, picked.flags);
+    if (picked === null) return;
+    await window.vibeRemote.addWorkdir(machineKey(machine), picked.workdir);
+    machineWorkdirs.set(machineKey(machine), await window.vibeRemote.getWorkdirs(machineKey(machine)));
+    openSession(machine, picked.workdir, picked.flags);
   });
-}
-
-// --- Desktop notifications (optional, for `waiting` events) ---
-// A simple localStorage flag gates whether we attempt OS notifications. The OS
-// permission itself is separate: a denied permission silently degrades to just
-// the sidebar dot. The machine-manager settings can flip this flag.
-function notificationsEnabled(): boolean {
-  return localStorage.getItem('vibe-remote.notifications') !== 'off';
-}
-
-function notifyDesktop(title: string, body: string) {
-  if (!('Notification' in window)) return;
-  if (Notification.permission === 'granted') {
-    new Notification(title, { body });
-  } else if (Notification.permission !== 'denied') {
-    Notification.requestPermission().then((perm) => {
-      if (perm === 'granted') new Notification(title, { body });
-    });
-  }
 }
 
 // --- Boot ---
@@ -557,6 +411,3 @@ if (document.readyState === 'loading') {
 } else {
   init();
 }
-
-
-
