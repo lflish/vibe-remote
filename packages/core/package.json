@@ -1,0 +1,27 @@
+{
+  "name": "@vibe-remote/core",
+  "version": "0.1.0",
+  "private": true,
+  "description": "框架无关的 vibe-remote 共享内核：协议、WS/REST 客户端、结构化 chat 解析。零 DOM，可单测。三端（桌面/web/iOS）复用。",
+  "license": "MIT",
+  "type": "module",
+  "main": "src/index.ts",
+  "types": "src/index.ts",
+  "exports": {
+    ".": "./src/index.ts",
+    "./protocol": "./src/protocol.ts",
+    "./client": "./src/client.ts",
+    "./rest": "./src/rest.ts",
+    "./base64": "./src/base64.ts",
+    "./machines": "./src/machines.ts",
+    "./chat": "./src/chat/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "devDependencies": {
+    "typescript": "^5.6.0",
+    "vitest": "^2.0.0"
+  }
+}

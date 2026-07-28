@@ -1,0 +1,21 @@
+{
+  "name": "vibe-remote-workspace",
+  "version": "0.1.0",
+  "private": true,
+  "description": "vibe-remote monorepo: 远程 Claude 工具（桌面/web/iOS 三端共享 core）",
+  "license": "MIT",
+  "author": "lflish",
+  "workspaces": [
+    "packages/*",
+    "desktop",
+    "mobile"
+  ],
+  "scripts": {
+    "test": "npm run test --workspaces --if-present",
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "build:core": "npm run build --workspace=@vibe-remote/core"
+  },
+  "devDependencies": {
+    "jsdom": "^29.1.1"
+  }
+}
