@@ -15,7 +15,7 @@ describe('probeMachine', () => {
   it('healthz+info 成功返回 online:true + hostname', async () => {
     vi.stubGlobal('fetch', (url: string) => {
       if (String(url).endsWith('/healthz')) return Promise.resolve({ ok: true } as Response);
-      return Promise.resolve({ ok: true, json: () => Promise.resolve({ hostname: 'boxA', tmux_enabled: false, default_workdir: '/w', allowed_roots: [] }) } as Response);
+      return Promise.resolve({ ok: true, json: () => Promise.resolve({ hostname: 'boxA', default_workdir: '/w', allowed_roots: [] }) } as Response);
     });
     const r = await probeMachine(M, 2000);
     expect(r).toEqual({ online: true, hostname: 'boxA' });

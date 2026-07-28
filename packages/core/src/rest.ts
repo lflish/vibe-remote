@@ -49,7 +49,6 @@ export interface ClaudeFlagInfo {
 
 export interface MachineInfo {
   hostname: string;
-  tmux_enabled: boolean;
   default_workdir: string;
   allowed_roots: string[];
   claude_flags?: ClaudeFlagInfo[];

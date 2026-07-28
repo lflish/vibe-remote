@@ -94,7 +94,6 @@ func (s *Server) handleInfo(w http.ResponseWriter, r *http.Request) {
 	}
 	info := map[string]any{
 		"hostname":        hostname,
-		"tmux_enabled":    s.cfg.UseTmux,
 		"default_workdir": s.cfg.DefaultWorkdir,
 		"allowed_roots":   s.cfg.AllowedRoots,
 		"claude_flags":    flags,
