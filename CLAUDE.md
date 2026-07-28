@@ -6,14 +6,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 vibe-remote 是一个「远程 Claude」工具：真正的 `claude` CLI 始终跑在**远程 Linux** 上，桌面 / web / iOS 三端以**结构化聊天式富交互 UI** 连上去。三端是 npm workspaces monorepo，共享一套框架无关内核 `@vibe-remote/core` + 一套 React 视图 `@vibe-remote/ui`；各端只是薄壳。
 
-**两条数据平面**（关键，别混淆）：
+**唯一数据平面：headless 结构化线**。服务端跑 `claude -p --output-format stream-json`，把 claude **官方 NDJSON 协议**按行透传；客户端用 `core` 的 parser/session **解析成结构化消息**（tool_use↔tool_result 配对、thinking、cost），`ui` 渲染成工具卡片/diff/思考/成本。**解析的是官方结构化协议，不是 TUI 像素** —— 所以「客户端不解析终端」的原则仍成立（解析仅用于显示）。会话以 **workdir** 为身份（`claude -c` 续接该目录最近对话），无 tmux / PTY / sessionId 概念。
 
-- **headless 线（结构化，默认）**：服务端跑 `claude -p --output-format stream-json`，把 claude **官方 NDJSON 协议**按行透传；客户端用 `core` 的 parser/session **解析成结构化消息**（tool_use↔tool_result 配对、thinking、cost），`ui` 渲染成工具卡片/diff/思考/成本。**解析的是官方结构化协议，不是 TUI 像素** —— 所以「客户端不解析终端」的原则仍成立（解析仅用于显示）。这是当前三端默认走的线。
-- **TUI 线（字节透传，逃生舱）**：PTY→tmux→claude，WS 双向透传 PTY 字节，客户端 xterm 哑终端。服务端 `wsRelay`/`wsOpenTUI` 保留，用于跑交互式全屏程序（vim/htop/claude 原生 TUI）。**这条线才是「纯字节透传、绝不解析」约束的适用范围**。
-
-改动时分清你在哪条线：碰 headless/结构化 UI（`packages/*`、各端 chat 视图）时解析是合法的；碰 TUI 线（`ws.go` 的 wsRelay、xterm）时维持字节透传约束。
-
-TUI 线是 **agent 无关**的（`claude_cmd` 换 `codex` 或任意交互 CLI 都照常）；headless 线依赖 claude 官方 stream-json 协议。
+历史上曾有一条 **TUI 字节透传线**（PTY→tmux→claude + xterm 哑终端）作为逃生舱，已于 2026-07-28 完全删除。现在服务端不启 tmux、不管 PTY，`use_tmux` 配置字段虽保留（向后兼容旧配置）但**不再被消费**。
 
 ## 常用命令
 
@@ -94,50 +89,36 @@ web/             Vite+React SPA 瘦壳（localStorage 存机器 + workdir；Side
 
 **共享 protocol 单一事实来源**：`packages/core/src/protocol.ts`（TS） 与 `vibe-remoted/internal/protocol/protocol.go`（Go）**手工镜像**，改协议时两端都要改，并同步 `docs/protocol.md`。desktop 的 `desktop/src/shared/protocol.ts` 只是 re-export `@vibe-remote/core/protocol` 的薄壳（保 renderer 现有 import 路径不动）。
 
-### 会话持久化模型（PTY → tmux → claude）
+### headless turn 模型（每 turn spawn claude）
 
-单一事实来源是 **tmux**，不是服务端内存。每个 vibe-remote 会话 = 一个 tmux 会话 `vibe-remote-<id>`，跑在**专用 socket** `tmux -L vibe-remote` 上（隔离用户自己的 tmux；`set -g status off` 让 claude 拿到全高 PTY —— 否则 status 栏吃掉 1 行导致错行）。
+无常驻进程、无 tmux。一个 `attach` 绑定一个 workdir；每收到一个 `data` 帧（用户 prompt）就在该 workdir 下 spawn 一次 `claude -c -p --output-format stream-json --include-partial-messages --verbose`（prompt 经 stdin 传入），把 claude 的 NDJSON 输出**按行**作为 `data` 帧转发，进程退出后发 `exit` 帧并等下一个 `data`。会话连续性完全靠 claude 自己的 `-c`（续接该 workdir 最近 jsonl），服务端不持有会话状态。
 
-- 客户端断开 → `Runner.DetachEpoch` 关 PTY，**tmux + claude 存活**。
-- 客户端重连 → `Runner.AttachExisting` 新起 PTY 重新 `tmux attach` + `refresh-client` 强制全屏重绘 → 现场恢复。
-- 服务端重启后内存 map 空 → `Manager.List` / `Manager.Attach` 靠 `tmux list-sessions` / `has-session` 找回会话（`liveTmuxSessions` 查 `pane_current_path` 回填 workdir）。
-- `Manager.List` 以 tmux 为准**双向 reconcile**：map 有 tmux 无的删（幽灵会话），tmux 有 map 无的补建恢复条目（隐形会话）。查询失败时回退内存 map，避免瞬时故障误删。
-
-相关文件：`vibe-remoted/internal/session/runner.go`（PTY/tmux 生命周期）、`manager.go`（会话表 + reconcile）。
-
-### epoch 代际（防重连竞态）
-
-`Runner.epoch` 每次装新 PTY（start / AttachExisting）+1。relay（`ws.go:wsRelay`）在 attach 后捕获自己的 epoch，teardown 时调 `DetachEpoch(epoch)` —— **只在仍拥有当前 epoch 时才关 PTY**，避免旧连接慢速 teardown 误关新重连已装的 PTY。Read/Write 用 `ptmxSnapshot()` 锁内快照后再阻塞操作，避免阻塞的 Read 卡死 Resize/Detach。改动 runner 的 PTY 生命周期时务必保持 race build 通过（`go build -race`）。
-
-### exit 帧语义
-
-`wsRelay` 用 `detaching atomic.Bool` 区分「我方主动 detach（会话在 tmux 里还活着）」vs「claude 进程真退出」。**只有真退出才发 exit 帧**。正常客户端断开不能发 exit（否则客户端会以为会话死了）。
+- **exit 帧语义**：`exit` 帧表示「本次 turn 的 claude 进程退出」（一次响应结束），不是会话销毁——客户端收到后仍可继续发下一个 prompt。
+- 相关文件：`vibe-remoted/internal/session/headless.go`（spawn + 逐行转发）、`manager.go`（构造 HeadlessRunner + 注入事件环境变量）、`ws.go`（握手 + turn 循环）。
 
 ### 协议（单一事实来源：docs/protocol.md）
 
 JSON 分帧 WebSocket，帧靠 `type` 区分，data 帧 payload 走 base64。**TS 单一事实来源在 core**：`packages/core/src/protocol.ts`（不再是 `desktop/src/shared/protocol.ts` —— 那已退化为 re-export core 的薄壳）与 Go 端 `vibe-remoted/internal/protocol/protocol.go` **手工对齐**（无代码生成）—— 改协议时两端都要改，并同步 `docs/protocol.md`。
 
-握手时序：`auth`（首帧，10s 超时）→ 服务端推 `sessions` 列表（tmux 会话，仅 TUI 线用）→ 客户端可空闲浏览（ping/pong 保活，**无 attach 超时**）→ `attach`（带 workdir + `mode`）→ `ready` → 双向 `data`。
+握手时序：`auth`（首帧，10s 超时）→ 客户端可空闲浏览（ping/pong 保活，**无 attach 超时**）→ `attach`（带 workdir + flags）→ `ready` → 双向 `data`（C→S 一条 prompt 触发一次 turn，S→C 是 claude stream-json 的 NDJSON 行）。
 
-`attach` 的 **`mode` 字段决定走哪条线**：
-- `mode:"headless"`（默认，三端聊天 UI 走这条）：data 帧 payload = base64 的用户 prompt / 服务端 NDJSON 行。会话 = workdir（无 sessionId），服务端不启 tmux，每 turn spawn 一次 `claude -p`。
-- `mode:"tui"`（可选逃生舱）：data 帧 payload = base64 的 PTY 字节，服务端 PTY→tmux→claude 全字节透传。
+帧类型收敛：仅 `auth / attach / data / ping / pong / ready / exit / error`。原 `resize / sessions / notify` 及 `attach.mode / attach.sessionId / attach.cols/rows / ready.sessionId` 字段在 TUI 线删除时一并去除。
 
-辅助 REST（Bearer token 鉴权）：`/healthz`、`/api/v1/info`、`/api/v1/sessions`（tmux 会话列表，headless 不出现）、`DELETE /api/v1/sessions/{id}`、`/api/v1/fs?path=`（远程目录选择器，受 workdir 白名单约束）、`/api/v1/history?path=&limit=`（读该 workdir 最近 jsonl，headless 聊天 UI 用它做历史回填）。
+辅助 REST（Bearer token 鉴权）：`/healthz`、`/api/v1/info`（主机名/默认 workdir/allowed_roots/claude_flags）、`/api/v1/fs?path=`（远程目录选择器，受 workdir 白名单约束）、`/api/v1/history?path=&limit=`（读该 workdir 最近 jsonl，聊天 UI 用它做历史回填）。原 `/api/v1/sessions*` 与 `/api/v1/events` 已删除。
 
 ### 客户端会话模型
 
-`desktop/src/renderer/index.ts` 的 **SessionView** 抽象：每个打开的会话 = **独立 WebSocket（`VibeRemoteClient` from core）+ 独立聊天挂载点（ui 的 `mountChat` 挂 ChatView）**。切换会话 = 显示/隐藏对应 term-instance 容器，未聚焦会话在服务端各自保活（headless 靠 `claude -c` 续会话；TUI 线靠 tmux）。所有机器级 Map 用 **`addr:port`（machineKey）** 做 key（不是 addr，防同主机多端口冲突）。侧边栏靠 REST 每 5s 轮询各机器状态。
+`desktop/src/renderer/index.ts` 的 **SessionView** 抽象：每个打开的会话 = **独立 WebSocket（`VibeRemoteClient` from core）+ 独立聊天挂载点（ui 的 `mountChat` 挂 ChatView）**。切换会话 = 显示/隐藏对应挂载点容器，未聚焦会话在服务端 headless 端保活（`claude -c` 续会话）。所有机器级 Map 用 **`addr:port`（machineKey）** 做 key（不是 addr，防同主机多端口冲突）。
 
-**默认 attach 走 headless**：`client.attach(sessionId, 80, 24, workdir, flags, 'headless')`（headless 下 cols/rows 无意义，传占位值）。data 帧 payload 是 base64 的 NDJSON 文本，经 `mount.feed()` → `makeLineSplitter` → `ChatSession.applyLine` 累积成结构化消息。web/mobile 同结构（各自的 ChatPane / openChat 都用同一个 `mountChat`）。
+**会话 = workdir**：一个 workdir = 一条聊天线（`claude -c` 续接该目录最近对话），无 sessionId、无 tmux 会话概念。三端侧边栏都按 workdir 列表组织——桌面走 preload IPC 存 Electron userData、iOS 走 Capacitor Preferences、web 走 `localStorage`（`vibe-remote.workdirs.<addr:port>`）。
 
-`client.ts` 重连：指数退避，`reconnectAttempt` 在收到 **`ready`（连接确认健康）后才归零**（不是 onopen —— 否则坏 token 每秒锤服务端）。重连按 `lastCols/lastRows/lastMode` re-attach，`pendingAttach` **必须带 workdir + mode**（曾因丢 workdir 导致新会话总落默认目录；丢 mode 导致 headless 重连退化成 TUI）。
+`client.attach(workdir?, flags?)` 是唯一签名（headless 唯一线）。`data` 帧 payload：S→C 是 base64 的 NDJSON 文本，经 `mount.feed()` → `makeLineSplitter` → `ChatSession.applyLine` 累积成结构化消息；C→S 是 base64 的用户 prompt。三端 chat 视图都用同一个 `mountChat`。
 
-**会话 = workdir**（headless 线）：headless 无 tmux 会话、无独立 sessionId，一个 workdir = 一条聊天线（`claude -c` 续接该目录最近对话）。web 端侧边栏列 workdir 列表存 localStorage；`Manager.List` 的 tmux 会话列表**只服务 TUI 线**，headless 不出现在里面。
+`client.ts` 重连：指数退避，`reconnectAttempt` 在收到 **`ready`（连接确认健康）后才归零**（不是 onopen —— 否则坏 token 每秒锤服务端）。重连按 `lastAttach = {workdir, flags}` re-attach，`pendingAttach` **必须带 workdir**（曾因丢 workdir 导致新会话总落默认目录）。
 
 ### 编解码工具（`@vibe-remote/core/base64`）
 
-`base64ToBytes` / `bytesToBase64` / `base64ToText` / `textToBase64` 已上提到 core（三端共用）。**易踩坑**：`atob()` 返回 Latin-1，直接 `term.write(string)` 会把多字节 UTF-8 拆坏——**必须** base64 → `Uint8Array` → `term.write`（xterm 自己按 UTF-8 解码）；输入方向用 `TextEncoder` 编码后再 base64。这条只对 **TUI 线**（xterm 字节透传）适用；headless 线 data 帧是 NDJSON **文本**（`base64ToText` 解出即可，无 UTF-8 拆坏风险）。
+`base64ToBytes` / `bytesToBase64` / `base64ToText` / `textToBase64` 已上提到 core（三端共用）。当前 data 帧承载的是 **文本**（S→C 的 NDJSON 行 / C→S 的用户 prompt）：S→C 侧用 `base64ToText` 解出，C→S 侧用 `textToBase64` 编码——不涉及二进制字节流，无 UTF-8 拆坏风险。
 
 ### 环境加载（登录 shell）
 
@@ -164,28 +145,28 @@ JSON 分帧 WebSocket，帧靠 `type` 区分，data 帧 payload 走 base64。**T
 ## 前置条件与联调
 
 - 所有机器（含 Mac 客户端）在同一 Tailscale tailnet（`tailscale up`）。
-- 目标 Linux 需 `claude` + `tmux`（不需要 go，交叉编译部署）。
+- 目标 Linux 需 `claude`（无需 `tmux`——headless 唯一线不用 tmux；也不需要 go，交叉编译部署）。
 - 真机联调用 ssh config 的 `dev`（tailscale `100.95.191.101`）；vibe-remoted 托管为常驻 `tmux new-session -d -s vibe-remoted-daemon`。
-- **本地无远程机冒烟**：macOS 本身有 PTY+tmux，用 `claude_cmd: "/bin/bash"` 代跑即可验证透传链路（纯字节透传不关心跑什么）。测试配置 `vibe-remoted.local.json`（无 tmux）/ `vibe-remoted.tmux.json`。
+- **本地无远程机冒烟**：见 README 的「Web-portal smoke」章节（绑 loopback + 真 claude + `make portal` 起门户，浏览器发一条消息验证完整结构化链路）。
 - **GUI 调试**：`VIBE_REMOTE_DEBUG_PORT=9222` 开 CDP 端口，用 CDP over WebSocket 驱动/检查 renderer（chrome-devtools MCP 在此 Electron 版本有调用故障，改用裸 CDP）。`VIBE_REMOTE_NO_DEVTOOLS=1` 禁自动开 DevTools。
 
 ## 状态
 
-**第一期**（Mac 桌面 TUI 可用版）：验收 7 项真机通过，`.dmg` 已交付。
+**第一期**（Mac 桌面 TUI 可用版）：验收 7 项真机通过，`.dmg` 已交付（历史里程碑，TUI 线代码已删除）。
 
 **三端结构化重构（阶段 0-3，已完成并合并 main）**：抽出 `@vibe-remote/core`（协议/客户端/REST/chat 深度解析内核）+ `@vibe-remote/ui`（React 视图）；桌面去 xterm 改走 headless 结构化聊天；mobile（Capacitor）切共享内核+视图升级；新建 web 端（Vite+React SPA + `cmd/vibe-portal` Go 静态门户）。三端共享 core+ui。web 端浏览器真机端到端验证通过（发消息→流式→工具卡片/diff/思考/成本）。参考蓝本：pi-web（结构化消息 + 富渲染）、VSCode Claude 插件（权限交互理念）。
 
-**阶段 4（待办）**：结构化工具权限确认 + steering（运行中插队）。二者都要求把 headless 从「一次一 turn」升级为「长驻双向 stream-json 会话」（`--input-format stream-json` + stdin 不 close + interrupt 帧）。权限路径已确认：`--permission-prompt-tool` + 自写权限 MCP server（纯 CLI 可跑通，无需 SDK），claude 要用工具时调该 MCP 工具、经现有 events pub/sub 通道推客户端弹 allow/deny。`mountChat` 的 `onStop`（停止/中断）已留空实现，等这条线落地后接入。
+**阶段 4（待办）**：结构化工具权限确认 + steering（运行中插队）。二者都要求把 headless 从「一次一 turn」升级为「长驻双向 stream-json 会话」（`--input-format stream-json` + stdin 不 close + interrupt 帧）。权限路径已确认：`--permission-prompt-tool` + 自写权限 MCP server（纯 CLI 可跑通，无需 SDK），claude 要用工具时调该 MCP 工具、经带外通道推客户端弹 allow/deny。`mountChat` 的 `onStop`（停止/中断）已留空实现，等这条线落地后接入。
+
+**TUI 逃生舱线删除（2026-07-28，已合并 main）**：服务端 `wsRelay` / `wsOpenTUI` / runner（PTY）/ tmux 集成 / `/api/v1/sessions*` / `/api/v1/events` 全删；客户端 `resize` / `sessions` / `notify` / `mode` / `sessionId` / `cols/rows` 全删；三端侧边栏改按 workdir 组织。headless 结构化线是**唯一数据平面**。核心净删 -1351 行 Go。带外通道（原 `/api/v1/events`）一并删；`Manager.SetEventEnv` 环境变量注入保留，供未来 hook / 权限 MCP 复用。
 
 未做（可选）：代码签名、app 图标、侧边栏轮询改推送、codex 多 agent 产品化、web 端 wss/TLS（当前明文 ws 靠 Tailscale 加密）。完整进展见 `REQUIREMENTS.md`。
 
-### 第二批体验增强（已完成）
+### 第二批体验增强（部分已随 TUI 线删除）
 
-- 机器管理 app 内 UI（CRUD + 空状态引导 + 测试连接），不再手改 machines.json。
-- 会话命名：默认名跟随 workdir，双击侧边栏内联重命名，名字存 tmux 用户选项 `@vibe_remote_name`（跟随 tmux 生命周期，重启/多端一致）。
-- 后台会话提示：A 圆点兜底（非活动会话有字节到达即亮蓝点，任何 agent 通用）+ C hook 事件增强（notify 帧把圆点升级为 idle 绿/waiting 黄 + 可选桌面通知）。
-- 重连体验：状态栏显示重连尝试次数 + 活动会话终端顶部断线横幅 + Retry now。
+- 机器管理 app 内 UI（CRUD + 空状态引导 + 测试连接）：**保留**。
+- 会话命名（默认名跟随 workdir，名字存 tmux 用户选项 `@vibe_remote_name`）：**已随 TUI 线删除**——headless 会话身份 = workdir，直接用目录路径展示，无独立命名。
+- 后台会话提示 A 圆点 + C hook notify 升级：**已随 TUI 线删除**（依赖 `/api/v1/sessions` 会话列表 + `/api/v1/events` + `notify` 帧）。将在阶段 4 权限 MCP 带外通道落地后按需重接。
+- 重连体验：状态栏显示重连尝试次数——保留（断线提示由 chat UI 层承担）。
 
-**事件基建（通用可扩展）**：`POST /api/v1/events`（Bearer 鉴权，body `{sessionId,kind,message?}`）+ Manager pub/sub 路由表 + notify 帧。`kind` 为开放枚举，未来带外事件（token 用量等）复用此通道。claude 进程已注入 `VIBE_REMOTE_SESSION_ID`/`VIBE_REMOTE_EVENTS_URL`/`VIBE_REMOTE_TOKEN`。
-
-**⚠️ 故意留空（本期不实现）**：vibe-remoted 自动生成 hook 配置让 claude 带上（`--settings` 注入方式需真机验证 claude 版本合并语义）。当前靠手动配 hook 或手动 curl events 端点即可验证全链路；日后补「自动注入」一小段，前面基建全不用动。
+**事件基建（原通用通道，已删）**：原 `POST /api/v1/events` + Manager pub/sub 路由表 + `notify` 帧随 TUI 线一并删除。**保留**的是 `Manager.SetEventEnv` 环境变量注入机制（`VIBE_REMOTE_EVENTS_URL` / `VIBE_REMOTE_TOKEN`，当 Manager 未配 eventsURL 时自动跳过注入），供阶段 4 权限 MCP / hook 重新接入带外事件时复用——届时补一个新的接收端点即可，注入侧不用动。

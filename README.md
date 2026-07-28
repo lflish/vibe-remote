@@ -14,8 +14,8 @@ See [REQUIREMENTS.md](./REQUIREMENTS.md) and [docs/protocol.md](./docs/protocol.
 
 ```
 Desktop (Electron) ┐
-Web (Vite SPA)     ┼─ws (JSON frames)─►  vibe-remoted (Go)  ──►  claude -p --output-format stream-json
-iOS (Capacitor)    ┘   @vibe-remote/{core,ui}   one per machine     (headless line: structured events)
+Web (Vite SPA)     ┼─ws (JSON frames)─►  vibe-remoted (Go)  ──►  claude -c -p --output-format stream-json
+iOS (Capacitor)    ┘   @vibe-remote/{core,ui}   one per machine     (one-shot per turn; session = workdir)
 ```
 
 - **Structured events, not TUI bytes**: the server runs `claude -p --output-format stream-json`
@@ -25,11 +25,10 @@ iOS (Capacitor)    ┘   @vibe-remote/{core,ui}   one per machine     (headless 
 - **Shared core + UI**: [`@vibe-remote/core`](./packages/core) holds the protocol, WS/REST clients,
   and the chat parser/state machine (zero DOM, unit-tested); [`@vibe-remote/ui`](./packages/ui) holds
   the React components. Desktop / web / iOS are thin shells over them.
-- **Two data planes**: the structured **headless line** is the default. A raw-byte **TUI line**
-  (PTY → tmux → claude, xterm passthrough) is retained on the server as an escape hatch for
-  interactive full-screen programs.
-- **tmux persistence** (TUI line): the claude session survives client disconnects and is restored
-  on reconnect. The headless line keeps continuity via claude's own `-c` over the shared jsonl.
+- **Single data plane (headless line)**: the server spawns `claude -c -p --output-format stream-json`
+  once per turn in the chosen workdir and relays its NDJSON line-by-line. A session is identified by
+  its **workdir** — continuity comes from claude's own `-c` over the shared jsonl, so there is no tmux,
+  no PTY, and no server-held session state.
 - **No central hub**: each machine runs its own vibe-remoted and clients connect directly. The server
   binds a private-network address (LAN / tailscale) with a static token as the primary access boundary;
   cross-network reach and encryption can be delegated to Tailscale.
@@ -85,7 +84,8 @@ Copy `vibe-remoted.example.json` and adjust per machine:
   "token": "your-secure-token",     // static auth token, the core access boundary (constant-time compare)
   "default_workdir": "/home/user",
   "allowed_roots": ["/home/user"],  // workdir whitelist, prevents path escape
-  "use_tmux": true,                 // false = run claude directly (no persistence)
+  "use_tmux": true,                 // deprecated / ignored (kept for backward-compat with old configs;
+                                    //   the headless line never uses tmux)
   "claude_cmd": "claude",           // base command, passed as one string to the shell
   "claude_flags": [                 // optional: flags the client can multi-select on new session
     { "id": "continue",   "label": "Continue last session (-c)", "arg": "-c",                             "default": false },
@@ -171,41 +171,28 @@ npm run typecheck           # all workspaces
 - The client and target machine just need network reachability: same **Tailscale tailnet**
   (recommended — built-in encryption + cross-network) or the same **trusted LAN**
   (plaintext `ws://` on the LAN; use only on trusted networks).
-- The target Linux host has `claude` and `tmux`. `go` is only needed to build vibe-remoted /
-  vibe-portal, not to run them (cross-compile and copy the binary over).
+- The target Linux host has `claude`. `tmux` is no longer required (the headless line never uses it).
+  `go` is only needed to build vibe-remoted / vibe-portal, not to run them (cross-compile and copy the
+  binary over).
 - When using Tailscale, the Mac must be up (`tailscale up`).
 - Browsers on an HTTPS page can't open a plaintext `ws://` (mixed-content). Serve the web portal
   over `http://` inside the tailnet, or terminate TLS in front of vibe-remoted.
 
 ## Local smoke test (no remote machine)
 
-macOS has PTY + tmux, so you can run vibe-remoted locally for a smoke test. Use `claude_cmd: "/bin/bash"`
-as a stand-in to verify the passthrough chain (raw passthrough doesn't care what command runs).
+macOS can run vibe-remoted locally for a smoke test against a real `claude` — no tmux, no remote box.
 
-### Self-connect test (make dev-local)
+### Web-portal smoke
 
-The Mac acts as both server and client, running real `claude` through the full chain:
-
-```bash
-make dev-local   # binds this host's tailscale IP with a real address (no allow_insecure_bind)
-```
-
-It prints the `addr:port` to fill in on the client (this host's tailscale IP + 8765). In the desktop
-"machine management", add this machine (token is in `vibe-remoted.local-tmux.json`) to verify
-passthrough / tmux persistence / reconnect end-to-end. Requires `tailscale up` and `tmux` + `claude`
-installed locally.
-
-### Web-portal smoke (headless line, no tmux)
-
-Verifies the full structured chain (browser → vibe-portal → headless vibe-remoted → real claude →
+Verifies the full structured chain (browser → vibe-portal → vibe-remoted → real claude →
 stream-json → chat rich UI) on one machine:
 
 ```bash
-# 1) config: bind loopback, use_tmux false, real claude
+# 1) config: bind loopback, real claude
 cat > /tmp/vibe-remoted.headless.json <<'EOF'
 {"bind_addr":"127.0.0.1","port":8799,"token":"smoke",
  "default_workdir":"/tmp","allowed_roots":["/tmp","/Users"],
- "use_tmux":false,"claude_cmd":"claude --dangerously-skip-permissions","login_shell":true}
+ "claude_cmd":"claude --dangerously-skip-permissions","login_shell":true}
 EOF
 ./bin/vibe-remoted -config /tmp/vibe-remoted.headless.json &
 

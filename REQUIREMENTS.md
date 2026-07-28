@@ -1,16 +1,20 @@
 # vibe-remote 需求文档
 
-> **⚠️ 当前状态（2026-07-28 更新）**：项目已经历一次三端结构化重构，**当前形态**（默认）是「结构化聊天式富交互 UI」而非 TUI 终端；下方「一、体验目标 → 十、验收标准」章节是**第一期 TUI 版**的原始需求，作为 **TUI 逃生舱线** 的规格保留（这条线在服务端 wsRelay 仍在，用于跑 vim/htop 等交互全屏程序）。当前实际交付形态、三端架构、共享内核等参见「第十一节 三端结构化重构（当前形态）」。
+> **⚠️ 当前状态（2026-07-28 更新）**：项目已经历一次三端结构化重构，**当前唯一形态**是「结构化聊天式富交互 UI」。原本作为逃生舱保留的 **TUI 字节透传线（PTY→tmux→claude + xterm）已于 2026-07-28 完全删除**——唯一数据平面为 **headless 结构化线**（`claude -p --output-format stream-json`，会话以 workdir 为身份）。
+>
+> 下方「一、体验目标 → 十、验收标准」章节是**第一期 TUI 版**的原始需求，**仅作历史存档保留**（描述的 PTY/tmux/resize/多会话 sessionId 等机制均已随 TUI 线删除，不再反映当前实现）。当前实际交付形态、三端架构、共享内核参见「第十一节 三端结构化重构（当前形态）」。
 
 ## 一句话定义
 
 **当前**：一个「远程 Claude」跨端工具——远程 Linux 上跑 Claude Code CLI，桌面 / web / iOS 三端以**结构化聊天式富交互 UI**（工具卡片 / 并排 diff / 思考折叠 / 成本）连上去。三端共享一套框架无关内核 + React 视图。
 
-**历史**（第一期 TUI 定义，见下方）：一个跨端的"远程 Claude 终端"客户端，桌面端像用本地 shell 一样连上去交互——现在这条线降级为可选的 TUI 逃生舱。
+**历史**（第一期 TUI 定义，见下方）：一个跨端的"远程 Claude 终端"客户端，桌面端像用本地 shell 一样连上去交互——**这条 TUI 字节透传线已于 2026-07-28 删除**，下方章节仅作历史存档。
 
 ---
 
 ## 一、核心需求
+
+> ⚠️ **第一至十节均为第一期 TUI 版历史存档**（PTY 字节透传 / tmux 持久化 / resize / 多会话 sessionId 等），该线已于 2026-07-28 删除，不再反映当前实现。当前形态见第十一节。
 
 ### 1.1 体验目标
 - 远程连接到跑在 **Linux 上的 Claude Code CLI**（`claude` 命令，交互模式）。
@@ -139,17 +143,16 @@
 
 ### 11.1 定位转变
 
-从「远程终端（TUI 字节透传）」转为「远程 Claude 的**结构化聊天式富交互 UI**」。参考蓝本：**pi-web**（结构化消息 + 富渲染）、**VSCode Claude 插件**（权限交互理念）。原 TUI 线保留为服务端逃生舱（跑交互式全屏程序）。
+从「远程终端（TUI 字节透传）」转为「远程 Claude 的**结构化聊天式富交互 UI**」。参考蓝本：**pi-web**（结构化消息 + 富渲染）、**VSCode Claude 插件**（权限交互理念）。原第一期的 TUI 字节透传线曾作为服务端逃生舱保留，已于 2026-07-28 完全删除，headless 结构化线是**唯一数据平面**。
 
-### 11.2 两条数据平面
+### 11.2 唯一数据平面
 
-- **headless 线（结构化，默认）**：服务端 `claude -p --output-format stream-json`，透传 claude 官方 NDJSON；客户端解析成结构化消息**仅用于显示**（不违反「不解析终端」——解析的是官方协议不是 TUI 像素）。
-- **TUI 线（字节透传，逃生舱）**：原第一期 PTY→tmux→claude 全字节透传，服务端 wsRelay 保留。
+**headless 线（结构化）**：服务端 `claude -c -p --output-format stream-json`，透传 claude 官方 NDJSON；客户端解析成结构化消息**仅用于显示**（不违反「不解析终端」——解析的是官方协议不是 TUI 像素）。会话以 workdir 为身份（无 sessionId / tmux）。原 TUI 线（PTY→tmux→claude + xterm，服务端 wsRelay / runner）已删除。
 
 ### 11.3 三端 + 共享架构
 
 - **monorepo**（npm workspaces）：`packages/core`（框架无关内核：协议/WS 客户端/REST/base64/机器校验/chat 解析器+状态机，零 DOM 可单测）+ `packages/ui`（共享 React 视图：ChatView/ToolCard/DiffToolCard/MarkdownBody/ChatInput/mountChat）。
-- **桌面**（Electron）：去 xterm，renderer 挂共享 ChatView，默认走 headless。
+- **桌面**（Electron）：去 xterm，renderer 挂共享 ChatView，走 headless（唯一数据平面）。
 - **web**（Vite+React SPA）：新建，复用 core+ui 只写外壳（Sidebar/App/机器管理/目录选择/localStorage）；`cmd/vibe-portal`（Go embed 静态托管）提供门户，浏览器直连各机器 headless ws。
 - **iOS**（Capacitor）：切共享内核，视图升级到与桌面同级。
 
@@ -164,7 +167,7 @@
 
 ### 11.5 当前非目标 / 待办（阶段 4）
 
-- **结构化工具权限确认**：claude 用工具时客户端弹 allow/deny。路径已定：`--permission-prompt-tool` + 自写权限 MCP server（纯 CLI，无需 SDK）；经现有 events pub/sub 通道推客户端。
+- **结构化工具权限确认**：claude 用工具时客户端弹 allow/deny。路径已定：`--permission-prompt-tool` + 自写权限 MCP server（纯 CLI，无需 SDK）；经带外通道推客户端（原 `/api/v1/events` pub/sub 通道随 TUI 线一并删除，`Manager.SetEventEnv` 环境变量注入侧保留供未来复用，届时补一个新的接收端点即可）。
 - **steering（运行中插队）/ 停止中断**：`mountChat.onStop` 已留空实现待接入。
 - 二者都要求 headless 从「一次一 turn」升级为「长驻双向 stream-json 会话」（`--input-format stream-json` + stdin 不 close + interrupt 帧）——这是阶段 4 的服务端核心改造。
 - web 端 wss/TLS（当前明文 ws 靠 Tailscale 加密）；浏览器 HTTPS 页面的混合内容限制。

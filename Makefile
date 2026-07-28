@@ -1,4 +1,4 @@
-.PHONY: all server desktop clean dev-server dev-desktop dev-local portal dev-portal
+.PHONY: all server desktop clean dev-server dev-desktop portal dev-portal
 
 # Default: build both
 all: server desktop
@@ -10,18 +10,6 @@ server:
 
 dev-server:
 	cd vibe-remoted && go run ./cmd/vibe-remoted --config ../vibe-remoted.json
-
-# Self-test on this machine: bind THIS host's tailscale IP (no insecure hatch),
-# run tmux + real claude. Use for local end-to-end verification when you have
-# no remote box — the desktop client points at the printed tailscale IP:port.
-dev-local:
-	@TS_IP=$$(tailscale ip -4 2>/dev/null | head -1); \
-	if [ -z "$$TS_IP" ]; then \
-		echo "ERROR: no tailscale IPv4 address (run 'tailscale up' first)"; exit 1; \
-	fi; \
-	echo "==> vibe-remoted self-test on $$TS_IP:8765 (token: local-selftest-token)"; \
-	echo "==> add this machine in the desktop client: addr=$$TS_IP port=8765"; \
-	cd vibe-remoted && VIBE_REMOTED_BIND_ADDR=$$TS_IP go run ./cmd/vibe-remoted --config ../vibe-remoted.local-tmux.json
 
 # --- Desktop (Electron) ---
 

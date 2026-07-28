@@ -12,8 +12,8 @@
 
 ```
 桌面端 (Electron) ┐
-Web (Vite SPA)    ┼─ws(JSON分帧)─►  vibe-remoted (Go)  ──►  claude -p --output-format stream-json
-iOS (Capacitor)   ┘  @vibe-remote/{core,ui}  每台机器一个     （headless 线：结构化事件流）
+Web (Vite SPA)    ┼─ws(JSON分帧)─►  vibe-remoted (Go)  ──►  claude -c -p --output-format stream-json
+iOS (Capacitor)   ┘  @vibe-remote/{core,ui}  每台机器一个     （一次 turn 一次 spawn；会话=workdir）
 ```
 
 - **结构化事件，非 TUI 字节**：服务端跑 `claude -p --output-format stream-json`，把 claude
@@ -21,10 +21,9 @@ iOS (Capacitor)   ┘  @vibe-remote/{core,ui}  每台机器一个     （headles
   解析的是官方结构化协议、不是 TUI 像素，所以「客户端不解析终端」的约束依然成立。
 - **共享内核 + UI**：[`@vibe-remote/core`](./packages/core) 是协议、WS/REST 客户端、chat 解析器/状态机
   （零 DOM、可单测）；[`@vibe-remote/ui`](./packages/ui) 是 React 组件。桌面/web/iOS 都是它们之上的瘦壳。
-- **两条数据平面**：结构化 **headless 线**为默认；原始字节 **TUI 线**（PTY→tmux→claude，xterm 透传）
-  在服务端保留，作为跑交互式全屏程序的逃生舱。
-- **tmux 持久化**（TUI 线）：客户端断开后 claude 会话存活，重连恢复现场。headless 线靠 claude 自己的
-  `-c`（读共享 jsonl）维持会话连续。
+- **唯一数据平面（headless 线）**：服务端在选定 workdir 下每 turn spawn 一次
+  `claude -c -p --output-format stream-json` 并按行透传 NDJSON。会话以 **workdir** 为身份，
+  连续性完全靠 claude 自己的 `-c`（读共享 jsonl）——无 tmux、无 PTY、服务端不持有会话状态。
 - **无中心 Hub**：每台机器各跑一个 vibe-remoted，客户端直连。服务端绑私有网段地址（LAN / tailscale），
   静态 token 为准入核心；跨网/加密可交给 Tailscale。
 
@@ -75,7 +74,7 @@ cd vibe-remoted && go build -o ../bin/vibe-remoted ./cmd/vibe-remoted
   "token": "your-secure-token",     // 静态鉴权 token，准入核心边界（常量时间校验）
   "default_workdir": "/home/user",
   "allowed_roots": ["/home/user"],  // workdir 白名单，防越权
-  "use_tmux": true,                 // false = 降级直跑 claude（无持久化）
+  "use_tmux": true,                 // 已废弃 / 已忽略（保留字段做旧配置向后兼容；headless 线不用 tmux）
   "claude_cmd": "claude",           // 基础命令，整串传给 shell
   "claude_flags": [                 // 可选：客户端新建会话时可多选的启动参数
     { "id": "continue",   "label": "续上次会话 (-c)", "arg": "-c",                             "default": false },
@@ -158,40 +157,27 @@ npm run typecheck           # 所有 workspace
 
 - 客户端与目标机网络互通即可：同一 **Tailscale tailnet**（推荐，自带加密+跨网）
   或同一**可信局域网**（LAN 内 `ws://` 明文，仅在可信网络使用）。
-- 目标 Linux 具备 `claude`、`tmux`。`go` 只在构建 vibe-remoted / vibe-portal 时需要，
-  运行不需要（交叉编译后拷二进制过去）。
+- 目标 Linux 具备 `claude`；`tmux` 不再需要（headless 线不用 tmux）。`go` 只在构建
+  vibe-remoted / vibe-portal 时需要，运行不需要（交叉编译后拷二进制过去）。
 - 走 Tailscale 时，Mac 端需运行（`tailscale up`）。
 - 浏览器在 HTTPS 页面下无法连明文 `ws://`（混合内容限制）。web 门户请在 tailnet 内以
   `http://` 提供，或在 vibe-remoted 前置 TLS。
 
 ## 本地开发冒烟（无需远程机）
 
-macOS 本身有 PTY + tmux，可本地起 vibe-remoted 冒烟。用 `claude_cmd: "/bin/bash"` 代跑即可验证透传链路
-（纯字节透传不关心跑什么命令）。
+macOS 可本地起 vibe-remoted 对真 `claude` 冒烟——无需 tmux、无需远程机。
 
-### 本机自连自测（make dev-local）
+### Web 门户冒烟
 
-Mac 同时当服务端与客户端，跑真 `claude` 走完整链路：
-
-```bash
-make dev-local   # 动态取本机 tailscale IP，绑真地址启动（不走 allow_insecure_bind）
-```
-
-它会打印客户端要填的 `addr:port`（本机 tailscale IP + 8765）。在桌面端「机器管理」里
-添加这台机器（token 见 `vibe-remoted.local-tmux.json`），即可端到端验证透传 / tmux 持久化 / 重连。
-前提：本机已 `tailscale up` 且装有 `tmux` + `claude`。
-
-### Web 门户冒烟（headless 线，无需 tmux）
-
-在一台机器上验证完整结构化链路（浏览器 → vibe-portal → headless vibe-remoted → 真 claude →
+在一台机器上验证完整结构化链路（浏览器 → vibe-portal → vibe-remoted → 真 claude →
 stream-json → 聊天富交互 UI）：
 
 ```bash
-# 1) 配置：绑 loopback、use_tmux false、真 claude
+# 1) 配置：绑 loopback、真 claude
 cat > /tmp/vibe-remoted.headless.json <<'EOF'
 {"bind_addr":"127.0.0.1","port":8799,"token":"smoke",
  "default_workdir":"/tmp","allowed_roots":["/tmp","/Users"],
- "use_tmux":false,"claude_cmd":"claude --dangerously-skip-permissions","login_shell":true}
+ "claude_cmd":"claude --dangerously-skip-permissions","login_shell":true}
 EOF
 ./bin/vibe-remoted -config /tmp/vibe-remoted.headless.json &
 
