@@ -51,12 +51,14 @@ export function openDirPicker(
       button.addEventListener('click', () => {
         mode = card.value;
         modeButtons.forEach((b, i) => b.setAttribute('aria-pressed', String(modeCards[i].value === mode)));
+        modeNote.hidden = mode !== 'worktree';
       });
       modeButtons.push(button);
       modesBox.appendChild(button);
     }
     const modeNote = el('div', 'modal-mode-note');
     modeNote.textContent = 'Worktree mode creates an isolated branch from the selected repository.';
+    modeNote.hidden = true;
     modesBox.appendChild(modeNote);
     modal.appendChild(modesBox);
 
