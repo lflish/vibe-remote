@@ -116,6 +116,9 @@ func TestWorktreeNestedSubdirectoryMapping(t *testing.T) {
 	if mapped != expected {
 		t.Fatalf("mapped=%q want %q", mapped, expected)
 	}
+	if info, err := os.Stat(mapped); err != nil || !info.IsDir() {
+		t.Fatalf("mapped workdir was not preserved as a directory: info=%v err=%v", info, err)
+	}
 }
 
 func TestWorktreeRejectsNonGitDirectory(t *testing.T) {

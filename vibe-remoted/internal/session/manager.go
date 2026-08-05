@@ -205,7 +205,24 @@ func applyTmuxSessionMetadata(r *Runner, info tmuxSessionInfo) {
 	if r.Workdir == "" {
 		r.Workdir = info.workdir
 	}
-	r.Mode, r.SourceWorkdir, r.SourceRepo, r.WorktreeRoot, r.Branch = info.mode, info.sourceWorkdir, info.sourceRepo, info.worktreeRoot, info.branch
+	// Session provisioning metadata is immutable. The in-memory runner is
+	// authoritative once populated; tmux is used to fill metadata after daemon
+	// recovery, not to erase it when list-sessions races the option writes.
+	if r.Mode == "" {
+		r.Mode = info.mode
+	}
+	if r.SourceWorkdir == "" {
+		r.SourceWorkdir = info.sourceWorkdir
+	}
+	if r.SourceRepo == "" {
+		r.SourceRepo = info.sourceRepo
+	}
+	if r.WorktreeRoot == "" {
+		r.WorktreeRoot = info.worktreeRoot
+	}
+	if r.Branch == "" {
+		r.Branch = info.branch
+	}
 }
 
 // reconcileTmuxSessions updates the in-memory session table from tmux's live

@@ -167,6 +167,19 @@ func TestReconcileTmuxSessionsAppliesWorktreeMetadataToExistingRunner(t *testing
 	assertRunnerWorktreeMetadata(t, r, info)
 }
 
+func TestReconcileTmuxSessionsDoesNotEraseAuthoritativeWorktreeMetadata(t *testing.T) {
+	r := &Runner{ID: "s1", Workdir: "/tree/sub", Mode: "worktree", SourceWorkdir: "/repo/sub", SourceRepo: "/repo", WorktreeRoot: "/tree", Branch: "vibe/s1"}
+	sessions := map[string]*Runner{"s1": r}
+
+	// A tmux snapshot can observe the session before all user options are visible.
+	reconcileTmuxSessions(sessions, map[string]tmuxSessionInfo{"s1": {workdir: "/tree/sub"}}, time.Unix(42, 0), true, "claude", "/bin/sh", true)
+
+	got := r.Metadata()
+	if got.Mode != protocol.SessionModeWorktree || got.SourceWorkdir != "/repo/sub" || got.SourceRepo != "/repo" || got.WorktreeRoot != "/tree" || got.Branch != "vibe/s1" {
+		t.Fatalf("authoritative metadata erased by incomplete tmux snapshot: %#v", got)
+	}
+}
+
 func TestReconcileTmuxSessionsAppliesWorktreeMetadataToRecoveredRunner(t *testing.T) {
 	sessions := map[string]*Runner{}
 	info := tmuxSessionInfo{workdir: "/tmux", mode: "worktree", sourceWorkdir: "/source", sourceRepo: "/repo", worktreeRoot: "/tree", branch: "vibe/s1"}

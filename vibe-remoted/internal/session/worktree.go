@@ -74,6 +74,14 @@ func CreateWorktree(sourceWorkdir, sessionID string) (WorktreeMetadata, string, 
 	mapped := root
 	if rel != "." {
 		mapped = filepath.Join(root, rel)
+		// Git does not materialize empty/untracked directories. Preserve the
+		// caller's selected directory so Runner always receives a valid cwd.
+		if err := os.MkdirAll(mapped, 0o755); err != nil {
+			if rollbackErr := RollbackWorktree(meta); rollbackErr != nil {
+				return WorktreeMetadata{}, "", fmt.Errorf("create mapped workdir: %v; rollback worktree: %w", err, rollbackErr)
+			}
+			return WorktreeMetadata{}, "", fmt.Errorf("create mapped workdir: %w", err)
+		}
 	}
 	return meta, mapped, nil
 }
