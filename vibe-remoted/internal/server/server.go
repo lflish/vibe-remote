@@ -18,9 +18,9 @@ import (
 
 // Server holds the HTTP server and dependencies.
 type Server struct {
-	cfg     *config.Config
-	mgr     *session.Manager
-	mux     *http.ServeMux
+	cfg *config.Config
+	mgr *session.Manager
+	mux *http.ServeMux
 }
 
 // New creates a new Server.
@@ -211,10 +211,12 @@ func (s *Server) handleFS(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid path"})
 		return
 	}
-	if !s.cfg.IsAllowedWorkdir(absPath) {
+	canonicalPath, resolveErr := s.cfg.ResolveAllowedWorkdir(absPath)
+	if resolveErr != nil {
 		writeJSON(w, http.StatusForbidden, map[string]string{"error": "path not in allowed roots"})
 		return
 	}
+	absPath = canonicalPath
 
 	entries, err := os.ReadDir(absPath)
 	if err != nil {

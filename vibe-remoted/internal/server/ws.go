@@ -114,11 +114,13 @@ func (s *Server) wsAttach(ctx context.Context, conn *websocket.Conn) (*session.R
 		if workdir == "" {
 			workdir = s.cfg.DefaultWorkdir
 		}
-		if !s.cfg.IsAllowedWorkdir(workdir) {
+		canonicalWorkdir, resolveErr := s.cfg.ResolveAllowedWorkdir(workdir)
+		if resolveErr != nil {
 			sendError(ctx, conn, "workdir not in allowed roots")
 			conn.Close(websocket.StatusPolicyViolation, "bad workdir")
 			return nil, ""
 		}
+		workdir = canonicalWorkdir
 
 		mode := frame.Mode
 		if mode == "" {

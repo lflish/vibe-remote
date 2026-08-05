@@ -1,6 +1,10 @@
 package config
 
-import "testing"
+import (
+	"os"
+	"path/filepath"
+	"testing"
+)
 
 func TestIsAllowedWorkdir(t *testing.T) {
 	cfg := &Config{
@@ -41,6 +45,19 @@ func TestIsAllowedWorkdir(t *testing.T) {
 				t.Errorf("IsAllowedWorkdir(%q) = %v, want %v", tt.dir, got, tt.want)
 			}
 		})
+	}
+}
+
+func TestIsAllowedWorkdirRejectsSymlinkEscape(t *testing.T) {
+	root := t.TempDir()
+	outside := t.TempDir()
+	link := filepath.Join(root, "alias")
+	if err := os.Symlink(outside, link); err != nil {
+		t.Skipf("symlinks unsupported: %v", err)
+	}
+	cfg := &Config{AllowedRoots: []string{root}}
+	if _, err := cfg.ResolveAllowedWorkdir(link); err == nil {
+		t.Fatalf("ResolveAllowedWorkdir(%q) accepted symlink escaping allowed root", link)
 	}
 }
 

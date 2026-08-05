@@ -64,6 +64,22 @@ func TestManagerCreateWorktreeRollsBackWhenRunnerStartFails(t *testing.T) {
 	}
 }
 
+func TestManagerDeleteRecoversLiveTmuxSessionBeforeLookup(t *testing.T) {
+	m := NewManager(true, "/bin/cat", false, "")
+	m.liveTmuxSessions = func() (map[string]tmuxSessionInfo, bool) {
+		return map[string]tmuxSessionInfo{
+			"recovered": {workdir: t.TempDir(), mode: string(protocol.SessionModeNormal)},
+		}, true
+	}
+
+	if err := m.Delete("recovered"); err != nil {
+		t.Fatalf("Delete recovered session: %v", err)
+	}
+	if _, ok := m.Get("recovered"); ok {
+		t.Fatal("recovered session remains registered after delete")
+	}
+}
+
 func TestManagerDeleteDirtyWorktreeStopsSessionAndPreservesGitResources(t *testing.T) {
 	repo := tempRepo(t)
 	m := NewManager(false, "/bin/cat", false, "")

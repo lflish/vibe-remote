@@ -16,23 +16,25 @@ type Manager struct {
 	sessions map[string]*Runner
 	subs     map[string][]chan protocol.NotifyFrame // sessionID → notify subscribers
 
-	useTmux    bool
-	claudeCmd  string
-	loginShell bool
-	shell      string
-	eventsURL  string
-	token      string
+	useTmux          bool
+	claudeCmd        string
+	loginShell       bool
+	shell            string
+	liveTmuxSessions func() (map[string]tmuxSessionInfo, bool)
+	eventsURL        string
+	token            string
 }
 
 // NewManager creates a session manager.
 func NewManager(useTmux bool, claudeCmd string, loginShell bool, shell string) *Manager {
 	return &Manager{
-		sessions:   make(map[string]*Runner),
-		subs:       make(map[string][]chan protocol.NotifyFrame),
-		useTmux:    useTmux,
-		claudeCmd:  claudeCmd,
-		loginShell: loginShell,
-		shell:      shell,
+		sessions:         make(map[string]*Runner),
+		subs:             make(map[string][]chan protocol.NotifyFrame),
+		useTmux:          useTmux,
+		claudeCmd:        claudeCmd,
+		loginShell:       loginShell,
+		shell:            shell,
+		liveTmuxSessions: liveTmuxSessions,
 	}
 }
 
@@ -158,6 +160,14 @@ func (m *Manager) Attach(id string, cols, rows uint16) (*Runner, error) {
 // Delete kills and removes a session. Worktree cleanup happens after the
 // runner is stopped; dirty resources are intentionally preserved and surfaced.
 func (m *Manager) Delete(id string) error {
+	if m.useTmux {
+		if live, ok := m.liveTmuxSessions(); ok {
+			m.mu.Lock()
+			reconcileTmuxSessions(m.sessions, live, time.Now(), m.useTmux, m.claudeCmd, m.shell, m.loginShell)
+			m.mu.Unlock()
+		}
+	}
+
 	m.mu.Lock()
 	runner, ok := m.sessions[id]
 	if !ok {
@@ -243,7 +253,7 @@ func (m *Manager) List() []protocol.SessionInfo {
 	haveLive := false
 	if m.useTmux {
 		var ok bool
-		live, ok = liveTmuxSessions()
+		live, ok = m.liveTmuxSessions()
 		if ok {
 			haveLive = true
 			reconcileTmuxSessions(m.sessions, live, time.Now(), m.useTmux, m.claudeCmd, m.shell, m.loginShell)
