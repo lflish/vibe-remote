@@ -19,7 +19,7 @@ Client                              Server (vibe-remoted)
   |                                    |
   |--- attach {sessionId?,cols,rows} ->|  (sessionId 空=新建)
   |                                    |
-  |<-- ready {sessionId,workdir} ------|  (确认，之后开始字节流)
+  |<-- ready {sessionId,workdir,mode,...} -|  (确认；worktree 元数据按需返回)
   |                                    |
   |<-- data {payload:base64} ----------|  (PTY 输出，流式)
   |--- data {payload:base64} --------->|  (键盘输入)
