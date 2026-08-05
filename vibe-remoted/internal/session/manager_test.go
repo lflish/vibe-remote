@@ -44,6 +44,18 @@ func TestParseTmuxSessionLineKeepsEmptyTrailingFields(t *testing.T) {
 	}
 }
 
+func TestParseTmuxSessionLineRejectsEmptySessionID(t *testing.T) {
+	if _, ok := parseTmuxSessionLine("vibe-remote-\t/src\t\t\t\t\t\t"); ok {
+		t.Fatal("parser accepted empty session ID")
+	}
+}
+
+func TestParseTmuxSessionLineRejectsMalformedFieldCount(t *testing.T) {
+	if _, ok := parseTmuxSessionLine("vibe-remote-s1\t/src\t"); ok {
+		t.Fatal("parser accepted malformed field count")
+	}
+}
+
 func TestManagerListSerializesMetadata(t *testing.T) {
 	m := newTestManager()
 	m.sessions["s1"] = &Runner{ID: "s1", Workdir: "/work", Mode: "worktree", SourceWorkdir: "/source", SourceRepo: "/repo", WorktreeRoot: "/tree", Branch: "vibe/s1"}

@@ -150,6 +150,13 @@ func (m *Manager) Rename(id, name string) error {
 	return runner.SetName(sanitizeSessionName(name))
 }
 
+func applyTmuxSessionMetadata(r *Runner, info tmuxSessionInfo) {
+	if r.Workdir == "" {
+		r.Workdir = info.workdir
+	}
+	r.Mode, r.SourceWorkdir, r.SourceRepo, r.WorktreeRoot, r.Branch = info.mode, info.sourceWorkdir, info.sourceRepo, info.worktreeRoot, info.branch
+}
+
 // List returns info for all sessions.
 func (m *Manager) List() []protocol.SessionInfo {
 	m.mu.Lock()
@@ -179,10 +186,7 @@ func (m *Manager) List() []protocol.SessionInfo {
 			// be re-attached, using the working directory tmux reports.
 			for id, info := range live {
 				if r, exists := m.sessions[id]; exists {
-					if r.Workdir == "" && info.workdir != "" {
-						r.Workdir = info.workdir
-					}
-					r.Mode, r.SourceWorkdir, r.SourceRepo, r.WorktreeRoot, r.Branch = info.mode, info.sourceWorkdir, info.sourceRepo, info.worktreeRoot, info.branch
+					applyTmuxSessionMetadata(r, info)
 				} else {
 					m.sessions[id] = &Runner{
 						ID:            id,

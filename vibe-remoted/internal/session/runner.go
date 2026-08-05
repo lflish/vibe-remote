@@ -41,7 +41,7 @@ type tmuxSessionInfo struct {
 
 func parseTmuxSessionLine(line string) (tmuxSessionInfo, bool) {
 	parts := strings.SplitN(line, "\t", 8)
-	if len(parts) != 8 || !strings.HasPrefix(parts[0], "vibe-remote-") {
+	if len(parts) != 8 || !strings.HasPrefix(parts[0], "vibe-remote-") || strings.TrimPrefix(parts[0], "vibe-remote-") == "" {
 		return tmuxSessionInfo{}, false
 	}
 	info := tmuxSessionInfo{}
@@ -87,7 +87,7 @@ func liveTmuxSessions() (map[string]tmuxSessionInfo, bool) {
 		return nil, false
 	}
 	sessions := make(map[string]tmuxSessionInfo)
-	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+	for _, line := range strings.Split(strings.TrimRight(string(out), "\r\n"), "\n") {
 		info, ok := parseTmuxSessionLine(line)
 		if !ok {
 			continue
@@ -245,9 +245,7 @@ func (r *Runner) start(cols, rows uint16) error {
 		}
 		for _, option := range options {
 			key, value := option.key, option.value
-			if value != "" || key == "@vibe_remote_mode" {
-				_ = tmuxCmd("set-option", "-t", tmuxSessionName, key, value).Run()
-			}
+			_ = tmuxCmd("set-option", "-t", tmuxSessionName, key, value).Run()
 		}
 		// Disable the status bar on the vibe-remote tmux server so claude gets the
 		// full PTY height (tmux reserves 1 row for the status bar by default).
