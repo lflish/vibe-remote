@@ -43,11 +43,61 @@ func TestWorktreeRepositoryRootSelection(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer CleanupWorktree(meta)
-	if meta.SourceRepo != repo {
+	canonicalRepo := runGit(t, sub, "rev-parse", "--show-toplevel")
+	if meta.SourceRepo != canonicalRepo {
 		t.Fatalf("meta=%+v mapped=%q", meta, mapped)
 	}
 	if mapped != filepath.Join(meta.WorktreeRoot, "nested") {
 		t.Fatalf("mapped=%q", mapped)
+	}
+}
+
+func TestWorktreeRejectsUnsafeSessionIDBeforeFilesystemAccess(t *testing.T) {
+	repo := tempRepo(t)
+	container := filepath.Join(filepath.Dir(repo), filepath.Base(repo)+"-worktrees")
+	outside := filepath.Join(filepath.Dir(container), "escape")
+
+	for _, sessionID := range []string{"", ".", "..", "../escape", "../../tmp", "/absolute", `back\\slash`} {
+		t.Run(sessionID, func(t *testing.T) {
+			_, _, err := CreateWorktree(repo, sessionID)
+			if err == nil || !strings.Contains(err.Error(), "invalid session ID") {
+				t.Fatalf("err=%v", err)
+			}
+		})
+	}
+	if _, err := os.Stat(container); !os.IsNotExist(err) {
+		t.Fatalf("worktree container was touched: %v", err)
+	}
+	if _, err := os.Stat(outside); !os.IsNotExist(err) {
+		t.Fatalf("outside path was touched: %v", err)
+	}
+	if got := runGit(t, repo, "worktree", "list", "--porcelain"); strings.Count(got, "worktree ") != 1 {
+		t.Fatalf("unexpected worktree created:\n%s", got)
+	}
+}
+
+func TestWorktreeUsesCanonicalRepoRootForSymlinkAlias(t *testing.T) {
+	repo := tempRepo(t)
+	alias := filepath.Join(filepath.Dir(repo), "repo-alias")
+	if err := os.Symlink(repo, alias); err != nil {
+		t.Skipf("symlinks unsupported: %v", err)
+	}
+	canonicalRoot := runGit(t, alias, "rev-parse", "--show-toplevel")
+
+	meta, mapped, err := CreateWorktree(alias, "symlinked")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer CleanupWorktree(meta)
+	if meta.SourceRepo != canonicalRoot {
+		t.Fatalf("SourceRepo=%q want canonical git root %q", meta.SourceRepo, canonicalRoot)
+	}
+	wantRoot := filepath.Join(filepath.Dir(canonicalRoot), filepath.Base(canonicalRoot)+"-worktrees", "symlinked")
+	if meta.WorktreeRoot != wantRoot {
+		t.Fatalf("WorktreeRoot=%q want %q", meta.WorktreeRoot, wantRoot)
+	}
+	if mapped != wantRoot {
+		t.Fatalf("mapped=%q want %q", mapped, wantRoot)
 	}
 }
 
@@ -85,7 +135,8 @@ func TestWorktreeGeneratedBranchAndPath(t *testing.T) {
 	if meta.Branch != "vibe/session-1" {
 		t.Fatal(meta.Branch)
 	}
-	if want := filepath.Join(filepath.Dir(repo), filepath.Base(repo)+"-worktrees", "session-1"); meta.WorktreeRoot != want {
+	canonicalRepo := runGit(t, repo, "rev-parse", "--show-toplevel")
+	if want := filepath.Join(filepath.Dir(canonicalRepo), filepath.Base(canonicalRepo)+"-worktrees", "session-1"); meta.WorktreeRoot != want {
 		t.Fatalf("root=%q want %q", meta.WorktreeRoot, want)
 	}
 	if got := runGit(t, repo, "branch", "--list", meta.Branch); !strings.Contains(got, meta.Branch) {

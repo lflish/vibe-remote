@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 )
 
@@ -30,7 +31,12 @@ func gitAt(dir string, args ...string) ([]byte, error) {
 	return out, nil
 }
 
+var safeSessionID = regexp.MustCompile(`^[A-Za-z0-9_-]+$`)
+
 func CreateWorktree(sourceWorkdir, sessionID string) (WorktreeMetadata, string, error) {
+	if !safeSessionID.MatchString(sessionID) {
+		return WorktreeMetadata{}, "", fmt.Errorf("invalid session ID")
+	}
 	sourceAbs, err := filepath.Abs(sourceWorkdir)
 	if err != nil {
 		return WorktreeMetadata{}, "", fmt.Errorf("resolve source workdir: %w", err)
@@ -39,13 +45,9 @@ func CreateWorktree(sourceWorkdir, sessionID string) (WorktreeMetadata, string, 
 	if err != nil {
 		return WorktreeMetadata{}, "", fmt.Errorf("discover repository: %w", err)
 	}
-	repoRoot, err := filepath.Abs(strings.TrimSpace(string(out)))
-	if err != nil {
-		return WorktreeMetadata{}, "", fmt.Errorf("resolve repository root: %w", err)
-	}
-	// Git may canonicalize a symlinked system path (for example /var to
-	// /private/var on macOS), while filepath.Abs preserves the caller's spelling.
-	// Compare canonical paths, but retain the caller-visible source path in metadata.
+	repoRoot := filepath.Clean(strings.TrimSpace(string(out)))
+	// Git returns the canonical repository root. Use that discovered path for
+	// worktree placement; never derive sibling paths from the caller's spelling.
 	canonicalAbs, err := filepath.EvalSymlinks(sourceAbs)
 	if err != nil {
 		return WorktreeMetadata{}, "", fmt.Errorf("resolve source workdir links: %w", err)
@@ -58,15 +60,7 @@ func CreateWorktree(sourceWorkdir, sessionID string) (WorktreeMetadata, string, 
 	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
 		return WorktreeMetadata{}, "", fmt.Errorf("source workdir escapes repository")
 	}
-	// Use the caller's path spelling for metadata and generated sibling paths.
-	// Walking up by the canonical relative depth avoids mixing /private/var and
-	// /var on macOS while preserving SourceWorkdir exactly as resolved by Abs.
-	sourceRepo := sourceAbs
-	if rel != "." {
-		for range strings.Split(rel, string(filepath.Separator)) {
-			sourceRepo = filepath.Dir(sourceRepo)
-		}
-	}
+	sourceRepo := repoRoot
 	container := filepath.Join(filepath.Dir(sourceRepo), filepath.Base(sourceRepo)+"-worktrees")
 	root := filepath.Join(container, sessionID)
 	meta := WorktreeMetadata{SourceWorkdir: sourceAbs, SourceRepo: sourceRepo, WorktreeRoot: root, Branch: "vibe/" + sessionID}
