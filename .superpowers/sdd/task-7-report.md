@@ -581,3 +581,17 @@ cd vibe-remoted && go vet ./...                         PASS
 cd desktop && npm run typecheck                         PASS
 git diff --check                                       PASS
 ```
+
+## Preserved Worktree Notice Ordering Fix
+
+The desktop 409 `worktree_preserved` path now awaits `refreshAllMachines()` before applying the status-bar notice containing the preserved Worktree path and branch, then returns without entering the generic failed-delete refresh path. This keeps the existing local `SessionView` intact while ensuring the refresh cannot immediately overwrite the only visible preserved-resource notice. Other delete failures retain their existing non-persistent status behavior.
+
+Added the deterministic `desktop` source assertion `npm run test:preserved-notice`, which requires the awaited refresh to precede the preserved notice inside `closeSession`.
+
+Verification:
+
+```text
+npm --prefix /Users/mac/github/vibe-remote/desktop run test:preserved-notice PASS
+npm --prefix /Users/mac/github/vibe-remote/desktop run typecheck             PASS
+git diff --check                                                            PASS
+```

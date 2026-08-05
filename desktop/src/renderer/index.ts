@@ -806,7 +806,9 @@ async function closeSession(machine: MachineConfig, sessionId: string) {
     console.error('delete session failed', e);
     if (e instanceof DeleteSessionError && e.status === 409 && e.code === 'worktree_preserved') {
       const location = [e.worktreeRoot && `path: ${e.worktreeRoot}`, e.branch && `branch: ${e.branch}`].filter(Boolean).join(' · ');
+      await refreshAllMachines();
       updateStatusBar(`Worktree preserved${location ? ` · ${location}` : ''}`);
+      return;
     } else {
       updateStatusBar(`Delete failed: ${e instanceof Error ? e.message : String(e)}`);
     }
