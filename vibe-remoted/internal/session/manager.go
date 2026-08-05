@@ -179,19 +179,24 @@ func (m *Manager) List() []protocol.SessionInfo {
 			// be re-attached, using the working directory tmux reports.
 			for id, info := range live {
 				if r, exists := m.sessions[id]; exists {
-					// Backfill workdir if we never recorded it (recovered entry).
 					if r.Workdir == "" && info.workdir != "" {
 						r.Workdir = info.workdir
 					}
+					r.Mode, r.SourceWorkdir, r.SourceRepo, r.WorktreeRoot, r.Branch = info.mode, info.sourceWorkdir, info.sourceRepo, info.worktreeRoot, info.branch
 				} else {
 					m.sessions[id] = &Runner{
-						ID:         id,
-						Workdir:    info.workdir,
-						Created:    time.Now(),
-						useTmux:    m.useTmux,
-						claudeCmd:  m.claudeCmd,
-						loginShell: m.loginShell,
-						shell:      m.shell,
+						ID:            id,
+						Workdir:       info.workdir,
+						Mode:          info.mode,
+						SourceWorkdir: info.sourceWorkdir,
+						SourceRepo:    info.sourceRepo,
+						WorktreeRoot:  info.worktreeRoot,
+						Branch:        info.branch,
+						Created:       time.Now(),
+						useTmux:       m.useTmux,
+						claudeCmd:     m.claudeCmd,
+						loginShell:    m.loginShell,
+						shell:         m.shell,
 					}
 				}
 			}
@@ -210,10 +215,11 @@ func (m *Manager) List() []protocol.SessionInfo {
 			name = r.readName()
 		}
 		list = append(list, protocol.SessionInfo{
-			ID:      r.ID,
-			Title:   titleFrom(name, r.Workdir, r.ID),
-			Workdir: r.Workdir,
-			Created: r.Created.Format(time.RFC3339),
+			ID:              r.ID,
+			Title:           titleFrom(name, r.Workdir, r.ID),
+			Workdir:         r.Workdir,
+			Created:         r.Created.Format(time.RFC3339),
+			SessionMetadata: r.Metadata(),
 		})
 	}
 	return list

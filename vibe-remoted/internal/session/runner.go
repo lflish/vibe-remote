@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/creack/pty"
+	"github.com/lflish/vibe-remote/vibe-remoted/internal/protocol"
 )
 
 // tmuxSocket is the dedicated tmux server socket name for vibe-remote.
@@ -29,8 +30,43 @@ func tmuxCmd(args ...string) *exec.Cmd {
 // `tmux list-sessions` query: the working directory and the user-set display
 // name (@vibe_remote_name, empty when unset).
 type tmuxSessionInfo struct {
-	workdir string
-	name    string
+	workdir       string
+	name          string
+	mode          string
+	sourceWorkdir string
+	sourceRepo    string
+	worktreeRoot  string
+	branch        string
+}
+
+func parseTmuxSessionLine(line string) (tmuxSessionInfo, bool) {
+	parts := strings.SplitN(line, "\t", 8)
+	if len(parts) != 8 || !strings.HasPrefix(parts[0], "vibe-remote-") {
+		return tmuxSessionInfo{}, false
+	}
+	info := tmuxSessionInfo{}
+	if len(parts) > 1 {
+		info.workdir = parts[1]
+	}
+	if len(parts) > 2 {
+		info.name = strings.TrimSpace(parts[2])
+	}
+	if len(parts) > 3 {
+		info.mode = parts[3]
+	}
+	if len(parts) > 4 {
+		info.sourceWorkdir = parts[4]
+	}
+	if len(parts) > 5 {
+		info.sourceRepo = parts[5]
+	}
+	if len(parts) > 6 {
+		info.worktreeRoot = parts[6]
+	}
+	if len(parts) > 7 {
+		info.branch = parts[7]
+	}
+	return info, true
 }
 
 // liveTmuxSessions returns the vibe-remote session IDs that currently have a live
@@ -41,7 +77,7 @@ type tmuxSessionInfo struct {
 // discarding live sessions on a transient failure. Pulling name here (rather
 // than a per-session show-options) keeps Manager.List to a single tmux exec.
 func liveTmuxSessions() (map[string]tmuxSessionInfo, bool) {
-	out, err := tmuxCmd("list-sessions", "-F", "#{session_name}\t#{pane_current_path}\t#{@vibe_remote_name}").Output()
+	out, err := tmuxCmd("list-sessions", "-F", "#{session_name}\t#{pane_current_path}\t#{@vibe_remote_name}\t#{@vibe_remote_mode}\t#{@vibe_remote_source_workdir}\t#{@vibe_remote_source_repo}\t#{@vibe_remote_worktree_root}\t#{@vibe_remote_branch}").Output()
 	if err != nil {
 		// tmux exits non-zero when the server has no sessions; that's a
 		// legitimate empty set, not a query failure.
@@ -52,20 +88,11 @@ func liveTmuxSessions() (map[string]tmuxSessionInfo, bool) {
 	}
 	sessions := make(map[string]tmuxSessionInfo)
 	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
-		if !strings.HasPrefix(line, "vibe-remote-") {
+		info, ok := parseTmuxSessionLine(line)
+		if !ok {
 			continue
 		}
-		// Fixed 3 fields: name may be empty, so split with a known field count
-		// rather than trimming, which would drop a trailing empty name.
-		parts := strings.SplitN(line, "\t", 3)
-		id := strings.TrimPrefix(parts[0], "vibe-remote-")
-		info := tmuxSessionInfo{}
-		if len(parts) >= 2 {
-			info.workdir = parts[1]
-		}
-		if len(parts) >= 3 {
-			info.name = strings.TrimSpace(parts[2])
-		}
+		id := strings.TrimPrefix(strings.SplitN(line, "\t", 2)[0], "vibe-remote-")
 		sessions[id] = info
 	}
 	return sessions, true
@@ -73,9 +100,14 @@ func liveTmuxSessions() (map[string]tmuxSessionInfo, bool) {
 
 // Runner manages a single PTY session connected to tmux→claude (or bare claude).
 type Runner struct {
-	ID      string
-	Workdir string
-	Created time.Time
+	ID            string
+	Workdir       string
+	Created       time.Time
+	Mode          string
+	SourceWorkdir string
+	SourceRepo    string
+	WorktreeRoot  string
+	Branch        string
 
 	ptmx    *os.File // PTY master (guarded by mu)
 	cmd     *exec.Cmd
@@ -97,30 +129,40 @@ type Runner struct {
 
 // RunnerConfig holds parameters for creating a new Runner.
 type RunnerConfig struct {
-	ID         string
-	Workdir    string
-	UseTmux    bool
-	ClaudeCmd  string
-	LoginShell bool
-	Shell      string
-	Cols       uint16
-	Rows       uint16
-	EventsURL  string
-	Token      string
+	ID            string
+	Workdir       string
+	Mode          string
+	SourceWorkdir string
+	SourceRepo    string
+	WorktreeRoot  string
+	Branch        string
+	UseTmux       bool
+	ClaudeCmd     string
+	LoginShell    bool
+	Shell         string
+	Cols          uint16
+	Rows          uint16
+	EventsURL     string
+	Token         string
 }
 
 // NewRunner creates and starts a new session.
 func NewRunner(cfg RunnerConfig) (*Runner, error) {
 	r := &Runner{
-		ID:         cfg.ID,
-		Workdir:    cfg.Workdir,
-		Created:    time.Now(),
-		useTmux:    cfg.UseTmux,
-		claudeCmd:  cfg.ClaudeCmd,
-		loginShell: cfg.LoginShell,
-		shell:      cfg.Shell,
-		eventsURL:  cfg.EventsURL,
-		token:      cfg.Token,
+		ID:            cfg.ID,
+		Workdir:       cfg.Workdir,
+		Mode:          cfg.Mode,
+		SourceWorkdir: cfg.SourceWorkdir,
+		SourceRepo:    cfg.SourceRepo,
+		WorktreeRoot:  cfg.WorktreeRoot,
+		Branch:        cfg.Branch,
+		Created:       time.Now(),
+		useTmux:       cfg.UseTmux,
+		claudeCmd:     cfg.ClaudeCmd,
+		loginShell:    cfg.LoginShell,
+		shell:         cfg.Shell,
+		eventsURL:     cfg.EventsURL,
+		token:         cfg.Token,
 	}
 
 	if err := r.start(cfg.Cols, cfg.Rows); err != nil {
@@ -129,7 +171,14 @@ func NewRunner(cfg RunnerConfig) (*Runner, error) {
 	return r, nil
 }
 
-// launchCommand returns the command to run inside the PTY (or as tmux's
+func (r *Runner) Metadata() protocol.SessionMetadata {
+	mode := protocol.SessionMode(r.Mode)
+	if mode == "" {
+		mode = protocol.SessionModeNormal
+	}
+	return protocol.SessionMetadata{Mode: mode, SourceWorkdir: r.SourceWorkdir, SourceRepo: r.SourceRepo, WorktreeRoot: r.WorktreeRoot, Branch: r.Branch}
+}
+
 // initial process). When loginShell is enabled, claude is launched through a
 // login+interactive shell (`<shell> -lic 'exec <claudeCmd>'`) so the user's
 // full shell environment — PATH, node version managers (fnm/nvm), etc. — is
@@ -187,6 +236,19 @@ func (r *Runner) start(cols, rows uint16) error {
 	r.epoch++
 
 	if r.useTmux {
+		options := []struct{ key, value string }{
+			{"@vibe_remote_mode", string(r.Metadata().Mode)},
+			{"@vibe_remote_source_workdir", r.SourceWorkdir},
+			{"@vibe_remote_source_repo", r.SourceRepo},
+			{"@vibe_remote_worktree_root", r.WorktreeRoot},
+			{"@vibe_remote_branch", r.Branch},
+		}
+		for _, option := range options {
+			key, value := option.key, option.value
+			if value != "" || key == "@vibe_remote_mode" {
+				_ = tmuxCmd("set-option", "-t", tmuxSessionName, key, value).Run()
+			}
+		}
 		// Disable the status bar on the vibe-remote tmux server so claude gets the
 		// full PTY height (tmux reserves 1 row for the status bar by default).
 		// Runs slightly delayed so the server/session exists first.

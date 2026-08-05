@@ -9,6 +9,54 @@ import (
 	"github.com/lflish/vibe-remote/vibe-remoted/internal/protocol"
 )
 
+func TestRunnerMetadataNormalizesEmptyMode(t *testing.T) {
+	r := &Runner{
+		Mode:          "",
+		SourceWorkdir: "/src",
+		SourceRepo:    "/repo",
+		WorktreeRoot:  "/repo-worktrees/s1",
+		Branch:        "vibe/s1",
+	}
+	got := r.Metadata()
+	if got.Mode != protocol.SessionModeNormal {
+		t.Fatalf("mode = %q, want %q", got.Mode, protocol.SessionModeNormal)
+	}
+	if got.SourceWorkdir != r.SourceWorkdir || got.SourceRepo != r.SourceRepo || got.WorktreeRoot != r.WorktreeRoot || got.Branch != r.Branch {
+		t.Fatalf("metadata worktree fields changed: %#v", got)
+	}
+}
+
+func TestParseTmuxSessionLinePreservesMetadataFields(t *testing.T) {
+	line := "vibe-remote-s1\t/src\tname\tworktree\t/source\t/repo\t/repo-worktrees/s1\tvibe/s1"
+	got, ok := parseTmuxSessionLine(line)
+	if !ok {
+		t.Fatal("parseTmuxSessionLine rejected valid line")
+	}
+	if got.workdir != "/src" || got.name != "name" || got.mode != "worktree" || got.sourceWorkdir != "/source" || got.sourceRepo != "/repo" || got.worktreeRoot != "/repo-worktrees/s1" || got.branch != "vibe/s1" {
+		t.Fatalf("parsed fields = %#v", got)
+	}
+}
+
+func TestParseTmuxSessionLineKeepsEmptyTrailingFields(t *testing.T) {
+	_, ok := parseTmuxSessionLine("vibe-remote-s1\t/src\t\t\t\t\t\t")
+	if !ok {
+		t.Fatal("parseTmuxSessionLine rejected line with empty name")
+	}
+}
+
+func TestManagerListSerializesMetadata(t *testing.T) {
+	m := newTestManager()
+	m.sessions["s1"] = &Runner{ID: "s1", Workdir: "/work", Mode: "worktree", SourceWorkdir: "/source", SourceRepo: "/repo", WorktreeRoot: "/tree", Branch: "vibe/s1"}
+	list := m.List()
+	if len(list) != 1 {
+		t.Fatalf("list length = %d, want 1", len(list))
+	}
+	got := list[0].SessionMetadata
+	if got.Mode != protocol.SessionModeWorktree || got.SourceWorkdir != "/source" || got.SourceRepo != "/repo" || got.WorktreeRoot != "/tree" || got.Branch != "vibe/s1" {
+		t.Fatalf("session metadata = %#v", got)
+	}
+}
+
 func TestSanitizeSessionName(t *testing.T) {
 	tests := []struct {
 		name string
