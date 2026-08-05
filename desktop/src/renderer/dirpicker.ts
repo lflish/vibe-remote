@@ -59,7 +59,7 @@ export function openDirPicker(
     }
     const modeNote = el('div', 'modal-mode-note');
     modeNote.textContent = 'Worktree mode creates an isolated branch from the selected repository.';
-    modeNote.hidden = true;
+    modeNote.hidden = mode !== 'worktree';
     modesBox.appendChild(modeNote);
     modal.appendChild(modesBox);
 

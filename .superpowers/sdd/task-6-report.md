@@ -57,3 +57,14 @@ No blocking correctness issues found in the focused diff. Automated review agent
 - Deterministic refresh source assertions — passed.
 - `npm --prefix /Users/mac/github/vibe-remote/desktop run typecheck` — passed.
 - `git -C /Users/mac/github/vibe-remote diff --check` — passed.
+
+## Task 6 Minor Fix (Initial Worktree Note)
+
+- Initialized the worktree explanatory note from the selected mode, so `initialMode = 'worktree'` shows it immediately while normal mode keeps it hidden.
+- Preserved the existing mode-card structure and `aria-pressed` state handling.
+
+## Minor-Fix Verification
+
+- Deterministic picker source assertion — passed.
+- `npm --prefix /Users/mac/github/vibe-remote/desktop run typecheck` — passed.
+- `git -C /Users/mac/github/vibe-remote diff --check` — passed.
