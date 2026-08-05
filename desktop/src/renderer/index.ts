@@ -199,39 +199,51 @@ function wireWindowResize() {
 async function refreshAllMachines() {
   const generation = ++machineRefreshGeneration;
   const refreshMachines = machines.slice();
+
+  // Publish each response independently. In particular, a slow / unavailable
+  // info endpoint must not delay the session list (or make a healthy machine
+  // appear offline after its sessions request succeeds).
+  const isCurrent = (m: MachineConfig) => {
+    const mk = machineKey(m);
+    return generation === machineRefreshGeneration && machines.some((current) => machineKey(current) === mk);
+  };
+  const publish = (m: MachineConfig) => {
+    const mk = machineKey(m);
+    if (!isCurrent(m)) return;
+    renderSidebar();
+    if (overviewMachineKey === mk) renderMachineOverview(m);
+    updateStatusBar();
+  };
+
   await Promise.all(
-    refreshMachines.map(async (m) => {
+    refreshMachines.flatMap((m) => {
       const mk = machineKey(m);
       const rest = rests.get(mk);
-      if (!rest) return;
-      const [sessionsResult, infoResult] = await Promise.allSettled([
-        rest.listSessions(),
-        rest.info(),
-      ]);
-      // Machine edits invalidate this request, including responses that arrive
-      // after a removed machine was deleted and then re-added.
-      if (generation !== machineRefreshGeneration) return;
-      if (sessionsResult.status === 'fulfilled') {
-        machineSessions.set(mk, sessionsResult.value);
-        machineOnline.set(mk, true);
-      } else {
-        machineOnline.set(mk, false);
-      }
-      if (infoResult.status === 'fulfilled') {
-        machineInfo.set(mk, infoResult.value);
-      }
+      if (!rest) return [];
+      const sessionsRequest = rest.listSessions()
+        .then((sessions) => {
+          if (!isCurrent(m)) return;
+          machineSessions.set(mk, sessions);
+          machineOnline.set(mk, true);
+        })
+        .catch(() => {
+          if (!isCurrent(m)) return;
+          machineOnline.set(mk, false);
+        })
+        .finally(() => publish(m));
+      const infoRequest = rest.info()
+        .then((info) => {
+          if (!isCurrent(m)) return;
+          machineInfo.set(mk, info);
+        })
+        .catch(() => {
+          // Keep the last successful metadata. Info failures are independent
+          // from reachability, which is determined by the session request.
+        })
+        .finally(() => publish(m));
+      return [sessionsRequest, infoRequest];
     }),
   );
-  if (generation !== machineRefreshGeneration) return;
-  // The machine list may only change through onSaved, which advances the
-  // generation. Check membership as a defensive guard before rendering.
-  if (refreshMachines.some((m) => !machines.some((current) => machineKey(current) === machineKey(m)))) return;
-  renderSidebar();
-  if (overviewMachineKey) {
-    const overviewMachine = machines.find((m) => machineKey(m) === overviewMachineKey);
-    if (overviewMachine) renderMachineOverview(overviewMachine);
-  }
-  updateStatusBar();
 }
 
 // --- Session views ---

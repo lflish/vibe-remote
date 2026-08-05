@@ -44,3 +44,16 @@ No blocking correctness issues found in the focused diff. Automated review agent
 ## Review-Fix Concerns
 
 - Runtime Electron verification remains assigned to Task 7.
+
+## Task 6 Review Fixes (Independent REST Publishing)
+
+- Refactored `refreshAllMachines()` so each machine's session-list and info requests settle and publish independently; a slow or failed info request no longer delays session availability.
+- Session success updates `machineSessions` and marks the machine online immediately; info failures retain cached metadata and never overwrite a successful session reachability result.
+- Preserved monotonic generation and machine-membership guards before cache mutation and rendering, while keeping polling requests concurrent.
+- Added deterministic source assertions covering independent request chains, per-response publishing, and current-snapshot guards.
+
+## Independent REST Fix Verification
+
+- Deterministic refresh source assertions — passed.
+- `npm --prefix /Users/mac/github/vibe-remote/desktop run typecheck` — passed.
+- `git -C /Users/mac/github/vibe-remote diff --check` — passed.
