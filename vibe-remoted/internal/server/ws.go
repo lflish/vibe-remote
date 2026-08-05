@@ -10,10 +10,10 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/lflish/vibe-remote/vibe-remoted/internal/protocol"
-	"github.com/lflish/vibe-remote/vibe-remoted/internal/session"
 	"github.com/coder/websocket"
 	"github.com/coder/websocket/wsjson"
+	"github.com/lflish/vibe-remote/vibe-remoted/internal/protocol"
+	"github.com/lflish/vibe-remote/vibe-remoted/internal/session"
 )
 
 // handleWS upgrades to WebSocket and manages the session lifecycle.
@@ -137,12 +137,9 @@ func (s *Server) wsAttach(ctx context.Context, conn *websocket.Conn) (*session.R
 		}
 	}
 
-	// Send ready
-	ready := protocol.ReadyFrame{
-		Type:      protocol.TypeReady,
-		SessionID: runner.ID,
-		Workdir:   runner.Workdir,
-	}
+	// Send ready. Runner metadata is authoritative: it survives tmux recovery
+	// and must be embedded so metadata fields serialize flat on the wire.
+	ready := readyFrame(runner)
 	if err := wsjson.Write(ctx, conn, ready); err != nil {
 		log.Printf("ws write ready: %v", err)
 		return nil, ""
@@ -158,7 +155,17 @@ func (s *Server) wsAttach(ctx context.Context, conn *websocket.Conn) (*session.R
 	return runner, runner.ID
 }
 
-// wsRelay relays data bidirectionally between WebSocket and PTY.
+// readyFrame builds the attach confirmation from the runner's authoritative
+// metadata, keeping SessionMetadata embedded (flat) in the wire representation.
+func readyFrame(runner *session.Runner) protocol.ReadyFrame {
+	return protocol.ReadyFrame{
+		Type:            protocol.TypeReady,
+		SessionID:       runner.ID,
+		Workdir:         runner.Workdir,
+		SessionMetadata: runner.Metadata(),
+	}
+}
+
 func (s *Server) wsRelay(ctx context.Context, conn *websocket.Conn, runner *session.Runner, sessionID string) {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()

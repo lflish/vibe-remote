@@ -19,3 +19,13 @@
 - `cd /Users/mac/github/vibe-remote/vibe-remoted && go test ./internal/session -v` — `PASS`; `ok github.com/lflish/vibe-remote/vibe-remoted/internal/session 3.365s`.
 - `cd /Users/mac/github/vibe-remote/vibe-remoted && go test -race ./internal/session` — `ok github.com/lflish/vibe-remote/vibe-remoted/internal/session 4.153s`.
 - `git -C /Users/mac/github/vibe-remote diff --check` — PASS (no output).
+
+## Final reviewer fix: ready metadata
+
+- `wsAttach` now constructs its `ready` frame through `readyFrame(runner)`, which embeds the authoritative `runner.Metadata()` alongside runner ID and workdir. Because `protocol.ReadyFrame` anonymously embeds `SessionMetadata`, `mode`, `sourceWorkdir`, `sourceRepo`, `worktreeRoot`, and `branch` serialize as flat top-level fields.
+- Added focused server tests covering all worktree metadata fields, flat JSON shape, and normalization of an empty runner mode to `normal`. No worktree creation/orchestration behavior was added.
+
+### Exact verification
+
+- `cd /Users/mac/github/vibe-remote/vibe-remoted && go test ./internal/session ./internal/server` — PASS; session `ok` in 3.073s, server `ok` in 1.037s.
+- `git -C /Users/mac/github/vibe-remote diff --check` — PASS (no output).
