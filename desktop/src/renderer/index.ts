@@ -55,6 +55,9 @@ let selectedMachineKey: string | null = null;
 // recreates the whole sidebar DOM — that would delete the focused input and
 // its blur would silently commit half-typed text. Paused during editing.
 let renamingActive = false;
+// Every refresh captures a generation. A newer refresh or machine-list edit
+// invalidates older in-flight requests without serializing the 5s poll.
+let machineRefreshGeneration = 0;
 
 const machineKey = (m: MachineConfig) => `${m.addr}:${m.port}`;
 const viewKey = (m: MachineConfig, sid: string) => `${machineKey(m)}::${sid}`;
@@ -123,6 +126,12 @@ function wireManageMachinesButton() {
           .filter((old) => !updated.some((u) => machineKey(u) === machineKey(old)))
           .map(machineKey);
         machines = updated;
+        machineRefreshGeneration++;
+        for (const rk of removedKeys) {
+          machineSessions.delete(rk);
+          machineInfo.delete(rk);
+          machineOnline.delete(rk);
+        }
         // Drop a selection that points at a now-removed machine so the
         // highlight (and new-session target) never dangles.
         if (selectedMachineKey && !machines.some((m) => machineKey(m) === selectedMachineKey)) {
@@ -188,14 +197,20 @@ function wireWindowResize() {
 // REST. Session-list reachability drives online status; a transient info failure
 // retains the last successful metadata so the workspace does not flicker.
 async function refreshAllMachines() {
+  const generation = ++machineRefreshGeneration;
+  const refreshMachines = machines.slice();
   await Promise.all(
-    machines.map(async (m) => {
+    refreshMachines.map(async (m) => {
       const mk = machineKey(m);
-      const rest = rests.get(mk)!;
+      const rest = rests.get(mk);
+      if (!rest) return;
       const [sessionsResult, infoResult] = await Promise.allSettled([
         rest.listSessions(),
         rest.info(),
       ]);
+      // Machine edits invalidate this request, including responses that arrive
+      // after a removed machine was deleted and then re-added.
+      if (generation !== machineRefreshGeneration) return;
       if (sessionsResult.status === 'fulfilled') {
         machineSessions.set(mk, sessionsResult.value);
         machineOnline.set(mk, true);
@@ -207,6 +222,10 @@ async function refreshAllMachines() {
       }
     }),
   );
+  if (generation !== machineRefreshGeneration) return;
+  // The machine list may only change through onSaved, which advances the
+  // generation. Check membership as a defensive guard before rendering.
+  if (refreshMachines.some((m) => !machines.some((current) => machineKey(current) === machineKey(m)))) return;
   renderSidebar();
   if (overviewMachineKey) {
     const overviewMachine = machines.find((m) => machineKey(m) === overviewMachineKey);
