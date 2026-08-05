@@ -80,6 +80,36 @@ func TestManagerDeleteRecoversLiveTmuxSessionBeforeLookup(t *testing.T) {
 	}
 }
 
+func TestManagerDeleteRecoveredCleanWorktreeRemovesGitResources(t *testing.T) {
+	repo := tempRepo(t)
+	meta, mapped, err := CreateWorktree(repo, "recovered-clean")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	m := NewManager(true, "/bin/cat", false, "")
+	m.sessions["recovered-clean"] = &Runner{ID: "recovered-clean", Mode: string(protocol.SessionModeNormal), useTmux: true}
+	m.liveTmuxSessions = func() (map[string]tmuxSessionInfo, bool) {
+		return map[string]tmuxSessionInfo{
+			"recovered-clean": {
+				workdir: mapped, mode: string(protocol.SessionModeWorktree),
+				sourceWorkdir: meta.SourceWorkdir, sourceRepo: meta.SourceRepo,
+				worktreeRoot: meta.WorktreeRoot, branch: meta.Branch,
+			},
+		}, true
+	}
+
+	if err := m.Delete("recovered-clean"); err != nil {
+		t.Fatalf("Delete recovered worktree: %v", err)
+	}
+	if _, err := os.Stat(meta.WorktreeRoot); !os.IsNotExist(err) {
+		t.Fatalf("recovered worktree still exists: %v", err)
+	}
+	if got := runGit(t, repo, "branch", "--list", meta.Branch); got != "" {
+		t.Fatalf("recovered worktree branch still exists: %q", got)
+	}
+}
+
 func TestManagerDeleteDirtyWorktreeStopsSessionAndPreservesGitResources(t *testing.T) {
 	repo := tempRepo(t)
 	m := NewManager(false, "/bin/cat", false, "")
@@ -177,6 +207,28 @@ func TestReconcileTmuxSessionsDoesNotEraseAuthoritativeWorktreeMetadata(t *testi
 	got := r.Metadata()
 	if got.Mode != protocol.SessionModeWorktree || got.SourceWorkdir != "/repo/sub" || got.SourceRepo != "/repo" || got.WorktreeRoot != "/tree" || got.Branch != "vibe/s1" {
 		t.Fatalf("authoritative metadata erased by incomplete tmux snapshot: %#v", got)
+	}
+}
+
+func TestManagerListReplacesRecoveredDefaultModeWithCompleteWorktreeMetadata(t *testing.T) {
+	m := NewManager(true, "claude", false, "/bin/sh")
+	m.sessions["s1"] = &Runner{ID: "s1", Mode: string(protocol.SessionModeNormal), useTmux: true}
+	info := tmuxSessionInfo{workdir: "/tree/sub", mode: "worktree", sourceWorkdir: "/repo/sub", sourceRepo: "/repo", worktreeRoot: "/tree", branch: "vibe/s1"}
+	m.liveTmuxSessions = func() (map[string]tmuxSessionInfo, bool) {
+		return map[string]tmuxSessionInfo{"s1": info}, true
+	}
+
+	list := m.List()
+	if len(list) != 1 {
+		t.Fatalf("list length = %d, want 1", len(list))
+	}
+	got := list[0].SessionMetadata
+	if got.Mode != protocol.SessionModeWorktree || got.SourceWorkdir != info.sourceWorkdir || got.SourceRepo != info.sourceRepo || got.WorktreeRoot != info.worktreeRoot || got.Branch != info.branch {
+		t.Fatalf("recovered list metadata = %#v", got)
+	}
+	readyMetadata := m.sessions["s1"].Metadata()
+	if readyMetadata != got {
+		t.Fatalf("ready metadata = %#v, want list metadata %#v", readyMetadata, got)
 	}
 }
 

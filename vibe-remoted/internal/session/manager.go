@@ -205,9 +205,19 @@ func applyTmuxSessionMetadata(r *Runner, info tmuxSessionInfo) {
 	if r.Workdir == "" {
 		r.Workdir = info.workdir
 	}
-	// Session provisioning metadata is immutable. The in-memory runner is
-	// authoritative once populated; tmux is used to fill metadata after daemon
-	// recovery, not to erase it when list-sessions races the option writes.
+	// A complete Worktree snapshot is authoritative for a recovered runner whose
+	// zero/default mode was already normalized to "normal". Apply the metadata as
+	// one unit so List, Ready, and Delete cannot observe a mixed Normal/Worktree
+	// state. Conversely, never let a partial snapshot erase a complete in-memory
+	// Worktree identity while tmux options are still being written.
+	if completeTmuxWorktreeMetadata(info) && !completeRunnerWorktreeMetadata(r) {
+		r.Mode = info.mode
+		r.SourceWorkdir = info.sourceWorkdir
+		r.SourceRepo = info.sourceRepo
+		r.WorktreeRoot = info.worktreeRoot
+		r.Branch = info.branch
+		return
+	}
 	if r.Mode == "" {
 		r.Mode = info.mode
 	}
@@ -223,6 +233,16 @@ func applyTmuxSessionMetadata(r *Runner, info tmuxSessionInfo) {
 	if r.Branch == "" {
 		r.Branch = info.branch
 	}
+}
+
+func completeTmuxWorktreeMetadata(info tmuxSessionInfo) bool {
+	return protocol.SessionMode(info.mode) == protocol.SessionModeWorktree &&
+		info.sourceWorkdir != "" && info.sourceRepo != "" && info.worktreeRoot != "" && info.branch != ""
+}
+
+func completeRunnerWorktreeMetadata(r *Runner) bool {
+	return protocol.SessionMode(r.Mode) == protocol.SessionModeWorktree &&
+		r.SourceWorkdir != "" && r.SourceRepo != "" && r.WorktreeRoot != "" && r.Branch != ""
 }
 
 // reconcileTmuxSessions updates the in-memory session table from tmux's live
