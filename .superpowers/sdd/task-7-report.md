@@ -382,3 +382,181 @@ PASS
 git diff --check
 PASS
 ```
+
+## Final Runtime Verification After `f4d0e7d`
+
+### Final status
+
+**NEEDS_FIX**
+
+The requested isolated end-to-end rerun found that the production daemon does not persist two required tmux options during Worktree creation: `@vibe_remote_mode` and `@vibe_remote_source_workdir`. Therefore daemon restart still recovers the session as Normal, recovered Ready omits `sourceWorkdir`, and DELETE returns 204 while leaking the clean Worktree and branch. The focused unit tests pass because their synthetic tmux snapshot contains complete metadata, but the real creation path does not produce that snapshot.
+
+### Isolated environment
+
+- Temporary root: `/tmp/vibe-task7-final-ZSpDfC`
+- Temporary Git repository: `/tmp/vibe-task7-final-ZSpDfC/demo-repo`
+- Server: `127.0.0.1:18765`, token `task7-token`, dedicated `tmux -L vibe-remote`, `claude_cmd=/bin/bash`
+- Electron/Vite CDP: `127.0.0.1:9222`
+- Scheme A screenshot inspected at `/tmp/vibe-task7-final-ZSpDfC/scheme-a-final.png` (2400x1600), then removed with the temporary root during cleanup
+- The user's Electron `machines.json` was backed up and restored
+
+### Automated checks
+
+```text
+cd /Users/mac/github/vibe-remote/vibe-remoted && go test ./...
+PASS
+
+cd /Users/mac/github/vibe-remote/vibe-remoted && go test -race ./internal/session ./internal/server
+PASS
+
+cd /Users/mac/github/vibe-remote/vibe-remoted && go vet ./...
+PASS
+
+cd /Users/mac/github/vibe-remote/desktop && npm run typecheck
+PASS
+
+git diff --check
+PASS
+```
+
+### Normal mode — PASS
+
+WebSocket creation Ready:
+
+```json
+{"type":"ready","sessionId":"1785923847066-a20cec31","workdir":"/private/tmp/vibe-task7-final-ZSpDfC/demo-repo","mode":"normal"}
+```
+
+REST and tmux reported the original repository path, and DELETE returned 204:
+
+```text
+normal-tmux-path=/private/tmp/vibe-task7-final-ZSpDfC/demo-repo
+normal-delete-http=204
+```
+
+### Worktree creation and empty nested subdirectory — PASS before restart
+
+Created a Worktree Session for the Git-untracked empty source directory `nested/empty`. Ready and REST both reported complete Worktree metadata:
+
+```json
+{"type":"ready","sessionId":"1785923866374-7c4dc076","workdir":"/private/tmp/vibe-task7-final-ZSpDfC/demo-repo-worktrees/1785923866374-7c4dc076/nested/empty","mode":"worktree","sourceWorkdir":"/private/tmp/vibe-task7-final-ZSpDfC/demo-repo/nested/empty","sourceRepo":"/private/tmp/vibe-task7-final-ZSpDfC/demo-repo","worktreeRoot":"/private/tmp/vibe-task7-final-ZSpDfC/demo-repo-worktrees/1785923866374-7c4dc076","branch":"vibe/1785923866374-7c4dc076"}
+```
+
+```text
+empty-nested-workdir=exists
+empty-tmux-path=/private/tmp/vibe-task7-final-ZSpDfC/demo-repo-worktrees/1785923866374-7c4dc076/nested/empty
+empty-delete-http=204
+empty-worktree=removed
+empty-branch=removed
+```
+
+### Dirty deletion — PASS
+
+Created a second Worktree Session, wrote `untracked.txt` at its Worktree root, and deleted it:
+
+```text
+dirty-delete-http=409
+{"branch":"vibe/1785923876507-b93e09ba","error":"worktree_preserved","message":"worktree \"/private/tmp/vibe-task7-final-ZSpDfC/demo-repo-worktrees/1785923876507-b93e09ba\" is dirty; preserved branch \"vibe/1785923876507-b93e09ba\"","worktreeRoot":"/private/tmp/vibe-task7-final-ZSpDfC/demo-repo-worktrees/1785923876507-b93e09ba"}
+dirty-worktree=preserved
+dirty-branch=preserved
+dirty-tmux=stopped
+```
+
+### Daemon restart recovery — NEEDS_FIX
+
+Before restart, WS Ready for clean Worktree Session `1785923915100-80ef5136` was complete:
+
+```json
+{"type":"ready","sessionId":"1785923915100-80ef5136","workdir":"/private/tmp/vibe-task7-final-ZSpDfC/demo-repo-worktrees/1785923915100-80ef5136/tracked/subdir","mode":"worktree","sourceWorkdir":"/private/tmp/vibe-task7-final-ZSpDfC/demo-repo/tracked/subdir","sourceRepo":"/private/tmp/vibe-task7-final-ZSpDfC/demo-repo","worktreeRoot":"/private/tmp/vibe-task7-final-ZSpDfC/demo-repo-worktrees/1785923915100-80ef5136","branch":"vibe/1785923915100-80ef5136"}
+```
+
+However, direct inspection of the real tmux session immediately before restart showed an incomplete persisted snapshot:
+
+```text
+vibe-remote-1785923915100-80ef5136|||/private/tmp/vibe-task7-final-ZSpDfC/demo-repo|/private/tmp/vibe-task7-final-ZSpDfC/demo-repo-worktrees/1785923915100-80ef5136|vibe/1785923915100-80ef5136
+```
+
+The fields are `session|mode|sourceWorkdir|sourceRepo|worktreeRoot|branch`; both `mode` and `sourceWorkdir` are empty. The cause is the tmux CLI parsing in `Runner.start`: values `normal`/`worktree` are interpreted as tmux option flags (`-n`/`-w`), and an absolute `sourceWorkdir` beginning with `/private/tmp` is interpreted as flags starting at `-p`, because `set-option` is invoked without an option terminator/explicit value form. Other values happen to persist because their leading characters are not recognized as tmux flags.
+
+After a real daemon process stop and restart, REST recovered:
+
+```json
+{"type":"sessions","list":[{"id":"1785923915100-80ef5136","title":"subdir","workdir":"/private/tmp/vibe-task7-final-ZSpDfC/demo-repo-worktrees/1785923915100-80ef5136/tracked/subdir","created":"2026-08-05T17:59:27+08:00","mode":"normal","sourceRepo":"/private/tmp/vibe-task7-final-ZSpDfC/demo-repo","worktreeRoot":"/private/tmp/vibe-task7-final-ZSpDfC/demo-repo-worktrees/1785923915100-80ef5136","branch":"vibe/1785923915100-80ef5136"}]}
+```
+
+Recovered WS Ready matched the defective state:
+
+```json
+{"type":"ready","sessionId":"1785923915100-80ef5136","workdir":"/private/tmp/vibe-task7-final-ZSpDfC/demo-repo-worktrees/1785923915100-80ef5136/tracked/subdir","mode":"normal","sourceRepo":"/private/tmp/vibe-task7-final-ZSpDfC/demo-repo","worktreeRoot":"/private/tmp/vibe-task7-final-ZSpDfC/demo-repo-worktrees/1785923915100-80ef5136","branch":"vibe/1785923915100-80ef5136"}
+```
+
+Deletion then reproduced the orphan leak:
+
+```text
+restart-delete-http=204
+restart-worktree=PRESERVED_ORPHAN
+restart-branch=PRESERVED_ORPHAN
+sessions={"type":"sessions","list":[]}
+```
+
+### Scheme A — PASS
+
+The live Electron machine workspace rendered the expected Scheme A content (`MACHINE WORKSPACE`, machine identity and address, `Start a session`, `Open existing directory`, and `Create isolated worktree`). Clicking the Worktree card opened the directory picker and produced:
+
+```text
+Open existing directory aria-pressed=false
+Create isolated worktree aria-pressed=true
+Worktree mode creates an isolated branch from the selected repository.
+```
+
+The 2400x1600 screenshot was visually inspected and showed the Worktree picker selected over the isolated machine workspace.
+
+### Cleanup
+
+Stopped Electron and both daemon processes; removed all dedicated tmux sessions, temporary Worktrees and branches (including the deliberately preserved dirty and leaked restart fixtures), the temporary Git repository/config/scripts/screenshots, and `/tmp/vibe-task7-final-ZSpDfC`; restored the original Electron machines file. No production source was changed. Only this report was appended.
+
+### Concerns
+
+1. **Blocking:** `Runner.start` silently fails to persist `@vibe_remote_mode` and `@vibe_remote_source_workdir` for typical Worktree values because tmux parses those values as flags.
+2. **Blocking consequence:** restart REST/Ready publishes `mode: "normal"` with missing `sourceWorkdir`; DELETE 204 leaks the Worktree and branch.
+3. Unit/regression tests do not exercise the real tmux option-writing command, so all automated checks pass despite this production defect.
+4. Normal mode, immediate Worktree create, empty nested cwd creation, clean delete, dirty 409 preservation, and Scheme A UI all passed.
+
+## Tmux Metadata Persistence Fix
+
+### Root cause
+
+`Runner.start` invoked tmux as `set-option -t <session> <key> <value>`. tmux accepts option-like values as command flags, so values beginning with flag letters were rejected or silently omitted. In particular, `worktree` and `/private/tmp/...` did not persist. This left restart recovery with incomplete Worktree metadata; the recovered Runner defaulted to Normal mode, and recovered deletion skipped Git cleanup.
+
+### Fix
+
+Added `setTmuxOption` in `/Users/mac/github/vibe-remote/vibe-remoted/internal/session/runner.go`. It invokes tmux with argument-array semantics and the supported `--` option terminator before the user-option key:
+
+```text
+set-option -t <session> -- <key> <value>
+```
+
+This preserves spaces and empty values without shell parsing. Runner startup now uses this helper for all five persisted metadata options.
+
+### Regression test
+
+Added `/Users/mac/github/vibe-remote/vibe-remoted/internal/session/runner_test.go` with a real tmux integration test. The test verifies mode `worktree`, a spaced absolute source workdir, and an empty source repository value survive set/read, while a PATH shim rejects the old ambiguous invocation. The test failed before the production fix and passes after it.
+
+### Verification
+
+```text
+go -C /Users/mac/github/vibe-remote/vibe-remoted test ./...
+PASS
+
+go -C /Users/mac/github/vibe-remote/vibe-remoted test -race ./internal/session ./internal/server
+PASS
+
+go -C /Users/mac/github/vibe-remote/vibe-remoted vet ./...
+PASS
+
+npm --prefix /Users/mac/github/vibe-remote/desktop run typecheck
+PASS
+
+git diff --check
+PASS
+```

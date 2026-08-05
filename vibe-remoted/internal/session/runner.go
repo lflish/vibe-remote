@@ -195,6 +195,14 @@ func (r *Runner) launchCommand() []string {
 	return []string{sh, "-lic", "exec " + r.claudeCmd}
 }
 
+// setTmuxOption stores a user option using an explicit option terminator. The
+// terminator prevents values such as "worktree" and "/private/tmp/..." from
+// being parsed as tmux flags, while separate argv entries preserve spaces and
+// empty values without involving a shell.
+func setTmuxOption(sessionName, key, value string) error {
+	return tmuxCmd("set-option", "-t", sessionName, "--", key, value).Run()
+}
+
 // start launches the PTY process.
 func (r *Runner) start(cols, rows uint16) error {
 	var cmd *exec.Cmd
@@ -244,8 +252,7 @@ func (r *Runner) start(cols, rows uint16) error {
 			{"@vibe_remote_branch", r.Branch},
 		}
 		for _, option := range options {
-			key, value := option.key, option.value
-			_ = tmuxCmd("set-option", "-t", tmuxSessionName, key, value).Run()
+			_ = setTmuxOption(tmuxSessionName, option.key, option.value)
 		}
 		// Disable the status bar on the vibe-remote tmux server so claude gets the
 		// full PTY height (tmux reserves 1 row for the status bar by default).
