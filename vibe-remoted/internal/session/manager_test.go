@@ -56,6 +56,42 @@ func TestParseTmuxSessionLineRejectsMalformedFieldCount(t *testing.T) {
 	}
 }
 
+func TestReconcileTmuxSessionsAppliesWorktreeMetadataToExistingRunner(t *testing.T) {
+	r := &Runner{ID: "s1", Workdir: "/kept"}
+	sessions := map[string]*Runner{"s1": r}
+	info := tmuxSessionInfo{workdir: "/tmux", mode: "worktree", sourceWorkdir: "/source", sourceRepo: "/repo", worktreeRoot: "/tree", branch: "vibe/s1"}
+
+	reconcileTmuxSessions(sessions, map[string]tmuxSessionInfo{"s1": info}, time.Unix(42, 0), true, "claude", "/bin/sh", true)
+
+	if r.Workdir != "/kept" {
+		t.Fatalf("existing runner workdir = %q, want preserved workdir", r.Workdir)
+	}
+	assertRunnerWorktreeMetadata(t, r, info)
+}
+
+func TestReconcileTmuxSessionsAppliesWorktreeMetadataToRecoveredRunner(t *testing.T) {
+	sessions := map[string]*Runner{}
+	info := tmuxSessionInfo{workdir: "/tmux", mode: "worktree", sourceWorkdir: "/source", sourceRepo: "/repo", worktreeRoot: "/tree", branch: "vibe/s1"}
+
+	reconcileTmuxSessions(sessions, map[string]tmuxSessionInfo{"s1": info}, time.Unix(42, 0), true, "claude", "/bin/sh", true)
+
+	r, ok := sessions["s1"]
+	if !ok {
+		t.Fatal("reconciliation did not recover runner")
+	}
+	assertRunnerWorktreeMetadata(t, r, info)
+	if r.Workdir != info.workdir || r.Created != time.Unix(42, 0) {
+		t.Fatalf("recovered runner identity fields = %#v", r)
+	}
+}
+
+func assertRunnerWorktreeMetadata(t *testing.T, r *Runner, info tmuxSessionInfo) {
+	t.Helper()
+	if r.Mode != info.mode || r.SourceWorkdir != info.sourceWorkdir || r.SourceRepo != info.sourceRepo || r.WorktreeRoot != info.worktreeRoot || r.Branch != info.branch {
+		t.Fatalf("runner metadata = %#v, want mode=%q source=%q repo=%q root=%q branch=%q", r.Metadata(), info.mode, info.sourceWorkdir, info.sourceRepo, info.worktreeRoot, info.branch)
+	}
+}
+
 func TestManagerListSerializesMetadata(t *testing.T) {
 	m := newTestManager()
 	m.sessions["s1"] = &Runner{ID: "s1", Workdir: "/work", Mode: "worktree", SourceWorkdir: "/source", SourceRepo: "/repo", WorktreeRoot: "/tree", Branch: "vibe/s1"}

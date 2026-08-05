@@ -157,6 +157,37 @@ func applyTmuxSessionMetadata(r *Runner, info tmuxSessionInfo) {
 	r.Mode, r.SourceWorkdir, r.SourceRepo, r.WorktreeRoot, r.Branch = info.mode, info.sourceWorkdir, info.sourceRepo, info.worktreeRoot, info.branch
 }
 
+// reconcileTmuxSessions updates the in-memory session table from tmux's live
+// snapshot. Keeping this seam separate makes reconciliation testable without
+// depending on a running tmux daemon.
+func reconcileTmuxSessions(sessions map[string]*Runner, live map[string]tmuxSessionInfo, now time.Time, useTmux bool, claudeCmd, shell string, loginShell bool) {
+	for id := range sessions {
+		if _, alive := live[id]; !alive {
+			delete(sessions, id)
+		}
+	}
+	for id, info := range live {
+		if r, exists := sessions[id]; exists {
+			applyTmuxSessionMetadata(r, info)
+			continue
+		}
+		sessions[id] = &Runner{
+			ID:            id,
+			Workdir:       info.workdir,
+			Mode:          info.mode,
+			SourceWorkdir: info.sourceWorkdir,
+			SourceRepo:    info.sourceRepo,
+			WorktreeRoot:  info.worktreeRoot,
+			Branch:        info.branch,
+			Created:       now,
+			useTmux:       useTmux,
+			claudeCmd:     claudeCmd,
+			loginShell:    loginShell,
+			shell:         shell,
+		}
+	}
+}
+
 // List returns info for all sessions.
 func (m *Manager) List() []protocol.SessionInfo {
 	m.mu.Lock()
@@ -174,36 +205,7 @@ func (m *Manager) List() []protocol.SessionInfo {
 		live, ok = liveTmuxSessions()
 		if ok {
 			haveLive = true
-			// Prune map entries tmux says are gone.
-			for id := range m.sessions {
-				if _, alive := live[id]; !alive {
-					delete(m.sessions, id)
-				}
-			}
-			// Reconcile the other direction: a session can exist in tmux but
-			// not in the map (e.g. the daemon restarted while the tmux session
-			// kept running). Register a recovery entry so it shows up and can
-			// be re-attached, using the working directory tmux reports.
-			for id, info := range live {
-				if r, exists := m.sessions[id]; exists {
-					applyTmuxSessionMetadata(r, info)
-				} else {
-					m.sessions[id] = &Runner{
-						ID:            id,
-						Workdir:       info.workdir,
-						Mode:          info.mode,
-						SourceWorkdir: info.sourceWorkdir,
-						SourceRepo:    info.sourceRepo,
-						WorktreeRoot:  info.worktreeRoot,
-						Branch:        info.branch,
-						Created:       time.Now(),
-						useTmux:       m.useTmux,
-						claudeCmd:     m.claudeCmd,
-						loginShell:    m.loginShell,
-						shell:         m.shell,
-					}
-				}
-			}
+			reconcileTmuxSessions(m.sessions, live, time.Now(), m.useTmux, m.claudeCmd, m.shell, m.loginShell)
 		}
 	}
 
