@@ -126,14 +126,23 @@ func TestManagerDeleteDirtyWorktreeStopsSessionAndPreservesGitResources(t *testi
 	if !errors.As(err, &preserved) {
 		t.Fatalf("err = %T %v, want WorktreePreservedError", err, err)
 	}
-	if _, ok := m.Get(r.ID); ok {
-		t.Fatal("deleted session remains registered")
+	if _, ok := m.Get(r.ID); !ok {
+		t.Fatal("preserved worktree metadata was discarded")
 	}
 	if _, err := os.Stat(r.WorktreeRoot); err != nil {
 		t.Fatalf("worktree not preserved: %v", err)
 	}
 	if got := runGit(t, repo, "branch", "--list", r.Branch); !strings.Contains(got, r.Branch) {
 		t.Fatalf("branch not preserved: %q", got)
+	}
+	if err := os.Remove(filepath.Join(r.WorktreeRoot, "changed")); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.Delete(r.ID); err != nil {
+		t.Fatalf("retry delete: %v", err)
+	}
+	if _, ok := m.Get(r.ID); ok {
+		t.Fatal("metadata remains after successful retry")
 	}
 }
 

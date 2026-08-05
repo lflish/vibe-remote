@@ -252,7 +252,10 @@ func (r *Runner) start(cols, rows uint16) error {
 			{"@vibe_remote_branch", r.Branch},
 		}
 		for _, option := range options {
-			_ = setTmuxOption(tmuxSessionName, option.key, option.value)
+			if err := setTmuxOption(tmuxSessionName, option.key, option.value); err != nil {
+				r.Kill()
+				return fmt.Errorf("persist tmux metadata %s: %w", option.key, err)
+			}
 		}
 		// Disable the status bar on the vibe-remote tmux server so claude gets the
 		// full PTY height (tmux reserves 1 row for the status bar by default).

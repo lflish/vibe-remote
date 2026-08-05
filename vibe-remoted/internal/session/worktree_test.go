@@ -189,6 +189,29 @@ func TestWorktreeDirtyCleanupPreservesBoth(t *testing.T) {
 	}
 }
 
+func TestWorktreeIgnoredFileIsPreserved(t *testing.T) {
+	repo := tempRepo(t)
+	if err := os.WriteFile(filepath.Join(repo, ".gitignore"), []byte("ignored.txt\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, repo, "add", ".gitignore")
+	runGit(t, repo, "commit", "-m", "ignore")
+	meta, _, err := CreateWorktree(repo, "ignored")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(meta.WorktreeRoot, "ignored.txt"), []byte("keep"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	err = CleanupWorktree(meta)
+	if err == nil {
+		t.Fatal("ignored file cleanup unexpectedly succeeded")
+	}
+	var preserved *WorktreePreservedError
+	if !asPreserved(err, &preserved) {
+		t.Fatalf("err=%T %v", err, err)
+	}
+}
 func TestWorktreeRollbackToleratesMissingWorktreeOrBranch(t *testing.T) {
 	repo := tempRepo(t)
 	meta, _, err := CreateWorktree(repo, "rollback")

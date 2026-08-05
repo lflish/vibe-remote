@@ -3,7 +3,7 @@ import { FitAddon } from '@xterm/addon-fit';
 import '@xterm/xterm/css/xterm.css';
 import type { MachineConfig, SessionInfo, SessionMode } from '../shared/protocol';
 import { VibeRemoteClient, ConnectionState } from './client';
-import { VibeRemoteRest, type MachineInfo } from './rest';
+import { VibeRemoteRest, DeleteSessionError, type MachineInfo } from './rest';
 import { openDirPicker } from './dirpicker';
 import { openMachineManager } from './machines';
 
@@ -798,10 +798,22 @@ function updateStatusBar(extra?: string, attempt?: number) {
 
 // closeSession kills the remote session (tmux + claude) and removes its view.
 async function closeSession(machine: MachineConfig, sessionId: string) {
+  let deletionSucceeded = false;
   try {
     await rests.get(machineKey(machine))!.deleteSession(sessionId);
+    deletionSucceeded = true;
   } catch (e) {
     console.error('delete session failed', e);
+    if (e instanceof DeleteSessionError && e.status === 409 && e.code === 'worktree_preserved') {
+      const location = [e.worktreeRoot && `path: ${e.worktreeRoot}`, e.branch && `branch: ${e.branch}`].filter(Boolean).join(' · ');
+      updateStatusBar(`Worktree preserved${location ? ` · ${location}` : ''}`);
+    } else {
+      updateStatusBar(`Delete failed: ${e instanceof Error ? e.message : String(e)}`);
+    }
+  }
+  if (!deletionSucceeded) {
+    refreshAllMachines();
+    return;
   }
   const key = viewKey(machine, sessionId);
   const view = views.get(key);

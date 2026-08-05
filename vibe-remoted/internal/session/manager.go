@@ -125,29 +125,25 @@ func (m *Manager) Attach(id string, cols, rows uint16) (*Runner, error) {
 	m.mu.RLock()
 	runner, ok := m.sessions[id]
 	m.mu.RUnlock()
-
-	if !ok {
-		// Check if there's a tmux session we can recover
-		if m.useTmux {
-			runner = &Runner{
-				ID:         id,
-				Workdir:    "", // will be recovered from tmux metadata if possible
-				Created:    time.Now(),
-				useTmux:    m.useTmux,
-				claudeCmd:  m.claudeCmd,
-				loginShell: m.loginShell,
-				shell:      m.shell,
+	if m.useTmux {
+		if !ok {
+			// Reconcile this one session from tmux before attaching, so Ready has
+			// the persisted worktree metadata after a daemon restart.
+			if live, queryOK := m.liveTmuxSessions(); queryOK {
+				if info, exists := live[id]; exists {
+					runner = &Runner{ID: id, Workdir: info.workdir, Mode: info.mode, SourceWorkdir: info.sourceWorkdir, SourceRepo: info.sourceRepo, WorktreeRoot: info.worktreeRoot, Branch: info.branch, Created: time.Now(), useTmux: true, claudeCmd: m.claudeCmd, loginShell: m.loginShell, shell: m.shell, eventsURL: m.eventsURL, token: m.token}
+					m.mu.Lock()
+					m.sessions[id] = runner
+					m.mu.Unlock()
+					ok = true
+				}
 			}
-			if !runner.TmuxSessionExists() {
-				return nil, fmt.Errorf("session %q not found", id)
-			}
-			// Re-register
-			m.mu.Lock()
-			m.sessions[id] = runner
-			m.mu.Unlock()
-		} else {
+		}
+		if !ok {
 			return nil, fmt.Errorf("session %q not found", id)
 		}
+	} else if !ok {
+		return nil, fmt.Errorf("session %q not found", id)
 	}
 
 	if err := runner.AttachExisting(cols, rows); err != nil {
@@ -167,25 +163,28 @@ func (m *Manager) Delete(id string) error {
 			m.mu.Unlock()
 		}
 	}
-
 	m.mu.Lock()
 	runner, ok := m.sessions[id]
+	m.mu.Unlock()
 	if !ok {
-		m.mu.Unlock()
 		return fmt.Errorf("session %q not found", id)
 	}
-	delete(m.sessions, id)
-	m.mu.Unlock()
 
 	runner.Kill()
 	if protocol.SessionMode(runner.Mode) == protocol.SessionModeWorktree {
-		return CleanupWorktree(WorktreeMetadata{
+		err := CleanupWorktree(WorktreeMetadata{
 			SourceWorkdir: runner.SourceWorkdir,
 			SourceRepo:    runner.SourceRepo,
 			WorktreeRoot:  runner.WorktreeRoot,
 			Branch:        runner.Branch,
 		})
+		if err != nil {
+			return err
+		}
 	}
+	m.mu.Lock()
+	delete(m.sessions, id)
+	m.mu.Unlock()
 	return nil
 }
 

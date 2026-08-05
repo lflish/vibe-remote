@@ -33,7 +33,11 @@ export class VibeRemoteRest {
       method: 'DELETE',
       headers: this.headers(),
     });
-    if (!res.ok && res.status !== 204) throw new Error(`delete failed: ${res.status}`);
+    if (!res.ok && res.status !== 204) {
+      let details: { error?: string; message?: string; worktreeRoot?: string; branch?: string } = {};
+      try { details = await res.json(); } catch { /* non-JSON response */ }
+      throw new DeleteSessionError(res.status, details.error || `delete failed: ${res.status}`, details.message, details.worktreeRoot, details.branch);
+    }
   }
 
   async renameSession(id: string, name: string): Promise<void> {
@@ -55,6 +59,12 @@ export class VibeRemoteRest {
   }
 }
 
+export class DeleteSessionError extends Error {
+  constructor(public status: number, public code: string, public detail?: string, public worktreeRoot?: string, public branch?: string) {
+    super(detail || code);
+    this.name = 'DeleteSessionError';
+  }
+}
 export interface ClaudeFlagInfo {
   id: string;
   label: string;

@@ -560,3 +560,24 @@ PASS
 git diff --check
 PASS
 ```
+
+## Focused lifecycle correctness wave
+
+Implemented all six confirmed lifecycle fixes without changing PTY byte transport.
+
+- Worktree cleanup now uses `git status --ignored --untracked-files=all --porcelain`, preserving ignored artifacts; cleanup/rollback tolerate already-missing worktrees and generated branches.
+- Manager deletion kills the runner first, retains metadata when cleanup returns preserved/transient errors, and removes it only after successful cleanup, enabling retry.
+- Restart attach reconciles the live tmux snapshot before `AttachExisting`, so Ready carries persisted worktree metadata.
+- Required tmux metadata writes now fail session creation and invoke rollback rather than being ignored.
+- REST delete errors expose structured status/code/message/worktreeRoot/branch details. Desktop treats worktree preservation as a distinct outcome, keeps the local view, refreshes remote state, and surfaces the preserved path and branch.
+- Added ignored-file and dirty-delete retry regressions; existing idempotent cleanup coverage remains green.
+
+Verification:
+
+```text
+cd vibe-remoted && go test ./...                         PASS
+cd vibe-remoted && go test -race ./internal/session ./internal/server PASS
+cd vibe-remoted && go vet ./...                         PASS
+cd desktop && npm run typecheck                         PASS
+git diff --check                                       PASS
+```

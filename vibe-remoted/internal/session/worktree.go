@@ -86,20 +86,29 @@ func CreateWorktree(sourceWorkdir, sessionID string) (WorktreeMetadata, string, 
 	return meta, mapped, nil
 }
 
+func isMissingBranchError(err error) bool {
+	message := err.Error()
+	return strings.Contains(message, "branch '") && strings.Contains(message, "not found")
+}
+
+func isMissingWorktreeError(err error) bool {
+	message := strings.ToLower(err.Error())
+	return strings.Contains(message, "is not a working tree") || strings.Contains(message, "does not exist") || strings.Contains(message, "not found")
+}
+
 func RollbackWorktree(meta WorktreeMetadata) error {
 	if _, err := gitAt(meta.SourceRepo, "worktree", "remove", "--force", meta.WorktreeRoot); err != nil {
-		// A missing path is already rolled back, but Git may retain stale metadata
-		// after an external filesystem removal. Prune that metadata before deleting
-		// the branch.
-		if _, pruneErr := gitAt(meta.SourceRepo, "worktree", "prune"); pruneErr != nil {
-			return fmt.Errorf("rollback worktree: %w", err)
+		if !isMissingWorktreeError(err) {
+			// A missing path is already rolled back, but Git may retain stale metadata
+			// after an external filesystem removal. Prune that metadata before deleting
+			// the branch.
+			if _, pruneErr := gitAt(meta.SourceRepo, "worktree", "prune"); pruneErr != nil {
+				return fmt.Errorf("rollback worktree: %w", err)
+			}
 		}
 	}
 	if _, err := gitAt(meta.SourceRepo, "branch", "-D", meta.Branch); err != nil {
-		// Missing branch means rollback was already completed. Do not broadly
-		// swallow other "error: branch" failures (for example a branch still in use).
-		message := err.Error()
-		if strings.Contains(message, "branch '") && strings.Contains(message, "not found") {
+		if isMissingBranchError(err) {
 			return nil
 		}
 		return fmt.Errorf("rollback branch: %w", err)
@@ -112,17 +121,17 @@ func CleanupWorktree(meta WorktreeMetadata) error {
 	if _, statErr := os.Stat(meta.WorktreeRoot); os.IsNotExist(statErr) {
 		return RollbackWorktree(meta)
 	}
-	out, err := gitAt(meta.WorktreeRoot, "status", "--porcelain")
+	out, err := gitAt(meta.WorktreeRoot, "status", "--ignored", "--untracked-files=all", "--porcelain")
 	if err != nil {
 		return fmt.Errorf("check worktree status: %w", err)
 	}
 	if strings.TrimSpace(string(out)) != "" {
 		return &WorktreePreservedError{WorktreeRoot: meta.WorktreeRoot, Branch: meta.Branch}
 	}
-	if _, err := gitAt(meta.SourceRepo, "worktree", "remove", meta.WorktreeRoot); err != nil {
+	if _, err := gitAt(meta.SourceRepo, "worktree", "remove", meta.WorktreeRoot); err != nil && !isMissingWorktreeError(err) {
 		return fmt.Errorf("remove worktree: %w", err)
 	}
-	if _, err := gitAt(meta.SourceRepo, "branch", "-D", meta.Branch); err != nil {
+	if _, err := gitAt(meta.SourceRepo, "branch", "-D", meta.Branch); err != nil && !isMissingBranchError(err) {
 		return fmt.Errorf("remove branch: %w", err)
 	}
 	_ = os.Remove(filepath.Dir(meta.WorktreeRoot))
