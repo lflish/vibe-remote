@@ -11,11 +11,12 @@ import type { MachineConfig, SessionMode } from '../shared/protocol';
  */
 export function openDirPicker(
   machine: MachineConfig,
+  initialMode: SessionMode = 'normal',
 ): Promise<{ workdir: string; flags: string[]; mode: SessionMode } | null> {
   return new Promise((resolve) => {
     const rest = new VibeRemoteRest(machine);
     let currentPath = '';
-    let mode: SessionMode = 'normal';
+    let mode: SessionMode = initialMode;
     const flagChecks: Array<{ id: string; input: HTMLInputElement }> = [];
 
     // --- Build modal DOM ---

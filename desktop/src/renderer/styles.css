@@ -231,26 +231,221 @@ html, body {
 .machine-overview[hidden] { display: none; }
 .machine-overview {
   height: 100%;
+  overflow-y: auto;
+  background: var(--bg-primary);
+}
+
+.workspace-page {
+  width: min(1040px, 100%);
+  min-height: 100%;
+  margin: 0 auto;
+  padding: 42px clamp(24px, 5vw, 64px) 56px;
+}
+
+.workspace-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 32px;
+  padding-bottom: 28px;
+}
+
+.workspace-identity { min-width: 0; }
+.workspace-eyebrow {
+  margin-bottom: 5px;
+  color: var(--accent);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+.workspace-header h1 {
+  font-size: clamp(26px, 3vw, 34px);
+  line-height: 1.15;
+  letter-spacing: -0.8px;
+}
+.workspace-metadata {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px 18px;
+  margin-top: 12px;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+.workspace-metadata span:not(:last-child)::after {
+  content: '·';
+  margin-left: 18px;
+  color: var(--border);
+}
+.workspace-header-actions {
   display: flex;
   align-items: center;
-  justify-content: center;
-  padding: 32px;
-  box-sizing: border-box;
+  gap: 8px;
+  flex-shrink: 0;
 }
-.overview-card {
-  width: min(520px, 100%);
-  padding: 28px;
+.workspace-new-session { width: auto; }
+
+.workspace-stats {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  border-block: 1px solid var(--border);
+}
+.workspace-stat {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 18px 20px;
+}
+.workspace-stat + .workspace-stat { border-left: 1px solid var(--border); }
+.workspace-stat strong {
+  font-size: 22px;
+  font-weight: 650;
+  line-height: 1.2;
+}
+.workspace-stat span {
+  color: var(--text-muted);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.workspace-section { margin-top: 34px; }
+.workspace-section h2 {
+  font-size: 15px;
+  font-weight: 650;
+  letter-spacing: -0.15px;
+}
+.workspace-section-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 12px;
+}
+.workspace-connection {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text-muted);
+  font-size: 11px;
+}
+.workspace-connection::before {
+  content: '';
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--error);
+}
+.workspace-connection.connected::before { background: var(--success); }
+.workspace-recent-list {
+  overflow: hidden;
   border: 1px solid var(--border);
-  border-radius: 12px;
-  background: var(--bg-surface);
-  box-shadow: 0 8px 24px rgba(43, 42, 40, 0.08);
+  border-radius: var(--radius);
+  background: var(--bg-elevated);
 }
-.overview-card h1 { margin: 0 0 8px; font-size: 22px; color: var(--text-primary); }
-.overview-status { display: flex; align-items: center; gap: 8px; color: var(--text-secondary); }
-.overview-status-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--error); }
-.overview-status-dot.connected { background: var(--success); }
-.overview-meta { margin: 20px 0 24px; color: var(--text-muted); font-size: 13px; line-height: 1.7; }
-.overview-action { width: auto; margin-top: 4px; }
+.workspace-session-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+  width: 100%;
+  min-height: 62px;
+  padding: 11px 15px;
+  border: 0;
+  border-bottom: 1px solid var(--border);
+  background: transparent;
+  color: var(--text-primary);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.workspace-session-row:last-child { border-bottom: 0; }
+.workspace-session-row:hover { background: var(--bg-hover); }
+.workspace-session-row:focus-visible,
+.workspace-mode-card:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.workspace-session-identity {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 2px;
+}
+.workspace-session-identity strong,
+.workspace-session-identity span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.workspace-session-identity strong { font-size: 13px; }
+.workspace-session-identity span {
+  color: var(--text-muted);
+  font-family: 'SF Mono', monospace;
+  font-size: 11px;
+}
+.workspace-session-badges { display: flex; gap: 6px; flex-shrink: 0; }
+.workspace-badge {
+  padding: 3px 7px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  color: var(--text-secondary);
+  font-size: 10px;
+  font-weight: 600;
+}
+.workspace-badge-status { background: var(--bg-secondary); }
+.workspace-empty {
+  padding: 26px 16px;
+  color: var(--text-muted);
+  font-size: 12px;
+  text-align: center;
+}
+.workspace-mode-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 12px;
+  margin-top: 12px;
+}
+.workspace-mode-card {
+  display: flex;
+  min-height: 142px;
+  flex-direction: column;
+  align-items: flex-start;
+  padding: 20px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-elevated);
+  color: var(--text-primary);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: border-color 0.15s, background 0.15s;
+}
+.workspace-mode-card:hover { border-color: #CFC7B9; background: #FFFEFB; }
+.workspace-mode-card strong { margin-bottom: 6px; font-size: 14px; }
+.workspace-mode-card > span:not(.workspace-mode-action) {
+  max-width: 42ch;
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 1.55;
+}
+.workspace-mode-action {
+  margin-top: auto;
+  padding-top: 16px;
+  color: var(--accent);
+  font-size: 12px;
+  font-weight: 650;
+}
+
+@media (max-width: 760px) {
+  .workspace-page { padding: 28px 20px 40px; }
+  .workspace-header { flex-direction: column; gap: 18px; }
+  .workspace-header-actions { width: 100%; }
+  .workspace-header-actions button { flex: 1; }
+  .workspace-stats { grid-template-columns: 1fr; }
+  .workspace-stat { padding: 12px 4px; }
+  .workspace-stat + .workspace-stat { border-left: 0; border-top: 1px solid var(--border); }
+  .workspace-mode-grid { grid-template-columns: 1fr; }
+  .workspace-session-row { align-items: flex-start; flex-direction: column; gap: 8px; }
+}
 
 /* Each open session's terminal stacks in the same area; only the active one
    is shown. Absolute fill so xterm's fit addon measures the full region. */

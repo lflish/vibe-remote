@@ -3,7 +3,7 @@ import { FitAddon } from '@xterm/addon-fit';
 import '@xterm/xterm/css/xterm.css';
 import type { MachineConfig, SessionInfo, SessionMode } from '../shared/protocol';
 import { VibeRemoteClient, ConnectionState } from './client';
-import { VibeRemoteRest } from './rest';
+import { VibeRemoteRest, type MachineInfo } from './rest';
 import { openDirPicker } from './dirpicker';
 import { openMachineManager } from './machines';
 
@@ -41,6 +41,7 @@ let machines: MachineConfig[] = [];
 const rests = new Map<string, VibeRemoteRest>(); // machineKey -> REST client
 const views = new Map<string, SessionView>(); // view key -> open session view
 const machineSessions = new Map<string, SessionInfo[]>(); // machineKey -> sessions (REST)
+const machineInfo = new Map<string, MachineInfo>(); // machineKey -> info (REST)
 const machineOnline = new Map<string, boolean>(); // machineKey -> reachable
 let activeKey: string | null = null;
 let overviewMachineKey: string | null = null;
@@ -183,18 +184,26 @@ function wireWindowResize() {
   });
 }
 
-// refreshAllMachines pulls each machine's session list over REST and updates
-// the sidebar + online status.
+// refreshAllMachines pulls each machine's sessions and machine metadata over
+// REST. Session-list reachability drives online status; a transient info failure
+// retains the last successful metadata so the workspace does not flicker.
 async function refreshAllMachines() {
   await Promise.all(
     machines.map(async (m) => {
       const mk = machineKey(m);
-      try {
-        const list = await rests.get(mk)!.listSessions();
-        machineSessions.set(mk, list);
+      const rest = rests.get(mk)!;
+      const [sessionsResult, infoResult] = await Promise.allSettled([
+        rest.listSessions(),
+        rest.info(),
+      ]);
+      if (sessionsResult.status === 'fulfilled') {
+        machineSessions.set(mk, sessionsResult.value);
         machineOnline.set(mk, true);
-      } catch {
+      } else {
         machineOnline.set(mk, false);
+      }
+      if (infoResult.status === 'fulfilled') {
+        machineInfo.set(mk, infoResult.value);
       }
     }),
   );
@@ -211,35 +220,175 @@ async function refreshAllMachines() {
 function renderMachineOverview(machine: MachineConfig) {
   const mount = document.getElementById('machine-overview');
   if (!mount) return;
-  const online = machineOnline.get(machineKey(machine)) === true;
-  const count = machineSessions.get(machineKey(machine))?.length ?? 0;
+
+  const mk = machineKey(machine);
+  const online = machineOnline.get(mk) === true;
+  const info = machineInfo.get(mk);
+  const sessions = machineSessions.get(mk) ?? [];
+  const localViewCount = [...views.values()].filter((view) => machineKey(view.machine) === mk).length;
   mount.textContent = '';
 
-  const card = document.createElement('section');
-  card.className = 'overview-card';
+  const workspace = document.createElement('div');
+  workspace.className = 'workspace-page';
+
+  const header = document.createElement('header');
+  header.className = 'workspace-header';
+  const identity = document.createElement('div');
+  identity.className = 'workspace-identity';
+  const eyebrow = document.createElement('p');
+  eyebrow.className = 'workspace-eyebrow';
+  eyebrow.textContent = 'Machine workspace';
   const title = document.createElement('h1');
   title.textContent = machine.name;
-  const status = document.createElement('div');
-  status.className = 'overview-status';
-  const dot = document.createElement('span');
-  dot.className = `overview-status-dot${online ? ' connected' : ''}`;
-  const statusText = document.createElement('span');
-  statusText.textContent = online ? 'Connected' : 'Offline';
-  status.append(dot, statusText);
-  const meta = document.createElement('div');
-  meta.className = 'overview-meta';
-  meta.textContent = `${machine.addr}:${machine.port}\n${count} ${count === 1 ? 'session' : 'sessions'}`;
-  meta.style.whiteSpace = 'pre-line';
-  const create = document.createElement('button');
-  create.className = 'btn-primary overview-action';
-  create.textContent = '+ New Session';
-  create.addEventListener('click', async () => {
-    const picked = await openDirPicker(machine);
-    if (picked === null) return;
-    openSession(machine, '', picked.workdir, picked.flags, picked.mode);
+  const metadata = document.createElement('div');
+  metadata.className = 'workspace-metadata';
+  const metadataValues = [
+    `${machine.addr}:${machine.port}`,
+    info?.default_workdir || 'Default directory unavailable',
+    info ? (info.tmux_enabled ? 'tmux enabled' : 'tmux disabled') : 'tmux status unavailable',
+  ];
+  for (const value of metadataValues) {
+    const item = document.createElement('span');
+    item.textContent = value;
+    metadata.appendChild(item);
+  }
+  identity.append(eyebrow, title, metadata);
+
+  const headerActions = document.createElement('div');
+  headerActions.className = 'workspace-header-actions';
+  const manage = document.createElement('button');
+  manage.type = 'button';
+  manage.className = 'btn-secondary';
+  manage.textContent = 'Manage';
+  manage.addEventListener('click', () => {
+    document.getElementById('btn-manage-machines')?.dispatchEvent(new MouseEvent('click'));
   });
-  card.append(title, status, meta, create);
-  mount.append(card);
+  const create = document.createElement('button');
+  create.type = 'button';
+  create.className = 'btn-primary workspace-new-session';
+  create.textContent = '+ New session';
+  create.addEventListener('click', () => startNewSession(machine));
+  headerActions.append(manage, create);
+  header.append(identity, headerActions);
+
+  const stats = document.createElement('section');
+  stats.className = 'workspace-stats';
+  stats.setAttribute('aria-label', 'Machine summary');
+  const statValues = [
+    { label: 'Sessions', value: String(sessions.length) },
+    { label: 'Open here', value: String(localViewCount) },
+    { label: 'Connection', value: isLoopbackAddress(machine.addr) ? 'Local' : 'Remote' },
+  ];
+  for (const stat of statValues) {
+    const item = document.createElement('div');
+    item.className = 'workspace-stat';
+    const value = document.createElement('strong');
+    value.textContent = stat.value;
+    const label = document.createElement('span');
+    label.textContent = stat.label;
+    item.append(value, label);
+    stats.appendChild(item);
+  }
+
+  const recentSection = document.createElement('section');
+  recentSection.className = 'workspace-section';
+  const recentHeading = document.createElement('div');
+  recentHeading.className = 'workspace-section-heading';
+  const recentTitle = document.createElement('h2');
+  recentTitle.textContent = 'Recent sessions';
+  const connection = document.createElement('span');
+  connection.className = `workspace-connection${online ? ' connected' : ''}`;
+  connection.textContent = online ? 'Connected' : 'Offline';
+  recentHeading.append(recentTitle, connection);
+  recentSection.appendChild(recentHeading);
+
+  const recentList = document.createElement('div');
+  recentList.className = 'workspace-recent-list';
+  const recent = [...sessions].sort((a, b) => b.created.localeCompare(a.created));
+  if (recent.length === 0) {
+    const empty = document.createElement('p');
+    empty.className = 'workspace-empty';
+    empty.textContent = 'No sessions on this machine yet.';
+    recentList.appendChild(empty);
+  } else {
+    for (const session of recent.slice(0, 5)) {
+      const key = viewKey(machine, session.id);
+      const row = document.createElement('button');
+      row.type = 'button';
+      row.className = 'workspace-session-row';
+      const sessionIdentity = document.createElement('span');
+      sessionIdentity.className = 'workspace-session-identity';
+      const sessionTitle = document.createElement('strong');
+      sessionTitle.textContent = session.title || (session.workdir ? session.workdir.split('/').pop() : '') || session.id;
+      const workdir = document.createElement('span');
+      workdir.textContent = session.workdir || 'Working directory unavailable';
+      sessionIdentity.append(sessionTitle, workdir);
+      const badges = document.createElement('span');
+      badges.className = 'workspace-session-badges';
+      const mode = document.createElement('span');
+      mode.className = 'workspace-badge';
+      mode.textContent = session.mode === 'worktree' ? 'Worktree' : 'Normal';
+      const status = document.createElement('span');
+      status.className = 'workspace-badge workspace-badge-status';
+      status.textContent = views.has(key) ? 'Running' : 'Remote';
+      badges.append(mode, status);
+      row.append(sessionIdentity, badges);
+      row.addEventListener('click', () => openSession(machine, session.id));
+      recentList.appendChild(row);
+    }
+  }
+  recentSection.appendChild(recentList);
+
+  const modesSection = document.createElement('section');
+  modesSection.className = 'workspace-section';
+  const modesTitle = document.createElement('h2');
+  modesTitle.textContent = 'Start a session';
+  const modeGrid = document.createElement('div');
+  modeGrid.className = 'workspace-mode-grid';
+  const modes: Array<{ mode: SessionMode; title: string; description: string; action: string }> = [
+    {
+      mode: 'normal',
+      title: 'Open existing directory',
+      description: 'Run in a folder on this machine without changing its Git setup.',
+      action: 'Choose directory',
+    },
+    {
+      mode: 'worktree',
+      title: 'Create isolated worktree',
+      description: 'Create an isolated branch and worktree before launching the session.',
+      action: 'Choose repository',
+    },
+  ];
+  for (const item of modes) {
+    const card = document.createElement('button');
+    card.type = 'button';
+    card.className = 'workspace-mode-card';
+    const cardTitle = document.createElement('strong');
+    cardTitle.textContent = item.title;
+    const description = document.createElement('span');
+    description.textContent = item.description;
+    const action = document.createElement('span');
+    action.className = 'workspace-mode-action';
+    action.textContent = `${item.action} →`;
+    card.append(cardTitle, description, action);
+    card.addEventListener('click', () => startNewSession(machine, item.mode));
+    modeGrid.appendChild(card);
+  }
+  modesSection.append(modesTitle, modeGrid);
+
+  workspace.append(header, stats, recentSection, modesSection);
+  mount.appendChild(workspace);
+}
+
+function isLoopbackAddress(address: string): boolean {
+  const normalized = address.toLowerCase().replace(/^\[|\]$/g, '');
+  return normalized === 'localhost' || normalized === '::1' || normalized.startsWith('127.');
+}
+
+async function startNewSession(machine: MachineConfig, initialMode?: SessionMode) {
+  const picked = await openDirPicker(machine, initialMode);
+  if (!picked) return;
+  openSession(machine, '', picked.workdir, picked.flags, picked.mode);
 }
 
 function showMachineOverview(machine: MachineConfig) {
@@ -684,9 +833,7 @@ function wireNewSessionButton() {
       ? machines.find((m) => machineKey(m) === selectedMachineKey)
       : null;
     const machine = active?.machine || selected || machines[0];
-    const picked = await openDirPicker(machine);
-    if (picked === null) return; // cancelled
-    openSession(machine, '', picked.workdir, picked.flags, picked.mode);
+    startNewSession(machine);
   });
 }
 
