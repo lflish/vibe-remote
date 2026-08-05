@@ -18,6 +18,8 @@ export type FrameTypeValue = (typeof FrameType)[keyof typeof FrameType];
 
 // --- Client → Server ---
 
+export type SessionMode = 'normal' | 'worktree';
+
 export interface AuthFrame {
   type: typeof FrameType.Auth;
   token: string;
@@ -30,6 +32,7 @@ export interface AttachFrame {
   rows: number;
   workdir?: string; // working directory for new sessions
   flags?: string[]; // selected claude_flags ids (new session only)
+  mode?: SessionMode; // omitted = normal
 }
 
 export interface DataFrameC2S {
@@ -53,6 +56,11 @@ export interface ReadyFrame {
   type: typeof FrameType.Ready;
   sessionId: string;
   workdir: string;
+  mode: SessionMode;
+  sourceWorkdir?: string;
+  sourceRepo?: string;
+  worktreeRoot?: string;
+  branch?: string;
 }
 
 export interface DataFrameS2C {
@@ -65,6 +73,11 @@ export interface SessionInfo {
   title: string;
   workdir: string;
   created: string;
+  mode: SessionMode;
+  sourceWorkdir?: string;
+  sourceRepo?: string;
+  worktreeRoot?: string;
+  branch?: string;
 }
 
 export interface SessionsFrame {

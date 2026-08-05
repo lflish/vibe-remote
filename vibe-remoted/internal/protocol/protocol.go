@@ -27,14 +27,33 @@ type AuthFrame struct {
 	Token string `json:"token"`
 }
 
+// SessionMode identifies how a session working directory is provisioned.
+type SessionMode string
+
+const (
+	SessionModeNormal   SessionMode = "normal"
+	SessionModeWorktree SessionMode = "worktree"
+)
+
+// SessionMetadata describes the authoritative working-directory mode and any
+// Git worktree resources associated with a session.
+type SessionMetadata struct {
+	Mode          SessionMode `json:"mode"`
+	SourceWorkdir string      `json:"sourceWorkdir,omitempty"`
+	SourceRepo    string      `json:"sourceRepo,omitempty"`
+	WorktreeRoot  string      `json:"worktreeRoot,omitempty"`
+	Branch        string      `json:"branch,omitempty"`
+}
+
 // AttachFrame requests opening or resuming a session.
 type AttachFrame struct {
-	Type      string   `json:"type"`
-	SessionID string   `json:"sessionId,omitempty"` // empty = create new
-	Cols      uint16   `json:"cols"`
-	Rows      uint16   `json:"rows"`
-	Workdir   string   `json:"workdir,omitempty"` // working directory for new sessions
-	Flags     []string `json:"flags,omitempty"`   // selected claude_flags ids (new session only)
+	Type      string      `json:"type"`
+	SessionID string      `json:"sessionId,omitempty"` // empty = create new
+	Cols      uint16      `json:"cols"`
+	Rows      uint16      `json:"rows"`
+	Workdir   string      `json:"workdir,omitempty"` // working directory for new sessions
+	Flags     []string    `json:"flags,omitempty"`   // selected claude_flags ids (new session only)
+	Mode      SessionMode `json:"mode,omitempty"`    // empty defaults to normal
 }
 
 // ReadyFrame confirms attach success.
@@ -42,6 +61,7 @@ type ReadyFrame struct {
 	Type      string `json:"type"`
 	SessionID string `json:"sessionId"`
 	Workdir   string `json:"workdir"`
+	SessionMetadata
 }
 
 // DataFrame carries PTY bytes (base64-encoded).
@@ -63,6 +83,7 @@ type SessionInfo struct {
 	Title   string `json:"title"`
 	Workdir string `json:"workdir"`
 	Created string `json:"created"`
+	SessionMetadata
 }
 
 // SessionsFrame lists all sessions on this machine.

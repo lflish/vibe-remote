@@ -52,21 +52,39 @@ Client                              Server (vibe-remoted)
   "cols": 120,
   "rows": 40,
   "workdir": "/home/user/project",
-  "flags": ["continue", "skip-perms"]
+  "flags": ["continue", "skip-perms"],
+  "mode": "worktree"
 }
 ```
 
 - `sessionId` 为空字符串或省略：创建新会话
 - `workdir`：仅新建时有效，指定 claude 工作目录。省略则用服务端默认值
 - `flags`：可选，仅新建会话有效。客户端勾选的 claude 启动 flag id 列表；服务端按 `claude_flags` 白名单查表，把对应参数拼到 `claude_cmd` 后（未知 id 忽略）
+- `mode`：可选，仅新建会话有效。`normal` 表示直接使用 `workdir`，`worktree` 表示服务端从所选目录所在 Git 仓库创建隔离 Worktree。省略或空值时按 `normal` 处理，以兼容旧客户端
 
 ### ready (S→C)
 
 确认 attach 成功。
 
 ```json
-{"type": "ready", "sessionId": "1720000000000", "workdir": "/home/user/project"}
+{
+  "type": "ready",
+  "sessionId": "1720000000000",
+  "workdir": "/home/user/project-worktrees/1720000000000/subdir",
+  "mode": "worktree",
+  "sourceWorkdir": "/home/user/project/subdir",
+  "sourceRepo": "/home/user/project",
+  "worktreeRoot": "/home/user/project-worktrees/1720000000000",
+  "branch": "vibe/1720000000000"
+}
 ```
+
+`mode` 始终由服务端返回权威值。`normal` 会话只需返回 `mode: "normal"`；`worktree` 会话还返回：
+
+- `sourceWorkdir`：用户选择的原始目录
+- `sourceRepo`：原始 Git 仓库根目录
+- `worktreeRoot`：该会话创建的 Worktree 根目录
+- `branch`：该 Worktree 使用的分支
 
 ### data (双向)
 
@@ -95,7 +113,17 @@ PTY 字节流，base64 编码。
 {
   "type": "sessions",
   "list": [
-    {"id": "1720000000000", "title": "1720000000000", "workdir": "/home/user/project", "created": "2024-07-01T12:00:00Z"}
+    {
+      "id": "1720000000000",
+      "title": "project",
+      "workdir": "/home/user/project-worktrees/1720000000000/subdir",
+      "created": "2024-07-01T12:00:00Z",
+      "mode": "worktree",
+      "sourceWorkdir": "/home/user/project/subdir",
+      "sourceRepo": "/home/user/project",
+      "worktreeRoot": "/home/user/project-worktrees/1720000000000",
+      "branch": "vibe/1720000000000"
+    }
   ]
 }
 ```
