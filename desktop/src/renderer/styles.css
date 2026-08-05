@@ -300,7 +300,33 @@ html, body {
   animation: pulse 1.5s ease-in-out infinite;
 }
 
-/* Scrollbar styling */
+/* Session mode cards */
+.modal-modes {
+  padding: 10px 16px 4px;
+  border-bottom: 1px solid var(--border);
+}
+.modal-modes .modal-flags-title { margin-bottom: 6px; }
+.modal-mode-card {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  width: 100%;
+  gap: 2px;
+  padding: 9px 10px;
+  margin-bottom: 6px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: transparent;
+  color: var(--text-primary);
+  text-align: left;
+  cursor: pointer;
+}
+.modal-mode-card:hover { background: var(--bg-hover); }
+.modal-mode-card[aria-pressed='true'] { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
+.modal-mode-title { font-size: 12px; font-weight: 600; }
+.modal-mode-description, .modal-mode-note { font-size: 11px; color: var(--text-muted); }
+.modal-mode-note { padding: 2px 0 6px; color: var(--text-secondary); }
+
 ::-webkit-scrollbar {
   width: 6px;
 }

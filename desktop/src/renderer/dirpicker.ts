@@ -1,5 +1,5 @@
 import { VibeRemoteRest, type DirEntry } from './rest';
-import type { MachineConfig } from '../shared/protocol';
+import type { MachineConfig, SessionMode } from '../shared/protocol';
 
 /**
  * Remote directory picker modal — lets the user browse the remote machine's
@@ -11,10 +11,11 @@ import type { MachineConfig } from '../shared/protocol';
  */
 export function openDirPicker(
   machine: MachineConfig,
-): Promise<{ workdir: string; flags: string[] } | null> {
+): Promise<{ workdir: string; flags: string[]; mode: SessionMode } | null> {
   return new Promise((resolve) => {
     const rest = new VibeRemoteRest(machine);
     let currentPath = '';
+    let mode: SessionMode = 'normal';
     const flagChecks: Array<{ id: string; input: HTMLInputElement }> = [];
 
     // --- Build modal DOM ---
@@ -27,6 +28,37 @@ export function openDirPicker(
 
     const pathBar = el('div', 'modal-path');
     modal.appendChild(pathBar);
+
+    const modesBox = el('div', 'modal-modes');
+    const modesTitle = el('div', 'modal-flags-title');
+    modesTitle.textContent = 'Session mode';
+    modesBox.appendChild(modesTitle);
+    const modeCards = [
+      { value: 'normal' as const, title: 'Open existing directory', description: 'Run Claude in the selected folder without touching Git.' },
+      { value: 'worktree' as const, title: 'Create isolated worktree', description: 'Create a branch + worktree, then launch Claude inside it.' },
+    ];
+    const modeButtons: HTMLButtonElement[] = [];
+    for (const card of modeCards) {
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.className = 'modal-mode-card';
+      button.setAttribute('aria-pressed', String(card.value === mode));
+      const title = el('span', 'modal-mode-title');
+      title.textContent = card.title;
+      const description = el('span', 'modal-mode-description');
+      description.textContent = card.description;
+      button.append(title, description);
+      button.addEventListener('click', () => {
+        mode = card.value;
+        modeButtons.forEach((b, i) => b.setAttribute('aria-pressed', String(modeCards[i].value === mode)));
+      });
+      modeButtons.push(button);
+      modesBox.appendChild(button);
+    }
+    const modeNote = el('div', 'modal-mode-note');
+    modeNote.textContent = 'Worktree mode creates an isolated branch from the selected repository.';
+    modesBox.appendChild(modeNote);
+    modal.appendChild(modesBox);
 
     const list = el('div', 'modal-list');
     modal.appendChild(list);
@@ -73,7 +105,7 @@ export function openDirPicker(
     document.body.appendChild(overlay);
 
     // --- Behavior ---
-    function close(result: { workdir: string; flags: string[] } | null) {
+    function close(result: { workdir: string; flags: string[]; mode: SessionMode } | null) {
       overlay.remove();
       resolve(result);
     }
@@ -130,7 +162,7 @@ export function openDirPicker(
     cancelBtn.addEventListener('click', () => close(null));
     selectBtn.addEventListener('click', () => {
       const flags = flagChecks.filter((c) => c.input.checked).map((c) => c.id);
-      close({ workdir: currentPath, flags });
+      close({ workdir: currentPath, flags, mode });
     });
     overlay.addEventListener('click', (e) => {
       if (e.target === overlay) close(null);

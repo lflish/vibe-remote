@@ -1,7 +1,7 @@
 import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import '@xterm/xterm/css/xterm.css';
-import type { MachineConfig, SessionInfo } from '../shared/protocol';
+import type { MachineConfig, SessionInfo, SessionMode } from '../shared/protocol';
 import { VibeRemoteClient, ConnectionState } from './client';
 import { VibeRemoteRest } from './rest';
 import { openDirPicker } from './dirpicker';
@@ -236,7 +236,7 @@ function renderMachineOverview(machine: MachineConfig) {
   create.addEventListener('click', async () => {
     const picked = await openDirPicker(machine);
     if (picked === null) return;
-    openSession(machine, '', picked.workdir, picked.flags);
+    openSession(machine, '', picked.workdir, picked.flags, picked.mode);
   });
   card.append(title, status, meta, create);
   mount.append(card);
@@ -275,7 +275,7 @@ function makeTerminal(): { term: Terminal; fit: FitAddon } {
 
 // openSession creates a new SessionView (its own WS + xterm) and attaches.
 // sessionId '' means create a brand-new session with the given workdir.
-function openSession(machine: MachineConfig, sessionId: string, workdir?: string, flags?: string[]): SessionView {
+function openSession(machine: MachineConfig, sessionId: string, workdir?: string, flags?: string[], mode: SessionMode = 'normal'): SessionView {
   const key = viewKey(machine, sessionId);
   const existing = views.get(key);
   if (existing) {
@@ -384,7 +384,7 @@ function openSession(machine: MachineConfig, sessionId: string, workdir?: string
 
   client.connect();
   const dims = fit.proposeDimensions();
-  client.attach(sessionId, dims?.cols || 80, dims?.rows || 24, workdir, flags);
+  client.attach(sessionId, dims?.cols || 80, dims?.rows || 24, workdir, flags, sessionId ? undefined : mode);
 
   setActive(view.key);
   return view;
@@ -686,7 +686,7 @@ function wireNewSessionButton() {
     const machine = active?.machine || selected || machines[0];
     const picked = await openDirPicker(machine);
     if (picked === null) return; // cancelled
-    openSession(machine, '', picked.workdir, picked.flags);
+    openSession(machine, '', picked.workdir, picked.flags, picked.mode);
   });
 }
 
