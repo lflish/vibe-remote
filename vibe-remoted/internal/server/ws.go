@@ -120,8 +120,24 @@ func (s *Server) wsAttach(ctx context.Context, conn *websocket.Conn) (*session.R
 			return nil, ""
 		}
 
+		mode := frame.Mode
+		if mode == "" {
+			mode = protocol.SessionModeNormal
+		}
+		if mode != protocol.SessionModeNormal && mode != protocol.SessionModeWorktree {
+			sendError(ctx, conn, "unknown session mode")
+			conn.Close(websocket.StatusPolicyViolation, "bad session mode")
+			return nil, ""
+		}
+
 		claudeCmd := s.cfg.ResolveClaudeCmd(frame.Flags)
-		runner, err = s.mgr.Create(workdir, frame.Cols, frame.Rows, claudeCmd)
+		runner, err = s.mgr.Create(session.CreateOptions{
+			Workdir:           workdir,
+			Mode:              mode,
+			Cols:              frame.Cols,
+			Rows:              frame.Rows,
+			ClaudeCmdOverride: claudeCmd,
+		})
 		if err != nil {
 			sendError(ctx, conn, "create session: "+err.Error())
 			conn.Close(websocket.StatusInternalError, "create failed")

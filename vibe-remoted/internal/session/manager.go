@@ -44,37 +44,69 @@ func (m *Manager) SetEventEnv(eventsURL, token string) {
 	m.token = token
 }
 
-// Create starts a new session and registers it. claudeCmdOverride, when
-// non-empty, replaces the manager's default claude command for this session
-// only (used to inject per-session flags resolved from the client's selection).
-func (m *Manager) Create(workdir string, cols, rows uint16, claudeCmdOverride string) (*Runner, error) {
-	id := generateID()
+// CreateOptions holds parameters for creating a new session.
+type CreateOptions struct {
+	Workdir           string
+	Mode              protocol.SessionMode
+	Cols, Rows        uint16
+	ClaudeCmdOverride string
+}
 
-	claudeCmd := m.claudeCmd
-	if claudeCmdOverride != "" {
-		claudeCmd = claudeCmdOverride
+// Create starts a new session and registers it. Worktree resources are created
+// before the runner starts so a failed launch can roll them back safely.
+func (m *Manager) Create(opts CreateOptions) (*Runner, error) {
+	id := generateID()
+	mode := opts.Mode
+	if mode == "" {
+		mode = protocol.SessionModeNormal
+	}
+	if mode != protocol.SessionModeNormal && mode != protocol.SessionModeWorktree {
+		return nil, fmt.Errorf("unknown session mode %q", mode)
 	}
 
+	workdir := opts.Workdir
+	var meta WorktreeMetadata
+	var err error
+	if mode == protocol.SessionModeWorktree {
+		meta, workdir, err = CreateWorktree(opts.Workdir, id)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	claudeCmd := m.claudeCmd
+	if opts.ClaudeCmdOverride != "" {
+		claudeCmd = opts.ClaudeCmdOverride
+	}
 	runner, err := NewRunner(RunnerConfig{
-		ID:         id,
-		Workdir:    workdir,
-		UseTmux:    m.useTmux,
-		ClaudeCmd:  claudeCmd,
-		LoginShell: m.loginShell,
-		Shell:      m.shell,
-		Cols:       cols,
-		Rows:       rows,
-		EventsURL:  m.eventsURL,
-		Token:      m.token,
+		ID:            id,
+		Workdir:       workdir,
+		Mode:          string(mode),
+		SourceWorkdir: meta.SourceWorkdir,
+		SourceRepo:    meta.SourceRepo,
+		WorktreeRoot:  meta.WorktreeRoot,
+		Branch:        meta.Branch,
+		UseTmux:       m.useTmux,
+		ClaudeCmd:     claudeCmd,
+		LoginShell:    m.loginShell,
+		Shell:         m.shell,
+		Cols:          opts.Cols,
+		Rows:          opts.Rows,
+		EventsURL:     m.eventsURL,
+		Token:         m.token,
 	})
 	if err != nil {
+		if mode == protocol.SessionModeWorktree {
+			if rollbackErr := RollbackWorktree(meta); rollbackErr != nil {
+				return nil, fmt.Errorf("%v; rollback worktree: %w", err, rollbackErr)
+			}
+		}
 		return nil, err
 	}
 
 	m.mu.Lock()
 	m.sessions[id] = runner
 	m.mu.Unlock()
-
 	return runner, nil
 }
 
@@ -123,7 +155,8 @@ func (m *Manager) Attach(id string, cols, rows uint16) (*Runner, error) {
 	return runner, nil
 }
 
-// Delete kills and removes a session.
+// Delete kills and removes a session. Worktree cleanup happens after the
+// runner is stopped; dirty resources are intentionally preserved and surfaced.
 func (m *Manager) Delete(id string) error {
 	m.mu.Lock()
 	runner, ok := m.sessions[id]
@@ -135,6 +168,14 @@ func (m *Manager) Delete(id string) error {
 	m.mu.Unlock()
 
 	runner.Kill()
+	if protocol.SessionMode(runner.Mode) == protocol.SessionModeWorktree {
+		return CleanupWorktree(WorktreeMetadata{
+			SourceWorkdir: runner.SourceWorkdir,
+			SourceRepo:    runner.SourceRepo,
+			WorktreeRoot:  runner.WorktreeRoot,
+			Branch:        runner.Branch,
+		})
+	}
 	return nil
 }
 

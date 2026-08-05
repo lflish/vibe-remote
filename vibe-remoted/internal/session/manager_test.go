@@ -1,6 +1,9 @@
 package session
 
 import (
+	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -8,6 +11,85 @@ import (
 
 	"github.com/lflish/vibe-remote/vibe-remoted/internal/protocol"
 )
+
+func TestManagerCreateDefaultsEmptyModeToNormal(t *testing.T) {
+	m := NewManager(false, "/bin/cat", false, "")
+	r, err := m.Create(CreateOptions{Workdir: t.TempDir(), Cols: 80, Rows: 24})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer m.Delete(r.ID)
+	if r.Metadata().Mode != protocol.SessionModeNormal {
+		t.Fatalf("mode = %q, want normal", r.Metadata().Mode)
+	}
+}
+
+func TestManagerCreateWorktreeUsesGeneratedIDAndMetadata(t *testing.T) {
+	repo := tempRepo(t)
+	m := NewManager(false, "/bin/cat", false, "")
+	r, err := m.Create(CreateOptions{Workdir: repo, Mode: protocol.SessionModeWorktree, Cols: 80, Rows: 24})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer m.Delete(r.ID)
+	if r.ID == "" || r.Branch != "vibe/"+r.ID {
+		t.Fatalf("id=%q branch=%q", r.ID, r.Branch)
+	}
+	if r.Workdir != r.WorktreeRoot || r.SourceWorkdir != repo || r.SourceRepo == "" {
+		t.Fatalf("runner metadata = %#v", r.Metadata())
+	}
+	if _, err := os.Stat(r.WorktreeRoot); err != nil {
+		t.Fatalf("worktree missing: %v", err)
+	}
+}
+
+func TestManagerCreateWorktreeRollsBackWhenRunnerStartFails(t *testing.T) {
+	repo := tempRepo(t)
+	container := filepath.Join(filepath.Dir(repo), filepath.Base(repo)+"-worktrees")
+	m := NewManager(false, "/definitely/missing-command", false, "")
+
+	_, err := m.Create(CreateOptions{Workdir: repo, Mode: protocol.SessionModeWorktree, Cols: 80, Rows: 24})
+	if err == nil {
+		t.Fatal("expected runner start failure")
+	}
+	entries, readErr := os.ReadDir(container)
+	if readErr != nil && !os.IsNotExist(readErr) {
+		t.Fatal(readErr)
+	}
+	if len(entries) != 0 {
+		t.Fatalf("rollback left worktrees: %v", entries)
+	}
+	if got := runGit(t, repo, "branch", "--list", "vibe/*"); got != "" {
+		t.Fatalf("rollback left branch: %q", got)
+	}
+}
+
+func TestManagerDeleteDirtyWorktreeStopsSessionAndPreservesGitResources(t *testing.T) {
+	repo := tempRepo(t)
+	m := NewManager(false, "/bin/cat", false, "")
+	r, err := m.Create(CreateOptions{Workdir: repo, Mode: protocol.SessionModeWorktree, Cols: 80, Rows: 24})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(r.WorktreeRoot, "changed"), []byte("keep"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	err = m.Delete(r.ID)
+	var preserved *WorktreePreservedError
+	if !errors.As(err, &preserved) {
+		t.Fatalf("err = %T %v, want WorktreePreservedError", err, err)
+	}
+	if _, ok := m.Get(r.ID); ok {
+		t.Fatal("deleted session remains registered")
+	}
+	if _, err := os.Stat(r.WorktreeRoot); err != nil {
+		t.Fatalf("worktree not preserved: %v", err)
+	}
+	if got := runGit(t, repo, "branch", "--list", r.Branch); !strings.Contains(got, r.Branch) {
+		t.Fatalf("branch not preserved: %q", got)
+	}
+}
 
 func TestRunnerMetadataNormalizesEmptyMode(t *testing.T) {
 	r := &Runner{
