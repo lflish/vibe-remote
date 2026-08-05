@@ -228,6 +228,30 @@ html, body {
   position: relative;
 }
 
+.machine-overview[hidden] { display: none; }
+.machine-overview {
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 32px;
+  box-sizing: border-box;
+}
+.overview-card {
+  width: min(520px, 100%);
+  padding: 28px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--bg-surface);
+  box-shadow: 0 8px 24px rgba(43, 42, 40, 0.08);
+}
+.overview-card h1 { margin: 0 0 8px; font-size: 22px; color: var(--text-primary); }
+.overview-status { display: flex; align-items: center; gap: 8px; color: var(--text-secondary); }
+.overview-status-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--error); }
+.overview-status-dot.connected { background: var(--success); }
+.overview-meta { margin: 20px 0 24px; color: var(--text-muted); font-size: 13px; line-height: 1.7; }
+.overview-action { width: auto; margin-top: 4px; }
+
 /* Each open session's terminal stacks in the same area; only the active one
    is shown. Absolute fill so xterm's fit addon measures the full region. */
 .term-instance {

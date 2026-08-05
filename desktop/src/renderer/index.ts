@@ -43,6 +43,7 @@ const views = new Map<string, SessionView>(); // view key -> open session view
 const machineSessions = new Map<string, SessionInfo[]>(); // machineKey -> sessions (REST)
 const machineOnline = new Map<string, boolean>(); // machineKey -> reachable
 let activeKey: string | null = null;
+let overviewMachineKey: string | null = null;
 // The machine a new session targets when there is no active session to inherit
 // from. Set by clicking a machine header in the sidebar. Must be module-level
 // state (not a DOM marker) because renderSidebar rebuilds the whole sidebar DOM
@@ -88,6 +89,7 @@ async function init() {
   selectedMachineKey = machineKey(machines[0]);
   rebuildRests();
   await refreshAllMachines();
+  showMachineOverview(machines[0]);
   startPolling();
 }
 
@@ -125,6 +127,9 @@ function wireManageMachinesButton() {
         if (selectedMachineKey && !machines.some((m) => machineKey(m) === selectedMachineKey)) {
           selectedMachineKey = machines.length > 0 ? machineKey(machines[0]) : null;
         }
+        if (overviewMachineKey && !machines.some((m) => machineKey(m) === overviewMachineKey)) {
+          overviewMachineKey = null;
+        }
         rebuildRests();
         // Close views belonging to removed machines (does NOT kill remote sessions).
         let activeRemoved = false;
@@ -146,6 +151,8 @@ function wireManageMachinesButton() {
           if (!next.done) setActive(next.value);
         }
         if (machines.length === 0) {
+          overviewMachineKey = null;
+          document.getElementById('machine-overview')?.setAttribute('hidden', '');
           renderEmptyState();
         } else {
           // Empty→non-empty transition: drop the leftover empty-state box (if any),
@@ -153,6 +160,7 @@ function wireManageMachinesButton() {
           document.querySelector('#terminal-container .empty-state')?.remove();
           refreshAllMachines();
           startPolling();
+          if (!overviewMachineKey) showMachineOverview(machines[0]);
         }
       },
     });
@@ -191,10 +199,59 @@ async function refreshAllMachines() {
     }),
   );
   renderSidebar();
+  if (overviewMachineKey) {
+    const overviewMachine = machines.find((m) => machineKey(m) === overviewMachineKey);
+    if (overviewMachine) renderMachineOverview(overviewMachine);
+  }
   updateStatusBar();
 }
 
 // --- Session views ---
+
+function renderMachineOverview(machine: MachineConfig) {
+  const mount = document.getElementById('machine-overview');
+  if (!mount) return;
+  const online = machineOnline.get(machineKey(machine)) === true;
+  const count = machineSessions.get(machineKey(machine))?.length ?? 0;
+  mount.textContent = '';
+
+  const card = document.createElement('section');
+  card.className = 'overview-card';
+  const title = document.createElement('h1');
+  title.textContent = machine.name;
+  const status = document.createElement('div');
+  status.className = 'overview-status';
+  const dot = document.createElement('span');
+  dot.className = `overview-status-dot${online ? ' connected' : ''}`;
+  const statusText = document.createElement('span');
+  statusText.textContent = online ? 'Connected' : 'Offline';
+  status.append(dot, statusText);
+  const meta = document.createElement('div');
+  meta.className = 'overview-meta';
+  meta.textContent = `${machine.addr}:${machine.port}\n${count} ${count === 1 ? 'session' : 'sessions'}`;
+  meta.style.whiteSpace = 'pre-line';
+  const create = document.createElement('button');
+  create.className = 'btn-primary overview-action';
+  create.textContent = '+ New Session';
+  create.addEventListener('click', async () => {
+    const picked = await openDirPicker(machine);
+    if (picked === null) return;
+    openSession(machine, '', picked.workdir, picked.flags);
+  });
+  card.append(title, status, meta, create);
+  mount.append(card);
+}
+
+function showMachineOverview(machine: MachineConfig) {
+  overviewMachineKey = machineKey(machine);
+  for (const view of views.values()) view.container.style.display = 'none';
+  const mount = document.getElementById('machine-overview');
+  if (mount) {
+    mount.hidden = false;
+    renderMachineOverview(machine);
+  }
+  updateStatusBar();
+}
 
 function makeTerminal(): { term: Terminal; fit: FitAddon } {
   const term = new Terminal({
@@ -336,6 +393,8 @@ function openSession(machine: MachineConfig, sessionId: string, workdir?: string
 // setActive shows one session view and hides the rest, then fits + focuses it.
 function setActive(key: string) {
   activeKey = key;
+  overviewMachineKey = null;
+  document.getElementById('machine-overview')?.setAttribute('hidden', '');
   const activeView = views.get(key);
   if (activeView && activeView.activity !== 'none') {
     activeView.activity = 'none';
@@ -379,6 +438,7 @@ function renderSidebar() {
     // the selected highlight.
     nameRow.addEventListener('click', () => {
       selectedMachineKey = mKey;
+      showMachineOverview(machine);
       renderSidebar();
     });
 
@@ -429,8 +489,19 @@ function renderSidebar() {
       const close = document.createElement('span');
       close.className = 'session-close';
       close.textContent = '×';
-      close.title = 'Close session (kills remote claude)';
-      close.addEventListener('click', (e) => { e.stopPropagation(); closeSession(machine, s.id); });
+      close.title = 'Delete session (kills remote claude — cannot be undone)';
+      // Deleting truly kills the remote tmux + claude; the current screen is
+      // lost and unrecoverable. Confirm first (mirrors machine-delete in
+      // machines.ts), showing the session's display name so a mis-hover on the
+      // wrong row is caught before the DELETE fires.
+      close.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const name = s.title || (s.workdir ? s.workdir.split('/').pop() : '') || s.id;
+        if (!window.confirm(`Delete session "${name}"? The remote claude process will be killed and its current screen lost. This cannot be undone.`)) {
+          return;
+        }
+        closeSession(machine, s.id);
+      });
 
       item.append(label, dot, close);
       list.appendChild(item);
@@ -493,9 +564,23 @@ function updateStatusBar(extra?: string, attempt?: number) {
   const tbStatus = document.getElementById('toolbar-status')!;
   const tbStatusText = document.getElementById('toolbar-status-text')!;
   const view = activeKey ? views.get(activeKey) : null;
+  const overviewMachine = overviewMachineKey
+    ? machines.find((m) => machineKey(m) === overviewMachineKey)
+    : null;
 
   connEl.className = '';
   tbStatus.className = '';
+
+  if (overviewMachine) {
+    const online = machineOnline.get(overviewMachineKey!) === true;
+    tbTitle.textContent = overviewMachine.name;
+    connEl.className = online ? 'connected' : 'error';
+    connEl.textContent = online ? `Connected · ${overviewMachine.name}` : `Offline · ${overviewMachine.name}`;
+    tbStatus.className = online ? 'connected' : 'error';
+    tbStatusText.textContent = online ? 'Connected' : 'Offline';
+    sessionEl.textContent = extra || '';
+    return;
+  }
 
   if (view) {
     // Toolbar title: machine name · short session code (SessionView holds no
@@ -556,7 +641,14 @@ async function closeSession(machine: MachineConfig, sessionId: string) {
 
 function renderEmptyState() {
   const container = document.getElementById('terminal-container')!;
-  container.textContent = '';
+  const overview = document.getElementById('machine-overview');
+  for (const child of [...container.children]) {
+    if (child !== overview) child.remove();
+  }
+  if (overview) {
+    overview.hidden = true;
+    overview.textContent = '';
+  }
   const box = document.createElement('div');
   box.className = 'empty-state';
   const h = document.createElement('p');
