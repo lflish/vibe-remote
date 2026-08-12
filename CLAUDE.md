@@ -95,15 +95,14 @@ JSON 分帧 WebSocket，帧靠 `type` 区分，PTY 字节走 base64（`data` 帧
 
 ## 前置条件与联调
 
-- 所有机器（含 Mac 客户端）在同一 Tailscale tailnet（`tailscale up`）。
-- 目标 Linux 需 `claude` + `tmux`（不需要 go，交叉编译部署）。
-- 真机联调用 ssh config 的 `dev`（tailscale `100.95.191.101`）；vibe-remoted 托管为常驻 `tmux new-session -d -s vibe-remoted-daemon`。
+- 客户端和服务端需通过 Tailscale 或可信私有网络互通。
+- 目标 Linux 需 `claude` + `tmux`（不需要 Go，可部署预编译二进制）。
 - **本地无远程机冒烟**：macOS 本身有 PTY+tmux，用 `claude_cmd: "/bin/bash"` 代跑即可验证透传链路（纯字节透传不关心跑什么）。测试配置 `vibe-remoted.local.json`（无 tmux）/ `vibe-remoted.tmux.json`。
 - **GUI 调试**：`VIBE_REMOTE_DEBUG_PORT=9222` 开 CDP 端口，用 CDP over WebSocket 驱动/检查 renderer（chrome-devtools MCP 在此 Electron 版本有调用故障，改用裸 CDP）。`VIBE_REMOTE_NO_DEVTOOLS=1` 禁自动开 DevTools。
 
 ## 状态
 
-第一期（Mac 桌面可用版）验收 7 项全部真机通过，`.dmg` 已交付。未做（可选）：代码签名、app 图标、侧边栏轮询改推送、codex 多 agent 产品化（config 多 agent 列表 + attach 带 `agent` 字段 + UI 选择）。完整进展见 `REQUIREMENTS.md` 和插件计划文件。
+首个开源版本聚焦 macOS 桌面客户端和 Go daemon。Windows 与移动端属于后续路线图。发行前仍需处理代码签名和 app 图标。
 
 ### 第二批体验增强（已完成）
 

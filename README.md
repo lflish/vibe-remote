@@ -2,11 +2,18 @@
 
 **English** ｜ [简体中文](./README.zh-CN.md)
 
-A cross-platform "remote Claude terminal" client: Claude Code CLI runs on a
-remote Linux machine while the desktop app connects to it like a local shell —
-the experience is identical to typing `claude` in a shell directly.
+A macOS desktop client for using Claude Code CLI on a remote machine like a
+local terminal. The interactive CLI runs inside a remote PTY while the Electron
+app renders the original terminal byte stream.
 
-See [REQUIREMENTS.md](./REQUIREMENTS.md) and [docs/protocol.md](./docs/protocol.md) for details.
+> **Project status:** early public preview. The first supported client is macOS.
+> Windows and mobile clients are roadmap items, not part of the initial release.
+
+vibe-remote is an independent open-source project and is not affiliated with or
+endorsed by Anthropic. Claude and Claude Code are trademarks of their respective
+owners.
+
+See [docs/protocol.md](./docs/protocol.md) for protocol details.
 
 ## Architecture
 
@@ -35,6 +42,17 @@ desktop/         Electron + xterm.js client
 docs/            protocol docs
 ```
 
+## Quick start
+
+1. Copy `vibe-remoted.example.json` to a private config file outside the
+   repository and set a random token, bind address, and allowed roots.
+2. Build and start `vibe-remoted` on the remote machine.
+3. Run the desktop app with `make dev-desktop`.
+4. Add the remote machine from the app's machine manager.
+
+Do not expose `vibe-remoted` directly to the public internet. Read
+[SECURITY.md](./SECURITY.md) before deployment.
+
 ## Server: vibe-remoted
 
 ### Build
@@ -59,6 +77,7 @@ Copy `vibe-remoted.example.json` and adjust per machine:
   "allowed_roots": ["/home/user"],  // workdir whitelist, prevents path escape
   "use_tmux": true,                 // false = run claude directly (no persistence)
   "claude_cmd": "claude",           // base command, passed as one string to the shell
+  "claude_reload_cmd": "claude -c", // command used by per-session Reload
   "claude_flags": [                 // optional: flags the client can multi-select on new session
     { "id": "continue",   "label": "Continue last session (-c)", "arg": "-c",                             "default": false },
     { "id": "skip-perms", "label": "Skip permission prompts",    "arg": "--dangerously-skip-permissions", "default": false }
@@ -99,7 +118,7 @@ cd vibe-remoted && go test ./...   # unit tests (incl. path-escape protection)
 ### Install deps
 
 ```bash
-cd desktop && npm install
+cd desktop && npm ci
 ```
 
 ### Dev run
@@ -130,12 +149,16 @@ macOS path is typically `~/Library/Application Support/vibe-remote/machines.json
 npm run build    # tsc + vite build + electron-builder
 ```
 
+Local builds are unsigned. macOS may require explicitly allowing the app in
+System Settings. Official signed binaries are not yet provided.
+
 ## Prerequisites
 
 - The client and target machine just need network reachability: same **Tailscale tailnet**
   (recommended — built-in encryption + cross-network) or the same **trusted LAN**
   (plaintext `ws://` on the LAN; use only on trusted networks).
-- The target Linux host has `claude`, `tmux`, `go`.
+- The target host has `claude` and `tmux`. Go is required only when building the
+  daemon from source.
 - When using Tailscale, the Mac must be up (`tailscale up`).
 
 ## Local smoke test (no remote machine)
@@ -151,10 +174,16 @@ The Mac acts as both server and client, running real `claude` through the full c
 make dev-local   # binds this host's tailscale IP with a real address (no allow_insecure_bind)
 ```
 
-It prints the `addr:port` to fill in on the client (this host's tailscale IP + 8765). In the desktop
-"machine management", add this machine (token is in `vibe-remoted.local-tmux.json`) to verify
+It prints the `addr:port` and a one-time token to fill in on the client. In the desktop
+"machine management", add this machine to verify
 passthrough / tmux persistence / reconnect end-to-end. Requires `tailscale up` and `tmux` + `claude`
 installed locally.
+
+## Contributing and security
+
+Contributions are welcome. See [CONTRIBUTING.md](./CONTRIBUTING.md) for the
+development workflow. Report vulnerabilities according to
+[SECURITY.md](./SECURITY.md), not through public issues.
 
 ## License
 

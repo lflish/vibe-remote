@@ -9,7 +9,7 @@ server:
 	cd vibe-remoted && go build -o ../bin/vibe-remoted ./cmd/vibe-remoted
 
 dev-server:
-	cd vibe-remoted && go run ./cmd/vibe-remoted --config ../vibe-remoted.json
+	cd vibe-remoted && go run ./cmd/vibe-remoted --config ../vibe-remoted.local.json
 
 # Self-test on this machine: bind THIS host's tailscale IP (no insecure hatch),
 # run tmux + real claude. Use for local end-to-end verification when you have
@@ -19,9 +19,11 @@ dev-local:
 	if [ -z "$$TS_IP" ]; then \
 		echo "ERROR: no tailscale IPv4 address (run 'tailscale up' first)"; exit 1; \
 	fi; \
-	echo "==> vibe-remoted self-test on $$TS_IP:8765 (token: local-selftest-token)"; \
+	VIBE_DEV_TOKEN=$$(openssl rand -hex 32); \
+	echo "==> vibe-remoted self-test on $$TS_IP:8765"; \
+	echo "==> one-time token: $$VIBE_DEV_TOKEN"; \
 	echo "==> add this machine in the desktop client: addr=$$TS_IP port=8765"; \
-	cd vibe-remoted && VIBE_REMOTED_BIND_ADDR=$$TS_IP go run ./cmd/vibe-remoted --config ../vibe-remoted.local-tmux.json
+	cd vibe-remoted && VIBE_REMOTED_BIND_ADDR=$$TS_IP VIBE_REMOTED_TOKEN=$$VIBE_DEV_TOKEN go run ./cmd/vibe-remoted --config ../vibe-remoted.local-tmux.json
 
 # --- Desktop (Electron) ---
 

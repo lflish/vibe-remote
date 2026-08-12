@@ -2,10 +2,16 @@
 
 [English](./README.md) ｜ **简体中文**
 
-一个跨端的「远程 Claude 终端」客户端：远程 Linux 机器上跑 Claude Code CLI，
-桌面端像用本地 shell 一样连上去交互，体验跟直接在 shell 里敲 `claude` 完全一致。
+一个 macOS「远程 Claude 终端」客户端：Claude Code CLI 在远程机器的 PTY
+中运行，Electron 桌面端像本地终端一样展示并交互。
 
-详见 [REQUIREMENTS.md](./REQUIREMENTS.md) 和 [docs/protocol.md](./docs/protocol.md)。
+> **项目状态：**早期公开预览。首个正式支持的客户端是 macOS；Windows 和移动端
+> 属于后续路线图，不在首个开源版本的支持范围内。
+
+vibe-remote 是独立开源项目，与 Anthropic 无隶属或背书关系。Claude 和 Claude Code
+归其各自权利人所有。
+
+协议细节见 [docs/protocol.md](./docs/protocol.md)。
 
 ## 架构
 
@@ -34,6 +40,16 @@ desktop/    Electron + xterm.js 客户端
 docs/       协议文档
 ```
 
+## 快速开始
+
+1. 复制 `vibe-remoted.example.json`，在仓库外创建私有配置，并设置随机 token、
+   监听地址和目录白名单。
+2. 在远程机器构建并启动 `vibe-remoted`。
+3. 用 `make dev-desktop` 启动桌面端。
+4. 在 app 内的机器管理器中添加远程机器。
+
+不要把 `vibe-remoted` 直接暴露到公网。部署前请阅读 [SECURITY.md](./SECURITY.md)。
+
 ## 服务端 vibe-remoted
 
 ### 构建
@@ -58,6 +74,7 @@ cd vibe-remoted && go build -o ../bin/vibe-remoted ./cmd/vibe-remoted
   "allowed_roots": ["/home/user"],  // workdir 白名单，防越权
   "use_tmux": true,                 // false = 降级直跑 claude（无持久化）
   "claude_cmd": "claude",           // 基础命令，整串传给 shell
+  "claude_reload_cmd": "claude -c", // 单个会话“重新加载”时执行的命令
   "claude_flags": [                 // 可选：客户端新建会话时可多选的启动参数
     { "id": "continue",   "label": "续上次会话 (-c)", "arg": "-c",                             "default": false },
     { "id": "skip-perms", "label": "跳过权限确认",     "arg": "--dangerously-skip-permissions", "default": false }
@@ -97,7 +114,7 @@ cd vibe-remoted && go test ./...   # 单元测试（含路径越权防护）
 ### 安装依赖
 
 ```bash
-cd desktop && npm install
+cd desktop && npm ci
 ```
 
 ### 开发运行
@@ -127,11 +144,13 @@ macOS 路径通常为 `~/Library/Application Support/vibe-remote/machines.json`�
 npm run build    # tsc + vite build + electron-builder
 ```
 
+本地构建产物未签名，macOS 可能要求在系统设置中手动允许打开。目前尚未提供官方签名发行包。
+
 ## 前置条件
 
 - 客户端与目标机网络互通即可：同一 **Tailscale tailnet**（推荐，自带加密+跨网）
   或同一**可信局域网**（LAN 内 `ws://` 明文，仅在可信网络使用）。
-- 目标 Linux 具备 `claude`、`tmux`、`go`。
+- 目标机器需安装 `claude` 和 `tmux`；只有从源码构建 daemon 时才需要 Go。
 - 走 Tailscale 时，Mac 端需运行（`tailscale up`）。
 
 ## 本地开发冒烟（无需远程机）
@@ -147,9 +166,14 @@ Mac 同时当服务端与客户端，跑真 `claude` 走完整链路：
 make dev-local   # 动态取本机 tailscale IP，绑真地址启动（不走 allow_insecure_bind）
 ```
 
-它会打印客户端要填的 `addr:port`（本机 tailscale IP + 8765）。在桌面端「机器管理」里
-添加这台机器（token 见 `vibe-remoted.local-tmux.json`），即可端到端验证透传 / tmux 持久化 / 重连。
+它会打印客户端要填的 `addr:port` 和一次性 token。在桌面端「机器管理」里
+添加这台机器，即可端到端验证透传 / tmux 持久化 / 重连。
 前提：本机已 `tailscale up` 且装有 `tmux` + `claude`。
+
+## 参与贡献与安全问题
+
+欢迎贡献。开发流程见 [CONTRIBUTING.md](./CONTRIBUTING.md)；安全漏洞请按
+[SECURITY.md](./SECURITY.md) 私下报告，不要直接创建公开 issue。
 
 ## 开源协议
 

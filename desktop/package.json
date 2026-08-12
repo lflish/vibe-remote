@@ -1,9 +1,19 @@
 {
   "name": "vibe-remote",
   "version": "0.1.0",
+  "private": true,
   "description": "Remote Claude terminal manager",
   "license": "MIT",
   "author": "lflish",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/lflish/vibe-remote.git"
+  },
+  "bugs": "https://github.com/lflish/vibe-remote/issues",
+  "homepage": "https://github.com/lflish/vibe-remote#readme",
+  "engines": {
+    "node": ">=22"
+  },
   "main": "dist/main/index.js",
   "scripts": {
     "dev": "vite",

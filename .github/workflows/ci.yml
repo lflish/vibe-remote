@@ -1,0 +1,48 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  server:
+    name: Go server
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: vibe-remoted/go.mod
+          cache-dependency-path: vibe-remoted/go.sum
+      - name: Test
+        working-directory: vibe-remoted
+        run: go test ./...
+      - name: Vet
+        working-directory: vibe-remoted
+        run: go vet ./...
+      - name: Race-sensitive packages
+        working-directory: vibe-remoted
+        run: go test -race ./internal/session ./internal/server
+
+  desktop:
+    name: Desktop client
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: desktop/package-lock.json
+      - name: Install dependencies
+        working-directory: desktop
+        run: npm ci
+      - name: Typecheck
+        working-directory: desktop
+        run: npm run typecheck
+      - name: Regression checks
+        working-directory: desktop
+        run: npm run test:preserved-notice
