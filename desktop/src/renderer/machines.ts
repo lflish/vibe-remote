@@ -1,5 +1,6 @@
 import type { MachineConfig } from '../shared/protocol';
 import { VibeRemoteRest } from './rest';
+import { t } from './i18n';
 
 /**
  * Machine manager modal — app-internal CRUD for the machine list, replacing
@@ -58,7 +59,7 @@ export function openMachineManager(opts: ManagerOpts): void {
   const modal = el('div', 'modal');
 
   const header = el('div', 'modal-header');
-  header.textContent = 'Machines';
+  header.textContent = t('machines.title');
   modal.appendChild(header);
 
   const list = el('div', 'modal-list');
@@ -70,9 +71,9 @@ export function openMachineManager(opts: ManagerOpts): void {
 
   const footer = el('div', 'modal-footer');
   const addBtn = el('button', 'btn-secondary');
-  addBtn.textContent = '+ Add machine';
+  addBtn.textContent = t('machines.add');
   const doneBtn = el('button', 'btn-primary');
-  doneBtn.textContent = 'Done';
+  doneBtn.textContent = t('machines.done');
   footer.append(addBtn, doneBtn);
   modal.appendChild(footer);
 
@@ -94,7 +95,7 @@ export function openMachineManager(opts: ManagerOpts): void {
       return true;
     } catch (e) {
       console.error('saveMachines failed', e);
-      bar.textContent = `Save failed: ${(e as Error).message}`;
+      bar.textContent = t('machines.saveFailed', { msg: (e as Error).message });
       bar.style.display = 'block';
       return false;
     }
@@ -104,7 +105,7 @@ export function openMachineManager(opts: ManagerOpts): void {
     list.textContent = '';
     if (working.length === 0) {
       const empty = el('div', 'modal-empty');
-      empty.textContent = 'No machines yet. Add your first one.';
+      empty.textContent = t('machines.empty');
       list.appendChild(empty);
     }
     working.forEach((m, idx) => {
@@ -118,10 +119,10 @@ export function openMachineManager(opts: ManagerOpts): void {
 
       const actions = el('div', 'machine-row-actions');
       const editBtn = el('button', 'btn-secondary');
-      editBtn.textContent = 'Edit';
+      editBtn.textContent = t('machines.edit');
       editBtn.addEventListener('click', () => openForm(idx));
       const delBtn = el('button', 'btn-secondary');
-      delBtn.textContent = 'Delete';
+      delBtn.textContent = t('machines.delete');
       delBtn.addEventListener('click', () => confirmDelete(idx));
       actions.append(editBtn, delBtn);
 
@@ -132,7 +133,7 @@ export function openMachineManager(opts: ManagerOpts): void {
 
   function confirmDelete(idx: number) {
     const m = working[idx];
-    if (!window.confirm(`Delete machine "${m.name}"? Its open sessions will be closed locally (the remote claude keeps running).`)) {
+    if (!window.confirm(t('machines.deleteConfirm', { name: m.name }))) {
       return;
     }
     working.splice(idx, 1);
@@ -144,21 +145,21 @@ export function openMachineManager(opts: ManagerOpts): void {
     const editing = idx >= 0 ? working[idx] : { name: '', addr: '', port: 8765, token: '' };
     const form = el('div', 'machine-form');
 
-    const nameIn = field(form, 'Name', editing.name, 'text');
-    const addrIn = field(form, 'Address (tailscale IP or MagicDNS)', editing.addr, 'text');
-    const portIn = field(form, 'Port', String(editing.port), 'number');
-    const tokenIn = field(form, 'Token', editing.token, 'password');
+    const nameIn = field(form, t('machines.field.name'), editing.name, 'text');
+    const addrIn = field(form, t('machines.field.addr'), editing.addr, 'text');
+    const portIn = field(form, t('machines.field.port'), String(editing.port), 'number');
+    const tokenIn = field(form, t('machines.field.token'), editing.token, 'password');
 
     const status = el('div', 'form-status');
     form.appendChild(status);
 
     const row = el('div', 'form-actions');
     const testBtn = el('button', 'btn-secondary');
-    testBtn.textContent = 'Test connection';
+    testBtn.textContent = t('machines.test');
     const saveBtn = el('button', 'btn-primary');
-    saveBtn.textContent = 'Save';
+    saveBtn.textContent = t('machines.save');
     const cancelBtn = el('button', 'btn-secondary');
-    cancelBtn.textContent = 'Cancel';
+    cancelBtn.textContent = t('machines.cancel');
     row.append(testBtn, cancelBtn, saveBtn);
     form.appendChild(row);
 
@@ -167,10 +168,10 @@ export function openMachineManager(opts: ManagerOpts): void {
       const addr = addrIn.value.trim();
       const port = parseInt(portIn.value, 10);
       const token = tokenIn.value.trim();
-      if (!name) { showStatus('Name is required', true); return null; }
-      if (!addr) { showStatus('Address is required', true); return null; }
-      if (!Number.isInteger(port) || port < 1 || port > 65535) { showStatus('Port must be 1–65535', true); return null; }
-      if (!token) { showStatus('Token is required', true); return null; }
+      if (!name) { showStatus(t('machines.err.name'), true); return null; }
+      if (!addr) { showStatus(t('machines.err.addr'), true); return null; }
+      if (!Number.isInteger(port) || port < 1 || port > 65535) { showStatus(t('machines.err.port'), true); return null; }
+      if (!token) { showStatus(t('machines.err.token'), true); return null; }
       return { name, addr, port, token };
     }
 
@@ -182,10 +183,10 @@ export function openMachineManager(opts: ManagerOpts): void {
     testBtn.addEventListener('click', async () => {
       const m = collect();
       if (!m) return;
-      showStatus('Testing…', false);
+      showStatus(t('machines.testing'), false);
       const res = await testConnection(m);
-      if (res.ok) showStatus(`Connected · ${res.hostname}`, false);
-      else showStatus(res.error || 'failed', true);
+      if (res.ok) showStatus(t('machines.testOk'), false);
+      else showStatus(res.error || t('machines.testFail', { msg: '' }), true);
     });
 
     cancelBtn.addEventListener('click', () => { form.remove(); renderList(); });

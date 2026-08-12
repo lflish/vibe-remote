@@ -18,6 +18,11 @@
   --error: #C0564B;           /* warm red */
   --radius: 10px;
   --sidebar-width: 272px;
+  /* Warm-tinted shadows (not pure black) so depth reads on the warm off-white
+     surfaces instead of looking like a grey sticker. Two tiers: resting card
+     and lifted hover. */
+  --shadow-card: 0 1px 2px rgba(60, 50, 38, 0.04), 0 2px 8px rgba(60, 50, 38, 0.05);
+  --shadow-lift: 0 2px 4px rgba(60, 50, 38, 0.06), 0 8px 24px rgba(60, 50, 38, 0.10);
 }
 
 * {
@@ -71,11 +76,6 @@ html, body {
   -webkit-app-region: no-drag;
 }
 
-.sidebar-footer {
-  padding: 16px;
-  -webkit-app-region: no-drag;
-}
-
 /* Machine groups */
 .machine-group {
   margin-bottom: 18px;
@@ -100,9 +100,8 @@ html, body {
   color: var(--text-primary);
 }
 
-/* Selected = this machine is the new-session target. Deliberately lighter than
-   .session-item.active (a full accent block): just a left accent bar + brighter
-   text, so a machine header never outweighs the selected session. */
+/* Selected machine is the target for machine-level actions and owns the
+   overview shown in the main pane. */
 .machine-name.selected {
   color: var(--text-primary);
   border-left-color: var(--accent);
@@ -166,7 +165,7 @@ html, body {
   font-weight: 550;
 }
 
-.session-item.active .session-close {
+.session-item.active .session-action {
   color: rgba(255, 255, 255, 0.75);
 }
 
@@ -177,17 +176,38 @@ html, body {
   white-space: nowrap;
 }
 
-.session-close {
+.session-action {
   opacity: 0;
-  padding: 0 4px;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 0;
+  background: transparent;
   color: var(--text-muted);
   font-size: 14px;
   line-height: 1;
   border-radius: 4px;
+  cursor: pointer;
 }
 
-.session-item:hover .session-close {
+.session-item:hover .session-action,
+.session-item:focus-within .session-action {
   opacity: 1;
+}
+
+.session-action:focus-visible {
+  opacity: 1;
+  outline: 2px solid currentColor;
+  outline-offset: 1px;
+}
+
+.session-action:disabled {
+  cursor: default;
+  opacity: 0.45;
+}
+
+.session-reload:hover {
+  background: color-mix(in srgb, currentColor 12%, transparent);
 }
 
 .session-close:hover {
@@ -228,20 +248,20 @@ html, body {
   position: relative;
 }
 
+/* Machine overview: desktop-only landing surface. It carries navigation and
+   session actions, while filesystem paths stay inside the picker/terminal. */
 .machine-overview[hidden] { display: none; }
 .machine-overview {
   height: 100%;
   overflow-y: auto;
-  background: var(--bg-primary);
+  background: radial-gradient(120% 60% at 50% -10%, color-mix(in srgb, var(--accent) 6%, var(--bg-primary)) 0%, var(--bg-primary) 60%);
 }
-
 .workspace-page {
   width: min(1040px, 100%);
   min-height: 100%;
   margin: 0 auto;
   padding: 42px clamp(24px, 5vw, 64px) 56px;
 }
-
 .workspace-header {
   display: flex;
   align-items: flex-start;
@@ -249,7 +269,6 @@ html, body {
   gap: 32px;
   padding-bottom: 28px;
 }
-
 .workspace-identity { min-width: 0; }
 .workspace-eyebrow {
   margin-bottom: 5px;
@@ -261,180 +280,54 @@ html, body {
 }
 .workspace-header h1 {
   font-size: clamp(26px, 3vw, 34px);
-  line-height: 1.15;
+  line-height: 1.12;
   letter-spacing: -0.8px;
 }
-.workspace-metadata {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 5px 18px;
-  margin-top: 12px;
-  color: var(--text-muted);
-  font-size: 12px;
-}
-.workspace-metadata span:not(:last-child)::after {
-  content: '·';
-  margin-left: 18px;
-  color: var(--border);
-}
-.workspace-header-actions {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  flex-shrink: 0;
-}
+.workspace-header-actions { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
 .workspace-new-session { width: auto; }
-
 .workspace-stats {
   display: grid;
   grid-template-columns: repeat(3, 1fr);
-  border-block: 1px solid var(--border);
-}
-.workspace-stat {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  padding: 18px 20px;
-}
-.workspace-stat + .workspace-stat { border-left: 1px solid var(--border); }
-.workspace-stat strong {
-  font-size: 22px;
-  font-weight: 650;
-  line-height: 1.2;
-}
-.workspace-stat span {
-  color: var(--text-muted);
-  font-size: 11px;
-  font-weight: 600;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-}
-
-.workspace-section { margin-top: 34px; }
-.workspace-section h2 {
-  font-size: 15px;
-  font-weight: 650;
-  letter-spacing: -0.15px;
-}
-.workspace-section-heading {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 16px;
-  margin-bottom: 12px;
-}
-.workspace-connection {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  color: var(--text-muted);
-  font-size: 11px;
-}
-.workspace-connection::before {
-  content: '';
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
-  background: var(--error);
-}
-.workspace-connection.connected::before { background: var(--success); }
-.workspace-recent-list {
-  overflow: hidden;
   border: 1px solid var(--border);
   border-radius: var(--radius);
   background: var(--bg-elevated);
+  box-shadow: var(--shadow-card);
+  overflow: hidden;
 }
-.workspace-session-row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 20px;
-  width: 100%;
-  min-height: 62px;
-  padding: 11px 15px;
-  border: 0;
-  border-bottom: 1px solid var(--border);
-  background: transparent;
-  color: var(--text-primary);
-  font: inherit;
-  text-align: left;
-  cursor: pointer;
-}
+.workspace-stat { display: flex; flex-direction: column; gap: 4px; padding: 18px 22px; }
+.workspace-stat + .workspace-stat { border-left: 1px solid var(--border); }
+.workspace-stat strong { font-size: 26px; font-weight: 680; line-height: 1.15; }
+.workspace-stat span { color: var(--text-muted); font-size: 11px; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; }
+.workspace-section { margin-top: 40px; }
+.workspace-section h2 { font-size: 15px; font-weight: 650; }
+.workspace-section-titles { min-width: 0; }
+.workspace-section-subtitle { margin-top: 3px; color: var(--text-muted); font-size: 12px; line-height: 1.5; }
+.workspace-section-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; margin-bottom: 14px; }
+.workspace-connection { display: inline-flex; align-items: center; gap: 6px; flex-shrink: 0; padding: 4px 10px; border: 1px solid var(--border); border-radius: 999px; background: var(--bg-secondary); color: var(--text-secondary); font-size: 11px; font-weight: 600; }
+.workspace-connection::before { content: ''; width: 7px; height: 7px; border-radius: 50%; background: var(--error); }
+.workspace-connection.connected::before { background: var(--success); }
+.workspace-recent-list { overflow: hidden; border: 1px solid var(--border); border-radius: var(--radius); background: var(--bg-elevated); box-shadow: var(--shadow-card); }
+.workspace-session-row { display: flex; align-items: center; justify-content: space-between; gap: 20px; width: 100%; min-height: 58px; padding: 11px 15px; border: 0; border-bottom: 1px solid var(--border); background: transparent; color: var(--text-primary); font: inherit; text-align: left; cursor: pointer; }
 .workspace-session-row:last-child { border-bottom: 0; }
 .workspace-session-row:hover { background: var(--bg-hover); }
-.workspace-session-row:focus-visible,
-.workspace-mode-card:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
-.workspace-session-identity {
-  display: flex;
-  min-width: 0;
-  flex-direction: column;
-  gap: 2px;
-}
-.workspace-session-identity strong,
-.workspace-session-identity span {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.workspace-session-identity strong { font-size: 13px; }
-.workspace-session-identity span {
-  color: var(--text-muted);
-  font-family: 'SF Mono', monospace;
-  font-size: 11px;
-}
+.workspace-session-row:focus-visible, .workspace-mode-card:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.workspace-session-identity { display: flex; min-width: 0; flex-direction: column; gap: 2px; }
+.workspace-session-identity strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; }
 .workspace-session-badges { display: flex; gap: 6px; flex-shrink: 0; }
-.workspace-badge {
-  padding: 3px 7px;
-  border: 1px solid var(--border);
-  border-radius: 999px;
-  color: var(--text-secondary);
-  font-size: 10px;
-  font-weight: 600;
-}
+.workspace-badge { padding: 3px 7px; border: 1px solid var(--border); border-radius: 999px; color: var(--text-secondary); font-size: 10px; font-weight: 600; }
 .workspace-badge-status { background: var(--bg-secondary); }
-.workspace-empty {
-  padding: 26px 16px;
-  color: var(--text-muted);
-  font-size: 12px;
-  text-align: center;
-}
-.workspace-mode-grid {
-  display: grid;
-  grid-template-columns: repeat(2, 1fr);
-  gap: 12px;
-  margin-top: 12px;
-}
-.workspace-mode-card {
-  display: flex;
-  min-height: 142px;
-  flex-direction: column;
-  align-items: flex-start;
-  padding: 20px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  background: var(--bg-elevated);
-  color: var(--text-primary);
-  font: inherit;
-  text-align: left;
-  cursor: pointer;
-  transition: border-color 0.15s, background 0.15s;
-}
-.workspace-mode-card:hover { border-color: #CFC7B9; background: #FFFEFB; }
-.workspace-mode-card strong { margin-bottom: 6px; font-size: 14px; }
-.workspace-mode-card > span:not(.workspace-mode-action) {
-  max-width: 42ch;
-  color: var(--text-secondary);
-  font-size: 12px;
-  line-height: 1.55;
-}
-.workspace-mode-action {
-  margin-top: auto;
-  padding-top: 16px;
-  color: var(--accent);
-  font-size: 12px;
-  font-weight: 650;
-}
-
+.workspace-empty { padding: 26px 16px; color: var(--text-muted); font-size: 12px; text-align: center; }
+.workspace-mode-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; margin-top: 12px; }
+.workspace-mode-card { display: flex; min-height: 168px; flex-direction: column; align-items: flex-start; padding: 22px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--bg-elevated); color: var(--text-primary); font: inherit; text-align: left; cursor: pointer; box-shadow: var(--shadow-card); transition: border-color .15s, background .15s, box-shadow .15s, transform .15s; }
+.workspace-mode-card:hover { border-color: #CFC7B9; background: #FFFEFB; box-shadow: var(--shadow-lift); transform: translateY(-2px); }
+.workspace-mode-card:active { transform: translateY(0); }
+.workspace-mode-head { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+.workspace-mode-head strong { font-size: 14px; }
+.workspace-mode-tag { padding: 2px 8px; border-radius: 999px; background: color-mix(in srgb, var(--accent) 14%, var(--bg-elevated)); color: var(--accent-hover); font-size: 10px; font-weight: 700; }
+.workspace-mode-desc { color: var(--text-secondary); font-size: 12px; line-height: 1.55; }
+.workspace-mode-hint { margin-top: 8px; color: var(--text-muted); font-size: 11px; line-height: 1.5; }
+.workspace-mode-card-featured { border-color: color-mix(in srgb, var(--accent) 32%, var(--border)); background: color-mix(in srgb, var(--accent) 5%, var(--bg-elevated)); }
+.workspace-mode-action { margin-top: auto; padding-top: 16px; color: var(--accent); font-size: 12px; font-weight: 650; }
 @media (max-width: 760px) {
   .workspace-page { padding: 28px 20px 40px; }
   .workspace-header { flex-direction: column; gap: 18px; }
@@ -655,12 +548,26 @@ html, body {
 
 /* --- Machine manager --- */
 .icon-btn {
+  display: inline-flex;
+  min-width: 26px;
+  min-height: 26px;
+  align-items: center;
+  justify-content: center;
   background: transparent; border: none; color: var(--text-muted);
   font-size: 16px; cursor: pointer; -webkit-app-region: no-drag;
   padding: 2px 6px; border-radius: 6px;
 }
 .icon-btn:hover { background: var(--bg-hover); color: var(--text-primary); }
+.icon-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.icon-btn:disabled { cursor: default; opacity: 0.5; }
 .sidebar-header { display: flex; align-items: center; justify-content: space-between; }
+.sidebar-header-actions { display: flex; align-items: center; gap: 2px; -webkit-app-region: no-drag; }
+#btn-lang {
+  min-width: 26px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
 
 .machine-row {
   display: flex; align-items: center; justify-content: space-between;

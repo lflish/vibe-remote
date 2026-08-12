@@ -3,9 +3,10 @@ import { FitAddon } from '@xterm/addon-fit';
 import '@xterm/xterm/css/xterm.css';
 import type { MachineConfig, SessionInfo, SessionMode } from '../shared/protocol';
 import { VibeRemoteClient, ConnectionState } from './client';
-import { VibeRemoteRest, DeleteSessionError, type MachineInfo } from './rest';
+import { VibeRemoteRest, DeleteSessionError } from './rest';
 import { openDirPicker } from './dirpicker';
 import { openMachineManager } from './machines';
+import { t, toggleLocale, getLocale, onLocaleChange } from './i18n';
 
 // Declared by preload
 declare global {
@@ -41,14 +42,11 @@ let machines: MachineConfig[] = [];
 const rests = new Map<string, VibeRemoteRest>(); // machineKey -> REST client
 const views = new Map<string, SessionView>(); // view key -> open session view
 const machineSessions = new Map<string, SessionInfo[]>(); // machineKey -> sessions (REST)
-const machineInfo = new Map<string, MachineInfo>(); // machineKey -> info (REST)
 const machineOnline = new Map<string, boolean>(); // machineKey -> reachable
 let activeKey: string | null = null;
 let overviewMachineKey: string | null = null;
-// The machine a new session targets when there is no active session to inherit
-// from. Set by clicking a machine header in the sidebar. Must be module-level
-// state (not a DOM marker) because renderSidebar rebuilds the whole sidebar DOM
-// on every 5s poll — a DOM flag would be wiped each rebuild.
+// The machine selected for a new session when no session is active. Kept as
+// state because the sidebar is rebuilt during polling.
 let selectedMachineKey: string | null = null;
 // While an inline rename input is open we suppress full sidebar rebuilds:
 // the 5s poll (and onReady/onExit) call renderSidebar(), which wipes and
@@ -81,20 +79,51 @@ function bytesToBase64(bytes: Uint8Array): string {
 
 async function init() {
   machines = await window.vibeRemote.getMachines();
+  document.documentElement.lang = getLocale() === 'zh' ? 'zh-CN' : 'en';
+  wireLanguageToggle();
   wireManageMachinesButton();
-  wireNewSessionButton();
   wireWindowResize();
+  wireTerminalResizeObserver();
   if (machines.length === 0) {
     renderEmptyState();
     return;
   }
-  // Default the new-session target to the first machine so the selection is
-  // always visible and "new session" is predictable before any click.
   selectedMachineKey = machineKey(machines[0]);
   rebuildRests();
   await refreshAllMachines();
   showMachineOverview(machines[0]);
   startPolling();
+}
+
+// wireLanguageToggle wires the sidebar language button and re-renders all
+// dynamically-built UI when the locale switches. Static HTML labels are read
+// through t() at render time, so re-running the render functions is enough —
+// no page reload, and open terminals (their own xterm instances) are untouched.
+function wireLanguageToggle() {
+  const btn = document.getElementById('btn-lang');
+  const sync = () => {
+    if (btn) {
+      btn.textContent = t('lang.toggle');
+      btn.title = t('lang.toggleTitle');
+      btn.setAttribute('aria-label', t('lang.toggleTitle'));
+    }
+    const manage = document.getElementById('btn-manage-machines');
+    if (manage) {
+      manage.title = t('machines.title');
+      manage.setAttribute('aria-label', t('machines.title'));
+    }
+  };
+  sync();
+  btn?.addEventListener('click', () => toggleLocale());
+  onLocaleChange(() => {
+    sync();
+    renderSidebar();
+    if (overviewMachineKey) {
+      const machine = machines.find((m) => machineKey(m) === overviewMachineKey);
+      if (machine) renderMachineOverview(machine);
+    }
+    updateStatusBar();
+  });
 }
 
 // startPolling starts the 5s sidebar refresh loop. Idempotent (guarded by a
@@ -129,11 +158,8 @@ function wireManageMachinesButton() {
         machineRefreshGeneration++;
         for (const rk of removedKeys) {
           machineSessions.delete(rk);
-          machineInfo.delete(rk);
           machineOnline.delete(rk);
         }
-        // Drop a selection that points at a now-removed machine so the
-        // highlight (and new-session target) never dangles.
         if (selectedMachineKey && !machines.some((m) => machineKey(m) === selectedMachineKey)) {
           selectedMachineKey = machines.length > 0 ? machineKey(machines[0]) : null;
         }
@@ -161,8 +187,8 @@ function wireManageMachinesButton() {
           if (!next.done) setActive(next.value);
         }
         if (machines.length === 0) {
+          selectedMachineKey = null;
           overviewMachineKey = null;
-          document.getElementById('machine-overview')?.setAttribute('hidden', '');
           renderEmptyState();
         } else {
           // Empty→non-empty transition: drop the leftover empty-state box (if any),
@@ -193,9 +219,26 @@ function wireWindowResize() {
   });
 }
 
-// refreshAllMachines pulls each machine's sessions and machine metadata over
-// REST. Session-list reachability drives online status; a transient info failure
-// retains the last successful metadata so the workspace does not flicker.
+// wireTerminalResizeObserver re-fits the active terminal whenever the terminal
+// container's box actually changes size. A single requestAnimationFrame in
+// setActive can fire before layout has settled, leaving xterm measured against
+// a stale size so it doesn't fill the pane. Observing the container covers that
+// timing without guessing a delay; fit() is a no-op when dimensions are
+// unchanged, so redundant callbacks are cheap.
+function wireTerminalResizeObserver() {
+  const container = document.getElementById('terminal-container');
+  if (!container || typeof ResizeObserver === 'undefined') return;
+  const ro = new ResizeObserver(() => {
+    if (!activeKey) return;
+    const view = views.get(activeKey);
+    // Only fit the visible terminal; hidden views (display:none) measure as 0.
+    if (view && view.container.style.display !== 'none') view.fitAddon.fit();
+  });
+  ro.observe(container);
+}
+
+// refreshAllMachines pulls each machine's session list over REST. It is the
+// single reachability signal used by the desktop sidebar.
 async function refreshAllMachines() {
   const generation = ++machineRefreshGeneration;
   const refreshMachines = machines.slice();
@@ -211,7 +254,10 @@ async function refreshAllMachines() {
     const mk = machineKey(m);
     if (!isCurrent(m)) return;
     renderSidebar();
-    if (overviewMachineKey === mk) renderMachineOverview(m);
+    if (overviewMachineKey === mk) {
+      const overviewMachine = machines.find((candidate) => machineKey(candidate) === mk);
+      if (overviewMachine) renderMachineOverview(overviewMachine);
+    }
     updateStatusBar();
   };
 
@@ -231,30 +277,20 @@ async function refreshAllMachines() {
           machineOnline.set(mk, false);
         })
         .finally(() => publish(m));
-      const infoRequest = rest.info()
-        .then((info) => {
-          if (!isCurrent(m)) return;
-          machineInfo.set(mk, info);
-        })
-        .catch(() => {
-          // Keep the last successful metadata. Info failures are independent
-          // from reachability, which is determined by the session request.
-        })
-        .finally(() => publish(m));
-      return [sessionsRequest, infoRequest];
+      return [sessionsRequest];
     }),
   );
 }
 
-// --- Session views ---
-
+// Machine overview keeps machine-level actions close to the selected machine.
+// It intentionally contains no remote filesystem/runtime metadata: paths and
+// environment details belong in the directory picker and terminal context.
 function renderMachineOverview(machine: MachineConfig) {
   const mount = document.getElementById('machine-overview');
   if (!mount) return;
 
   const mk = machineKey(machine);
   const online = machineOnline.get(mk) === true;
-  const info = machineInfo.get(mk);
   const sessions = machineSessions.get(mk) ?? [];
   const localViewCount = [...views.values()].filter((view) => machineKey(view.machine) === mk).length;
   mount.textContent = '';
@@ -268,36 +304,24 @@ function renderMachineOverview(machine: MachineConfig) {
   identity.className = 'workspace-identity';
   const eyebrow = document.createElement('p');
   eyebrow.className = 'workspace-eyebrow';
-  eyebrow.textContent = 'Machine workspace';
+  eyebrow.textContent = t('workspace.eyebrow');
   const title = document.createElement('h1');
   title.textContent = machine.name;
-  const metadata = document.createElement('div');
-  metadata.className = 'workspace-metadata';
-  const metadataValues = [
-    `${machine.addr}:${machine.port}`,
-    info?.default_workdir || 'Default directory unavailable',
-    info ? (info.tmux_enabled ? 'tmux enabled' : 'tmux disabled') : 'tmux status unavailable',
-  ];
-  for (const value of metadataValues) {
-    const item = document.createElement('span');
-    item.textContent = value;
-    metadata.appendChild(item);
-  }
-  identity.append(eyebrow, title, metadata);
+  identity.append(eyebrow, title);
 
   const headerActions = document.createElement('div');
   headerActions.className = 'workspace-header-actions';
   const manage = document.createElement('button');
   manage.type = 'button';
   manage.className = 'btn-secondary';
-  manage.textContent = 'Manage';
+  manage.textContent = t('workspace.manage');
   manage.addEventListener('click', () => {
     document.getElementById('btn-manage-machines')?.dispatchEvent(new MouseEvent('click'));
   });
   const create = document.createElement('button');
   create.type = 'button';
   create.className = 'btn-primary workspace-new-session';
-  create.textContent = '+ New session';
+  create.textContent = t('workspace.newSession');
   create.addEventListener('click', () => startNewSession(machine));
   headerActions.append(manage, create);
   header.append(identity, headerActions);
@@ -306,9 +330,9 @@ function renderMachineOverview(machine: MachineConfig) {
   stats.className = 'workspace-stats';
   stats.setAttribute('aria-label', 'Machine summary');
   const statValues = [
-    { label: 'Sessions', value: String(sessions.length) },
-    { label: 'Open here', value: String(localViewCount) },
-    { label: 'Connection', value: isLoopbackAddress(machine.addr) ? 'Local' : 'Remote' },
+    { label: t('workspace.stat.sessions'), value: String(sessions.length) },
+    { label: t('workspace.stat.openHere'), value: String(localViewCount) },
+    { label: t('workspace.stat.connection'), value: isLoopbackAddress(machine.addr) ? t('workspace.connection.local') : t('workspace.connection.remote') },
   ];
   for (const stat of statValues) {
     const item = document.createElement('div');
@@ -325,12 +349,18 @@ function renderMachineOverview(machine: MachineConfig) {
   recentSection.className = 'workspace-section';
   const recentHeading = document.createElement('div');
   recentHeading.className = 'workspace-section-heading';
+  const recentTitleGroup = document.createElement('div');
+  recentTitleGroup.className = 'workspace-section-titles';
   const recentTitle = document.createElement('h2');
-  recentTitle.textContent = 'Recent sessions';
+  recentTitle.textContent = t('workspace.recent.title');
+  const recentSubtitle = document.createElement('p');
+  recentSubtitle.className = 'workspace-section-subtitle';
+  recentSubtitle.textContent = t('workspace.recent.subtitle');
+  recentTitleGroup.append(recentTitle, recentSubtitle);
   const connection = document.createElement('span');
   connection.className = `workspace-connection${online ? ' connected' : ''}`;
-  connection.textContent = online ? 'Connected' : 'Offline';
-  recentHeading.append(recentTitle, connection);
+  connection.textContent = online ? t('workspace.connected') : t('workspace.offline');
+  recentHeading.append(recentTitleGroup, connection);
   recentSection.appendChild(recentHeading);
 
   const recentList = document.createElement('div');
@@ -339,7 +369,7 @@ function renderMachineOverview(machine: MachineConfig) {
   if (recent.length === 0) {
     const empty = document.createElement('p');
     empty.className = 'workspace-empty';
-    empty.textContent = 'No sessions on this machine yet.';
+    empty.textContent = t('workspace.recent.empty');
     recentList.appendChild(empty);
   } else {
     for (const session of recent.slice(0, 5)) {
@@ -347,23 +377,21 @@ function renderMachineOverview(machine: MachineConfig) {
       const row = document.createElement('button');
       row.type = 'button';
       row.className = 'workspace-session-row';
-      const sessionIdentity = document.createElement('span');
-      sessionIdentity.className = 'workspace-session-identity';
       const sessionTitle = document.createElement('strong');
-      sessionTitle.textContent = session.title || (session.workdir ? session.workdir.split('/').pop() : '') || session.id;
-      const workdir = document.createElement('span');
-      workdir.textContent = session.workdir || 'Working directory unavailable';
-      sessionIdentity.append(sessionTitle, workdir);
+      sessionTitle.textContent = session.title || session.id;
+      const identity = document.createElement('span');
+      identity.className = 'workspace-session-identity';
+      identity.appendChild(sessionTitle);
       const badges = document.createElement('span');
       badges.className = 'workspace-session-badges';
       const mode = document.createElement('span');
       mode.className = 'workspace-badge';
-      mode.textContent = session.mode === 'worktree' ? 'Worktree' : 'Normal';
+      mode.textContent = session.mode === 'worktree' ? t('workspace.badge.worktree') : t('workspace.badge.normal');
       const status = document.createElement('span');
       status.className = 'workspace-badge workspace-badge-status';
-      status.textContent = views.has(key) ? 'Running' : 'Remote';
+      status.textContent = views.has(key) ? t('workspace.badge.running') : t('workspace.badge.remote');
       badges.append(mode, status);
-      row.append(sessionIdentity, badges);
+      row.append(identity, badges);
       row.addEventListener('click', () => openSession(machine, session.id));
       recentList.appendChild(row);
     }
@@ -372,41 +400,49 @@ function renderMachineOverview(machine: MachineConfig) {
 
   const modesSection = document.createElement('section');
   modesSection.className = 'workspace-section';
+  const modesTitleGroup = document.createElement('div');
+  modesTitleGroup.className = 'workspace-section-titles';
   const modesTitle = document.createElement('h2');
-  modesTitle.textContent = 'Start a session';
+  modesTitle.textContent = t('workspace.start.title');
+  const modesSubtitle = document.createElement('p');
+  modesSubtitle.className = 'workspace-section-subtitle';
+  modesSubtitle.textContent = t('workspace.start.subtitle');
+  modesTitleGroup.append(modesTitle, modesSubtitle);
   const modeGrid = document.createElement('div');
   modeGrid.className = 'workspace-mode-grid';
-  const modes: Array<{ mode: SessionMode; title: string; description: string; action: string }> = [
-    {
-      mode: 'normal',
-      title: 'Open existing directory',
-      description: 'Run in a folder on this machine without changing its Git setup.',
-      action: 'Choose directory',
-    },
-    {
-      mode: 'worktree',
-      title: 'Create isolated worktree',
-      description: 'Create an isolated branch and worktree before launching the session.',
-      action: 'Choose repository',
-    },
+  const modes: Array<{ mode: SessionMode; title: string; description: string; hint: string; action: string; tag?: string; featured?: boolean }> = [
+    { mode: 'normal', title: t('mode.normal.title'), description: t('mode.normal.desc'), hint: t('mode.normal.hint'), action: t('mode.normal.action') },
+    { mode: 'worktree', title: t('mode.worktree.title'), description: t('mode.worktree.desc'), hint: t('mode.worktree.hint'), action: t('mode.worktree.action'), tag: t('mode.worktree.tag'), featured: true },
   ];
   for (const item of modes) {
     const card = document.createElement('button');
     card.type = 'button';
-    card.className = 'workspace-mode-card';
+    card.className = `workspace-mode-card${item.featured ? ' workspace-mode-card-featured' : ''}`;
+    const cardHead = document.createElement('span');
+    cardHead.className = 'workspace-mode-head';
     const cardTitle = document.createElement('strong');
     cardTitle.textContent = item.title;
+    cardHead.appendChild(cardTitle);
+    if (item.tag) {
+      const tag = document.createElement('span');
+      tag.className = 'workspace-mode-tag';
+      tag.textContent = item.tag;
+      cardHead.appendChild(tag);
+    }
     const description = document.createElement('span');
+    description.className = 'workspace-mode-desc';
     description.textContent = item.description;
+    const hint = document.createElement('span');
+    hint.className = 'workspace-mode-hint';
+    hint.textContent = item.hint;
     const action = document.createElement('span');
     action.className = 'workspace-mode-action';
     action.textContent = `${item.action} →`;
-    card.append(cardTitle, description, action);
+    card.append(cardHead, description, hint, action);
     card.addEventListener('click', () => startNewSession(machine, item.mode));
     modeGrid.appendChild(card);
   }
-  modesSection.append(modesTitle, modeGrid);
-
+  modesSection.append(modesTitleGroup, modeGrid);
   workspace.append(header, stats, recentSection, modesSection);
   mount.appendChild(workspace);
 }
@@ -480,9 +516,9 @@ function openSession(machine: MachineConfig, sessionId: string, workdir?: string
   views.set(key, view);
 
   const bannerText = document.createElement('span');
-  bannerText.textContent = 'Connection lost, reconnecting…';
+  bannerText.textContent = t('banner.reconnecting');
   const retryBtn = document.createElement('button');
-  retryBtn.textContent = 'Retry now';
+  retryBtn.textContent = t('banner.retry');
   retryBtn.addEventListener('click', () => view.client.reconnectNow());
   banner.append(bannerText, retryBtn);
   container.appendChild(banner);
@@ -538,14 +574,14 @@ function openSession(machine: MachineConfig, sessionId: string, workdir?: string
     // Write a visible marker into the terminal and surface it in the status bar
     // so a dead session isn't just a frozen screen.
     if (view.terminal) view.terminal.write(`\r\n\x1b[33m[session exited, code ${code}]\x1b[0m\r\n`);
-    updateStatusBar(`Session exited (code ${code})`);
+    updateStatusBar(t('status.sessionExited', { code }));
     refreshAllMachines();
   };
   client.onError = (msg) => {
     console.error(`[${machine.name}]`, msg);
     // Show the error to the user instead of leaving a blank terminal.
     if (view.terminal) view.terminal.write(`\r\n\x1b[31m[error: ${msg}]\x1b[0m\r\n`);
-    if (view.key === activeKey) updateStatusBar(`Error: ${msg}`);
+    if (view.key === activeKey) updateStatusBar(t('status.error', { msg }));
   };
   client.onNotify = (kind, message) => {
     // hook 事件把圆点从「有输出」升级为语义状态。活动会话不标记（用户在看）。
@@ -554,7 +590,7 @@ function openSession(machine: MachineConfig, sessionId: string, workdir?: string
         view.activity = kind;
         renderSidebar();
       }
-      // waiting = 需要用户介入，可选弹桌面通知（移动端伏笔）。
+      // waiting = 需要用户介入，可选弹桌面通知。
       if (kind === 'waiting' && notificationsEnabled()) {
         const title = view.terminal ? (views.get(view.key)?.sessionId || 'vibe-remote') : 'vibe-remote';
         notifyDesktop(`${machine.name} · ${title}`, message || 'Claude 需要你的确认');
@@ -574,7 +610,8 @@ function openSession(machine: MachineConfig, sessionId: string, workdir?: string
 function setActive(key: string) {
   activeKey = key;
   overviewMachineKey = null;
-  document.getElementById('machine-overview')?.setAttribute('hidden', '');
+  const overview = document.getElementById('machine-overview');
+  if (overview) overview.hidden = true;
   const activeView = views.get(key);
   if (activeView && activeView.activity !== 'none') {
     activeView.activity = 'none';
@@ -584,9 +621,17 @@ function setActive(key: string) {
   }
   const view = views.get(key);
   if (view) {
+    // The container just flipped from display:none to block, so its box may not
+    // be laid out yet on the next frame. A single rAF sometimes measures the
+    // stale (zero/old) size, leaving the terminal too small or too large for the
+    // pane. Fit after two frames (layout settled), and once more after focus, so
+    // the visible terminal always matches the current pane size. fit() is a
+    // no-op when dimensions are unchanged.
     requestAnimationFrame(() => {
-      view.fitAddon.fit();
-      view.terminal.focus();
+      requestAnimationFrame(() => {
+        view.fitAddon.fit();
+        view.terminal.focus();
+      });
     });
   }
   renderSidebar();
@@ -613,9 +658,6 @@ function renderSidebar() {
     const nameSpan = document.createElement('span');
     nameSpan.textContent = machine.name;
     nameRow.append(dot, nameSpan);
-    // Click selects this machine as the new-session target (does NOT open a
-    // session — that's what clicking a session item does). Re-render to move
-    // the selected highlight.
     nameRow.addEventListener('click', () => {
       selectedMachineKey = mKey;
       showMachineOverview(machine);
@@ -666,10 +708,38 @@ function renderSidebar() {
         dot.classList.add(act); // 'output' | 'idle' | 'waiting'
       }
 
-      const close = document.createElement('span');
-      close.className = 'session-close';
+      const reload = document.createElement('button');
+      reload.type = 'button';
+      reload.className = 'session-action session-reload';
+      reload.textContent = '↻';
+      reload.title = t('session.reloadTitle');
+      reload.setAttribute('aria-label', `${t('session.reloadTitle')}：${s.title || s.id}`);
+      reload.addEventListener('click', async (e) => {
+        e.stopPropagation();
+        const name = s.title || (s.workdir ? s.workdir.split('/').pop() : '') || s.id;
+        if (!window.confirm(t('session.reloadConfirm', { name }))) return;
+        reload.disabled = true;
+        reload.setAttribute('aria-busy', 'true');
+        try {
+          await rests.get(machineKey(machine))!.reloadSession(s.id);
+          updateStatusBar(t('session.reloadSuccess', { name }));
+          await refreshAllMachines();
+        } catch (error) {
+          updateStatusBar(t('session.reloadFailed', {
+            msg: error instanceof Error ? error.message : String(error),
+          }));
+        } finally {
+          reload.disabled = false;
+          reload.removeAttribute('aria-busy');
+        }
+      });
+
+      const close = document.createElement('button');
+      close.type = 'button';
+      close.className = 'session-action session-close';
       close.textContent = '×';
-      close.title = 'Delete session (kills remote claude — cannot be undone)';
+      close.title = t('session.deleteTitle');
+      close.setAttribute('aria-label', `${t('session.deleteTitle')}：${s.title || s.id}`);
       // Deleting truly kills the remote tmux + claude; the current screen is
       // lost and unrecoverable. Confirm first (mirrors machine-delete in
       // machines.ts), showing the session's display name so a mis-hover on the
@@ -677,13 +747,13 @@ function renderSidebar() {
       close.addEventListener('click', (e) => {
         e.stopPropagation();
         const name = s.title || (s.workdir ? s.workdir.split('/').pop() : '') || s.id;
-        if (!window.confirm(`Delete session "${name}"? The remote claude process will be killed and its current screen lost. This cannot be undone.`)) {
+        if (!window.confirm(t('session.deleteConfirm', { name }))) {
           return;
         }
         closeSession(machine, s.id);
       });
 
-      item.append(label, dot, close);
+      item.append(label, dot, reload, close);
       list.appendChild(item);
     }
 
@@ -747,7 +817,6 @@ function updateStatusBar(extra?: string, attempt?: number) {
   const overviewMachine = overviewMachineKey
     ? machines.find((m) => machineKey(m) === overviewMachineKey)
     : null;
-
   connEl.className = '';
   tbStatus.className = '';
 
@@ -755,9 +824,9 @@ function updateStatusBar(extra?: string, attempt?: number) {
     const online = machineOnline.get(overviewMachineKey!) === true;
     tbTitle.textContent = overviewMachine.name;
     connEl.className = online ? 'connected' : 'error';
-    connEl.textContent = online ? `Connected · ${overviewMachine.name}` : `Offline · ${overviewMachine.name}`;
+    connEl.textContent = online ? `${t('status.connected')} · ${overviewMachine.name}` : `${t('workspace.offline')} · ${overviewMachine.name}`;
     tbStatus.className = online ? 'connected' : 'error';
-    tbStatusText.textContent = online ? 'Connected' : 'Offline';
+    tbStatusText.textContent = online ? t('status.connected') : t('workspace.offline');
     sessionEl.textContent = extra || '';
     return;
   }
@@ -771,29 +840,29 @@ function updateStatusBar(extra?: string, attempt?: number) {
     const st = view.client.state;
     if (st === ConnectionState.Connected) {
       connEl.className = 'connected';
-      connEl.textContent = `Connected · ${view.machine.name}`;
+      connEl.textContent = `${t('status.connected')} · ${view.machine.name}`;
       tbStatus.className = 'connected';
-      tbStatusText.textContent = 'Connected';
+      tbStatusText.textContent = t('status.connected');
     } else if (st === ConnectionState.Reconnecting) {
       connEl.className = 'reconnecting';
       const n = attempt ?? 0;
-      connEl.textContent = n > 0 ? `Reconnecting… (attempt ${n})` : 'Reconnecting…';
+      connEl.textContent = n > 0 ? t('status.reconnectingAttempt', { n }) : t('status.reconnecting');
       tbStatus.className = 'reconnecting';
-      tbStatusText.textContent = n > 0 ? `Reconnecting… (${n})` : 'Reconnecting…';
+      tbStatusText.textContent = n > 0 ? t('status.reconnectingAttempt', { n }) : t('status.reconnecting');
     } else {
-      connEl.textContent = 'Disconnected';
+      connEl.textContent = t('status.disconnected');
       tbStatus.className = 'error';
-      tbStatusText.textContent = 'Disconnected';
+      tbStatusText.textContent = t('status.disconnected');
     }
   } else {
     tbTitle.textContent = 'vibe-remote';
     const anyOnline = [...machineOnline.values()].some(Boolean);
     connEl.className = anyOnline ? 'connected' : '';
-    connEl.textContent = anyOnline ? 'Ready' : 'No connection';
+    connEl.textContent = anyOnline ? t('status.ready') : t('status.noConnection');
     tbStatus.className = anyOnline ? 'connected' : '';
-    tbStatusText.textContent = anyOnline ? 'Ready' : 'No connection';
+    tbStatusText.textContent = anyOnline ? t('status.ready') : t('status.noConnection');
   }
-  sessionEl.textContent = extra || (view?.sessionId ? `Session: ${view.sessionId}` : '');
+  sessionEl.textContent = extra || (view?.sessionId ? t('status.sessionLabel', { id: view.sessionId }) : '');
 }
 
 // closeSession kills the remote session (tmux + claude) and removes its view.
@@ -805,12 +874,11 @@ async function closeSession(machine: MachineConfig, sessionId: string) {
   } catch (e) {
     console.error('delete session failed', e);
     if (e instanceof DeleteSessionError && e.status === 409 && e.code === 'worktree_preserved') {
-      const location = [e.worktreeRoot && `path: ${e.worktreeRoot}`, e.branch && `branch: ${e.branch}`].filter(Boolean).join(' · ');
       await refreshAllMachines();
-      updateStatusBar(`Worktree preserved${location ? ` · ${location}` : ''}`);
+      updateStatusBar(t('session.worktreePreserved', { path: e.worktreeRoot || '—', branch: e.branch || '—' }));
       return;
     } else {
-      updateStatusBar(`Delete failed: ${e instanceof Error ? e.message : String(e)}`);
+      updateStatusBar(t('status.error', { msg: e instanceof Error ? e.message : String(e) }));
     }
   }
   if (!deletionSucceeded) {
@@ -846,40 +914,23 @@ function renderEmptyState() {
   const box = document.createElement('div');
   box.className = 'empty-state';
   const h = document.createElement('p');
-  h.textContent = 'Add your first machine';
+  h.textContent = t('empty.title');
   h.style.fontSize = '16px';
   h.style.color = 'var(--text-secondary)';
   const p = document.createElement('p');
   p.style.fontSize = '12px';
-  p.textContent = 'The machine must be on the same tailnet and running vibe-remoted.';
+  p.textContent = t('empty.desc');
   const btn = document.createElement('button');
   btn.className = 'btn-primary';
   btn.style.width = 'auto';
   btn.style.marginTop = '8px';
-  btn.textContent = 'Add machine';
+  btn.textContent = t('empty.addMachine');
   btn.addEventListener('click', () => document.getElementById('btn-manage-machines')?.dispatchEvent(new MouseEvent('click')));
   const hint = document.createElement('p');
   hint.style.fontSize = '11px';
-  hint.textContent = 'Address: tailscale IP (100.x) or MagicDNS name · Token: matches vibe-remoted config';
+  hint.textContent = t('empty.hint');
   box.append(h, p, btn, hint);
   container.appendChild(box);
-}
-
-// --- New session button ---
-
-function wireNewSessionButton() {
-  document.getElementById('btn-new-session')?.addEventListener('click', async () => {
-    if (machines.length === 0) return;
-    // Target machine priority: active session's machine → sidebar-selected
-    // machine → first machine. Active wins so "new session" inside a session
-    // stays on the same machine; selection covers the no-active-session case.
-    const active = activeKey ? views.get(activeKey) : null;
-    const selected = selectedMachineKey
-      ? machines.find((m) => machineKey(m) === selectedMachineKey)
-      : null;
-    const machine = active?.machine || selected || machines[0];
-    startNewSession(machine);
-  });
 }
 
 // --- Desktop notifications (optional, for `waiting` events) ---
@@ -907,6 +958,3 @@ if (document.readyState === 'loading') {
 } else {
   init();
 }
-
-
-

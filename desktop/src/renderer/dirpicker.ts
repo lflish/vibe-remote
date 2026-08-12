@@ -1,5 +1,6 @@
 import { VibeRemoteRest, type DirEntry } from './rest';
 import type { MachineConfig, SessionMode } from '../shared/protocol';
+import { t } from './i18n';
 
 /**
  * Remote directory picker modal — lets the user browse the remote machine's
@@ -24,7 +25,7 @@ export function openDirPicker(
     const modal = el('div', 'modal');
 
     const header = el('div', 'modal-header');
-    header.textContent = `Choose folder on ${machine.name}`;
+    header.textContent = t('picker.chooseFolder', { name: machine.name });
     modal.appendChild(header);
 
     const pathBar = el('div', 'modal-path');
@@ -32,11 +33,11 @@ export function openDirPicker(
 
     const modesBox = el('div', 'modal-modes');
     const modesTitle = el('div', 'modal-flags-title');
-    modesTitle.textContent = 'Session mode';
+    modesTitle.textContent = t('picker.sessionMode');
     modesBox.appendChild(modesTitle);
     const modeCards = [
-      { value: 'normal' as const, title: 'Open existing directory', description: 'Run Claude in the selected folder without touching Git.' },
-      { value: 'worktree' as const, title: 'Create isolated worktree', description: 'Create a branch + worktree, then launch Claude inside it.' },
+      { value: 'normal' as const, title: t('picker.mode.normal.title'), description: t('picker.mode.normal.desc') },
+      { value: 'worktree' as const, title: t('picker.mode.worktree.title'), description: t('picker.mode.worktree.desc') },
     ];
     const modeButtons: HTMLButtonElement[] = [];
     for (const card of modeCards) {
@@ -58,7 +59,7 @@ export function openDirPicker(
       modesBox.appendChild(button);
     }
     const modeNote = el('div', 'modal-mode-note');
-    modeNote.textContent = 'Worktree mode creates an isolated branch from the selected repository.';
+    modeNote.textContent = t('picker.modeNote');
     modeNote.hidden = mode !== 'worktree';
     modesBox.appendChild(modeNote);
     modal.appendChild(modesBox);
@@ -78,7 +79,7 @@ export function openDirPicker(
         const flags = info.claude_flags || [];
         if (flags.length === 0) return;
         const title = el('div', 'modal-flags-title');
-        title.textContent = 'Launch options';
+        title.textContent = t('picker.launchOptions');
         flagsBox.appendChild(title);
         for (const f of flags) {
           const row = el('label', 'modal-flag');
@@ -98,9 +99,9 @@ export function openDirPicker(
 
     const footer = el('div', 'modal-footer');
     const cancelBtn = el('button', 'btn-secondary');
-    cancelBtn.textContent = 'Cancel';
+    cancelBtn.textContent = t('picker.cancel');
     const selectBtn = el('button', 'btn-primary');
-    selectBtn.textContent = 'Open here';
+    selectBtn.textContent = t('picker.openHere');
     footer.append(cancelBtn, selectBtn);
     modal.appendChild(footer);
 
@@ -122,7 +123,7 @@ export function openDirPicker(
       } catch (e) {
         list.textContent = '';
         const err = el('div', 'modal-error');
-        err.textContent = `Failed to list directory: ${(e as Error).message}`;
+        err.textContent = t('picker.listFailed', { msg: (e as Error).message });
         list.appendChild(err);
       }
     }
@@ -138,14 +139,14 @@ export function openDirPicker(
       const parent = parentPath(path);
       if (parent && parent !== path) {
         const up = el('div', 'modal-item modal-item-up');
-        up.textContent = '.. (up)';
+        up.textContent = t('picker.up');
         up.addEventListener('click', () => load(parent));
         list.appendChild(up);
       }
 
       if (entries.length === 0) {
         const empty = el('div', 'modal-empty');
-        empty.textContent = '(no subdirectories)';
+        empty.textContent = t('picker.noSubdirs');
         list.appendChild(empty);
         return;
       }
