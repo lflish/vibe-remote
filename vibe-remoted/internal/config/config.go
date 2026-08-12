@@ -26,6 +26,9 @@ type Config struct {
 	UseTmux bool `json:"use_tmux"`
 	// Claude command (default: "claude").
 	ClaudeCmd string `json:"claude_cmd"`
+	// Command used when reloading an existing session. Empty derives a command
+	// from ClaudeCmd and the "continue" flag, falling back to "<claude_cmd> -c".
+	ClaudeReloadCmd string `json:"claude_reload_cmd,omitempty"`
 	// Optional whitelist of selectable launch flags. When set, clients can
 	// pick flags per-session (by id); the server appends each selected flag's
 	// Arg to ClaudeCmd. Empty = feature off (ClaudeCmd used as-is).
@@ -246,4 +249,20 @@ func (c *Config) ResolveClaudeCmd(ids []string) string {
 		}
 	}
 	return cmd
+}
+
+// ResolveClaudeReloadCmd returns the server-controlled command used to replace
+// the CLI process inside an existing tmux session. An explicit override supports
+// non-Claude CLIs. Otherwise reuse the configured "continue" flag so the same
+// argument definition powers both new-session presets and session reloads.
+func (c *Config) ResolveClaudeReloadCmd() string {
+	if strings.TrimSpace(c.ClaudeReloadCmd) != "" {
+		return c.ClaudeReloadCmd
+	}
+	for _, f := range c.ClaudeFlags {
+		if f.ID == "continue" && strings.TrimSpace(f.Arg) != "" {
+			return c.ClaudeCmd + " " + f.Arg
+		}
+	}
+	return c.ClaudeCmd + " -c"
 }

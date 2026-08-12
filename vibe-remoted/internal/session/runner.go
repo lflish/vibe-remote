@@ -2,6 +2,7 @@
 package session
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -20,6 +21,8 @@ import (
 // lets us disable the status bar globally (so claude gets full PTY height),
 // and makes cleanup safe.
 const tmuxSocket = "vibe-remote"
+
+var ErrReloadRequiresTmux = errors.New("session reload requires tmux mode")
 
 // tmuxCmd builds a tmux command on the dedicated vibe-remote socket.
 func tmuxCmd(args ...string) *exec.Cmd {
@@ -185,14 +188,18 @@ func (r *Runner) Metadata() protocol.SessionMetadata {
 // loaded, matching what the user gets running claude by hand. `exec` replaces
 // the shell so no extra process lingers.
 func (r *Runner) launchCommand() []string {
+	return r.launchCommandFor(r.claudeCmd)
+}
+
+func (r *Runner) launchCommandFor(command string) []string {
 	if !r.loginShell {
-		return []string{r.claudeCmd}
+		return []string{command}
 	}
 	sh := r.shell
 	if sh == "" {
 		sh = "/bin/bash"
 	}
-	return []string{sh, "-lic", "exec " + r.claudeCmd}
+	return []string{sh, "-lic", "exec " + command}
 }
 
 // setTmuxOption stores a user option using an explicit option terminator. The
@@ -201,6 +208,25 @@ func (r *Runner) launchCommand() []string {
 // empty values without involving a shell.
 func setTmuxOption(sessionName, key, value string) error {
 	return tmuxCmd("set-option", "-t", sessionName, "--", key, value).Run()
+}
+
+// waitTmuxSession polls until the named tmux session is registered (or the
+// timeout elapses). `pty.StartWithSize` returns as soon as the `tmux
+// new-session` process is spawned, but the tmux server registers the session
+// asynchronously — a set-option issued immediately can hit "can't find
+// session" and fail. Polling has-session closes that race without a fixed
+// sleep. Returns true once the session exists.
+func waitTmuxSession(sessionName string, timeout time.Duration) bool {
+	deadline := time.Now().Add(timeout)
+	for {
+		if tmuxCmd("has-session", "-t", sessionName).Run() == nil {
+			return true
+		}
+		if time.Now().After(deadline) {
+			return false
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
 }
 
 // start launches the PTY process.
@@ -244,6 +270,13 @@ func (r *Runner) start(cols, rows uint16) error {
 	r.epoch++
 
 	if r.useTmux {
+		// The tmux server registers the new session asynchronously after the
+		// new-session process spawns; wait for it before set-option so metadata
+		// writes don't race "can't find session".
+		if !waitTmuxSession(tmuxSessionName, 3*time.Second) {
+			r.Kill()
+			return fmt.Errorf("tmux session %s did not become ready", tmuxSessionName)
+		}
 		options := []struct{ key, value string }{
 			{"@vibe_remote_mode", string(r.Metadata().Mode)},
 			{"@vibe_remote_source_workdir", r.SourceWorkdir},
@@ -427,6 +460,33 @@ func (r *Runner) Kill() {
 	}
 
 	r.stopped = true
+}
+
+// Reload replaces the process in the session's only pane while leaving tmux
+// and attached clients alive. A fresh login shell reloads the user's shell
+// environment before the configured resume command starts.
+func (r *Runner) Reload(command string) error {
+	if !r.useTmux {
+		return ErrReloadRequiresTmux
+	}
+	if strings.TrimSpace(command) == "" {
+		return fmt.Errorf("session reload command is empty")
+	}
+
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	tmuxSessionName := fmt.Sprintf("vibe-remote-%s", r.ID)
+	launch := r.launchCommandFor(command)
+	args := append([]string{"respawn-pane", "-k", "-t", tmuxSessionName + ":0.0", "-c", r.Workdir, "--"}, launch...)
+	if out, err := tmuxCmd(args...).CombinedOutput(); err != nil {
+		message := strings.TrimSpace(string(out))
+		if message != "" {
+			return fmt.Errorf("reload tmux session: %w: %s", err, message)
+		}
+		return fmt.Errorf("reload tmux session: %w", err)
+	}
+	return nil
 }
 
 // Wait waits for the process to exit and returns the exit code.

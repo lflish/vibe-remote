@@ -56,3 +56,14 @@ func TestEventsRoutesToSubscriber(t *testing.T) {
 		t.Fatal("event not delivered to subscriber")
 	}
 }
+
+func TestReloadSessionRequiresTmux(t *testing.T) {
+	s := newTestServer()
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/sessions/s1/reload", nil)
+	req.Header.Set("Authorization", "Bearer secret")
+	w := httptest.NewRecorder()
+	s.mux.ServeHTTP(w, req)
+	if w.Code != http.StatusConflict {
+		t.Fatalf("code = %d, want 409; body=%s", w.Code, w.Body.String())
+	}
+}

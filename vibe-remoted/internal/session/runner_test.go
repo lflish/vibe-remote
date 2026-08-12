@@ -62,3 +62,50 @@ exec %q "$@"
 		}
 	}
 }
+
+func TestReloadRespawnsTmuxPaneInSameSession(t *testing.T) {
+	realTmux, err := exec.LookPath("tmux")
+	if err != nil {
+		t.Skip("tmux is not installed")
+	}
+
+	id := fmt.Sprintf("reload-test-%d", time.Now().UnixNano())
+	sessionName := "vibe-remote-" + id
+	workdir := t.TempDir()
+	marker := filepath.Join(workdir, "reloaded")
+	cmd := exec.Command(realTmux, "-L", tmuxSocket, "new-session", "-d", "-s", sessionName, "-c", workdir, "--", "/bin/sleep", "30")
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("create tmux session: %v: %s", err, out)
+	}
+	defer exec.Command(realTmux, "-L", tmuxSocket, "kill-session", "-t", sessionName).Run()
+
+	runner := &Runner{
+		ID:         id,
+		Workdir:    workdir,
+		useTmux:    true,
+		loginShell: true,
+		shell:      "/bin/sh",
+	}
+	if err := runner.Reload("/bin/sh -c 'printf reloaded > reloaded; exec /bin/sleep 30'"); err != nil {
+		t.Fatal(err)
+	}
+
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		data, err := os.ReadFile(marker)
+		if err == nil {
+			if string(data) != "reloaded" {
+				t.Fatalf("marker = %q, want reloaded", data)
+			}
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("reloaded command did not run: %v", err)
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	if err := exec.Command(realTmux, "-L", tmuxSocket, "has-session", "-t", sessionName).Run(); err != nil {
+		list, _ := exec.Command(realTmux, "-L", tmuxSocket, "list-sessions", "-F", "#{session_name}").CombinedOutput()
+		t.Fatalf("tmux session was not preserved: %v; sessions=%q", err, list)
+	}
+}

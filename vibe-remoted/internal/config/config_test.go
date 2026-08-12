@@ -210,3 +210,36 @@ func TestResolveClaudeCmdNoFlagsConfigured(t *testing.T) {
 		t.Errorf("with no ClaudeFlags configured, want unchanged %q, got %q", "claude -c", got)
 	}
 }
+
+func TestResolveClaudeReloadCmd(t *testing.T) {
+	tests := []struct {
+		name string
+		cfg  Config
+		want string
+	}{
+		{
+			name: "explicit override",
+			cfg:  Config{ClaudeCmd: "claude", ClaudeReloadCmd: "codex resume --last"},
+			want: "codex resume --last",
+		},
+		{
+			name: "configured continue flag",
+			cfg: Config{ClaudeCmd: "claude", ClaudeFlags: []ClaudeFlag{
+				{ID: "continue", Arg: "--continue"},
+			}},
+			want: "claude --continue",
+		},
+		{
+			name: "claude default",
+			cfg:  Config{ClaudeCmd: "claude"},
+			want: "claude -c",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := tt.cfg.ResolveClaudeReloadCmd(); got != tt.want {
+				t.Fatalf("ResolveClaudeReloadCmd() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}

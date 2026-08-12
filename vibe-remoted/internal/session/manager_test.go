@@ -413,6 +413,13 @@ func TestPublishToNoSubscribersIsNoop(t *testing.T) {
 	m.PublishEvent("ghost", protocol.NotifyFrame{Kind: "idle"})
 }
 
+func TestReloadRequiresTmux(t *testing.T) {
+	m := NewManager(false, "claude", true, "/bin/sh")
+	if err := m.Reload("session-id", "claude -c"); err == nil || !strings.Contains(err.Error(), "requires tmux") {
+		t.Fatalf("Reload() error = %v, want requires tmux", err)
+	}
+}
+
 // TestPubSubConcurrentPublishUnsubscribe stresses PublishEvent against
 // Subscribe/unsub churn on the same sessionID. It reproduces the
 // send-on-closed-channel race (publisher sends on a channel a concurrent

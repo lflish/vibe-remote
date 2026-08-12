@@ -200,6 +200,26 @@ func (m *Manager) Rename(id, name string) error {
 	return runner.SetName(sanitizeSessionName(name))
 }
 
+// Reload replaces the CLI process inside an existing tmux session. The tmux
+// session itself remains alive, preserving its id, metadata and attached client.
+func (m *Manager) Reload(id, command string) error {
+	if !m.useTmux {
+		return ErrReloadRequiresTmux
+	}
+	if live, ok := m.liveTmuxSessions(); ok {
+		m.mu.Lock()
+		reconcileTmuxSessions(m.sessions, live, time.Now(), m.useTmux, m.claudeCmd, m.shell, m.loginShell)
+		m.mu.Unlock()
+	}
+	m.mu.RLock()
+	runner, ok := m.sessions[id]
+	m.mu.RUnlock()
+	if !ok {
+		return fmt.Errorf("session %q not found", id)
+	}
+	return runner.Reload(command)
+}
+
 func applyTmuxSessionMetadata(r *Runner, info tmuxSessionInfo) {
 	if r.Workdir == "" {
 		r.Workdir = info.workdir

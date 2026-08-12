@@ -175,6 +175,7 @@ PTY 字节流，base64 编码。
 | GET | `/api/v1/sessions` | 会话列表 |
 | DELETE | `/api/v1/sessions/{id}` | 关闭指定会话 |
 | POST | `/api/v1/sessions/{id}/rename` | 重命名会话，body `{"name":"..."}`，名字存 tmux 用户选项 |
+| POST | `/api/v1/sessions/{id}/reload` | 在原 tmux 会话和工作目录中重启 CLI，并继续最近的对话 |
 | GET | `/api/v1/fs?path=<dir>` | 列目录（仅目录项），供远程目录选择器用 |
 | POST | `/api/v1/events` | 带外事件上报，body `{sessionId,kind,message?}`，路由为该会话的 notify 帧 |
 

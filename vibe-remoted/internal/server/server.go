@@ -4,6 +4,7 @@ package server
 import (
 	"crypto/subtle"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"net/http"
@@ -41,9 +42,36 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /api/v1/sessions", s.handleListSessions)
 	s.mux.HandleFunc("DELETE /api/v1/sessions/{id}", s.handleDeleteSession)
 	s.mux.HandleFunc("POST /api/v1/sessions/{id}/rename", s.handleRenameSession)
+	s.mux.HandleFunc("POST /api/v1/sessions/{id}/reload", s.handleReloadSession)
 	s.mux.HandleFunc("POST /api/v1/events", s.handleEvents)
 	s.mux.HandleFunc("GET /api/v1/fs", s.handleFS)
 	s.mux.HandleFunc("/ws", s.handleWS)
+}
+
+// handleReloadSession replaces the CLI process in an existing tmux pane while
+// retaining the session id, working directory, name, worktree, and attachments.
+func (s *Server) handleReloadSession(w http.ResponseWriter, r *http.Request) {
+	if !s.checkToken(r, w) {
+		return
+	}
+	id := r.PathValue("id")
+	if id == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "missing session id"})
+		return
+	}
+	if err := s.mgr.Reload(id, s.cfg.ResolveClaudeReloadCmd()); err != nil {
+		if strings.Contains(err.Error(), "not found") {
+			writeJSON(w, http.StatusNotFound, map[string]string{"error": err.Error()})
+			return
+		}
+		if errors.Is(err, session.ErrReloadRequiresTmux) {
+			writeJSON(w, http.StatusConflict, map[string]string{"error": err.Error()})
+			return
+		}
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 // ListenAndServe starts the server on the configured bind address.

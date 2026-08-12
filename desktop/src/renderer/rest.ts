@@ -49,6 +49,21 @@ export class VibeRemoteRest {
     if (!res.ok && res.status !== 204) throw new Error(`rename failed: ${res.status}`);
   }
 
+  async reloadSession(id: string): Promise<void> {
+    const res = await fetch(`${this.base()}/api/v1/sessions/${id}/reload`, {
+      method: 'POST',
+      headers: this.headers(),
+    });
+    if (!res.ok && res.status !== 204) {
+      let message = `reload failed: ${res.status}`;
+      try {
+        const details = await res.json() as { error?: string };
+        if (details.error) message = details.error;
+      } catch { /* non-JSON response */ }
+      throw new Error(message);
+    }
+  }
+
   /** List directory entries (directories only) for the remote picker. */
   async listDir(path?: string): Promise<DirListing> {
     const url = new URL(`${this.base()}/api/v1/fs`);
