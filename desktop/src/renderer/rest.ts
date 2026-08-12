@@ -1,4 +1,105 @@
-// 已上提到 @vibe-remote/core（阶段 0a）。此文件保留为 re-export 薄壳，
-// 使 desktop 现有 import 路径（'./rest'）无需改动。
-// 单一事实来源：packages/core/src/rest.ts。
-export * from '@vibe-remote/core/rest';
+import type { MachineConfig, SessionInfo } from '../shared/protocol';
+
+/**
+ * REST client for a vibe-remoted instance. Complements the WebSocket connection
+ * with the auxiliary HTTP endpoints (info, sessions list, delete, fs browse).
+ */
+export class VibeRemoteRest {
+  constructor(private machine: MachineConfig) {}
+
+  private base(): string {
+    return `http://${this.machine.addr}:${this.machine.port}`;
+  }
+
+  private headers(): HeadersInit {
+    return { Authorization: `Bearer ${this.machine.token}` };
+  }
+
+  async info(): Promise<MachineInfo> {
+    const res = await fetch(`${this.base()}/api/v1/info`, { headers: this.headers() });
+    if (!res.ok) throw new Error(`info failed: ${res.status}`);
+    return res.json();
+  }
+
+  async listSessions(): Promise<SessionInfo[]> {
+    const res = await fetch(`${this.base()}/api/v1/sessions`, { headers: this.headers() });
+    if (!res.ok) throw new Error(`sessions failed: ${res.status}`);
+    const data = await res.json();
+    return data.list || [];
+  }
+
+  async deleteSession(id: string): Promise<void> {
+    const res = await fetch(`${this.base()}/api/v1/sessions/${id}`, {
+      method: 'DELETE',
+      headers: this.headers(),
+    });
+    if (!res.ok && res.status !== 204) {
+      let details: { error?: string; message?: string; worktreeRoot?: string; branch?: string } = {};
+      try { details = await res.json(); } catch { /* non-JSON response */ }
+      throw new DeleteSessionError(res.status, details.error || `delete failed: ${res.status}`, details.message, details.worktreeRoot, details.branch);
+    }
+  }
+
+  async renameSession(id: string, name: string): Promise<void> {
+    const res = await fetch(`${this.base()}/api/v1/sessions/${id}/rename`, {
+      method: 'POST',
+      headers: { ...this.headers(), 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name }),
+    });
+    if (!res.ok && res.status !== 204) throw new Error(`rename failed: ${res.status}`);
+  }
+
+  async reloadSession(id: string): Promise<void> {
+    const res = await fetch(`${this.base()}/api/v1/sessions/${id}/reload`, {
+      method: 'POST',
+      headers: this.headers(),
+    });
+    if (!res.ok && res.status !== 204) {
+      let message = `reload failed: ${res.status}`;
+      try {
+        const details = await res.json() as { error?: string };
+        if (details.error) message = details.error;
+      } catch { /* non-JSON response */ }
+      throw new Error(message);
+    }
+  }
+
+  /** List directory entries (directories only) for the remote picker. */
+  async listDir(path?: string): Promise<DirListing> {
+    const url = new URL(`${this.base()}/api/v1/fs`);
+    if (path) url.searchParams.set('path', path);
+    const res = await fetch(url.toString(), { headers: this.headers() });
+    if (!res.ok) throw new Error(`fs failed: ${res.status}`);
+    return res.json();
+  }
+}
+
+export class DeleteSessionError extends Error {
+  constructor(public status: number, public code: string, public detail?: string, public worktreeRoot?: string, public branch?: string) {
+    super(detail || code);
+    this.name = 'DeleteSessionError';
+  }
+}
+export interface ClaudeFlagInfo {
+  id: string;
+  label: string;
+  default?: boolean;
+}
+
+export interface MachineInfo {
+  hostname: string;
+  tmux_enabled: boolean;
+  default_workdir: string;
+  allowed_roots: string[];
+  claude_flags?: ClaudeFlagInfo[];
+}
+
+export interface DirEntry {
+  name: string;
+  path: string;
+}
+
+export interface DirListing {
+  path: string;
+  entries: DirEntry[];
+}

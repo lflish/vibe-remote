@@ -1,17 +1,19 @@
 // Package protocol defines the JSON frame types for the vibe-remote WebSocket protocol.
-// 与 packages/core/src/protocol.ts 手工逐字对齐（headless 唯一线）。
 package protocol
 
 // Frame types exchanged between client and server.
 const (
-	TypeAuth   = "auth"
-	TypeAttach = "attach"
-	TypeReady  = "ready"
-	TypeData   = "data"
-	TypePing   = "ping"
-	TypePong   = "pong"
-	TypeExit   = "exit"
-	TypeError  = "error"
+	TypeAuth     = "auth"
+	TypeAttach   = "attach"
+	TypeReady    = "ready"
+	TypeData     = "data"
+	TypeResize   = "resize"
+	TypeSessions = "sessions"
+	TypePing     = "ping"
+	TypePong     = "pong"
+	TypeExit     = "exit"
+	TypeError    = "error"
+	TypeNotify   = "notify"
 )
 
 // Frame is the envelope for all WebSocket messages.
@@ -25,23 +27,69 @@ type AuthFrame struct {
 	Token string `json:"token"`
 }
 
-// AttachFrame requests opening a headless session.
-type AttachFrame struct {
-	Type    string   `json:"type"`
-	Workdir string   `json:"workdir,omitempty"` // working directory for the session
-	Flags   []string `json:"flags,omitempty"`   // selected claude_flags ids
+// SessionMode identifies how a session working directory is provisioned.
+type SessionMode string
+
+const (
+	SessionModeNormal   SessionMode = "normal"
+	SessionModeWorktree SessionMode = "worktree"
+)
+
+// SessionMetadata describes the authoritative working-directory mode and any
+// Git worktree resources associated with a session.
+type SessionMetadata struct {
+	Mode          SessionMode `json:"mode"`
+	SourceWorkdir string      `json:"sourceWorkdir,omitempty"`
+	SourceRepo    string      `json:"sourceRepo,omitempty"`
+	WorktreeRoot  string      `json:"worktreeRoot,omitempty"`
+	Branch        string      `json:"branch,omitempty"`
 }
 
-// DataFrame carries bytes (base64-encoded).
+// AttachFrame requests opening or resuming a session.
+type AttachFrame struct {
+	Type      string      `json:"type"`
+	SessionID string      `json:"sessionId,omitempty"` // empty = create new
+	Cols      uint16      `json:"cols"`
+	Rows      uint16      `json:"rows"`
+	Workdir   string      `json:"workdir,omitempty"` // working directory for new sessions
+	Flags     []string    `json:"flags,omitempty"`   // selected claude_flags ids (new session only)
+	Mode      SessionMode `json:"mode,omitempty"`    // empty defaults to normal
+}
+
+// ReadyFrame confirms attach success.
+type ReadyFrame struct {
+	Type      string `json:"type"`
+	SessionID string `json:"sessionId"`
+	Workdir   string `json:"workdir"`
+	SessionMetadata
+}
+
+// DataFrame carries PTY bytes (base64-encoded).
 type DataFrame struct {
 	Type    string `json:"type"`
 	Payload string `json:"payload"` // base64
 }
 
-// ReadyFrame confirms attach success.
-type ReadyFrame struct {
-	Type    string `json:"type"`
+// ResizeFrame updates remote PTY dimensions.
+type ResizeFrame struct {
+	Type string `json:"type"`
+	Cols uint16 `json:"cols"`
+	Rows uint16 `json:"rows"`
+}
+
+// SessionInfo describes a single session in the list.
+type SessionInfo struct {
+	ID      string `json:"id"`
+	Title   string `json:"title"`
 	Workdir string `json:"workdir"`
+	Created string `json:"created"`
+	SessionMetadata
+}
+
+// SessionsFrame lists all sessions on this machine.
+type SessionsFrame struct {
+	Type string        `json:"type"`
+	List []SessionInfo `json:"list"`
 }
 
 // ExitFrame signals that the session process exited.
@@ -54,4 +102,23 @@ type ExitFrame struct {
 type ErrorFrame struct {
 	Type    string `json:"type"`
 	Message string `json:"message"`
+}
+
+// NotifyFrame carries an out-of-band session event to the client (e.g. from a
+// claude hook via the events endpoint). Kind is an open string ("idle",
+// "waiting", or future kinds); clients ignore kinds they don't recognize.
+type NotifyFrame struct {
+	Type      string `json:"type"`
+	SessionID string `json:"sessionId"`
+	Kind      string `json:"kind"`
+	Message   string `json:"message,omitempty"`
+}
+
+// EventRequest is the JSON body posted to POST /api/v1/events by hooks (or any
+// tailnet-local reporter). Transport reuses the existing HTTP server + Bearer
+// auth + tailscale binding. Kind is an open enum for forward-compatibility.
+type EventRequest struct {
+	SessionID string `json:"sessionId"`
+	Kind      string `json:"kind"`
+	Message   string `json:"message,omitempty"`
 }

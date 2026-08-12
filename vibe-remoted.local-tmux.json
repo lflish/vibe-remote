@@ -1,10 +1,11 @@
 {
   "bind_addr": "100.64.0.1",
   "port": 8765,
-  "token": "local-selftest-token",
-  "default_workdir": "/Users/mac",
-  "allowed_roots": ["/Users/mac"],
+  "token": "overridden-by-make-dev-local",
+  "default_workdir": "/tmp",
+  "allowed_roots": ["/tmp"],
   "use_tmux": true,
-  "claude_cmd": "claude --dangerously-skip-permissions",
+  "claude_cmd": "claude",
+  "claude_reload_cmd": "claude -c",
   "login_shell": true
 }

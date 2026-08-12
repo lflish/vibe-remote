@@ -2,14 +2,9 @@
 
 ## 概述
 
-vibe-remote 使用 **JSON 分帧 WebSocket** 实现客户端（桌面 / web / iOS）与远程 `vibe-remoted` 之间的双向通信。
+vibe-remote 使用 **JSON 分帧 WebSocket** 实现桌面客户端与远程 `vibe-remoted` 之间的双向通信。
 每条 WebSocket 消息是一个 JSON 对象，以 `type` 字段区分消息类型。
-claude 官方 stream-json 的 NDJSON 输出按行经 base64 编码传输（`data` 帧）。
-
-**唯一数据平面：headless 结构化线**。服务端跑 `claude -p --output-format stream-json`，把 claude
-官方 NDJSON 协议按行透传；客户端用 `@vibe-remote/core` 的 parser **解析成结构化消息仅用于显示**
-（tool_use ↔ tool_result 配对、thinking、cost），不解析 TUI 像素。会话以 **workdir** 为身份
-（`claude -c` 续接该目录最近对话），无 tmux / PTY 会话概念。
+PTY 字节数据使用 base64 编码传输（`data` 帧）。
 
 连接地址：`ws://<host-ip>:<port>/ws`（`<host-ip>` 为服务端所绑私有网段地址，如 tailscale IP 或 LAN IP）
 
@@ -22,17 +17,18 @@ Client                              Server (vibe-remoted)
   |                                    |
   |--- auth {token} ------------------>|  (必须是首帧，10s 超时)
   |                                    |
-  |--- attach {workdir?,flags?} ------>|  (指定 claude 工作目录 + 启动 flag)
+  |--- attach {sessionId?,cols,rows} ->|  (sessionId 空=新建)
   |                                    |
-  |<-- ready {workdir} ----------------|  (确认，之后开始一次 turn)
+  |<-- ready {sessionId,workdir,mode,...} -|  (确认；worktree 元数据按需返回)
   |                                    |
-  |--- data {payload:base64} --------->|  (用户 prompt，一条=一次 turn)
-  |<-- data {payload:base64} ----------|  (claude NDJSON 输出，按行流式)
+  |<-- data {payload:base64} ----------|  (PTY 输出，流式)
+  |--- data {payload:base64} --------->|  (键盘输入)
+  |--- resize {cols,rows} ------------>|  (终端尺寸变化)
   |--- ping -------------------------->|
   |<-- pong ---------------------------|
   |                                    |
-  |<-- exit {code} --------------------|  (本次 turn 的 claude 进程退出)
-  |--- [close] ----------------------->|  (客户端断开)
+  |<-- exit {code} --------------------|  (会话进程退出)
+  |--- [close] ----------------------->|  (客户端断开，PTY detach，tmux 存活)
 ```
 
 ## 帧类型
@@ -47,38 +43,89 @@ Client                              Server (vibe-remoted)
 
 ### attach (C→S)
 
-请求打开一个 workdir 的聊天线。服务端不启 tmux，而是每收到一个 `data` 帧
-（base64 编码的用户 prompt）就在 `workdir` 下起一次
-`claude -c -p --output-format stream-json --include-partial-messages --verbose`
-（prompt 经 stdin 传入），把 claude 的 NDJSON 输出**按行**作为 `data` 帧转发；
-进程退出后等待下一个 `data` 帧。
+请求打开或恢复会话。
 
 ```json
 {
   "type": "attach",
+  "sessionId": "1720000000000",
+  "cols": 120,
+  "rows": 40,
   "workdir": "/home/user/project",
-  "flags": ["continue", "skip-perms"]
+  "flags": ["continue", "skip-perms"],
+  "mode": "worktree"
 }
 ```
 
-- `workdir`：指定 claude 工作目录，受 `allowed_roots` 白名单约束。省略则用服务端默认值
-- `flags`：可选。客户端勾选的 claude 启动 flag id 列表；服务端按 `claude_flags` 白名单查表，把对应参数拼到 `claude_cmd` 后（未知 id 忽略）
+- `sessionId` 为空字符串或省略：创建新会话
+- `workdir`：仅新建时有效，指定 claude 工作目录。省略则用服务端默认值
+- `flags`：可选，仅新建会话有效。客户端勾选的 claude 启动 flag id 列表；服务端按 `claude_flags` 白名单查表，把对应参数拼到 `claude_cmd` 后（未知 id 忽略）
+- `mode`：可选，仅新建会话有效。`normal` 表示直接使用 `workdir`，`worktree` 表示服务端从所选目录所在 Git 仓库创建隔离 Worktree。省略或空值时按 `normal` 处理，以兼容旧客户端
 
 ### ready (S→C)
 
 确认 attach 成功。
 
 ```json
-{"type": "ready", "workdir": "/home/user/project"}
+{
+  "type": "ready",
+  "sessionId": "1720000000000",
+  "workdir": "/home/user/project-worktrees/1720000000000/subdir",
+  "mode": "worktree",
+  "sourceWorkdir": "/home/user/project/subdir",
+  "sourceRepo": "/home/user/project",
+  "worktreeRoot": "/home/user/project-worktrees/1720000000000",
+  "branch": "vibe/1720000000000"
+}
 ```
+
+`mode` 始终由服务端返回权威值。`normal` 会话只需返回 `mode: "normal"`；`worktree` 会话还返回：
+
+- `sourceWorkdir`：用户选择的原始目录
+- `sourceRepo`：原始 Git 仓库根目录
+- `worktreeRoot`：该会话创建的 Worktree 根目录
+- `branch`：该 Worktree 使用的分支
 
 ### data (双向)
 
-- C→S：一条用户 prompt（UTF-8 文本经 base64 编码），触发一次 turn
-- S→C：claude 官方 stream-json 的 NDJSON 输出，**按行**经 base64 编码转发
+PTY 字节流，base64 编码。
 
 ```json
 {"type": "data", "payload": "SGVsbG8gV29ybGQ="}
+```
+
+- C→S：键盘输入（包括 Ctrl+C = `\x03`）
+- S→C：PTY 输出（终端转义序列、颜色等全部透传）
+
+### resize (C→S)
+
+客户端终端尺寸变化。
+
+```json
+{"type": "resize", "cols": 150, "rows": 50}
+```
+
+### sessions (S→C)
+
+会话列表推送。
+
+```json
+{
+  "type": "sessions",
+  "list": [
+    {
+      "id": "1720000000000",
+      "title": "project",
+      "workdir": "/home/user/project-worktrees/1720000000000/subdir",
+      "created": "2024-07-01T12:00:00Z",
+      "mode": "worktree",
+      "sourceWorkdir": "/home/user/project/subdir",
+      "sourceRepo": "/home/user/project",
+      "worktreeRoot": "/home/user/project-worktrees/1720000000000",
+      "branch": "vibe/1720000000000"
+    }
+  ]
+}
 ```
 
 ### ping / pong (双向)
@@ -92,7 +139,7 @@ Client                              Server (vibe-remoted)
 
 ### exit (S→C)
 
-本次 turn 的 claude 进程退出（一次 turn 结束）。
+会话进程退出。
 
 ```json
 {"type": "exit", "code": 0}
@@ -103,8 +150,19 @@ Client                              Server (vibe-remoted)
 错误通知。
 
 ```json
-{"type": "error", "message": "..."}
+{"type": "error", "message": "session not found"}
 ```
+
+### notify (S→C)
+
+带外会话事件（如 claude hook 经 events 端点上报）。`kind` 为开放枚举，客户端忽略不认识的 kind。
+
+```json
+{"type": "notify", "sessionId": "1720000000000", "kind": "waiting", "message": "需要确认权限"}
+```
+
+- `kind: "idle"`：claude 完成一次响应（Stop hook）
+- `kind: "waiting"`：claude 需要权限确认/等待输入（Notification hook）
 
 ## 辅助 REST API
 
@@ -113,18 +171,13 @@ Client                              Server (vibe-remoted)
 | Method | Path | 说明 |
 |--------|------|------|
 | GET | `/healthz` | 存活探针（无需鉴权） |
-| GET | `/api/v1/info` | 机器信息（主机名、默认目录、allowed_roots、claude_flags） |
+| GET | `/api/v1/info` | 机器信息（主机名、tmux 状态、默认目录等） |
+| GET | `/api/v1/sessions` | 会话列表 |
+| DELETE | `/api/v1/sessions/{id}` | 关闭指定会话 |
+| POST | `/api/v1/sessions/{id}/rename` | 重命名会话，body `{"name":"..."}`，名字存 tmux 用户选项 |
+| POST | `/api/v1/sessions/{id}/reload` | 在原 tmux 会话和工作目录中重启 CLI，并继续最近的对话 |
 | GET | `/api/v1/fs?path=<dir>` | 列目录（仅目录项），供远程目录选择器用 |
-| GET | `/api/v1/history?path=<workdir>&limit=<n>` | 读该 workdir 最近 jsonl，返回最近 turns（详见下节） |
-
-### GET /api/v1/history（会话历史，headless 聊天线）
-
-`GET /api/v1/history?path=<workdir>&limit=<n>`（Bearer 鉴权 + workdir 白名单）。
-读取该 workdir 对应 claude 会话 jsonl（`~/.claude/projects/<编码目录>/*.jsonl`，取最近修改的一个），
-返回最近 `limit`（默认 50）轮对话，oldest-first：
-`{"turns":[{"role":"user"|"assistant","text":"..."}]}`。
-仅提取 user 纯文本 prompt 与 assistant 的 text 片段（tool_result / thinking / 附件等跳过）。
-无会话时返回 `{"turns":[]}`。
+| POST | `/api/v1/events` | 带外事件上报，body `{sessionId,kind,message?}`，路由为该会话的 notify 帧 |
 
 ## 安全
 

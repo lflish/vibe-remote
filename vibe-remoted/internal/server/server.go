@@ -4,23 +4,24 @@ package server
 import (
 	"crypto/subtle"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"net/http"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 
 	"github.com/lflish/vibe-remote/vibe-remoted/internal/config"
+	"github.com/lflish/vibe-remote/vibe-remoted/internal/protocol"
 	"github.com/lflish/vibe-remote/vibe-remoted/internal/session"
 )
 
 // Server holds the HTTP server and dependencies.
 type Server struct {
-	cfg     *config.Config
-	mgr     *session.Manager
-	mux     *http.ServeMux
+	cfg *config.Config
+	mgr *session.Manager
+	mux *http.ServeMux
 }
 
 // New creates a new Server.
@@ -38,9 +39,39 @@ func New(cfg *config.Config, mgr *session.Manager) *Server {
 func (s *Server) routes() {
 	s.mux.HandleFunc("GET /healthz", s.handleHealthz)
 	s.mux.HandleFunc("GET /api/v1/info", s.handleInfo)
+	s.mux.HandleFunc("GET /api/v1/sessions", s.handleListSessions)
+	s.mux.HandleFunc("DELETE /api/v1/sessions/{id}", s.handleDeleteSession)
+	s.mux.HandleFunc("POST /api/v1/sessions/{id}/rename", s.handleRenameSession)
+	s.mux.HandleFunc("POST /api/v1/sessions/{id}/reload", s.handleReloadSession)
+	s.mux.HandleFunc("POST /api/v1/events", s.handleEvents)
 	s.mux.HandleFunc("GET /api/v1/fs", s.handleFS)
-	s.mux.HandleFunc("GET /api/v1/history", s.handleHistory)
 	s.mux.HandleFunc("/ws", s.handleWS)
+}
+
+// handleReloadSession replaces the CLI process in an existing tmux pane while
+// retaining the session id, working directory, name, worktree, and attachments.
+func (s *Server) handleReloadSession(w http.ResponseWriter, r *http.Request) {
+	if !s.checkToken(r, w) {
+		return
+	}
+	id := r.PathValue("id")
+	if id == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "missing session id"})
+		return
+	}
+	if err := s.mgr.Reload(id, s.cfg.ResolveClaudeReloadCmd()); err != nil {
+		if strings.Contains(err.Error(), "not found") {
+			writeJSON(w, http.StatusNotFound, map[string]string{"error": err.Error()})
+			return
+		}
+		if errors.Is(err, session.ErrReloadRequiresTmux) {
+			writeJSON(w, http.StatusConflict, map[string]string{"error": err.Error()})
+			return
+		}
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 // ListenAndServe starts the server on the configured bind address.
@@ -94,11 +125,102 @@ func (s *Server) handleInfo(w http.ResponseWriter, r *http.Request) {
 	}
 	info := map[string]any{
 		"hostname":        hostname,
+		"tmux_enabled":    s.cfg.UseTmux,
 		"default_workdir": s.cfg.DefaultWorkdir,
 		"allowed_roots":   s.cfg.AllowedRoots,
 		"claude_flags":    flags,
 	}
 	writeJSON(w, http.StatusOK, info)
+}
+
+func (s *Server) handleListSessions(w http.ResponseWriter, r *http.Request) {
+	if !s.checkToken(r, w) {
+		return
+	}
+	list := s.mgr.List()
+	frame := protocol.SessionsFrame{
+		Type: protocol.TypeSessions,
+		List: list,
+	}
+	writeJSON(w, http.StatusOK, frame)
+}
+
+func (s *Server) handleDeleteSession(w http.ResponseWriter, r *http.Request) {
+	if !s.checkToken(r, w) {
+		return
+	}
+	id := r.PathValue("id")
+	if id == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "missing session id"})
+		return
+	}
+	if err := s.mgr.Delete(id); err != nil {
+		if preserved, ok := err.(*session.WorktreePreservedError); ok {
+			writeJSON(w, http.StatusConflict, map[string]string{
+				"error":        "worktree_preserved",
+				"message":      preserved.Error(),
+				"worktreeRoot": preserved.WorktreeRoot,
+				"branch":       preserved.Branch,
+			})
+			return
+		}
+		if strings.Contains(err.Error(), "not found") {
+			writeJSON(w, http.StatusNotFound, map[string]string{"error": err.Error()})
+			return
+		}
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// handleRenameSession sets a user display name on a session.
+func (s *Server) handleRenameSession(w http.ResponseWriter, r *http.Request) {
+	if !s.checkToken(r, w) {
+		return
+	}
+	id := r.PathValue("id")
+	if id == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "missing session id"})
+		return
+	}
+	var body struct {
+		Name string `json:"name"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid body"})
+		return
+	}
+	if err := s.mgr.Rename(id, body.Name); err != nil {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": err.Error()})
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// handleEvents receives an out-of-band session event (from a claude hook or any
+// tailnet-local reporter) and routes it to the session's WS subscribers as a
+// notify frame. Reuses the same Bearer auth as every other REST endpoint.
+func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
+	if !s.checkToken(r, w) {
+		return
+	}
+	var body protocol.EventRequest
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid body"})
+		return
+	}
+	if body.SessionID == "" || body.Kind == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "sessionId and kind required"})
+		return
+	}
+	s.mgr.PublishEvent(body.SessionID, protocol.NotifyFrame{
+		Type:      protocol.TypeNotify,
+		SessionID: body.SessionID,
+		Kind:      body.Kind,
+		Message:   body.Message,
+	})
+	w.WriteHeader(http.StatusNoContent)
 }
 
 // handleFS lists directory entries for the remote directory picker.
@@ -117,10 +239,12 @@ func (s *Server) handleFS(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid path"})
 		return
 	}
-	if !s.cfg.IsAllowedWorkdir(absPath) {
+	canonicalPath, resolveErr := s.cfg.ResolveAllowedWorkdir(absPath)
+	if resolveErr != nil {
 		writeJSON(w, http.StatusForbidden, map[string]string{"error": "path not in allowed roots"})
 		return
 	}
+	absPath = canonicalPath
 
 	entries, err := os.ReadDir(absPath)
 	if err != nil {
@@ -143,35 +267,6 @@ func (s *Server) handleFS(w http.ResponseWriter, r *http.Request) {
 		"path":    absPath,
 		"entries": dirs,
 	})
-}
-
-// handleHistory returns recent conversation turns for a workdir's claude
-// session, read from the shared jsonl. Same Bearer auth + workdir whitelist as
-// every other endpoint. Powers the mobile chat's "show prior context on open".
-func (s *Server) handleHistory(w http.ResponseWriter, r *http.Request) {
-	if !s.checkToken(r, w) {
-		return
-	}
-	workdir := r.URL.Query().Get("path")
-	if workdir == "" {
-		workdir = s.cfg.DefaultWorkdir
-	}
-	if !s.cfg.IsAllowedWorkdir(workdir) {
-		writeJSON(w, http.StatusForbidden, map[string]string{"error": "path not in allowed roots"})
-		return
-	}
-	limit := 50
-	if v := r.URL.Query().Get("limit"); v != "" {
-		if n, err := strconv.Atoi(v); err == nil && n > 0 {
-			limit = n
-		}
-	}
-	turns, err := session.ReadHistory(workdir, limit)
-	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
-		return
-	}
-	writeJSON(w, http.StatusOK, map[string]any{"turns": turns})
 }
 
 // checkToken validates the Bearer token from the Authorization header.

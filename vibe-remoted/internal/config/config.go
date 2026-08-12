@@ -26,6 +26,9 @@ type Config struct {
 	UseTmux bool `json:"use_tmux"`
 	// Claude command (default: "claude").
 	ClaudeCmd string `json:"claude_cmd"`
+	// Command used when reloading an existing session. Empty derives a command
+	// from ClaudeCmd and the "continue" flag, falling back to "<claude_cmd> -c".
+	ClaudeReloadCmd string `json:"claude_reload_cmd,omitempty"`
 	// Optional whitelist of selectable launch flags. When set, clients can
 	// pick flags per-session (by id); the server appends each selected flag's
 	// Arg to ClaudeCmd. Empty = feature off (ClaudeCmd used as-is).
@@ -159,7 +162,41 @@ func isPrivateBindIP(ip net.IP) bool {
 	return false
 }
 
-// IsAllowedWorkdir checks if a path falls within the allowed roots.
+// ResolveAllowedWorkdir canonicalizes dir and verifies that it remains within a
+// canonical allowed root. Resolving symlinks before the containment check prevents
+// an in-root alias from escaping to a directory outside the configured roots.
+func (c *Config) ResolveAllowedWorkdir(dir string) (string, error) {
+	abs, err := filepath.Abs(dir)
+	if err != nil {
+		return "", err
+	}
+	canonical, err := filepath.EvalSymlinks(abs)
+	if err != nil {
+		return "", err
+	}
+	for _, root := range c.AllowedRoots {
+		rootAbs, err := filepath.Abs(root)
+		if err != nil {
+			continue
+		}
+		canonicalRoot, err := filepath.EvalSymlinks(rootAbs)
+		if err != nil {
+			continue
+		}
+		rel, err := filepath.Rel(canonicalRoot, canonical)
+		if err != nil {
+			continue
+		}
+		if rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+			continue
+		}
+		return canonical, nil
+	}
+	return "", fmt.Errorf("workdir not in allowed roots")
+}
+
+// IsAllowedWorkdir checks if a path falls within the allowed roots using
+// lexical containment. Call ResolveAllowedWorkdir for filesystem access.
 func (c *Config) IsAllowedWorkdir(dir string) bool {
 	abs, err := filepath.Abs(dir)
 	if err != nil {
@@ -174,14 +211,9 @@ func (c *Config) IsAllowedWorkdir(dir string) bool {
 		if err != nil {
 			continue
 		}
-		// rel == "." means dir IS the root (allowed).
-		// A leading ".." component means dir escapes the root (rejected).
-		// Check for exactly ".." or a "../" prefix — not just a ".." substring,
-		// so a directory literally named "..foo" isn't wrongly rejected.
-		if rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
-			continue
+		if rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+			return true
 		}
-		return true
 	}
 	return false
 }
@@ -217,4 +249,20 @@ func (c *Config) ResolveClaudeCmd(ids []string) string {
 		}
 	}
 	return cmd
+}
+
+// ResolveClaudeReloadCmd returns the server-controlled command used to replace
+// the CLI process inside an existing tmux session. An explicit override supports
+// non-Claude CLIs. Otherwise reuse the configured "continue" flag so the same
+// argument definition powers both new-session presets and session reloads.
+func (c *Config) ResolveClaudeReloadCmd() string {
+	if strings.TrimSpace(c.ClaudeReloadCmd) != "" {
+		return c.ClaudeReloadCmd
+	}
+	for _, f := range c.ClaudeFlags {
+		if f.ID == "continue" && strings.TrimSpace(f.Arg) != "" {
+			return c.ClaudeCmd + " " + f.Arg
+		}
+	}
+	return c.ClaudeCmd + " -c"
 }

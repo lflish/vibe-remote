@@ -1,26 +1,32 @@
 {
   "name": "vibe-remote",
   "version": "0.1.0",
+  "private": true,
   "description": "Remote Claude terminal manager",
   "license": "MIT",
   "author": "lflish",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/lflish/vibe-remote.git"
+  },
+  "bugs": "https://github.com/lflish/vibe-remote/issues",
+  "homepage": "https://github.com/lflish/vibe-remote#readme",
+  "engines": {
+    "node": ">=22"
+  },
   "main": "dist/main/index.js",
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build && electron-builder",
     "start": "electron dist/main/index.js",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test:preserved-notice": "node -e \"const fs=require('fs');const s=fs.readFileSync('src/renderer/index.ts','utf8');const f=s.slice(s.indexOf('async function closeSession'),s.indexOf('function renderEmptyState'));const preserved=f.indexOf(\\\"e.code === 'worktree_preserved'\\\");const refresh=f.indexOf('await refreshAllMachines()',preserved);const notice=f.indexOf(\\\"t('session.worktreePreserved'\\\",preserved);if(!(preserved>=0&&refresh>preserved&&notice>refresh))throw new Error('Worktree-preserved notice must be applied after awaited refresh');\""
   },
   "dependencies": {
-    "@vibe-remote/core": "^0.1.0",
-    "@vibe-remote/ui": "^0.1.0",
-    "react": "^19.2.8",
-    "react-dom": "^19.2.8"
+    "@xterm/xterm": "^5.5.0",
+    "@xterm/addon-fit": "^0.10.0"
   },
   "devDependencies": {
-    "@types/react": "^19.2.17",
-    "@types/react-dom": "^19.2.3",
-    "@vitejs/plugin-react": "^4.7.0",
     "electron": "^33.0.0",
     "electron-builder": "^25.0.0",
     "typescript": "^5.6.0",

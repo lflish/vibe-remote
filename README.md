@@ -2,65 +2,56 @@
 
 **English** ｜ [简体中文](./README.zh-CN.md)
 
-A cross-platform "remote Claude" client: Claude Code CLI runs on a remote Linux
-machine while desktop / web / iOS clients present a structured, chat-style rich
-UI over it — tool-call cards, side-by-side diffs, collapsible thinking, token /
-cost, streamed markdown. All three clients share one framework-agnostic core and
-one React view layer.
+A macOS desktop client for using Claude Code CLI on a remote machine like a
+local terminal. The interactive CLI runs inside a remote PTY while the Electron
+app renders the original terminal byte stream.
 
-See [REQUIREMENTS.md](./REQUIREMENTS.md) and [docs/protocol.md](./docs/protocol.md) for details.
+> **Project status:** early public preview. The first supported client is macOS.
+> Windows and mobile clients are roadmap items, not part of the initial release.
+
+vibe-remote is an independent open-source project and is not affiliated with or
+endorsed by Anthropic. Claude and Claude Code are trademarks of their respective
+owners.
+
+See [docs/protocol.md](./docs/protocol.md) for protocol details.
 
 ## Architecture
 
 ```
-Desktop (Electron) ┐
-Web (Vite SPA)     ┼─ws (JSON frames)─►  vibe-remoted (Go)  ──►  claude -c -p --output-format stream-json
-iOS (Capacitor)    ┘   @vibe-remote/{core,ui}   one per machine     (one-shot per turn; session = workdir)
+Desktop (Electron + xterm.js)  ──ws (JSON frames)──►  vibe-remoted (Go)  ──►  PTY→tmux→claude
+    "dumb terminal", raw byte passthrough              one per machine       bidirectional bytes
 ```
 
-- **Structured events, not TUI bytes**: the server runs `claude -p --output-format stream-json`
-  and relays claude's **official NDJSON protocol** line-by-line. Clients parse it *only for display*
-  (tool_use ↔ tool_result pairing, thinking, cost) — this is not TUI-pixel parsing, so the
-  "clients never parse the terminal" rule still holds.
-- **Shared core + UI**: [`@vibe-remote/core`](./packages/core) holds the protocol, WS/REST clients,
-  and the chat parser/state machine (zero DOM, unit-tested); [`@vibe-remote/ui`](./packages/ui) holds
-  the React components. Desktop / web / iOS are thin shells over them.
-- **Single data plane (headless line)**: the server spawns `claude -c -p --output-format stream-json`
-  once per turn in the chosen workdir and relays its NDJSON line-by-line. A session is identified by
-  its **workdir** — continuity comes from claude's own `-c` over the shared jsonl, so there is no tmux,
-  no PTY, and no server-held session state.
-- **No central hub**: each machine runs its own vibe-remoted and clients connect directly. The server
-  binds a private-network address (LAN / tailscale) with a static token as the primary access boundary;
-  cross-network reach and encryption can be delegated to Tailscale.
+- **Raw byte passthrough**: the client never parses claude's output. PTY bytes are relayed verbatim in both directions, so streaming / colors / cursor render with zero loss.
+- **tmux persistence**: the claude session survives client disconnects and is restored on reconnect.
+- **No central hub**: each machine runs its own vibe-remoted and the client connects directly. The server binds a private-network address (LAN / tailscale) with a static token as the primary access boundary; cross-network reach and encryption can be delegated to Tailscale.
 
 ## Features
 
-- **Rich chat UI**: streamed markdown, tool-call cards (collapsible, success/error state), side-by-side
-  diffs for Edit/Write, collapsible thinking blocks, and a token/cost bar — all rendered from claude's
-  structured stream-json.
-- **Three clients, one codebase**: desktop (Electron), web (browser SPA + a tiny Go static portal),
-  and iOS (Capacitor) all consume the same `@vibe-remote/core` + `@vibe-remote/ui`.
-- **Multi-machine**: machines grouped in the sidebar with a reachability dot; sessions key on workdir
-  (`claude -c` continues a directory's most recent conversation).
-- **Reconnection**: the status bar shows reconnect progress, with a disconnect banner + Retry.
-- **claude flag presets**: the server defines a `claude_flags` whitelist; on new-session you multi-select
-  flags (e.g. `-c` to continue, skip-permissions) — applied per-session.
-- **In-app machine management**: add / edit / remove machines + test connection, no need to hand-edit
-  the stored machine list.
+- **Multi-machine, multi-session**: sessions grouped by machine in the sidebar; click a machine to choose where a new session lands.
+- **Session naming / background hints**: double-click to rename; a sidebar dot lights up when a background session has output or is waiting for input.
+- **Reconnection**: the status bar shows reconnect progress, with a disconnect banner + Retry on the active session.
+- **claude flag presets**: the server defines a `claude_flags` whitelist; on new-session you multi-select flags (e.g. `-c` to continue, skip-permissions) — applied per-session.
+- **In-app machine management**: add / edit / remove machines + test connection, no need to hand-edit `machines.json`.
 
 ## Layout
 
 ```
-packages/core/   @vibe-remote/core — framework-agnostic shared kernel (protocol, WS/REST, chat parser)
-packages/ui/     @vibe-remote/ui   — shared React view components (ChatView, ToolCard, DiffToolCard, …)
-vibe-remoted/    Go server (single binary) + cmd/vibe-portal (static web host)
-desktop/         Electron client (thin shell over core+ui)
-mobile/          iOS client (Capacitor, thin shell over core+ui)
-web/             Web SPA (Vite + React, thin shell over core+ui)
+vibe-remoted/    Go server (single binary)
+desktop/         Electron + xterm.js client
 docs/            protocol docs
 ```
 
-This is an npm-workspaces monorepo; run `npm install` at the root once.
+## Quick start
+
+1. Copy `vibe-remoted.example.json` to a private config file outside the
+   repository and set a random token, bind address, and allowed roots.
+2. Build and start `vibe-remoted` on the remote machine.
+3. Run the desktop app with `make dev-desktop`.
+4. Add the remote machine from the app's machine manager.
+
+Do not expose `vibe-remoted` directly to the public internet. Read
+[SECURITY.md](./SECURITY.md) before deployment.
 
 ## Server: vibe-remoted
 
@@ -84,9 +75,9 @@ Copy `vibe-remoted.example.json` and adjust per machine:
   "token": "your-secure-token",     // static auth token, the core access boundary (constant-time compare)
   "default_workdir": "/home/user",
   "allowed_roots": ["/home/user"],  // workdir whitelist, prevents path escape
-  "use_tmux": true,                 // deprecated / ignored (kept for backward-compat with old configs;
-                                    //   the headless line never uses tmux)
+  "use_tmux": true,                 // false = run claude directly (no persistence)
   "claude_cmd": "claude",           // base command, passed as one string to the shell
+  "claude_reload_cmd": "claude -c", // command used by per-session Reload
   "claude_flags": [                 // optional: flags the client can multi-select on new session
     { "id": "continue",   "label": "Continue last session (-c)", "arg": "-c",                             "default": false },
     { "id": "skip-perms", "label": "Skip permission prompts",    "arg": "--dangerously-skip-permissions", "default": false }
@@ -122,87 +113,77 @@ Environment overrides: `VIBE_REMOTED_BIND_ADDR`, `VIBE_REMOTED_TOKEN`.
 cd vibe-remoted && go test ./...   # unit tests (incl. path-escape protection)
 ```
 
-## Clients
+## Client: desktop
 
-All clients share `@vibe-remote/core` + `@vibe-remote/ui`. Install once at the repo root:
-
-```bash
-npm install      # installs all workspaces (packages/*, desktop, mobile, web)
-```
-
-Each machine is configured with `name / addr / port / token` via in-app machine management
-(add / edit / remove + test connection). The stored list lives in each client's local storage
-(Electron userData on desktop, Capacitor Preferences on iOS, `localStorage` on web).
-
-### Desktop (Electron)
+### Install deps
 
 ```bash
-npm run dev --workspace=vibe-remote      # Vite + Electron hot reload
-npm run build --workspace=vibe-remote    # tsc + vite build + electron-builder → .dmg
+cd desktop && npm ci
 ```
 
-### Web (SPA + Go portal)
-
-The web client is a static SPA; a tiny Go binary (`vibe-portal`) embeds and serves it. Browsers then
-connect directly to each machine's vibe-remoted over `ws://` (Tailscale-encrypted).
+### Dev run
 
 ```bash
-npm run dev --workspace=@vibe-remote/web  # Vite dev server
-make portal                               # build web/dist + embed → bin/vibe-portal
-./bin/vibe-portal -addr 127.0.0.1:9000    # serve the portal; open the URL in a browser
+npm run dev      # Vite + Electron hot reload
 ```
 
-### iOS (Capacitor)
+### Machine management
+
+On first run, click "machine management" in the sidebar to add / edit / remove machines and test
+connections in-app (recommended). Each machine takes `name / addr / port / token`. With multiple
+machines, click a machine name in the sidebar to select it — new sessions then land on the selected machine.
+
+The list is stored under the Electron userData dir as `machines.json` (rarely edited by hand):
+
+```json
+[
+  { "name": "machine-a", "addr": "192.168.1.x or 100.x.x.x", "port": 8765, "token": "your-secure-token" }
+]
+```
+
+macOS path is typically `~/Library/Application Support/vibe-remote/machines.json`.
+
+### Package (.dmg)
 
 ```bash
-npm run build --workspace=vibe-remote-mobile   # tsc + vite build
-cd mobile && npx cap sync ios                  # sync web assets into the Xcode project, then build in Xcode
+npm run build    # tsc + vite build + electron-builder
 ```
 
-### Tests
-
-```bash
-npm test                    # all JS workspaces (core / ui / mobile / web)
-npm run typecheck           # all workspaces
-```
+Local builds are unsigned. macOS may require explicitly allowing the app in
+System Settings. Official signed binaries are not yet provided.
 
 ## Prerequisites
 
 - The client and target machine just need network reachability: same **Tailscale tailnet**
   (recommended — built-in encryption + cross-network) or the same **trusted LAN**
   (plaintext `ws://` on the LAN; use only on trusted networks).
-- The target Linux host has `claude`. `tmux` is no longer required (the headless line never uses it).
-  `go` is only needed to build vibe-remoted / vibe-portal, not to run them (cross-compile and copy the
-  binary over).
+- The target host has `claude` and `tmux`. Go is required only when building the
+  daemon from source.
 - When using Tailscale, the Mac must be up (`tailscale up`).
-- Browsers on an HTTPS page can't open a plaintext `ws://` (mixed-content). Serve the web portal
-  over `http://` inside the tailnet, or terminate TLS in front of vibe-remoted.
 
 ## Local smoke test (no remote machine)
 
-macOS can run vibe-remoted locally for a smoke test against a real `claude` — no tmux, no remote box.
+macOS has PTY + tmux, so you can run vibe-remoted locally for a smoke test. Use `claude_cmd: "/bin/bash"`
+as a stand-in to verify the passthrough chain (raw passthrough doesn't care what command runs).
 
-### Web-portal smoke
+### Self-connect test (make dev-local)
 
-Verifies the full structured chain (browser → vibe-portal → vibe-remoted → real claude →
-stream-json → chat rich UI) on one machine:
+The Mac acts as both server and client, running real `claude` through the full chain:
 
 ```bash
-# 1) config: bind loopback, real claude
-cat > /tmp/vibe-remoted.headless.json <<'EOF'
-{"bind_addr":"127.0.0.1","port":8799,"token":"smoke",
- "default_workdir":"/tmp","allowed_roots":["/tmp","/Users"],
- "claude_cmd":"claude --dangerously-skip-permissions","login_shell":true}
-EOF
-./bin/vibe-remoted -config /tmp/vibe-remoted.headless.json &
-
-# 2) build + serve the portal
-make portal
-./bin/vibe-portal -addr 127.0.0.1:9100 &
-
-# 3) open http://127.0.0.1:9100 in a browser, add machine (127.0.0.1 / 8799 / smoke),
-#    "+ 选目录开聊" → send a message → verify tool cards / diff / thinking / cost render.
+make dev-local   # binds this host's tailscale IP with a real address (no allow_insecure_bind)
 ```
+
+It prints the `addr:port` and a one-time token to fill in on the client. In the desktop
+"machine management", add this machine to verify
+passthrough / tmux persistence / reconnect end-to-end. Requires `tailscale up` and `tmux` + `claude`
+installed locally.
+
+## Contributing and security
+
+Contributions are welcome. See [CONTRIBUTING.md](./CONTRIBUTING.md) for the
+development workflow. Report vulnerabilities according to
+[SECURITY.md](./SECURITY.md), not through public issues.
 
 ## License
 

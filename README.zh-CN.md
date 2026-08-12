@@ -2,55 +2,53 @@
 
 [English](./README.md) ｜ **简体中文**
 
-一个跨端的「远程 Claude」客户端：远程 Linux 机器上跑 Claude Code CLI，
-桌面端 / web 端 / iOS 端以**结构化聊天式富交互 UI** 连上去——工具卡片、并排 diff、
-可折叠思考、token/成本、流式 markdown。三端共享同一套框架无关内核 + 同一套 React 视图。
+一个 macOS「远程 Claude 终端」客户端：Claude Code CLI 在远程机器的 PTY
+中运行，Electron 桌面端像本地终端一样展示并交互。
 
-详见 [REQUIREMENTS.md](./REQUIREMENTS.md) 和 [docs/protocol.md](./docs/protocol.md)。
+> **项目状态：**早期公开预览。首个正式支持的客户端是 macOS；Windows 和移动端
+> 属于后续路线图，不在首个开源版本的支持范围内。
+
+vibe-remote 是独立开源项目，与 Anthropic 无隶属或背书关系。Claude 和 Claude Code
+归其各自权利人所有。
+
+协议细节见 [docs/protocol.md](./docs/protocol.md)。
 
 ## 架构
 
 ```
-桌面端 (Electron) ┐
-Web (Vite SPA)    ┼─ws(JSON分帧)─►  vibe-remoted (Go)  ──►  claude -c -p --output-format stream-json
-iOS (Capacitor)   ┘  @vibe-remote/{core,ui}  每台机器一个     （一次 turn 一次 spawn；会话=workdir）
+桌面端 (Electron + xterm.js)  ──ws(JSON分帧)──►  vibe-remoted (Go)  ──►  PTY→tmux→claude
+    「哑终端」，纯字节透传                          每台机器一个        字节流双向透传
 ```
 
-- **结构化事件，非 TUI 字节**：服务端跑 `claude -p --output-format stream-json`，把 claude
-  **官方 NDJSON 协议**按行透传。客户端**只为显示而解析**（tool_use ↔ tool_result 配对、思考、成本）——
-  解析的是官方结构化协议、不是 TUI 像素，所以「客户端不解析终端」的约束依然成立。
-- **共享内核 + UI**：[`@vibe-remote/core`](./packages/core) 是协议、WS/REST 客户端、chat 解析器/状态机
-  （零 DOM、可单测）；[`@vibe-remote/ui`](./packages/ui) 是 React 组件。桌面/web/iOS 都是它们之上的瘦壳。
-- **唯一数据平面（headless 线）**：服务端在选定 workdir 下每 turn spawn 一次
-  `claude -c -p --output-format stream-json` 并按行透传 NDJSON。会话以 **workdir** 为身份，
-  连续性完全靠 claude 自己的 `-c`（读共享 jsonl）——无 tmux、无 PTY、服务端不持有会话状态。
-- **无中心 Hub**：每台机器各跑一个 vibe-remoted，客户端直连。服务端绑私有网段地址（LAN / tailscale），
-  静态 token 为准入核心；跨网/加密可交给 Tailscale。
+- **纯字节透传**：不解析 claude 输出，PTY 字节流原样双向透传，流式/颜色/光标 0 失真还原。
+- **tmux 持久化**：客户端断开后 claude 会话存活，重连恢复现场。
+- **无中心 Hub**：每台机器各跑一个 vibe-remoted，客户端直连。服务端绑私有网段地址（LAN / tailscale），静态 token 为准入核心；跨网/加密可交给 Tailscale。
 
 ## 主要特性
 
-- **富交互聊天 UI**：流式 markdown、工具调用卡片（可折叠、成功/错误配色）、Edit/Write 并排 diff、
-  可折叠思考块、token/成本栏——全部由 claude 的结构化 stream-json 渲染而来。
-- **三端一套代码**：桌面（Electron）、web（浏览器 SPA + 极简 Go 静态门户）、iOS（Capacitor）
-  都消费同一个 `@vibe-remote/core` + `@vibe-remote/ui`。
-- **多机器**：侧边栏按机器分组带可达状态点；会话以 workdir 为身份（`claude -c` 续接该目录最近对话）。
-- **断线重连**：状态栏显示重连进度，断线横幅 + Retry。
+- **多机多会话**：侧边栏按机器分组管理会话，点选机器决定新建会话落在哪台。
+- **会话命名 / 后台提示**：双击重命名，后台会话有输出/待输入时侧边栏亮圆点。
+- **断线重连**：状态栏显示重连进度，活动会话顶部断线横幅 + Retry。
 - **claude 参数预设**：服务端配 `claude_flags` 白名单，新建会话时页面多选（如 `-c` 续会话、跳过权限），per-session 生效。
-- **app 内机器管理**：增删改机器 + 测试连接，不用手改机器清单文件。
+- **app 内机器管理**：增删改机器 + 测试连接，不用手改 `machines.json`。
 
 ## 目录结构
 
 ```
-packages/core/   @vibe-remote/core — 框架无关共享内核（协议、WS/REST、chat 解析器）
-packages/ui/     @vibe-remote/ui   — 共享 React 视图组件（ChatView、ToolCard、DiffToolCard…）
-vibe-remoted/    Go 服务端（单二进制）+ cmd/vibe-portal（web 静态托管）
-desktop/         Electron 客户端（core+ui 瘦壳）
-mobile/          iOS 客户端（Capacitor，core+ui 瘦壳）
-web/             Web SPA（Vite + React，core+ui 瘦壳）
-docs/            协议文档
+vibe-remoted/    Go 服务端（单二进制）
+desktop/    Electron + xterm.js 客户端
+docs/       协议文档
 ```
 
-这是一个 npm workspaces monorepo，在根目录 `npm install` 一次即可。
+## 快速开始
+
+1. 复制 `vibe-remoted.example.json`，在仓库外创建私有配置，并设置随机 token、
+   监听地址和目录白名单。
+2. 在远程机器构建并启动 `vibe-remoted`。
+3. 用 `make dev-desktop` 启动桌面端。
+4. 在 app 内的机器管理器中添加远程机器。
+
+不要把 `vibe-remoted` 直接暴露到公网。部署前请阅读 [SECURITY.md](./SECURITY.md)。
 
 ## 服务端 vibe-remoted
 
@@ -74,8 +72,9 @@ cd vibe-remoted && go build -o ../bin/vibe-remoted ./cmd/vibe-remoted
   "token": "your-secure-token",     // 静态鉴权 token，准入核心边界（常量时间校验）
   "default_workdir": "/home/user",
   "allowed_roots": ["/home/user"],  // workdir 白名单，防越权
-  "use_tmux": true,                 // 已废弃 / 已忽略（保留字段做旧配置向后兼容；headless 线不用 tmux）
+  "use_tmux": true,                 // false = 降级直跑 claude（无持久化）
   "claude_cmd": "claude",           // 基础命令，整串传给 shell
+  "claude_reload_cmd": "claude -c", // 单个会话“重新加载”时执行的命令
   "claude_flags": [                 // 可选：客户端新建会话时可多选的启动参数
     { "id": "continue",   "label": "续上次会话 (-c)", "arg": "-c",                             "default": false },
     { "id": "skip-perms", "label": "跳过权限确认",     "arg": "--dangerously-skip-permissions", "default": false }
@@ -110,84 +109,71 @@ cd vibe-remoted && go build -o ../bin/vibe-remoted ./cmd/vibe-remoted
 cd vibe-remoted && go test ./...   # 单元测试（含路径越权防护）
 ```
 
-## 客户端
+## 客户端 desktop
 
-三端共享 `@vibe-remote/core` + `@vibe-remote/ui`，在仓库根一次装好依赖：
-
-```bash
-npm install      # 装所有 workspace（packages/*、desktop、mobile、web）
-```
-
-每台机器用 `name / addr / port / token` 通过 app 内机器管理配置（增删改 + 测试连接）。
-清单存于各端本地存储（桌面走 Electron userData、iOS 走 Capacitor Preferences、web 走 `localStorage`）。
-
-### 桌面端（Electron）
+### 安装依赖
 
 ```bash
-npm run dev --workspace=vibe-remote      # Vite + Electron 热重载
-npm run build --workspace=vibe-remote    # tsc + vite build + electron-builder → .dmg
+cd desktop && npm ci
 ```
 
-### Web（SPA + Go 门户）
-
-web 端是静态 SPA；一个极简 Go 二进制（`vibe-portal`）用 embed 打包并托管它。
-浏览器加载页面后直连各机器的 vibe-remoted `ws://`（由 Tailscale 加密）。
+### 开发运行
 
 ```bash
-npm run dev --workspace=@vibe-remote/web  # Vite dev 服务器
-make portal                               # 构建 web/dist + embed → bin/vibe-portal
-./bin/vibe-portal -addr 127.0.0.1:9000    # 起门户，用浏览器打开该 URL
+npm run dev      # Vite + Electron 热重载
 ```
 
-### iOS（Capacitor）
+### 机器管理
+
+首次运行后，点侧边栏「机器管理」在 app 内增删改机器 + 测试连接（推荐）。每台填
+`name / addr / port / token`。多台机器时，点侧边栏机器名选中它，新建会话即落在选中的机器上。
+
+配置底层存于 Electron userData 下的 `machines.json`（一般无需手改）：
+
+```json
+[
+  { "name": "机器A", "addr": "192.168.1.x 或 100.x.x.x", "port": 8765, "token": "your-secure-token" }
+]
+```
+
+macOS 路径通常为 `~/Library/Application Support/vibe-remote/machines.json`。
+
+### 打包 (.dmg)
 
 ```bash
-npm run build --workspace=vibe-remote-mobile   # tsc + vite build
-cd mobile && npx cap sync ios                  # 同步 web 产物到 Xcode 工程，再用 Xcode 构建
+npm run build    # tsc + vite build + electron-builder
 ```
 
-### 测试
-
-```bash
-npm test                    # 所有 JS workspace（core / ui / mobile / web）
-npm run typecheck           # 所有 workspace
-```
+本地构建产物未签名，macOS 可能要求在系统设置中手动允许打开。目前尚未提供官方签名发行包。
 
 ## 前置条件
 
 - 客户端与目标机网络互通即可：同一 **Tailscale tailnet**（推荐，自带加密+跨网）
   或同一**可信局域网**（LAN 内 `ws://` 明文，仅在可信网络使用）。
-- 目标 Linux 具备 `claude`；`tmux` 不再需要（headless 线不用 tmux）。`go` 只在构建
-  vibe-remoted / vibe-portal 时需要，运行不需要（交叉编译后拷二进制过去）。
+- 目标机器需安装 `claude` 和 `tmux`；只有从源码构建 daemon 时才需要 Go。
 - 走 Tailscale 时，Mac 端需运行（`tailscale up`）。
-- 浏览器在 HTTPS 页面下无法连明文 `ws://`（混合内容限制）。web 门户请在 tailnet 内以
-  `http://` 提供，或在 vibe-remoted 前置 TLS。
 
 ## 本地开发冒烟（无需远程机）
 
-macOS 可本地起 vibe-remoted 对真 `claude` 冒烟——无需 tmux、无需远程机。
+macOS 本身有 PTY + tmux，可本地起 vibe-remoted 冒烟。用 `claude_cmd: "/bin/bash"` 代跑即可验证透传链路
+（纯字节透传不关心跑什么命令）。
 
-### Web 门户冒烟
+### 本机自连自测（make dev-local）
 
-在一台机器上验证完整结构化链路（浏览器 → vibe-portal → vibe-remoted → 真 claude →
-stream-json → 聊天富交互 UI）：
+Mac 同时当服务端与客户端，跑真 `claude` 走完整链路：
 
 ```bash
-# 1) 配置：绑 loopback、真 claude
-cat > /tmp/vibe-remoted.headless.json <<'EOF'
-{"bind_addr":"127.0.0.1","port":8799,"token":"smoke",
- "default_workdir":"/tmp","allowed_roots":["/tmp","/Users"],
- "claude_cmd":"claude --dangerously-skip-permissions","login_shell":true}
-EOF
-./bin/vibe-remoted -config /tmp/vibe-remoted.headless.json &
-
-# 2) 构建并托管门户
-make portal
-./bin/vibe-portal -addr 127.0.0.1:9100 &
-
-# 3) 浏览器打开 http://127.0.0.1:9100，添加机器（127.0.0.1 / 8799 / smoke），
-#    「+ 选目录开聊」→ 发消息 → 验证工具卡片 / diff / 思考 / 成本正确渲染。
+make dev-local   # 动态取本机 tailscale IP，绑真地址启动（不走 allow_insecure_bind）
 ```
+
+它会打印客户端要填的 `addr:port` 和一次性 token。在桌面端「机器管理」里
+添加这台机器，即可端到端验证透传 / tmux 持久化 / 重连。
+前提：本机已 `tailscale up` 且装有 `tmux` + `claude`。
+
+## 参与贡献与安全问题
+
+欢迎贡献。开发流程见 [CONTRIBUTING.md](./CONTRIBUTING.md)；安全漏洞请按
+[SECURITY.md](./SECURITY.md) 私下报告，不要直接创建公开 issue。
 
 ## 开源协议
 

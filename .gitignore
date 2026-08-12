@@ -1,19 +1,10 @@
-# Dependencies (monorepo: 依赖提升到根 node_modules)
+# Dependencies and build output
 node_modules/
-
-# Build output
+**/node_modules/
 bin/
-dist/
-desktop/dist/
-mobile/dist/
-web/dist/
-mobile/ios/App/Pods/
-mobile/ios/App/build/
-vibe-remoted/cmd/vibe-portal/dist
-
-# Test/tool caches
-.vite/
-.playwright-mcp/
+**/dist/
+mobile/ios/Pods/
+mobile/ios/**/xcuserdata/
 
 # OS
 .DS_Store
@@ -25,10 +16,34 @@ Thumbs.db
 *.swp
 *.swo
 
-# Config with secrets
-ccdeskd.json
+# Local configuration and credentials
+vibe-remoted.json
+vibe-remoted.*.json
+!vibe-remoted.example.json
+!vibe-remoted.local.json
+!vibe-remoted.local-tmux.json
+!vibe-remoted.tmux.json
 desktop/src/main/machines.json
+*.local.env
+.env
+.env.*
+!.env.example
+
+# Local agent and test-tool state
+.agents/
+.claude/
+.playwright-mcp/
+.superpowers/
+skills-lock.json
+
+# Experimental clients kept outside the desktop-first public release
+mobile/
+web/
+packages/
+vibe-remoted/cmd/vibe-portal/
+
+# Local scratch files
+/2
 
 # Go
 *.exe
-vibe-remoted.mobile.json
