@@ -62,7 +62,7 @@ JSON 分帧 WebSocket，帧靠 `type` 区分，PTY 字节走 base64（`data` 帧
 
 握手时序：`auth`（首帧，10s 超时）→ 服务端推 `sessions` 列表 → 客户端可空闲浏览（ping/pong 保活，**无 attach 超时**）→ `attach`（空 sessionId=新建，带 workdir）→ `ready` → 双向 `data`。
 
-辅助 REST（Bearer token 鉴权）：`/healthz`、`/api/v1/info`、`/api/v1/sessions`、`DELETE /api/v1/sessions/{id}`、`/api/v1/fs?path=`（远程目录选择器，受 workdir 白名单约束）。
+辅助 REST（除 `/healthz` 外均需 Bearer token）：`/api/v1/info`、`/api/v1/sessions`、`DELETE /api/v1/sessions/{id}`、`POST /api/v1/sessions/{id}/rename`、`POST /api/v1/sessions/{id}/reload`、`/api/v1/fs?path=`（远程目录选择器，受 workdir 白名单约束）、`POST /api/v1/events`。`/healthz` 故意免鉴权（存活探针），只回 `ok`、不含任何信息。
 
 ### 客户端会话模型
 
