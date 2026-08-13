@@ -45,4 +45,6 @@ jobs:
         run: npm run typecheck
       - name: Regression checks
         working-directory: desktop
-        run: npm run test:preserved-notice
+        run: |
+          npm run test:preserved-notice
+          npm run test:attach-replay

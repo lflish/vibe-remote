@@ -27,6 +27,16 @@ const PING_INTERVAL = 25000; // 25s
  * VibeRemoteClient manages the WebSocket connection to a single vibe-remoted instance.
  * Handles auth, attach, data relay, ping/pong, and auto-reconnect.
  */
+/** Everything needed to (re)issue an attach, so a reconnect can replay it. */
+type AttachIntent = {
+  sessionId: string;
+  cols: number;
+  rows: number;
+  workdir?: string;
+  flags?: string[];
+  mode?: SessionMode;
+};
+
 export class VibeRemoteClient {
   machine: MachineConfig;
   state: ConnectionState = ConnectionState.Disconnected;
@@ -45,7 +55,13 @@ export class VibeRemoteClient {
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private pingTimer: ReturnType<typeof setInterval> | null = null;
   private currentSessionId: string | null = null;
-  private pendingAttach: { sessionId: string; cols: number; rows: number; workdir?: string; flags?: string[]; mode?: SessionMode } | null = null;
+  private pendingAttach: AttachIntent | null = null;
+  // The attach we sent but haven't seen a `ready` for yet. A reconnect resends
+  // this verbatim: until ready arrives we have no sessionId (a brand-new session
+  // gets its id from the server), so without it a drop in that window would
+  // leave the client connected but attached to nothing. It also carries
+  // workdir/flags/mode, which a sessionId-only re-attach would lose.
+  private unconfirmedAttach: AttachIntent | null = null;
   // Last known terminal size, so a reconnect re-attaches at the correct
   // dimensions instead of a default 80x24 (which would misdraw until resize).
   private lastCols = 80;
@@ -78,15 +94,7 @@ export class VibeRemoteClient {
 
       // If we have a pending attach (initial connect or reconnect), send it
       if (this.pendingAttach) {
-        this.send<AttachFrame>({
-          type: FrameType.Attach,
-          sessionId: this.pendingAttach.sessionId || undefined,
-          cols: this.pendingAttach.cols,
-          rows: this.pendingAttach.rows,
-          workdir: this.pendingAttach.workdir,
-          flags: this.pendingAttach.flags,
-          mode: this.pendingAttach.mode,
-        });
+        this.sendAttach(this.pendingAttach);
         this.pendingAttach = null;
       }
     };
@@ -112,6 +120,10 @@ export class VibeRemoteClient {
   disconnect() {
     this.setState(ConnectionState.Disconnected);
     this.stopPing();
+    // Deliberate close: drop any attach we were holding for replay so a later
+    // connect() doesn't resurrect a session the caller already walked away from.
+    this.unconfirmedAttach = null;
+    this.pendingAttach = null;
     if (this.reconnectTimer) {
       clearTimeout(this.reconnectTimer);
       this.reconnectTimer = null;
@@ -145,21 +157,28 @@ export class VibeRemoteClient {
     this.lastRows = rows;
 
     if (this.state === ConnectionState.Connected && this.ws) {
-      this.send<AttachFrame>({
-        type: FrameType.Attach,
-        sessionId: sessionId || undefined,
-        cols,
-        rows,
-        workdir,
-        flags,
-        mode,
-      });
+      this.sendAttach({ sessionId, cols, rows, workdir, flags, mode });
     } else {
       // Connection not ready yet — store the full attach (including workdir/flags)
       // to send on open. Dropping workdir here is what made new sessions
       // always land in the default dir instead of the chosen one.
       this.pendingAttach = { sessionId, cols, rows, workdir, flags, mode };
     }
+  }
+
+  // sendAttach writes the frame and remembers the intent until `ready` confirms
+  // it, so a disconnect in between can replay the exact same attach.
+  private sendAttach(intent: AttachIntent) {
+    this.unconfirmedAttach = intent;
+    this.send<AttachFrame>({
+      type: FrameType.Attach,
+      sessionId: intent.sessionId || undefined,
+      cols: intent.cols,
+      rows: intent.rows,
+      workdir: intent.workdir,
+      flags: intent.flags,
+      mode: intent.mode,
+    });
   }
 
   /** Send terminal data (keyboard input). */
@@ -187,8 +206,11 @@ export class VibeRemoteClient {
     switch (frame.type) {
       case FrameType.Ready:
         // A ready frame means auth + attach succeeded — the connection is
-        // healthy, so it's safe to reset the backoff counter now.
+        // healthy, so it's safe to reset the backoff counter now. The attach is
+        // confirmed, so stop holding it for replay: from here on the server has
+        // given us a sessionId and a plain re-attach is enough.
         this.reconnectAttempt = 0;
+        this.unconfirmedAttach = null;
         this.currentSessionId = frame.sessionId;
         this.onReady?.(frame.sessionId, frame.workdir);
         break;
@@ -239,9 +261,14 @@ export class VibeRemoteClient {
     this.reconnectAttempt++;
 
     this.reconnectTimer = setTimeout(() => {
-      // Re-attach the same session at the last known size so the restored
-      // screen draws correctly instead of at a default 80x24.
-      if (this.currentSessionId) {
+      // Re-attach at the last known size so the restored screen draws correctly
+      // instead of at a default 80x24.
+      if (this.unconfirmedAttach) {
+        // Never confirmed by a `ready`. Replay it as-is: for a new session we
+        // still have no sessionId, and workdir/flags/mode would be lost if we
+        // rebuilt the attach from currentSessionId alone.
+        this.pendingAttach = { ...this.unconfirmedAttach, cols: this.lastCols, rows: this.lastRows };
+      } else if (this.currentSessionId) {
         this.pendingAttach = {
           sessionId: this.currentSessionId,
           cols: this.lastCols,
