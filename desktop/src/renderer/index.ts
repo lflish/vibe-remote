@@ -328,7 +328,7 @@ function renderMachineOverview(machine: MachineConfig) {
 
   const stats = document.createElement('section');
   stats.className = 'workspace-stats';
-  stats.setAttribute('aria-label', 'Machine summary');
+  stats.setAttribute('aria-label', t('workspace.statsLabel'));
   const statValues = [
     { label: t('workspace.stat.sessions'), value: String(sessions.length) },
     { label: t('workspace.stat.openHere'), value: String(localViewCount) },
@@ -593,7 +593,7 @@ function openSession(machine: MachineConfig, sessionId: string, workdir?: string
       // waiting = 需要用户介入，可选弹桌面通知。
       if (kind === 'waiting' && notificationsEnabled()) {
         const title = view.terminal ? (views.get(view.key)?.sessionId || 'vibe-remote') : 'vibe-remote';
-        notifyDesktop(`${machine.name} · ${title}`, message || 'Claude 需要你的确认');
+        notifyDesktop(`${machine.name} · ${title}`, message || t('session.waitingFallback'));
       }
     }
   };

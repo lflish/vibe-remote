@@ -9,7 +9,6 @@ type Dict = Record<string, string>;
 const STORAGE_KEY = 'vibe-remote.locale';
 
 const zh: Dict = {
-  'app.title': 'vibe-remote',
   'lang.toggle': 'EN',
   'lang.toggleTitle': '切换到英文',
   // workspace
@@ -19,6 +18,7 @@ const zh: Dict = {
   'workspace.stat.sessions': '会话',
   'workspace.stat.openHere': '本地打开',
   'workspace.stat.connection': '连接',
+  'workspace.statsLabel': '机器概要',
   'workspace.connection.local': '本地',
   'workspace.connection.remote': '远程',
   'workspace.recent.title': '最近会话',
@@ -52,6 +52,7 @@ const zh: Dict = {
   'session.reloadSuccess': '会话已重新加载：{name}',
   'session.reloadFailed': '重新加载失败：{msg}',
   'session.worktreePreserved': 'Worktree 已保留 · {path} · 分支 {branch}',
+  'session.waitingFallback': 'Claude 需要你的确认',
   // toolbar / status
   'status.connected': '已连接',
   'status.disconnected': '未连接',
@@ -107,7 +108,6 @@ const zh: Dict = {
 };
 
 const en: Dict = {
-  'app.title': 'vibe-remote',
   'lang.toggle': '中',
   'lang.toggleTitle': 'Switch to Chinese',
   'workspace.eyebrow': 'Machine workspace',
@@ -116,6 +116,7 @@ const en: Dict = {
   'workspace.stat.sessions': 'Sessions',
   'workspace.stat.openHere': 'Open here',
   'workspace.stat.connection': 'Connection',
+  'workspace.statsLabel': 'Machine summary',
   'workspace.connection.local': 'Local',
   'workspace.connection.remote': 'Remote',
   'workspace.recent.title': 'Recent sessions',
@@ -138,7 +139,6 @@ const en: Dict = {
   'mode.worktree.hint': 'Best for parallel work that must stay off your main branch.',
   'mode.worktree.action': 'Choose repository',
   'mode.worktree.tag': 'Isolated',
-  'sidebar.newSession': 'New session',
   'banner.reconnecting': 'Connection lost, reconnecting…',
   'banner.retry': 'Retry now',
   'session.deleteTitle': 'Delete session (kills remote claude — cannot be undone)',
@@ -148,6 +148,7 @@ const en: Dict = {
   'session.reloadSuccess': 'Session reloaded: {name}',
   'session.reloadFailed': 'Reload failed: {msg}',
   'session.worktreePreserved': 'Worktree preserved · {path} · branch {branch}',
+  'session.waitingFallback': 'Claude needs your confirmation',
   'status.connected': 'Connected',
   'status.disconnected': 'Disconnected',
   'status.reconnecting': 'Reconnecting…',
