@@ -128,6 +128,18 @@ function wireLanguageToggle() {
       const machine = machines.find((m) => machineKey(m) === overviewMachineKey);
       if (machine) renderMachineOverview(machine);
     }
+    // The empty state is built once when there are no machines/sessions, so it
+    // needs an explicit rebuild (renderEmptyState is idempotent).
+    if (document.querySelector('.empty-state')) renderEmptyState();
+    // Reconnect banners live inside each open session's container and are
+    // usually hidden, so they'd otherwise keep their creation-time language
+    // until the next disconnect.
+    for (const view of views.values()) {
+      const text = view.banner.querySelector('.reconnect-banner-text');
+      if (text) text.textContent = t('banner.reconnecting');
+      const retry = view.banner.querySelector('.reconnect-banner-retry');
+      if (retry) retry.textContent = t('banner.retry');
+    }
     updateStatusBar();
   });
 }
@@ -526,9 +538,14 @@ function openSession(machine: MachineConfig, sessionId: string, workdir?: string
   const view: SessionView = { key, machine, sessionId, client, terminal: term, fitAddon: fit, container, banner, activity: 'none', suppressUntil: 0 };
   views.set(key, view);
 
+  // Classed so a locale switch can retranslate banners that already exist:
+  // these are created once per session but only become visible later, on a
+  // disconnect, so without this they'd show the language from creation time.
   const bannerText = document.createElement('span');
+  bannerText.className = 'reconnect-banner-text';
   bannerText.textContent = t('banner.reconnecting');
   const retryBtn = document.createElement('button');
+  retryBtn.className = 'reconnect-banner-retry';
   retryBtn.textContent = t('banner.retry');
   retryBtn.addEventListener('click', () => view.client.reconnectNow());
   banner.append(bannerText, retryBtn);
