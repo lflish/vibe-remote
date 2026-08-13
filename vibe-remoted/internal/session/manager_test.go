@@ -474,3 +474,46 @@ func TestPubSubConcurrentPublishUnsubscribe(t *testing.T) {
 
 	wg.Wait()
 }
+
+// TestIsNoTmuxServerDistinguishesEmptyFromFailure pins the stderr check that
+// decides whether a non-zero `tmux list-sessions` means "nothing is running" or
+// "the query failed". tmux uses a non-zero exit for both, so only stderr tells
+// them apart — and mistaking a failure for an empty set makes reconcile evict
+// every live session from the in-memory table.
+func TestIsNoTmuxServerDistinguishesEmptyFromFailure(t *testing.T) {
+	cases := []struct {
+		name   string
+		stderr string
+		want   bool
+	}{
+		{"no server running", "no server running on /tmp/tmux-501/vibe-remote\n", true},
+		{"no sessions", "no sessions\n", true},
+		{"socket missing", "error connecting to /tmp/tmux-501/vibe-remote (No such file or directory)\n", false},
+		{"not a socket", "error connecting to /tmp/x (Socket operation on non-socket)\n", false},
+		{"permission denied", "error connecting to /tmp/x (Permission denied)\n", false},
+		{"empty stderr", "", false},
+	}
+	for _, c := range cases {
+		if got := isNoTmuxServer([]byte(c.stderr)); got != c.want {
+			t.Errorf("%s: isNoTmuxServer(%q) = %v, want %v", c.name, c.stderr, got, c.want)
+		}
+	}
+}
+
+// TestListKeepsSessionsWhenTmuxQueryFails guards the fallback: a failed query
+// must leave the in-memory sessions alone rather than reporting an empty list.
+func TestListKeepsSessionsWhenTmuxQueryFails(t *testing.T) {
+	m := NewManager(true, "/bin/cat", false, "")
+	m.sessions["alive"] = &Runner{ID: "alive", Workdir: t.TempDir(), useTmux: true}
+	m.liveTmuxSessions = func() (map[string]tmuxSessionInfo, bool) {
+		return nil, false // query failed — we cannot tell what is running
+	}
+
+	list := m.List()
+	if len(list) != 1 || list[0].ID != "alive" {
+		t.Fatalf("List() = %+v, want the in-memory session preserved on query failure", list)
+	}
+	if _, ok := m.Get("alive"); !ok {
+		t.Error("session was evicted from the table despite an inconclusive tmux query")
+	}
+}

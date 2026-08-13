@@ -79,12 +79,26 @@ func parseTmuxSessionLine(line string) (tmuxSessionInfo, bool) {
 // callers can distinguish "no sessions" from "couldn't tell" and avoid wrongly
 // discarding live sessions on a transient failure. Pulling name here (rather
 // than a per-session show-options) keeps Manager.List to a single tmux exec.
+// isNoTmuxServer reports whether tmux's stderr means "there is nothing running"
+// (an honest empty set) rather than "the query failed". tmux prints
+// "no server running on <socket>" for the former and "error connecting to
+// <socket> (...)" for the latter, both with a non-zero exit.
+func isNoTmuxServer(stderr []byte) bool {
+	msg := strings.ToLower(string(stderr))
+	return strings.Contains(msg, "no server running") ||
+		strings.Contains(msg, "no sessions")
+}
+
 func liveTmuxSessions() (map[string]tmuxSessionInfo, bool) {
 	out, err := tmuxCmd("list-sessions", "-F", "#{session_name}\t#{pane_current_path}\t#{@vibe_remote_name}\t#{@vibe_remote_mode}\t#{@vibe_remote_source_workdir}\t#{@vibe_remote_source_repo}\t#{@vibe_remote_worktree_root}\t#{@vibe_remote_branch}").Output()
 	if err != nil {
-		// tmux exits non-zero when the server has no sessions; that's a
-		// legitimate empty set, not a query failure.
-		if _, ok := err.(*exec.ExitError); ok {
+		// tmux exits non-zero both when there genuinely are no sessions and when
+		// the query could not run at all, and only stderr tells them apart.
+		// Treating every non-zero exit as an empty set would let a transient
+		// failure (unreachable socket, permission problem) wipe every session
+		// from the in-memory table via reconcile.
+		var exitErr *exec.ExitError
+		if errors.As(err, &exitErr) && isNoTmuxServer(exitErr.Stderr) {
 			return map[string]tmuxSessionInfo{}, true
 		}
 		return nil, false
