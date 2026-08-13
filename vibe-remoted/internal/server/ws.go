@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"io"
 	"log"
 	"net/http"
@@ -222,11 +223,16 @@ func (s *Server) wsRelay(ctx context.Context, conn *websocket.Conn, runner *sess
 		defer cancel()
 		buf := make([]byte, 4096)
 		for {
-			n, err := runner.Read(buf)
+			n, err := runner.ReadEpoch(epoch, buf)
 			if err != nil {
 				if detaching.Load() || ctx.Err() != nil {
 					// PTY closed by our own teardown — session lives on in tmux,
 					// this is not a process exit.
+					return
+				}
+				if errors.Is(err, session.ErrEpochSuperseded) {
+					// A reconnect took the session over. Stop quietly: the process
+					// is alive and no longer ours to report on.
 					return
 				}
 				if err != io.EOF {
@@ -288,7 +294,13 @@ func (s *Server) wsRelay(ctx context.Context, conn *websocket.Conn, runner *sess
 			if err != nil {
 				continue
 			}
-			runner.Write(decoded)
+			// Epoch-bound so a stale connection's keystrokes can't land in the
+			// PTY a newer reconnect installed.
+			if _, err := runner.WriteEpoch(epoch, decoded); err != nil {
+				if errors.Is(err, session.ErrEpochSuperseded) {
+					return
+				}
+			}
 
 		case protocol.TypeResize:
 			var rf protocol.ResizeFrame

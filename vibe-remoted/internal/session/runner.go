@@ -309,10 +309,14 @@ func (r *Runner) AttachExisting(cols, rows uint16) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
-	// Close old PTY if any
-	if r.ptmx != nil {
-		r.ptmx.Close()
-	}
+	// Hand off the outgoing PTY and its tmux attach process, then clear the
+	// fields before doing anything that can fail. Leaving a closed *os.File in
+	// r.ptmx would make ptmxSnapshot hand out a dead descriptor instead of nil.
+	// reap() waits on the old process so repeated reconnects don't pile up
+	// zombies — closing the PTY master alone does not reclaim the child.
+	oldPTY, oldCmd := r.ptmx, r.cmd
+	r.ptmx, r.cmd = nil, nil
+	reap(oldPTY, oldCmd)
 
 	tmuxSessionName := fmt.Sprintf("vibe-remote-%s", r.ID)
 
@@ -346,6 +350,31 @@ func (r *Runner) AttachExisting(cols, rows uint16) error {
 	return nil
 }
 
+// reap retires a PTY master and the tmux attach process behind it.
+//
+// Order matters. Closing the master alone does NOT wake a relay already blocked
+// in Read on it (PTY masters support neither that nor SetReadDeadline), so the
+// old relay's goroutine would hang forever — one leak per reconnect. Killing
+// the attach process closes the slave side, which surfaces as EOF and lets the
+// reader exit. That only detaches a tmux *client*; the session and the CLI
+// inside it keep running, which is the whole point of tmux persistence.
+//
+// The Wait is what actually reclaims the child: on Unix an exited process stays
+// in the table until someone Waits for it. It runs in a goroutine because
+// callers hold r.mu and the process may take a moment to die.
+func reap(ptmx *os.File, cmd *exec.Cmd) {
+	if cmd != nil && cmd.Process != nil {
+		_ = cmd.Process.Kill()
+	}
+	if ptmx != nil {
+		ptmx.Close()
+	}
+	if cmd == nil || cmd.Process == nil {
+		return
+	}
+	go func() { _ = cmd.Wait() }()
+}
+
 // CurrentEpoch returns the current PTY epoch. A relay captures this right
 // after (re)attach and passes it to DetachEpoch so a stale connection's
 // teardown cannot close a newer connection's PTY.
@@ -354,6 +383,12 @@ func (r *Runner) CurrentEpoch() uint64 {
 	defer r.mu.Unlock()
 	return r.epoch
 }
+
+// ErrEpochSuperseded means a newer connection has installed its own PTY, so the
+// caller's epoch no longer owns the session. A relay seeing this must stop
+// quietly: the session is alive and now belongs to someone else, so reporting a
+// process exit to its (already gone) client would be wrong.
+var ErrEpochSuperseded = errors.New("pty epoch superseded by a newer attach")
 
 // ptmxSnapshot returns the current PTY master under lock. The blocking
 // Read/Write then operate on the snapshot without holding the mutex (so a
@@ -365,6 +400,20 @@ func (r *Runner) ptmxSnapshot() *os.File {
 	return r.ptmx
 }
 
+// ptmxSnapshotEpoch is ptmxSnapshot for a caller that owns a specific epoch. It
+// refuses to hand back a PTY that a newer attach installed — without this check
+// an old relay's next Read would silently start consuming the new connection's
+// bytes, and the two relays would split the stream between them (each client
+// rendering a partial screen).
+func (r *Runner) ptmxSnapshotEpoch(epoch uint64) (*os.File, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.epoch != epoch {
+		return nil, ErrEpochSuperseded
+	}
+	return r.ptmx, nil
+}
+
 // Read reads from the PTY master (blocks until data available).
 func (r *Runner) Read(buf []byte) (int, error) {
 	ptmx := r.ptmxSnapshot()
@@ -374,9 +423,36 @@ func (r *Runner) Read(buf []byte) (int, error) {
 	return ptmx.Read(buf)
 }
 
+// ReadEpoch is Read for a relay that owns a given epoch. It returns
+// ErrEpochSuperseded once a reconnect has taken over, so the caller can exit
+// without mistaking the handover for a process exit.
+func (r *Runner) ReadEpoch(epoch uint64, buf []byte) (int, error) {
+	ptmx, err := r.ptmxSnapshotEpoch(epoch)
+	if err != nil {
+		return 0, err
+	}
+	if ptmx == nil {
+		return 0, io.EOF
+	}
+	return ptmx.Read(buf)
+}
+
 // Write sends data to the PTY master (keyboard input from client).
 func (r *Runner) Write(data []byte) (int, error) {
 	ptmx := r.ptmxSnapshot()
+	if ptmx == nil {
+		return 0, io.ErrClosedPipe
+	}
+	return ptmx.Write(data)
+}
+
+// WriteEpoch is Write for a relay that owns a given epoch, so a stale
+// connection's buffered keystrokes can't leak into a newer session's PTY.
+func (r *Runner) WriteEpoch(epoch uint64, data []byte) (int, error) {
+	ptmx, err := r.ptmxSnapshotEpoch(epoch)
+	if err != nil {
+		return 0, err
+	}
 	if ptmx == nil {
 		return 0, io.ErrClosedPipe
 	}
@@ -413,10 +489,9 @@ func (r *Runner) Detach() {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
-	if r.ptmx != nil {
-		r.ptmx.Close()
-		r.ptmx = nil
-	}
+	oldPTY, oldCmd := r.ptmx, r.cmd
+	r.ptmx, r.cmd = nil, nil
+	reap(oldPTY, oldCmd)
 	r.stopped = true
 }
 
@@ -429,13 +504,13 @@ func (r *Runner) DetachEpoch(epoch uint64) bool {
 	defer r.mu.Unlock()
 
 	if r.epoch != epoch {
-		// A newer connection owns the PTY now; leave it alone.
+		// A newer connection owns the PTY now; leave it alone. Its own teardown
+		// (or the next AttachExisting) reaps the process it installed.
 		return false
 	}
-	if r.ptmx != nil {
-		r.ptmx.Close()
-		r.ptmx = nil
-	}
+	oldPTY, oldCmd := r.ptmx, r.cmd
+	r.ptmx, r.cmd = nil, nil
+	reap(oldPTY, oldCmd)
 	r.stopped = true
 	return true
 }
@@ -445,19 +520,18 @@ func (r *Runner) Kill() {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
-	if r.ptmx != nil {
-		r.ptmx.Close()
-		r.ptmx = nil
-	}
+	oldPTY, oldCmd := r.ptmx, r.cmd
+	r.ptmx, r.cmd = nil, nil
 
 	if r.useTmux {
 		tmuxSessionName := fmt.Sprintf("vibe-remote-%s", r.ID)
 		if err := tmuxCmd("kill-session", "-t", tmuxSessionName).Run(); err != nil {
 			log.Printf("warning: failed to kill tmux session %s: %v", tmuxSessionName, err)
 		}
-	} else if r.cmd != nil && r.cmd.Process != nil {
-		r.cmd.Process.Kill()
 	}
+	// reap kills the process and waits for it, which covers both cases: the
+	// tmux attach client above, or the directly-spawned CLI when tmux is off.
+	reap(oldPTY, oldCmd)
 
 	r.stopped = true
 }
@@ -489,12 +563,17 @@ func (r *Runner) Reload(command string) error {
 	return nil
 }
 
-// Wait waits for the process to exit and returns the exit code.
+// Wait waits for the process to exit and returns the exit code. Only the relay
+// that saw a genuine read error calls this, on the process it still owns —
+// retired processes are reaped by reap() instead, so no cmd is ever Waited twice.
 func (r *Runner) Wait() int {
-	if r.cmd == nil {
+	r.mu.Lock()
+	cmd := r.cmd
+	r.mu.Unlock()
+	if cmd == nil {
 		return -1
 	}
-	err := r.cmd.Wait()
+	err := cmd.Wait()
 	if err != nil {
 		if exitErr, ok := err.(*exec.ExitError); ok {
 			return exitErr.ExitCode()
