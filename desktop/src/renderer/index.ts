@@ -53,6 +53,12 @@ let selectedMachineKey: string | null = null;
 // recreates the whole sidebar DOM — that would delete the focused input and
 // its blur would silently commit half-typed text. Paused during editing.
 let renamingActive = false;
+// Sessions with a Reload in flight, keyed by viewKey(machine, sessionId).
+// Session-level rather than per-button because the sidebar is rebuilt from
+// several paths (5s poll, onReady/onExit, locale switch, and Reload's own
+// refresh) — a fresh button would come back enabled and let the user fire a
+// second respawn-pane at the same pane while the first is still running.
+const reloadingSessions = new Set<string>();
 // Every refresh captures a generation. A newer refresh or machine-list edit
 // invalidates older in-flight requests without serializing the 5s poll.
 let machineRefreshGeneration = 0;
@@ -159,6 +165,11 @@ function wireManageMachinesButton() {
         for (const rk of removedKeys) {
           machineSessions.delete(rk);
           machineOnline.delete(rk);
+          // Reload markers are keyed "<machineKey>::<sessionId>"; drop the
+          // machine's entries so they can't outlive it.
+          for (const marker of [...reloadingSessions]) {
+            if (marker.startsWith(`${rk}::`)) reloadingSessions.delete(marker);
+          }
         }
         if (selectedMachineKey && !machines.some((m) => machineKey(m) === selectedMachineKey)) {
           selectedMachineKey = machines.length > 0 ? machineKey(machines[0]) : null;
@@ -714,21 +725,33 @@ function renderSidebar() {
       reload.textContent = '↻';
       reload.title = t('session.reloadTitle');
       reload.setAttribute('aria-label', `${t('session.reloadTitle')}：${s.title || s.id}`);
+      // Reflect any in-flight Reload for this session, so a sidebar rebuild
+      // mid-request doesn't hand back an enabled button.
+      const reloadKey = viewKey(machine, s.id);
+      if (reloadingSessions.has(reloadKey)) {
+        reload.disabled = true;
+        reload.setAttribute('aria-busy', 'true');
+      }
       reload.addEventListener('click', async (e) => {
         e.stopPropagation();
+        if (reloadingSessions.has(reloadKey)) return;
         const name = s.title || (s.workdir ? s.workdir.split('/').pop() : '') || s.id;
         if (!window.confirm(t('session.reloadConfirm', { name }))) return;
+        reloadingSessions.add(reloadKey);
         reload.disabled = true;
         reload.setAttribute('aria-busy', 'true');
         try {
           await rests.get(machineKey(machine))!.reloadSession(s.id);
           updateStatusBar(t('session.reloadSuccess', { name }));
+          reloadingSessions.delete(reloadKey);
           await refreshAllMachines();
         } catch (error) {
           updateStatusBar(t('session.reloadFailed', {
             msg: error instanceof Error ? error.message : String(error),
           }));
+          reloadingSessions.delete(reloadKey);
         } finally {
+          // This button may already be detached by a rebuild; harmless either way.
           reload.disabled = false;
           reload.removeAttribute('aria-busy');
         }
@@ -886,6 +909,9 @@ async function closeSession(machine: MachineConfig, sessionId: string) {
     return;
   }
   const key = viewKey(machine, sessionId);
+  // The session is gone; drop any Reload marker so the key can't linger and
+  // disable a future session that happens to reuse the id.
+  reloadingSessions.delete(key);
   const view = views.get(key);
   if (view) {
     view.client.disconnect();
