@@ -3,8 +3,6 @@ node_modules/
 **/node_modules/
 bin/
 **/dist/
-mobile/ios/Pods/
-mobile/ios/**/xcuserdata/
 
 # OS
 .DS_Store
@@ -35,12 +33,6 @@ desktop/src/main/machines.json
 .playwright-mcp/
 .superpowers/
 skills-lock.json
-
-# Experimental clients kept outside the desktop-first public release
-mobile/
-web/
-packages/
-vibe-remoted/cmd/vibe-portal/
 
 # Local scratch files
 /2
