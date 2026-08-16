@@ -24,7 +24,7 @@ cd vibe-remoted && go vet ./...
 cd vibe-remoted && GOOS=linux GOARCH=amd64 go build -o ../bin/vibe-remoted-linux-amd64 ./cmd/vibe-remoted
 scp bin/vibe-remoted-linux-amd64 dev:~/vibe-remoted
 
-# 客户端（Electron）
+- 客户端（Electron）
 cd desktop && npm install
 cd desktop && npm run dev       # Vite + Electron 热重载
 cd desktop && npm run typecheck # tsc --noEmit
@@ -35,7 +35,17 @@ make smoke                      # curl localhost:8765/healthz
 
 打包时用国内镜像加速 electron 二进制：`ELECTRON_MIRROR=https://npmmirror.com/mirrors/electron/`。
 
-## 架构：关键机制（跨文件才能理解的部分）
+### 当前仓库布局
+
+```text
+desktop/       Electron + xterm.js macOS 客户端
+vibe-remoted/  Go daemon：REST + WebSocket + PTY/tmux 会话生命周期
+docs/          协议与发布文档
+```
+
+当前仓库只维护上述桌面终端产品线。iOS、Android、web 客户端、共享 React 包和 portal 均不属于当前版本；旧实现若需研究只能从 Git 历史恢复。
+
+
 
 ### 会话持久化模型（PTY → tmux → claude）
 
@@ -102,7 +112,7 @@ JSON 分帧 WebSocket，帧靠 `type` 区分，PTY 字节走 base64（`data` 帧
 
 ## 状态
 
-首个开源版本聚焦 macOS 桌面客户端和 Go daemon。Windows 与移动端属于后续路线图。发行前仍需处理代码签名和 app 图标。
+首个开源版本聚焦 macOS 桌面客户端和 Go daemon。当前仓库只维护桌面终端线；iOS、Android、web 客户端和共享包不属于当前版本。发行后仍需处理代码签名和 app 图标。
 
 ### 第二批体验增强（已完成）
 

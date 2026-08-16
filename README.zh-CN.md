@@ -5,8 +5,8 @@
 一个 macOS「远程 Claude 终端」客户端：Claude Code CLI 在远程机器的 PTY
 中运行，Electron 桌面端像本地终端一样展示并交互。
 
-> **项目状态：**早期公开预览。首个正式支持的客户端是 macOS；Windows 和移动端
-> 属于后续路线图，不在首个开源版本的支持范围内。
+> **项目状态：**早期公开预览。目前唯一支持的客户端是 macOS 桌面端；本仓库刻意只保留
+> 远程 PTY→tmux 终端这一条产品线。
 
 vibe-remote 是独立开源项目，与 Anthropic 无隶属或背书关系。Claude 和 Claude Code
 归其各自权利人所有。

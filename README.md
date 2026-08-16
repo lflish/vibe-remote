@@ -6,8 +6,8 @@ A macOS desktop client for using Claude Code CLI on a remote machine like a
 local terminal. The interactive CLI runs inside a remote PTY while the Electron
 app renders the original terminal byte stream.
 
-> **Project status:** early public preview. The first supported client is macOS.
-> Windows and mobile clients are roadmap items, not part of the initial release.
+> **Project status:** early public preview. The only supported client is the macOS desktop app.
+> This repository intentionally ships one client: remote PTY→tmux terminal access.
 
 vibe-remote is an independent open-source project and is not affiliated with or
 endorsed by Anthropic. Claude and Claude Code are trademarks of their respective

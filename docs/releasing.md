@@ -13,8 +13,11 @@ If an existing private repository history contains environment-specific data,
 prefer creating the public repository from a reviewed squash of the current
 tree instead of making the old history public.
 
-## Build verification
+## Current artifact scope
 
+The current release contains one supported artifact: the macOS arm64 Electron desktop DMG. Mobile, web, and portal artifacts are not built or published from this repository.
+
+## Build verification
 ```bash
 cd vibe-remoted
 go test ./...
@@ -25,6 +28,7 @@ cd ../desktop
 npm ci
 npm run typecheck
 npm run test:preserved-notice
+npm run test:attach-replay
 npm run build
 ```
 

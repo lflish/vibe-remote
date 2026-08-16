@@ -3,7 +3,13 @@
 Thanks for helping improve vibe-remote. The initial public release focuses on
 the macOS desktop client and the Go daemon.
 
+## Current product scope
+
+The current repository contains one product line: a macOS Electron desktop client connected to the Go daemon over the PTY→tmux terminal protocol. Mobile, web, and shared-package implementations are not part of the active tree; do not add them back without a new product decision.
+
 ## Development setup
+
+
 
 Requirements:
 

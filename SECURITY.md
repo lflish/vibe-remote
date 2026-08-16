@@ -16,7 +16,13 @@ Include reproduction steps, affected versions, impact, and any suggested
 mitigation. Please allow reasonable time for investigation before public
 disclosure.
 
+## Current product scope
+
+The supported product surface is the macOS Electron desktop client and the Go `vibe-remoted` daemon. The repository does not currently ship mobile or web clients.
+
 ## Deployment boundary
+
+
 
 `vibe-remoted` gives an authenticated client interactive access to a shell-like
 CLI running with the daemon user's permissions. Treat it as remote shell access.
