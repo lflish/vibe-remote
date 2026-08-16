@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain } from 'electron';
+import { app, BrowserWindow, ipcMain, screen } from 'electron';
 import * as path from 'path';
 import * as fs from 'fs';
 import type { MachineConfig } from '../shared/protocol';
@@ -15,7 +15,17 @@ type WindowState = {
   maximized?: boolean;
 };
 
-const DEFAULT_WINDOW_STATE: WindowState = { width: 1200, height: 800 };
+// First run fills the screen's work area (minus the menu bar / Dock) rather than
+// opening a small window the user has to resize. Only the default: once a size
+// has been saved, that wins — so manually shrinking the window sticks.
+function defaultWindowState(): WindowState {
+  const { workAreaSize } = screen.getPrimaryDisplay();
+  return {
+    width: Math.max(800, workAreaSize.width),
+    height: Math.max(500, workAreaSize.height),
+    maximized: true,
+  };
+}
 
 function getWindowStatePath(): string {
   return path.join(app.getPath('userData'), 'window-state.json');
@@ -29,7 +39,7 @@ function loadWindowState(): WindowState {
     const width = Number(parsed.width);
     const height = Number(parsed.height);
     if (!Number.isFinite(width) || !Number.isFinite(height) || width < 800 || height < 500) {
-      return DEFAULT_WINDOW_STATE;
+      return defaultWindowState();
     }
     const state: WindowState = { width: Math.round(width), height: Math.round(height) };
     if (Number.isFinite(Number(parsed.x)) && Number.isFinite(Number(parsed.y))) {
@@ -39,7 +49,7 @@ function loadWindowState(): WindowState {
     if (parsed.maximized) state.maximized = true;
     return state;
   } catch {
-    return DEFAULT_WINDOW_STATE;
+    return defaultWindowState();
   }
 }
 
