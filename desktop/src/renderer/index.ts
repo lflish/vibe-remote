@@ -43,11 +43,14 @@ const rests = new Map<string, VibeRemoteRest>(); // machineKey -> REST client
 const views = new Map<string, SessionView>(); // view key -> open session view
 const machineSessions = new Map<string, SessionInfo[]>(); // machineKey -> sessions (REST)
 const machineOnline = new Map<string, boolean>(); // machineKey -> reachable
+type MachineIssue = 'auth' | 'version' | 'unreachable';
+const machineIssues = new Map<string, MachineIssue>();
+const machineFailures = new Map<string, number>();
+const machineRetryAt = new Map<string, number>();
+const COLLAPSED_MACHINES_KEY = 'vibe-remote.collapsed-machines';
+const collapsedMachines = loadCollapsedMachines();
 let activeKey: string | null = null;
 let overviewMachineKey: string | null = null;
-// The machine selected for a new session when no session is active. Kept as
-// state because the sidebar is rebuilt during polling.
-let selectedMachineKey: string | null = null;
 // While an inline rename input is open we suppress full sidebar rebuilds:
 // the 5s poll (and onReady/onExit) call renderSidebar(), which wipes and
 // recreates the whole sidebar DOM — that would delete the focused input and
@@ -62,9 +65,41 @@ const reloadingSessions = new Set<string>();
 // Every refresh captures a generation. A newer refresh or machine-list edit
 // invalidates older in-flight requests without serializing the 5s poll.
 let machineRefreshGeneration = 0;
+let statusMessageTimer: ReturnType<typeof setTimeout> | null = null;
 
 const machineKey = (m: MachineConfig) => `${m.addr}:${m.port}`;
 const viewKey = (m: MachineConfig, sid: string) => `${machineKey(m)}::${sid}`;
+
+function rendererIcon(name: 'machine' | 'terminal' | 'branch' | 'chevron' | 'reload' | 'close'): SVGSVGElement {
+  const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+  svg.setAttribute('viewBox', '0 0 20 20');
+  svg.setAttribute('aria-hidden', 'true');
+  const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+  const paths = {
+    machine: 'M4 3.5h12a1.5 1.5 0 0 1 1.5 1.5v10A1.5 1.5 0 0 1 16 16.5H4A1.5 1.5 0 0 1 2.5 15V5A1.5 1.5 0 0 1 4 3.5Zm-1.5 6h15M5.5 6.5h.01m2.49 0h.01m-2.51 6h.01m2.49 0h.01',
+    terminal: 'M4.5 5.5 8 9l-3.5 3.5M10 13h5.5',
+    branch: 'M6 3.5v9.25A3.75 3.75 0 0 0 9.75 16.5H14M6 6.5h5A3 3 0 0 0 14 3.5v0M4 3.5h4m4 0h4m-4 13h4',
+    chevron: 'm7 5 5 5-5 5',
+    reload: 'M15.5 6.4A6.5 6.5 0 1 0 16.2 12M15.5 6.4V2.8m0 3.6h-3.6',
+    close: 'M5.5 5.5l9 9m0-9-9 9',
+  };
+  path.setAttribute('d', paths[name]);
+  svg.appendChild(path);
+  return svg;
+}
+
+function loadCollapsedMachines(): Set<string> {
+  try {
+    const value = JSON.parse(localStorage.getItem(COLLAPSED_MACHINES_KEY) ?? '[]');
+    return new Set(Array.isArray(value) ? value.filter((item): item is string => typeof item === 'string') : []);
+  } catch {
+    return new Set();
+  }
+}
+
+function persistCollapsedMachines() {
+  localStorage.setItem(COLLAPSED_MACHINES_KEY, JSON.stringify([...collapsedMachines]));
+}
 
 // --- base64 <-> bytes helpers (UTF-8 safe) ---
 // PTY bytes travel as base64; convert to/from raw bytes (not JS strings) so
@@ -94,7 +129,6 @@ async function init() {
     renderEmptyState();
     return;
   }
-  selectedMachineKey = machineKey(machines[0]);
   rebuildRests();
   await refreshAllMachines();
   showMachineOverview(machines[0]);
@@ -177,15 +211,17 @@ function wireManageMachinesButton() {
         for (const rk of removedKeys) {
           machineSessions.delete(rk);
           machineOnline.delete(rk);
+          machineIssues.delete(rk);
+          machineFailures.delete(rk);
+          machineRetryAt.delete(rk);
+          collapsedMachines.delete(rk);
           // Reload markers are keyed "<machineKey>::<sessionId>"; drop the
           // machine's entries so they can't outlive it.
           for (const marker of [...reloadingSessions]) {
             if (marker.startsWith(`${rk}::`)) reloadingSessions.delete(marker);
           }
         }
-        if (selectedMachineKey && !machines.some((m) => machineKey(m) === selectedMachineKey)) {
-          selectedMachineKey = machines.length > 0 ? machineKey(machines[0]) : null;
-        }
+        if (removedKeys.length > 0) persistCollapsedMachines();
         if (overviewMachineKey && !machines.some((m) => machineKey(m) === overviewMachineKey)) {
           overviewMachineKey = null;
         }
@@ -210,7 +246,6 @@ function wireManageMachinesButton() {
           if (!next.done) setActive(next.value);
         }
         if (machines.length === 0) {
-          selectedMachineKey = null;
           overviewMachineKey = null;
           renderEmptyState();
         } else {
@@ -262,9 +297,14 @@ function wireTerminalResizeObserver() {
 
 // refreshAllMachines pulls each machine's session list over REST. It is the
 // single reachability signal used by the desktop sidebar.
-async function refreshAllMachines() {
+async function refreshAllMachines(force = false, targetMachineKey?: string) {
   const generation = ++machineRefreshGeneration;
-  const refreshMachines = machines.slice();
+  const now = Date.now();
+  const refreshMachines = machines.filter((machine) => {
+    const mk = machineKey(machine);
+    if (targetMachineKey && mk !== targetMachineKey) return false;
+    return force || (machineRetryAt.get(mk) ?? 0) <= now;
+  });
 
   // Publish each response independently. In particular, a slow / unavailable
   // info endpoint must not delay the session list (or make a healthy machine
@@ -294,15 +334,29 @@ async function refreshAllMachines() {
           if (!isCurrent(m)) return;
           machineSessions.set(mk, sessions);
           machineOnline.set(mk, true);
+          machineIssues.delete(mk);
+          machineFailures.delete(mk);
+          machineRetryAt.delete(mk);
         })
-        .catch(() => {
+        .catch((error: unknown) => {
           if (!isCurrent(m)) return;
           machineOnline.set(mk, false);
+          machineIssues.set(mk, classifyMachineIssue(error));
+          const failures = (machineFailures.get(mk) ?? 0) + 1;
+          machineFailures.set(mk, failures);
+          machineRetryAt.set(mk, Date.now() + Math.min(5000 * (2 ** (failures - 1)), 60000));
         })
         .finally(() => publish(m));
       return [sessionsRequest];
     }),
   );
+}
+
+function classifyMachineIssue(error: unknown): MachineIssue {
+  const message = error instanceof Error ? error.message.toLowerCase() : String(error).toLowerCase();
+  if (/\b(401|403)\b/.test(message)) return 'auth';
+  if (/\b404\b/.test(message)) return 'version';
+  return 'unreachable';
 }
 
 // Machine overview keeps machine-level actions close to the selected machine.
@@ -313,9 +367,9 @@ function renderMachineOverview(machine: MachineConfig) {
   if (!mount) return;
 
   const mk = machineKey(machine);
-  const online = machineOnline.get(mk) === true;
+  const reachability = machineOnline.get(mk);
+  const online = reachability === true;
   const sessions = machineSessions.get(mk) ?? [];
-  const localViewCount = [...views.values()].filter((view) => machineKey(view.machine) === mk).length;
   mount.textContent = '';
 
   const workspace = document.createElement('div');
@@ -330,7 +384,13 @@ function renderMachineOverview(machine: MachineConfig) {
   eyebrow.textContent = t('workspace.eyebrow');
   const title = document.createElement('h1');
   title.textContent = machine.name;
-  identity.append(eyebrow, title);
+  const titleRow = document.createElement('div');
+  titleRow.className = 'workspace-title-row';
+  const machineMark = document.createElement('span');
+  machineMark.className = `workspace-machine-mark ${reachability === undefined ? 'checking' : online ? 'connected' : 'error'}`;
+  machineMark.appendChild(rendererIcon('machine'));
+  titleRow.append(machineMark, title);
+  identity.append(eyebrow, titleRow);
 
   const headerActions = document.createElement('div');
   headerActions.className = 'workspace-header-actions';
@@ -341,31 +401,36 @@ function renderMachineOverview(machine: MachineConfig) {
   manage.addEventListener('click', () => {
     document.getElementById('btn-manage-machines')?.dispatchEvent(new MouseEvent('click'));
   });
-  const create = document.createElement('button');
-  create.type = 'button';
-  create.className = 'btn-primary workspace-new-session';
-  create.textContent = t('workspace.newSession');
-  create.addEventListener('click', () => startNewSession(machine));
-  headerActions.append(manage, create);
+  headerActions.append(manage);
   header.append(identity, headerActions);
 
-  const stats = document.createElement('section');
-  stats.className = 'workspace-stats';
-  stats.setAttribute('aria-label', t('workspace.statsLabel'));
-  const statValues = [
-    { label: t('workspace.stat.sessions'), value: String(sessions.length) },
-    { label: t('workspace.stat.openHere'), value: String(localViewCount) },
-    { label: t('workspace.stat.connection'), value: isLoopbackAddress(machine.addr) ? t('workspace.connection.local') : t('workspace.connection.remote') },
-  ];
-  for (const stat of statValues) {
-    const item = document.createElement('div');
-    item.className = 'workspace-stat';
-    const value = document.createElement('strong');
-    value.textContent = stat.value;
-    const label = document.createElement('span');
-    label.textContent = stat.label;
-    item.append(value, label);
-    stats.appendChild(item);
+  const summary = document.createElement('p');
+  summary.className = 'workspace-summary';
+  summary.textContent = `${t('workspace.summary.sessions', { count: sessions.length })} · ${isLoopbackAddress(machine.addr) ? t('workspace.summary.local') : t('workspace.summary.remote')}`;
+
+  let connectionNotice: HTMLElement | null = null;
+  if (reachability === false) {
+    connectionNotice = document.createElement('section');
+    connectionNotice.className = 'workspace-notice workspace-notice-error';
+    connectionNotice.setAttribute('aria-labelledby', 'connection-notice-title');
+    const noticeCopy = document.createElement('div');
+    const noticeTitle = document.createElement('strong');
+    noticeTitle.id = 'connection-notice-title';
+    noticeTitle.textContent = t('workspace.connectionIssue.title');
+    const noticeDetail = document.createElement('p');
+    noticeDetail.textContent = t(`workspace.connectionIssue.${machineIssues.get(mk) ?? 'unreachable'}`);
+    noticeCopy.append(noticeTitle, noticeDetail);
+    const retry = document.createElement('button');
+    retry.type = 'button';
+    retry.className = 'btn-secondary workspace-retry';
+    retry.textContent = t('workspace.connectionIssue.retry');
+    retry.addEventListener('click', async () => {
+      retry.disabled = true;
+      retry.setAttribute('aria-busy', 'true');
+      machineRetryAt.delete(mk);
+      await refreshAllMachines(true, mk);
+    });
+    connectionNotice.append(noticeCopy, retry);
   }
 
   const recentSection = document.createElement('section');
@@ -380,10 +445,7 @@ function renderMachineOverview(machine: MachineConfig) {
   recentSubtitle.className = 'workspace-section-subtitle';
   recentSubtitle.textContent = t('workspace.recent.subtitle');
   recentTitleGroup.append(recentTitle, recentSubtitle);
-  const connection = document.createElement('span');
-  connection.className = `workspace-connection${online ? ' connected' : ''}`;
-  connection.textContent = online ? t('workspace.connected') : t('workspace.offline');
-  recentHeading.append(recentTitleGroup, connection);
+  recentHeading.append(recentTitleGroup);
   recentSection.appendChild(recentHeading);
 
   const recentList = document.createElement('div');
@@ -404,7 +466,13 @@ function renderMachineOverview(machine: MachineConfig) {
       sessionTitle.textContent = session.title || session.id;
       const identity = document.createElement('span');
       identity.className = 'workspace-session-identity';
-      identity.appendChild(sessionTitle);
+      const sessionIcon = document.createElement('span');
+      sessionIcon.className = 'workspace-session-icon';
+      sessionIcon.appendChild(rendererIcon('terminal'));
+      const sessionCopy = document.createElement('span');
+      sessionCopy.className = 'workspace-session-copy';
+      sessionCopy.appendChild(sessionTitle);
+      identity.append(sessionIcon, sessionCopy);
       const badges = document.createElement('span');
       badges.className = 'workspace-session-badges';
       const mode = document.createElement('span');
@@ -441,11 +509,16 @@ function renderMachineOverview(machine: MachineConfig) {
     const card = document.createElement('button');
     card.type = 'button';
     card.className = `workspace-mode-card${item.featured ? ' workspace-mode-card-featured' : ''}`;
+    card.disabled = !online;
+    if (!online) card.title = t('workspace.connectionIssue.required');
     const cardHead = document.createElement('span');
     cardHead.className = 'workspace-mode-head';
+    const cardIcon = document.createElement('span');
+    cardIcon.className = 'workspace-mode-icon';
+    cardIcon.appendChild(rendererIcon(item.mode === 'worktree' ? 'branch' : 'terminal'));
     const cardTitle = document.createElement('strong');
     cardTitle.textContent = item.title;
-    cardHead.appendChild(cardTitle);
+    cardHead.append(cardIcon, cardTitle);
     if (item.tag) {
       const tag = document.createElement('span');
       tag.className = 'workspace-mode-tag';
@@ -466,7 +539,22 @@ function renderMachineOverview(machine: MachineConfig) {
     modeGrid.appendChild(card);
   }
   modesSection.append(modesTitleGroup, modeGrid);
-  workspace.append(header, stats, recentSection, modesSection);
+
+  const content = document.createElement('div');
+  content.className = 'workspace-content';
+  if (online && recent.length === 0) {
+    content.classList.add('workspace-content-empty');
+    content.appendChild(modesSection);
+  } else if (online) {
+    content.append(recentSection, modesSection);
+  } else if (recent.length > 0) {
+    content.classList.add('workspace-content-single');
+    content.appendChild(recentSection);
+  }
+
+  workspace.append(header, summary);
+  if (connectionNotice) workspace.appendChild(connectionNotice);
+  if (content.childElementCount > 0) workspace.appendChild(content);
   mount.appendChild(workspace);
 }
 
@@ -489,6 +577,7 @@ function showMachineOverview(machine: MachineConfig) {
     mount.hidden = false;
     renderMachineOverview(machine);
   }
+  renderSidebar();
   updateStatusBar();
 }
 
@@ -497,8 +586,8 @@ function makeTerminal(): { term: Terminal; fit: FitAddon } {
     fontSize: 14,
     fontFamily: "'JetBrains Mono', 'SF Mono', 'Fira Code', 'Cascadia Code', monospace",
     theme: {
-      background: '#F5F4EF', foreground: '#2B2A28', cursor: '#C9645A',
-      selectionBackground: '#DCD6C9',
+      background: '#FBFAF7', foreground: '#2B2A28', cursor: '#AD5048',
+      selectionBackground: '#DED7CB',
       black: '#3B3A37', red: '#C0564B', green: '#5E8C58', yellow: '#B07D2E',
       blue: '#4A72B0', magenta: '#9A5BA0', cyan: '#3E8C8C', white: '#6B6862',
       brightBlack: '#9B978E', brightRed: '#C0564B', brightGreen: '#5E8C58',
@@ -644,6 +733,10 @@ function setActive(key: string) {
   if (activeView && activeView.activity !== 'none') {
     activeView.activity = 'none';
   }
+  if (activeView) {
+    const activeMachineKey = machineKey(activeView.machine);
+    if (collapsedMachines.delete(activeMachineKey)) persistCollapsedMachines();
+  }
   for (const [k, v] of views) {
     v.container.style.display = k === key ? 'block' : 'none';
   }
@@ -678,32 +771,65 @@ function renderSidebar() {
     const group = document.createElement('div');
     group.className = 'machine-group';
 
-    const nameRow = document.createElement('div');
-    const mKey = machineKey(machine);
-    nameRow.className = 'machine-name' + (mKey === selectedMachineKey ? ' selected' : '');
-    const dot = document.createElement('span');
-    dot.className = 'machine-status' + (machineOnline.get(mKey) ? ' connected' : ' error');
-    const nameSpan = document.createElement('span');
-    nameSpan.textContent = machine.name;
-    nameRow.append(dot, nameSpan);
-    nameRow.addEventListener('click', () => {
-      selectedMachineKey = mKey;
-      showMachineOverview(machine);
+    const sessions = machineSessions.get(machineKey(machine)) || [];
+    const collapsed = collapsedMachines.has(machineKey(machine));
+    const groupHeader = document.createElement('div');
+    groupHeader.className = 'machine-group-header';
+    const toggle = document.createElement('button');
+    toggle.type = 'button';
+    toggle.className = 'machine-toggle';
+    toggle.appendChild(rendererIcon('chevron'));
+    toggle.setAttribute('aria-expanded', String(!collapsed));
+    toggle.setAttribute('aria-label', `${collapsed ? t('sidebar.expand') : t('sidebar.collapse')}：${machine.name}`);
+    toggle.disabled = sessions.length === 0;
+    toggle.addEventListener('click', () => {
+      if (collapsedMachines.has(machineKey(machine))) collapsedMachines.delete(machineKey(machine));
+      else collapsedMachines.add(machineKey(machine));
+      persistCollapsedMachines();
       renderSidebar();
+    });
+    const nameRow = document.createElement('button');
+    nameRow.type = 'button';
+    const mKey = machineKey(machine);
+    const machineState = machineOnline.get(mKey);
+    const isOverview = mKey === overviewMachineKey;
+    nameRow.className = 'machine-name' + (isOverview ? ' selected' : '');
+    if (isOverview) nameRow.setAttribute('aria-current', 'page');
+    nameRow.setAttribute('aria-label', `${machine.name} · ${machineState === true ? t('workspace.connected') : machineState === false ? t('workspace.offline') : t('status.connecting')}`);
+    const nameSpan = document.createElement('span');
+    nameSpan.className = 'machine-name-label';
+    nameSpan.textContent = machine.name;
+    const machineIcon = document.createElement('span');
+    machineIcon.className = `machine-kind-icon ${machineState === true ? 'connected' : machineState === false ? 'error' : 'checking'}`;
+    machineIcon.appendChild(rendererIcon('machine'));
+    const sessionCount = document.createElement('span');
+    sessionCount.className = 'machine-session-count';
+    sessionCount.textContent = String(sessions.length);
+    sessionCount.setAttribute('aria-hidden', 'true');
+    nameRow.append(machineIcon, nameSpan, sessionCount);
+    nameRow.addEventListener('click', () => {
+      showMachineOverview(machine);
     });
 
     const list = document.createElement('div');
     list.className = 'session-list';
+    list.hidden = collapsed;
 
-    const sessions = machineSessions.get(machineKey(machine)) || [];
     for (const s of sessions) {
       const key = viewKey(machine, s.id);
       const item = document.createElement('div');
       item.className = 'session-item' + (key === activeKey ? ' active' : '');
 
-      const label = document.createElement('span');
+      const label = document.createElement('button');
+      label.type = 'button';
       label.className = 'session-label';
-      label.textContent = s.title || (s.workdir ? s.workdir.split('/').pop() : '') || s.id;
+      const sessionIcon = document.createElement('span');
+      sessionIcon.className = 'session-kind-icon';
+      sessionIcon.appendChild(rendererIcon('terminal'));
+      const sessionText = document.createElement('span');
+      sessionText.className = 'session-label-text';
+      sessionText.textContent = s.title || (s.workdir ? s.workdir.split('/').pop() : '') || s.id;
+      label.append(sessionIcon, sessionText);
       label.title = s.workdir || s.id;
       // Click vs dblclick: dblclick=rename. A dblclick fires as click→click→
       // dblclick, so a naive click handler would open (and WS-connect) an
@@ -728,6 +854,7 @@ function renderSidebar() {
 
       const dot = document.createElement('span');
       dot.className = 'session-unread';
+      dot.setAttribute('aria-hidden', 'true');
       const openView = views.get(key);
       const act = openView?.activity ?? 'none';
       if (act === 'none' || key === activeKey) {
@@ -739,7 +866,7 @@ function renderSidebar() {
       const reload = document.createElement('button');
       reload.type = 'button';
       reload.className = 'session-action session-reload';
-      reload.textContent = '↻';
+      reload.appendChild(rendererIcon('reload'));
       reload.title = t('session.reloadTitle');
       reload.setAttribute('aria-label', `${t('session.reloadTitle')}：${s.title || s.id}`);
       // Reflect any in-flight Reload for this session, so a sidebar rebuild
@@ -777,7 +904,7 @@ function renderSidebar() {
       const close = document.createElement('button');
       close.type = 'button';
       close.className = 'session-action session-close';
-      close.textContent = '×';
+      close.appendChild(rendererIcon('close'));
       close.title = t('session.deleteTitle');
       close.setAttribute('aria-label', `${t('session.deleteTitle')}：${s.title || s.id}`);
       // Deleting truly kills the remote tmux + claude; the current screen is
@@ -797,7 +924,8 @@ function renderSidebar() {
       list.appendChild(item);
     }
 
-    group.append(nameRow, list);
+    groupHeader.append(toggle, nameRow);
+    group.append(groupHeader, list);
     container.appendChild(group);
   }
 }
@@ -848,8 +976,8 @@ function startInlineRename(machine: MachineConfig, s: SessionInfo, label: HTMLEl
 }
 
 function updateStatusBar(extra?: string, attempt?: number) {
-  const connEl = document.getElementById('status-connection')!;
-  const sessionEl = document.getElementById('status-session')!;
+  const statusBar = document.getElementById('status-bar')!;
+  const statusMessage = document.getElementById('status-message')!;
   const tbTitle = document.getElementById('toolbar-title')!;
   const tbStatus = document.getElementById('toolbar-status')!;
   const tbStatusText = document.getElementById('toolbar-status-text')!;
@@ -857,17 +985,26 @@ function updateStatusBar(extra?: string, attempt?: number) {
   const overviewMachine = overviewMachineKey
     ? machines.find((m) => machineKey(m) === overviewMachineKey)
     : null;
-  connEl.className = '';
   tbStatus.className = '';
 
+  if (extra) {
+    statusMessage.textContent = extra;
+    statusBar.hidden = false;
+    if (statusMessageTimer) clearTimeout(statusMessageTimer);
+    statusMessageTimer = setTimeout(() => {
+      statusBar.hidden = true;
+      statusMessage.textContent = '';
+      statusMessageTimer = null;
+    }, 6000);
+  }
+
   if (overviewMachine) {
-    const online = machineOnline.get(overviewMachineKey!) === true;
+    const state = machineOnline.get(overviewMachineKey!);
     tbTitle.textContent = overviewMachine.name;
-    connEl.className = online ? 'connected' : 'error';
-    connEl.textContent = online ? `${t('status.connected')} · ${overviewMachine.name}` : `${t('workspace.offline')} · ${overviewMachine.name}`;
-    tbStatus.className = online ? 'connected' : 'error';
-    tbStatusText.textContent = online ? t('status.connected') : t('workspace.offline');
-    sessionEl.textContent = extra || '';
+    tbStatus.className = state === true ? 'connected' : state === false ? 'error' : 'checking';
+    tbStatusText.textContent = state === true
+      ? t('status.connected')
+      : state === false ? t('workspace.offline') : t('status.connecting');
     return;
   }
 
@@ -879,30 +1016,22 @@ function updateStatusBar(extra?: string, attempt?: number) {
 
     const st = view.client.state;
     if (st === ConnectionState.Connected) {
-      connEl.className = 'connected';
-      connEl.textContent = `${t('status.connected')} · ${view.machine.name}`;
       tbStatus.className = 'connected';
       tbStatusText.textContent = t('status.connected');
     } else if (st === ConnectionState.Reconnecting) {
-      connEl.className = 'reconnecting';
       const n = attempt ?? 0;
-      connEl.textContent = n > 0 ? t('status.reconnectingAttempt', { n }) : t('status.reconnecting');
       tbStatus.className = 'reconnecting';
       tbStatusText.textContent = n > 0 ? t('status.reconnectingAttempt', { n }) : t('status.reconnecting');
     } else {
-      connEl.textContent = t('status.disconnected');
       tbStatus.className = 'error';
       tbStatusText.textContent = t('status.disconnected');
     }
   } else {
     tbTitle.textContent = 'vibe-remote';
     const anyOnline = [...machineOnline.values()].some(Boolean);
-    connEl.className = anyOnline ? 'connected' : '';
-    connEl.textContent = anyOnline ? t('status.ready') : t('status.noConnection');
     tbStatus.className = anyOnline ? 'connected' : '';
     tbStatusText.textContent = anyOnline ? t('status.ready') : t('status.noConnection');
   }
-  sessionEl.textContent = extra || (view?.sessionId ? t('status.sessionLabel', { id: view.sessionId }) : '');
 }
 
 // closeSession kills the remote session (tmux + claude) and removes its view.
@@ -956,21 +1085,19 @@ function renderEmptyState() {
   }
   const box = document.createElement('div');
   box.className = 'empty-state';
-  const h = document.createElement('p');
+  const h = document.createElement('h1');
+  h.className = 'empty-state-title';
   h.textContent = t('empty.title');
-  h.style.fontSize = '16px';
-  h.style.color = 'var(--text-secondary)';
   const p = document.createElement('p');
-  p.style.fontSize = '12px';
+  p.className = 'empty-state-description';
   p.textContent = t('empty.desc');
   const btn = document.createElement('button');
+  btn.type = 'button';
   btn.className = 'btn-primary';
-  btn.style.width = 'auto';
-  btn.style.marginTop = '8px';
   btn.textContent = t('empty.addMachine');
   btn.addEventListener('click', () => document.getElementById('btn-manage-machines')?.dispatchEvent(new MouseEvent('click')));
   const hint = document.createElement('p');
-  hint.style.fontSize = '11px';
+  hint.className = 'empty-state-hint';
   hint.textContent = t('empty.hint');
   box.append(h, p, btn, hint);
   container.appendChild(box);

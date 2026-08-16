@@ -1,6 +1,7 @@
 import type { MachineConfig } from '../shared/protocol';
 import { VibeRemoteRest } from './rest';
 import { t } from './i18n';
+import { activateModal } from './modal';
 
 /**
  * Machine manager modal — app-internal CRUD for the machine list, replacing
@@ -15,6 +16,7 @@ import { t } from './i18n';
 export interface TestResult {
   ok: boolean;
   hostname?: string;
+  reason?: 'unreachable' | 'auth' | 'version';
   error?: string;
 }
 
@@ -25,16 +27,18 @@ export async function testConnection(machine: MachineConfig): Promise<TestResult
   const base = `http://${machine.addr}:${machine.port}`;
   try {
     const health = await fetch(`${base}/healthz`);
-    if (!health.ok) return { ok: false, error: `unreachable (healthz ${health.status})` };
+    if (!health.ok) return { ok: false, reason: 'unreachable', error: `healthz ${health.status}` };
   } catch (e) {
-    return { ok: false, error: `unreachable (${(e as Error).message})` };
+    return { ok: false, reason: 'unreachable', error: (e as Error).message };
   }
   try {
     const rest = new VibeRemoteRest(machine);
     const info = await rest.info();
     return { ok: true, hostname: info.hostname };
-  } catch {
-    return { ok: false, error: 'bad token or info failed' };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    const reason = /\b(401|403)\b/.test(message) ? 'auth' : /\b404\b/.test(message) ? 'version' : 'unreachable';
+    return { ok: false, reason, error: message };
   }
 }
 
@@ -54,11 +58,12 @@ interface ManagerOpts {
 // then calls onSaved so the caller can hot-reload without restarting the app.
 export function openMachineManager(opts: ManagerOpts): void {
   const working: MachineConfig[] = opts.machines.map((m) => ({ ...m }));
+  let closed = false;
 
   const overlay = el('div', 'modal-overlay');
   const modal = el('div', 'modal');
 
-  const header = el('div', 'modal-header');
+  const header = el('h2', 'modal-header');
   header.textContent = t('machines.title');
   modal.appendChild(header);
 
@@ -67,12 +72,16 @@ export function openMachineManager(opts: ManagerOpts): void {
 
   const bar = el('div', 'modal-error');
   bar.style.display = 'none';
+  bar.setAttribute('role', 'alert');
+  bar.setAttribute('aria-live', 'assertive');
   modal.appendChild(bar);
 
   const footer = el('div', 'modal-footer');
   const addBtn = el('button', 'btn-secondary');
+  (addBtn as HTMLButtonElement).type = 'button';
   addBtn.textContent = t('machines.add');
   const doneBtn = el('button', 'btn-primary');
+  (doneBtn as HTMLButtonElement).type = 'button';
   doneBtn.textContent = t('machines.done');
   footer.append(addBtn, doneBtn);
   modal.appendChild(footer);
@@ -80,7 +89,11 @@ export function openMachineManager(opts: ManagerOpts): void {
   overlay.appendChild(modal);
   document.body.appendChild(overlay);
 
+  let deactivateModal = () => {};
   function close() {
+    if (closed) return;
+    closed = true;
+    deactivateModal();
     overlay.remove();
   }
 
@@ -119,9 +132,11 @@ export function openMachineManager(opts: ManagerOpts): void {
 
       const actions = el('div', 'machine-row-actions');
       const editBtn = el('button', 'btn-secondary');
+      (editBtn as HTMLButtonElement).type = 'button';
       editBtn.textContent = t('machines.edit');
       editBtn.addEventListener('click', () => openForm(idx));
       const delBtn = el('button', 'btn-secondary');
+      (delBtn as HTMLButtonElement).type = 'button';
       delBtn.textContent = t('machines.delete');
       delBtn.addEventListener('click', () => confirmDelete(idx));
       actions.append(editBtn, delBtn);
@@ -137,7 +152,10 @@ export function openMachineManager(opts: ManagerOpts): void {
       return;
     }
     working.splice(idx, 1);
-    commit().then(renderList);
+    commit().then((saved) => {
+      if (!saved) working.splice(idx, 0, m);
+      renderList();
+    });
   }
 
   // openForm shows the add/edit form. idx === -1 means add.
@@ -145,20 +163,23 @@ export function openMachineManager(opts: ManagerOpts): void {
     const editing = idx >= 0 ? working[idx] : { name: '', addr: '', port: 8765, token: '' };
     const form = el('div', 'machine-form');
 
-    const nameIn = field(form, t('machines.field.name'), editing.name, 'text');
-    const addrIn = field(form, t('machines.field.addr'), editing.addr, 'text');
-    const portIn = field(form, t('machines.field.port'), String(editing.port), 'number');
-    const tokenIn = field(form, t('machines.field.token'), editing.token, 'password');
+    const nameIn = field(form, t('machines.field.name'), editing.name, 'text', 'machine-name', 'off');
+    const addrIn = field(form, t('machines.field.addr'), editing.addr, 'text', 'machine-address', 'off');
+    const portIn = field(form, t('machines.field.port'), String(editing.port), 'number', 'machine-port', 'off');
+    const tokenIn = field(form, t('machines.field.token'), editing.token, 'password', 'machine-token', 'off');
 
     const status = el('div', 'form-status');
     form.appendChild(status);
 
     const row = el('div', 'form-actions');
     const testBtn = el('button', 'btn-secondary');
+    (testBtn as HTMLButtonElement).type = 'button';
     testBtn.textContent = t('machines.test');
     const saveBtn = el('button', 'btn-primary');
+    (saveBtn as HTMLButtonElement).type = 'button';
     saveBtn.textContent = t('machines.save');
     const cancelBtn = el('button', 'btn-secondary');
+    (cancelBtn as HTMLButtonElement).type = 'button';
     cancelBtn.textContent = t('machines.cancel');
     row.append(testBtn, cancelBtn, saveBtn);
     form.appendChild(row);
@@ -168,10 +189,10 @@ export function openMachineManager(opts: ManagerOpts): void {
       const addr = addrIn.value.trim();
       const port = parseInt(portIn.value, 10);
       const token = tokenIn.value.trim();
-      if (!name) { showStatus(t('machines.err.name'), true); return null; }
-      if (!addr) { showStatus(t('machines.err.addr'), true); return null; }
-      if (!Number.isInteger(port) || port < 1 || port > 65535) { showStatus(t('machines.err.port'), true); return null; }
-      if (!token) { showStatus(t('machines.err.token'), true); return null; }
+      if (!name) { showStatus(t('machines.err.name'), true); nameIn.focus(); return null; }
+      if (!addr) { showStatus(t('machines.err.addr'), true); addrIn.focus(); return null; }
+      if (!Number.isInteger(port) || port < 1 || port > 65535) { showStatus(t('machines.err.port'), true); portIn.focus(); return null; }
+      if (!token) { showStatus(t('machines.err.token'), true); tokenIn.focus(); return null; }
       return { name, addr, port, token };
     }
 
@@ -184,9 +205,16 @@ export function openMachineManager(opts: ManagerOpts): void {
       const m = collect();
       if (!m) return;
       showStatus(t('machines.testing'), false);
-      const res = await testConnection(m);
-      if (res.ok) showStatus(t('machines.testOk'), false);
-      else showStatus(res.error || t('machines.testFail', { msg: '' }), true);
+      (testBtn as HTMLButtonElement).disabled = true;
+      testBtn.setAttribute('aria-busy', 'true');
+      try {
+        const res = await testConnection(m);
+        if (res.ok) showStatus(t('machines.testOk'), false);
+        else showStatus(t('machines.testFail', { msg: t(`machines.testReason.${res.reason ?? 'unreachable'}`) }), true);
+      } finally {
+        (testBtn as HTMLButtonElement).disabled = false;
+        testBtn.removeAttribute('aria-busy');
+      }
     });
 
     cancelBtn.addEventListener('click', () => { form.remove(); renderList(); });
@@ -194,32 +222,50 @@ export function openMachineManager(opts: ManagerOpts): void {
     saveBtn.addEventListener('click', async () => {
       const m = collect();
       if (!m) return;
+      (saveBtn as HTMLButtonElement).disabled = true;
+      saveBtn.setAttribute('aria-busy', 'true');
+      const previous = idx >= 0 ? working[idx] : null;
       if (idx >= 0) working[idx] = m;
       else working.push(m);
-      if (!(await commit())) return; // keep the form open so the error is visible
+      if (!(await commit())) {
+        if (idx >= 0 && previous) working[idx] = previous;
+        else working.pop();
+        (saveBtn as HTMLButtonElement).disabled = false;
+        saveBtn.removeAttribute('aria-busy');
+        return;
+      }
       form.remove();
       renderList();
     });
 
     list.textContent = '';
     list.appendChild(form);
+    nameIn.focus();
   }
 
   addBtn.addEventListener('click', () => openForm(-1));
   doneBtn.addEventListener('click', close);
   overlay.addEventListener('click', (e) => { if (e.target === overlay) close(); });
+  deactivateModal = activateModal(overlay, modal, header, addBtn, close);
 
   renderList();
 }
 
 // field builds a labeled input inside the form and returns the input element.
-function field(form: HTMLElement, label: string, value: string, type: string): HTMLInputElement {
+let fieldId = 0;
+function field(form: HTMLElement, label: string, value: string, type: string, name: string, autocomplete: HTMLInputElement['autocomplete']): HTMLInputElement {
   const wrap = el('div', 'form-field');
   const lab = el('label');
   lab.textContent = label;
   const input = document.createElement('input');
+  const id = `machine-field-${++fieldId}`;
+  input.id = id;
   input.type = type;
+  input.name = name;
+  input.autocomplete = autocomplete;
+  input.spellcheck = false;
   input.value = value;
+  lab.setAttribute('for', id);
   wrap.append(lab, input);
   form.appendChild(wrap);
   return input;
