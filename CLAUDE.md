@@ -84,7 +84,7 @@ JSON 分帧 WebSocket，帧靠 `type` 区分，PTY 字节走 base64（`data` 帧
 
 `atob()` 返回 Latin-1，直接 `term.write(string)` 会把多字节 UTF-8（box-drawing/emoji/CJK）拆成乱码。**必须** base64 → `Uint8Array` → `term.write`（xterm 自己按 UTF-8 解码）；输入方向用 `TextEncoder` 编码后再 base64。见 `index.ts` 的 `base64ToBytes`/`bytesToBase64`。
 
-### 环境加载（登录 shell）
+
 
 `login_shell: true`（默认）时 runner 用 `<shell> -lic 'exec <claudeCmd>'` 启动，加载完整用户环境（PATH、fnm/nvm 等）。治本 —— 契合「跟在 shell 里敲 claude 一致」。远程若用 fnm 管理 node，不走登录 shell 会报 `node: command not found`。
 

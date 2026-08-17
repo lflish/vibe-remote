@@ -29,6 +29,7 @@ npm ci
 npm run typecheck
 npm run test:preserved-notice
 npm run test:attach-replay
+npm run test:terminal-layout
 npm run build
 ```
 
@@ -41,7 +42,7 @@ in the release notes and document the expected Gatekeeper prompt.
    version.
 2. Update user-facing release notes.
 3. Commit the release changes.
-4. Create an annotated tag such as `v0.1.0`.
+4. Create an annotated tag such as `v0.1.1`.
 5. Build artifacts from the tagged commit.
 6. Publish SHA-256 checksums alongside downloadable artifacts.
 

@@ -26,9 +26,13 @@ Desktop (Electron + xterm.js)  ──ws (JSON frames)──►  vibe-remoted (Go
 - **tmux persistence**: the claude session survives client disconnects and is restored on reconnect.
 - **No central hub**: each machine runs its own vibe-remoted and the client connects directly. The server binds a private-network address (LAN / tailscale) with a static token as the primary access boundary; cross-network reach and encryption can be delegated to Tailscale.
 
-## Features
+## What's new in v0.1.1
 
-- **Multi-machine, multi-session**: sessions grouped by machine in the sidebar; click a machine to choose where a new session lands.
+- First-launch terminal layout is now measured only after the xterm host is visible, so a newly opened terminal fills the window without requiring a manual resize.
+- Added a regression check for the initial terminal layout timing.
+- The repository is now desktop-only: the ignored mobile, web, shared-package, and portal trees have been removed from the working tree.
+
+## Features
 - **Session naming / background hints**: double-click to rename; a sidebar dot lights up when a background session has output or is waiting for input.
 - **Reconnection**: the status bar shows reconnect progress, with a disconnect banner + Retry on the active session.
 - **claude flag presets**: the server defines a `claude_flags` whitelist; on new-session you multi-select flags (e.g. `-c` to continue, skip-permissions) — applied per-session.
