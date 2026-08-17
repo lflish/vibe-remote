@@ -127,7 +127,27 @@ cd desktop && npm ci
 npm run dev      # Vite + Electron 热重载
 ```
 
-### 机器管理
+### 部署到远程 Linux
+
+桌面端与 `vibe-remoted` 必须保持兼容版本。修改 Go daemon 或 WebSocket/REST 协议后，应先交叉编译并替换远程二进制，再从桌面端测试：
+
+```bash
+cd vibe-remoted
+go test ./...
+GOOS=linux GOARCH=amd64 go build -o /tmp/vibe-remoted-linux-amd64 ./cmd/vibe-remoted
+scp /tmp/vibe-remoted-linux-amd64 dev:/home/<user>/vibe-remoted.new
+ssh dev 'systemctl --user stop vibe-remoted.service && install -m 0755 /home/<user>/vibe-remoted.new /home/<user>/vibe-remoted && rm -f /home/<user>/vibe-remoted.new && systemctl --user start vibe-remoted.service'
+```
+
+桌面端机器管理器中应填写 daemon 实际监听的 NAT/内网地址和 token。Windows/虚拟机 NAT 场景下，SSH 地址可能与 daemon 的监听地址不同。部署后检查所有客户端使用的接口：
+
+```bash
+curl http://<daemon-address>:8765/healthz
+curl -H 'Authorization: Bearer <token>' http://<daemon-address>:8765/api/v1/info
+curl -H 'Authorization: Bearer <token>' http://<daemon-address>:8765/api/v1/sessions
+```
+
+
 
 首次运行后，点侧边栏「机器管理」在 app 内增删改机器 + 测试连接（推荐）。每台填
 `name / addr / port / token`。多台机器时，点侧边栏机器名选中它，新建会话即落在选中的机器上。

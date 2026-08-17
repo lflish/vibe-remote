@@ -20,7 +20,7 @@ cd vibe-remoted && go test ./...    # 单元测试（config 包含路径越权 +
 cd vibe-remoted && go test ./internal/config -run TestValidateBindAddr   # 跑单个测试
 cd vibe-remoted && go vet ./...
 
-# 交叉编译部署到远程 Linux（远程通常无 go）
+# 交叉编译部署到远程 Linux（远程通常无 Go）
 cd vibe-remoted && GOOS=linux GOARCH=amd64 go build -o ../bin/vibe-remoted-linux-amd64 ./cmd/vibe-remoted
 scp bin/vibe-remoted-linux-amd64 dev:~/vibe-remoted
 
@@ -35,7 +35,11 @@ make smoke                      # curl localhost:8765/healthz
 
 打包时用国内镜像加速 electron 二进制：`ELECTRON_MIRROR=https://npmmirror.com/mirrors/electron/`。
 
-### 当前仓库布局
+### 远程 daemon 部署同步
+
+桌面端与 `vibe-remoted` 必须保持兼容版本。修改 Go daemon 或协议后，先交叉编译再替换远程二进制；仅重启旧 daemon 不会更新协议。Windows/虚拟机 NAT 场景下，SSH Host 地址可能与 daemon 实际监听的 NAT 地址不同，桌面端应填写能实际返回 `/healthz`、`/api/v1/info`、`/api/v1/sessions` 的地址。
+
+
 
 ```text
 desktop/       Electron + xterm.js macOS 客户端

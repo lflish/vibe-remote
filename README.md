@@ -131,7 +131,27 @@ cd desktop && npm ci
 npm run dev      # Vite + Electron hot reload
 ```
 
-### Machine management
+### Deploy to a remote Linux host
+
+The desktop client and `vibe-remoted` must be kept on compatible versions. After changing the Go daemon or the WebSocket/REST protocol, cross-compile and replace the remote binary before testing from the desktop app:
+
+```bash
+cd vibe-remoted
+go test ./...
+GOOS=linux GOARCH=amd64 go build -o /tmp/vibe-remoted-linux-amd64 ./cmd/vibe-remoted
+scp /tmp/vibe-remoted-linux-amd64 dev:/home/<user>/vibe-remoted.new
+ssh dev 'systemctl --user stop vibe-remoted.service && install -m 0755 /home/<user>/vibe-remoted.new /home/<user>/vibe-remoted && rm -f /home/<user>/vibe-remoted.new && systemctl --user start vibe-remoted.service'
+```
+
+Use the daemon's configured NAT/private address and token in the desktop machine manager. The SSH address and the daemon's listening address may differ when the Linux guest is behind a Windows/VM NAT port mapping. Verify all client endpoints after deployment:
+
+```bash
+curl http://<daemon-address>:8765/healthz
+curl -H 'Authorization: Bearer <token>' http://<daemon-address>:8765/api/v1/info
+curl -H 'Authorization: Bearer <token>' http://<daemon-address>:8765/api/v1/sessions
+```
+
+
 
 On first run, click "machine management" in the sidebar to add / edit / remove machines and test
 connections in-app (recommended). Each machine takes `name / addr / port / token`. With multiple
