@@ -48,3 +48,4 @@ jobs:
         run: |
           npm run test:preserved-notice
           npm run test:attach-replay
+          npm run test:terminal-layout

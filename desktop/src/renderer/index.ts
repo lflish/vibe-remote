@@ -7,6 +7,7 @@ import { VibeRemoteRest, DeleteSessionError } from './rest';
 import { openDirPicker } from './dirpicker';
 import { openMachineManager } from './machines';
 import { t, toggleLocale, getLocale, onLocaleChange } from './i18n';
+import { fitWhenVisible, dimensionsWhenVisible } from './terminal-layout';
 
 // Declared by preload
 declare global {
@@ -290,7 +291,9 @@ function wireTerminalResizeObserver() {
     if (!activeKey) return;
     const view = views.get(activeKey);
     // Only fit the visible terminal; hidden views (display:none) measure as 0.
-    if (view && view.container.style.display !== 'none') view.fitAddon.fit();
+    if (view && view.container.style.display !== 'none') {
+      fitWhenVisible(view.container, () => view.fitAddon.fit());
+    }
   });
   ro.observe(container);
 }
@@ -614,7 +617,10 @@ function openSession(machine: MachineConfig, sessionId: string, workdir?: string
   const wrap = document.getElementById('terminal-container')!;
   const container = document.createElement('div');
   container.className = 'term-instance';
-  container.style.display = 'none';
+  // Keep the view in layout from the beginning. xterm measures its host during
+  // term.open(); display:none would produce 0×0 and send a fallback 80×24
+  // attach before the first real fit.
+  container.style.display = 'block';
   wrap.appendChild(container);
 
   const { term, fit } = makeTerminal();
@@ -716,7 +722,7 @@ function openSession(machine: MachineConfig, sessionId: string, workdir?: string
   };
 
   client.connect();
-  const dims = fit.proposeDimensions();
+  const dims = dimensionsWhenVisible(container, () => fit.proposeDimensions());
   client.attach(sessionId, dims?.cols || 80, dims?.rows || 24, workdir, flags, sessionId ? undefined : mode);
 
   setActive(view.key);
@@ -742,17 +748,12 @@ function setActive(key: string) {
   }
   const view = views.get(key);
   if (view) {
-    // The container just flipped from display:none to block, so its box may not
-    // be laid out yet on the next frame. A single rAF sometimes measures the
-    // stale (zero/old) size, leaving the terminal too small or too large for the
-    // pane. Fit after two frames (layout settled), and once more after focus, so
-    // the visible terminal always matches the current pane size. fit() is a
-    // no-op when dimensions are unchanged.
-    requestAnimationFrame(() => {
-      requestAnimationFrame(() => {
-        view.fitAddon.fit();
-        view.terminal.focus();
-      });
+    // Fit only after the host has a real box. The first startup can still be in
+    // Electron's maximize/layout transition; fitWhenVisible retries once on
+    // the next frame instead of locking xterm to the initial small dimensions.
+    fitWhenVisible(view.container, () => {
+      view.fitAddon.fit();
+      view.terminal.focus();
     });
   }
   renderSidebar();
