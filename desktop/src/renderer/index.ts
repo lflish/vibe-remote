@@ -962,14 +962,21 @@ function startInlineRename(machine: MachineConfig, s: SessionInfo, label: HTMLEl
     if (!document.body.contains(input)) { done = true; renamingActive = false; return; }
     done = true;
     const name = input.value.trim();
-    // Clear before refresh so the subsequent renderSidebar() actually rebuilds.
-    renamingActive = false;
+    const mk = machineKey(machine);
+    // Invalidate in-flight session polls before the rename request starts. Their
+    // old title must not be allowed to render over the rename transaction.
+    machineRefreshGeneration++;
     try {
-      await rests.get(machineKey(machine))!.renameSession(s.id, name);
+      await rests.get(mk)!.renameSession(s.id, name);
     } catch (e) {
       console.error('rename failed', e);
+    } finally {
+      // Refresh even after failure so the sidebar returns to the server's
+      // authoritative title. Keep the input protected until that refresh is done.
+      await refreshAllMachines(false, mk);
+      renamingActive = false;
+      renderSidebar();
     }
-    refreshAllMachines();
   };
   const cancel = () => {
     if (done) return;
