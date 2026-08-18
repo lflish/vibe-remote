@@ -44,8 +44,13 @@
       "target": "dmg",
       "category": "public.app-category.developer-tools"
     },
+    "directories": {
+      "output": "release"
+    },
     "files": [
-      "dist/**/*"
+      "dist/main/**/*",
+      "dist/renderer/**/*",
+      "dist/shared/**/*"
     ]
   }
 }

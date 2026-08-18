@@ -3,6 +3,9 @@ node_modules/
 **/node_modules/
 bin/
 **/dist/
+# electron-builder output, kept out of dist/ so packaged artifacts are never
+# re-ingested into the next build's asar
+**/release/
 
 # OS
 .DS_Store
