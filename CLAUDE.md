@@ -88,6 +88,20 @@ JSON 分帧 WebSocket，帧靠 `type` 区分，PTY 字节走 base64（`data` 帧
 
 `atob()` 返回 Latin-1，直接 `term.write(string)` 会把多字节 UTF-8（box-drawing/emoji/CJK）拆成乱码。**必须** base64 → `Uint8Array` → `term.write`（xterm 自己按 UTF-8 解码）；输入方向用 `TextEncoder` 编码后再 base64。见 `index.ts` 的 `base64ToBytes`/`bytesToBase64`。
 
+### 终端选区与复制（易踩坑）
+
+claude 开启**鼠标上报**（DOM 上表现为 `.xterm` 带 `enable-mouse-events`），xterm 的 `SelectionService` 检测到 `areMouseEventsActive` 就会 `disable()` 自己的选区、把拖拽全转发给应用 —— 此时 `getSelection()` **恒为空串**，⌘C 复制到的是空内容。而 xterm 的逃生口在 macOS 上**不是 Shift**：
+
+```js
+shouldForceSelection(e) { return isMac ? e.altKey && macOptionClickForcesSelection : e.shiftKey; }
+```
+
+`makeTerminal()` 因此设 **`mouseEventsRequireAlt: true`**（语义反转：默认可拖拽选中，仅按 ⌥ 时把鼠标事件转发给 claude；**wheel 事件豁免**，所以 claude 内滚动照常），并保留 `macOptionClickForcesSelection: true` 作降级。
+
+⚠️ `mouseEventsRequireAlt` **只存在于 xterm 6.1.0-beta**（5.5.0 完全没有此选项，设了会被静默忽略），所以 `@xterm/xterm` / `@xterm/addon-fit` 在 package.json 里**锁精确版本、不带 `^`** —— 浮动范围会无声回退这个修复。`scripts/test-terminal-selection.mjs` 守住这三点（选项已设 + typings 已声明 + 版本已锁死）。
+
+复制/粘贴走 `terminal-clipboard.ts`：⌘C/⌘V 经 preload 桥到主进程 `clipboard`（Electron 原生剪贴板，不用 `navigator.clipboard`）。注意 `attachCustomKeyEventHandler` 必须**同步返回**，剪贴板 IPC 只能在返回后异步收尾。
+
 
 
 `login_shell: true`（默认）时 runner 用 `<shell> -lic 'exec <claudeCmd>'` 启动，加载完整用户环境（PATH、fnm/nvm 等）。治本 —— 契合「跟在 shell 里敲 claude 一致」。远程若用 fnm 管理 node，不走登录 shell 会报 `node: command not found`。

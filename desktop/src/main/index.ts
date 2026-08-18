@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, screen } from 'electron';
+import { app, BrowserWindow, clipboard, ipcMain, screen } from 'electron';
 import * as path from 'path';
 import * as fs from 'fs';
 import type { MachineConfig } from '../shared/protocol';
@@ -169,6 +169,13 @@ ipcMain.handle('get-machines', () => {
 
 ipcMain.handle('save-machines', (_event, machines: MachineConfig[]) => {
   saveMachines(machines);
+  return true;
+});
+
+ipcMain.handle('clipboard-read-text', () => clipboard.readText());
+
+ipcMain.handle('clipboard-write-text', (_event, text: string) => {
+  clipboard.writeText(text);
   return true;
 });
 

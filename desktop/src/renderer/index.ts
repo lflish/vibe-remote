@@ -8,16 +8,9 @@ import { openDirPicker } from './dirpicker';
 import { openMachineManager } from './machines';
 import { t, toggleLocale, getLocale, onLocaleChange } from './i18n';
 import { fitWhenVisible, dimensionsWhenVisible } from './terminal-layout';
+import { attachMacClipboardShortcuts } from './terminal-clipboard';
 
 // Declared by preload
-declare global {
-  interface Window {
-    vibeRemote: {
-      getMachines(): Promise<MachineConfig[]>;
-      saveMachines(machines: MachineConfig[]): Promise<boolean>;
-    };
-  }
-}
 
 // A SessionView is one open session: its own WebSocket (VibeRemoteClient) and its
 // own xterm instance. Multiple sessions stay open simultaneously; switching
@@ -598,6 +591,15 @@ function makeTerminal(): { term: Terminal; fit: FitAddon } {
       brightCyan: '#3E8C8C', brightWhite: '#2B2A28',
     },
     cursorBlink: true, scrollback: 10000, allowProposedApi: true,
+    // claude turns on mouse reporting, which otherwise makes xterm forward every
+    // drag to the app and disable its own selection — getSelection() would always
+    // return '' and ⌘C would copy nothing. This inverts the default: a plain drag
+    // selects text, and mouse events reach claude only while ⌥ is held. Wheel
+    // events are exempt, so scrolling inside claude keeps working unmodified.
+    mouseEventsRequireAlt: true,
+    // Fallback escape hatch (⌥-drag forces selection). mouseEventsRequireAlt takes
+    // precedence when both are set; this only matters if that option goes away.
+    macOptionClickForcesSelection: true,
   });
   const fit = new FitAddon();
   term.loadAddon(fit);
@@ -625,6 +627,13 @@ function openSession(machine: MachineConfig, sessionId: string, workdir?: string
 
   const { term, fit } = makeTerminal();
   term.open(container);
+  attachMacClipboardShortcuts(term, window.vibeRemote, (error) => {
+    console.error('Clipboard operation failed', error);
+  }, (_operation, details) => {
+    if (location.protocol === 'http:') {
+      console.debug('Clipboard text length', details);
+    }
+  });
 
   const client = new VibeRemoteClient(machine);
   const banner = document.createElement('div');

@@ -28,6 +28,7 @@ Desktop (Electron + xterm.js)  ──ws (JSON frames)──►  vibe-remoted (Go
 
 ## What's new in v0.1.1
 
+- Terminal text is selectable and copyable again: drag to select, ⌘C to copy, ⌘V to paste. Mouse events reach the remote app only while ⌥ is held (scrolling is unaffected).
 - First-launch terminal layout is now measured only after the xterm host is visible, so a newly opened terminal fills the window without requiring a manual resize.
 - Added a regression check for the initial terminal layout timing.
 - The repository is now desktop-only: the ignored mobile, web, shared-package, and portal trees have been removed from the working tree.
@@ -37,6 +38,7 @@ Desktop (Electron + xterm.js)  ──ws (JSON frames)──►  vibe-remoted (Go
 - **Reconnection**: the status bar shows reconnect progress, with a disconnect banner + Retry on the active session.
 - **claude flag presets**: the server defines a `claude_flags` whitelist; on new-session you multi-select flags (e.g. `-c` to continue, skip-permissions) — applied per-session.
 - **In-app machine management**: add / edit / remove machines + test connection, no need to hand-edit `machines.json`.
+- **Copy / paste**: drag to select and ⌘C to copy, ⌘V to paste — even though claude enables mouse reporting. Hold ⌥ to send drags/clicks to the remote app instead; the scroll wheel always reaches it.
 
 ## Layout
 

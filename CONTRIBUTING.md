@@ -53,7 +53,7 @@ Run these before opening a pull request:
 
 ```bash
 cd vibe-remoted && go test ./... && go vet ./...
-cd ../desktop && npm run typecheck && npm run test:preserved-notice && npm run test:attach-replay && npm run test:terminal-layout
+cd ../desktop && npm run typecheck && npm run test:preserved-notice && npm run test:attach-replay && npm run test:terminal-layout && npm run test:terminal-clipboard && npm run test:terminal-selection
 ```
 
 ## Architecture rules

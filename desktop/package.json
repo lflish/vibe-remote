@@ -22,11 +22,13 @@
     "typecheck": "tsc --noEmit",
     "test:attach-replay": "node scripts/test-attach-replay.mjs",
     "test:terminal-layout": "node scripts/test-terminal-layout.mjs",
+    "test:terminal-clipboard": "node scripts/test-terminal-clipboard.mjs",
+    "test:terminal-selection": "node scripts/test-terminal-selection.mjs",
     "test:preserved-notice": "node -e \"const fs=require('fs');const s=fs.readFileSync('src/renderer/index.ts','utf8');const f=s.slice(s.indexOf('async function closeSession'),s.indexOf('function renderEmptyState'));const preserved=f.indexOf(\\\"e.code === 'worktree_preserved'\\\");const refresh=f.indexOf('await refreshAllMachines()',preserved);const notice=f.indexOf(\\\"t('session.worktreePreserved'\\\",preserved);if(!(preserved>=0&&refresh>preserved&&notice>refresh))throw new Error('Worktree-preserved notice must be applied after awaited refresh');\""
   },
   "dependencies": {
-    "@xterm/xterm": "^5.5.0",
-    "@xterm/addon-fit": "^0.10.0"
+    "@xterm/addon-fit": "0.12.0-beta.299",
+    "@xterm/xterm": "6.1.0-beta.302"
   },
   "devDependencies": {
     "electron": "^33.0.0",
