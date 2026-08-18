@@ -30,6 +30,8 @@ npm run typecheck
 npm run test:preserved-notice
 npm run test:attach-replay
 npm run test:terminal-layout
+npm run test:terminal-clipboard
+npm run test:terminal-selection
 npm run build
 ```
 

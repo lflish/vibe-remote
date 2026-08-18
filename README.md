@@ -26,9 +26,13 @@ Desktop (Electron + xterm.js)  ──ws (JSON frames)──►  vibe-remoted (Go
 - **tmux persistence**: the claude session survives client disconnects and is restored on reconnect.
 - **No central hub**: each machine runs its own vibe-remoted and the client connects directly. The server binds a private-network address (LAN / tailscale) with a static token as the primary access boundary; cross-network reach and encryption can be delegated to Tailscale.
 
+## What's new in v0.1.2
+
+- Terminal text is selectable and copyable again: drag to select, ⌘C to copy, ⌘V to paste. claude enables mouse reporting, which previously made xterm disable its own selection, so copying silently produced an empty clipboard. Mouse drags/clicks reach the remote app while ⌥ is held; the scroll wheel always does.
+- Inline session rename is no longer overwritten by the 5s session poll, and falls back to the server's title if the rename fails.
+
 ## What's new in v0.1.1
 
-- Terminal text is selectable and copyable again: drag to select, ⌘C to copy, ⌘V to paste. Mouse events reach the remote app only while ⌥ is held (scrolling is unaffected).
 - First-launch terminal layout is now measured only after the xterm host is visible, so a newly opened terminal fills the window without requiring a manual resize.
 - Added a regression check for the initial terminal layout timing.
 - The repository is now desktop-only: the ignored mobile, web, shared-package, and portal trees have been removed from the working tree.
