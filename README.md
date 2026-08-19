@@ -26,6 +26,10 @@ Desktop (Electron + xterm.js)  ──ws (JSON frames)──►  vibe-remoted (Go
 - **tmux persistence**: the claude session survives client disconnects and is restored on reconnect.
 - **No central hub**: each machine runs its own vibe-remoted and the client connects directly. The server binds a private-network address (LAN / tailscale) with a static token as the primary access boundary; cross-network reach and encryption can be delegated to Tailscale.
 
+## What's new in v0.1.3
+
+- Intel Macs are supported again: the release now ships separate `-arm64` (Apple silicon) and `-x64` (Intel) DMGs. Previous releases contained an arm64-only build that would not launch on Intel hardware.
+
 ## What's new in v0.1.2
 
 - Terminal text is selectable and copyable again: drag to select, ⌘C to copy, ⌘V to paste. claude enables mouse reporting, which previously made xterm disable its own selection, so copying silently produced an empty clipboard. Mouse drags/clicks reach the remote app while ⌥ is held; the scroll wheel always does.
@@ -62,6 +66,8 @@ docs/            protocol docs
 
 Do not expose `vibe-remoted` directly to the public internet. Read
 [SECURITY.md](./SECURITY.md) before deployment.
+
+Prebuilt macOS DMGs are on the [releases page](https://github.com/lflish/vibe-remote/releases) — pick `-arm64` for Apple silicon or `-x64` for Intel. They are unsigned, so Gatekeeper blocks the first launch: right-click the app and choose *Open*, or run `xattr -dr com.apple.quarantine /Applications/vibe-remote.app`.
 
 ## Server: vibe-remoted
 

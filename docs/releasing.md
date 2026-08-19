@@ -15,7 +15,9 @@ tree instead of making the old history public.
 
 ## Current artifact scope
 
-The current release contains one supported artifact: the macOS arm64 Electron desktop DMG. Mobile, web, and portal artifacts are not built or published from this repository.
+The current release contains two supported artifacts: the macOS Electron desktop DMG for arm64 (Apple silicon) and for x64 (Intel). Both are built from an Apple silicon machine via electron-builder cross-compilation. Mobile, web, and portal artifacts are not built or published from this repository.
+
+The x64 DMG cannot be launch-tested on an Apple silicon build host — verification there is limited to confirming the architecture slices (`lipo -info` on the executable and on Electron Framework) and mounting the image. Confirm startup on real Intel hardware before relying on it.
 
 ## Build verification
 ```bash

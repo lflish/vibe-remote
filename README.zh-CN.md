@@ -24,6 +24,10 @@ vibe-remote 是独立开源项目，与 Anthropic 无隶属或背书关系。Cla
 - **tmux 持久化**：客户端断开后 claude 会话存活，重连恢复现场。
 - **无中心 Hub**：每台机器各跑一个 vibe-remoted，客户端直连。服务端绑私有网段地址（LAN / tailscale），静态 token 为准入核心；跨网/加密可交给 Tailscale。
 
+## v0.1.3 更新
+
+- 恢复 Intel Mac 支持：现在分别提供 `-arm64`（M 系列）和 `-x64`（Intel）两个安装包。此前版本只有 arm64 构建，在 Intel 机器上无法启动。
+
 ## v0.1.2 更新
 
 - 终端文本恢复可选中、可复制：拖拽选中、⌘C 复制、⌘V 粘贴。claude 会开启鼠标上报，此前会导致 xterm 关闭自身选区，复制到的是空内容。按住 ⌥ 时鼠标拖拽/点击交给远端应用；滚轮始终可用。
@@ -59,6 +63,8 @@ docs/       协议文档
 4. 在 app 内的机器管理器中添加远程机器。
 
 不要把 `vibe-remoted` 直接暴露到公网。部署前请阅读 [SECURITY.md](./SECURITY.md)。
+
+预编译的 macOS 安装包见 [releases 页面](https://github.com/lflish/vibe-remote/releases) —— M 系列选 `-arm64`，Intel 选 `-x64`。安装包未签名，首次打开会被 Gatekeeper 拦下：右键点应用选「打开」，或执行 `xattr -dr com.apple.quarantine /Applications/vibe-remote.app`。
 
 ## 服务端 vibe-remoted
 
