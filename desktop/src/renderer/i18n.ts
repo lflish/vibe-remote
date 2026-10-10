@@ -67,6 +67,15 @@ const zh: Dict = {
   'status.noConnection': '无连接',
   'status.sessionExited': '会话已退出（代码 {code}）',
   'status.error': '错误：{msg}',
+  // terminal markers (written into xterm, so keep them short)
+  'terminal.exited': '会话已退出，代码 {code}',
+  'terminal.error': '错误：{msg}',
+  // startup failure
+  'init.failedTitle': '启动失败',
+  'init.failedDesc': '无法加载机器配置：{msg}',
+  'init.reload': '重新加载',
+  // accessible name for a per-item action button
+  'a11y.actionTarget': '{action}：{target}',
   // empty state
   'empty.title': '添加你的第一台机器',
   'empty.desc': '这台机器需在同一 tailnet 内并运行 vibe-remoted。',
@@ -82,6 +91,8 @@ const zh: Dict = {
   'picker.loading': '正在读取目录…',
   'picker.listFailed': '目录读取失败：{msg}',
   'picker.up': '.. (上一级)',
+  'picker.atRoot': '已经是可访问的最上层目录',
+  'picker.outsideRoots': '该目录不在服务端允许的范围内（allowed_roots）',
   'picker.noSubdirs': '(没有子目录)',
   'picker.mode.normal.title': '打开现有目录',
   'picker.mode.normal.desc': '在所选目录中运行 Claude，不改动 Git。',
@@ -170,6 +181,12 @@ const en: Dict = {
   'status.noConnection': 'No connection',
   'status.sessionExited': 'Session exited (code {code})',
   'status.error': 'Error: {msg}',
+  'terminal.exited': 'session exited, code {code}',
+  'terminal.error': 'error: {msg}',
+  'init.failedTitle': 'Couldn’t start',
+  'init.failedDesc': 'Failed to load the machine list: {msg}',
+  'init.reload': 'Reload',
+  'a11y.actionTarget': '{action}: {target}',
   'empty.title': 'Add your first machine',
   'empty.desc': 'The machine must be on the same tailnet and running vibe-remoted.',
   'empty.addMachine': 'Add machine',
@@ -183,6 +200,8 @@ const en: Dict = {
   'picker.loading': 'Loading folders…',
   'picker.listFailed': 'Failed to list directory: {msg}',
   'picker.up': '.. (up)',
+  'picker.atRoot': 'Already at the topmost accessible folder',
+  'picker.outsideRoots': 'That folder is outside the server\'s allowed_roots',
   'picker.noSubdirs': '(no subdirectories)',
   'picker.mode.normal.title': 'Open existing directory',
   'picker.mode.normal.desc': 'Run Claude in the selected folder without touching Git.',
@@ -217,10 +236,14 @@ const en: Dict = {
 
 const dicts: Record<Locale, Dict> = { zh, en };
 
+// Exposed read-only for scripts/test-i18n-parity.mjs (zh/en key sets must match).
+export const dictionaries: Readonly<Record<Locale, Readonly<Dict>>> = dicts;
+
 function detectInitial(): Locale {
   const saved = localStorage.getItem(STORAGE_KEY);
   if (saved === 'zh' || saved === 'en') return saved;
-  return 'zh'; // default Chinese per product decision
+  // No saved choice: follow the system language.
+  return typeof navigator !== 'undefined' && navigator.language?.toLowerCase().startsWith('zh') ? 'zh' : 'en';
 }
 
 let current: Locale = detectInitial();

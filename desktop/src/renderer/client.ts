@@ -73,16 +73,30 @@ export class VibeRemoteClient {
 
   /** Initiate connection to the server. */
   connect() {
-    if (this.ws) {
-      this.ws.close();
+    // Retire the old socket before closing it. Its onclose would otherwise
+    // fire after this.ws already points at the new socket, stop the new
+    // socket's ping timer and schedule another reconnect — which calls
+    // connect() again and loops.
+    this.detachSocket();
+    this.stopPing();
+    // A direct connect() supersedes any backoff already queued; letting that
+    // timer fire later would tear down the socket we are about to open.
+    if (this.reconnectTimer) {
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = null;
     }
 
     this.setState(ConnectionState.Connecting);
 
     const url = `ws://${this.machine.addr}:${this.machine.port}/ws`;
-    this.ws = new WebSocket(url);
+    const ws = new WebSocket(url);
+    this.ws = ws;
 
-    this.ws.onopen = () => {
+    // Every handler checks it still belongs to the current socket: a late
+    // event from a superseded socket (e.g. one queued before the nulling
+    // above took effect) must not touch the live connection's state.
+    ws.onopen = () => {
+      if (ws !== this.ws) return;
       // Note: reconnectAttempt is reset on `ready` (a proven-healthy
       // connection), not here — otherwise a server that accepts the socket
       // then immediately closes it (bad token, attach failure) would reset the
@@ -99,11 +113,13 @@ export class VibeRemoteClient {
       }
     };
 
-    this.ws.onmessage = (event) => {
+    ws.onmessage = (event) => {
+      if (ws !== this.ws) return;
       this.handleMessage(event.data as string);
     };
 
-    this.ws.onclose = () => {
+    ws.onclose = () => {
+      if (ws !== this.ws) return;
       this.stopPing();
       if (this.state !== ConnectionState.Disconnected) {
         this.setState(ConnectionState.Reconnecting);
@@ -111,9 +127,23 @@ export class VibeRemoteClient {
       }
     };
 
-    this.ws.onerror = () => {
+    ws.onerror = () => {
+      if (ws !== this.ws) return;
       this.setState(ConnectionState.Error);
     };
+  }
+
+  // detachSocket unbinds and closes the current socket so none of its events
+  // can reach this client any more.
+  private detachSocket() {
+    const old = this.ws;
+    if (!old) return;
+    this.ws = null;
+    old.onopen = null;
+    old.onclose = null;
+    old.onerror = null;
+    old.onmessage = null;
+    old.close();
   }
 
   /** Disconnect and stop reconnecting. */
@@ -128,10 +158,7 @@ export class VibeRemoteClient {
       clearTimeout(this.reconnectTimer);
       this.reconnectTimer = null;
     }
-    if (this.ws) {
-      this.ws.close();
-      this.ws = null;
-    }
+    this.detachSocket();
   }
 
   /** Skip the backoff wait and reconnect immediately (manual retry). */
@@ -280,6 +307,8 @@ export class VibeRemoteClient {
   }
 
   private startPing() {
+    // Never stack intervals: a leaked one would keep pinging forever.
+    this.stopPing();
     this.pingTimer = setInterval(() => {
       this.send<PingFrame>({ type: FrameType.Ping });
     }, PING_INTERVAL);

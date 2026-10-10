@@ -1,4 +1,5 @@
 import type { MachineConfig, SessionInfo } from '../shared/protocol';
+import { t } from './i18n';
 
 /**
  * REST client for a vibe-remoted instance. Complements the WebSocket connection
@@ -69,7 +70,16 @@ export class VibeRemoteRest {
     const url = new URL(`${this.base()}/api/v1/fs`);
     if (path) url.searchParams.set('path', path);
     const res = await fetch(url.toString(), { headers: this.headers() });
-    if (!res.ok) throw new Error(`fs failed: ${res.status}`);
+    if (!res.ok) {
+      // Prefer the server's reason ("path not in allowed roots") over a bare
+      // status code, which told the user nothing actionable.
+      let message = res.status === 403 ? t('picker.outsideRoots') : `fs failed: ${res.status}`;
+      try {
+        const details = await res.json() as { error?: string };
+        if (details.error && res.status !== 403) message = details.error;
+      } catch { /* non-JSON response */ }
+      throw new Error(message);
+    }
     return res.json();
   }
 }
@@ -92,6 +102,8 @@ export interface MachineInfo {
   default_workdir: string;
   allowed_roots: string[];
   claude_flags?: ClaudeFlagInfo[];
+  /** Daemon build version (e.g. "v0.1.4" or "dev"). Absent on older daemons. */
+  version?: string;
 }
 
 export interface DirEntry {
@@ -102,4 +114,11 @@ export interface DirEntry {
 export interface DirListing {
   path: string;
   entries: DirEntry[];
+  /**
+   * Canonical parent path, or empty/absent when `path` is already at an
+   * allowed root. The server decides this because allowed_roots are configured
+   * pre-symlink-resolution while `path` is canonical, so the client cannot
+   * compare them reliably. Absent on older daemons — treat as "unknown".
+   */
+  parent?: string;
 }
