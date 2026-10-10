@@ -30,8 +30,11 @@ packaging setup changes.
 3. Bump the version: `cd desktop && npm version X.Y.Z --no-git-tag-version`
    (updates `package.json` and `package-lock.json`). The workflow fails if the
    tag and `package.json` disagree.
-4. Commit (`release: prepare vX.Y.Z`), then create and push an annotated tag:
-   `git tag -a vX.Y.Z -m vX.Y.Z && git push origin main vX.Y.Z`.
+4. `main` is protected (PR + the four CI checks required, no direct pushes),
+   so the release commit goes through a PR: commit `release: prepare vX.Y.Z`
+   on a `release/vX.Y.Z` branch, open a PR, and merge it once CI is green.
+   Then tag the merged commit on `main` and push only the tag:
+   `git checkout main && git pull && git tag -a vX.Y.Z -m vX.Y.Z && git push origin vX.Y.Z`.
 5. Wait for the Release workflow, open the draft release, check the notes and
    the asset list, then publish it.
 
