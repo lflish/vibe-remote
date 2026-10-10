@@ -1,12 +1,48 @@
-.PHONY: all server desktop clean dev-server dev-desktop dev-local
+.PHONY: all server desktop clean dev-server dev-desktop dev-local install-desktop \
+	check check-server check-desktop dist-daemon smoke fmt vet
+
+# Version stamped into the daemon (`vibe-remoted --version`, /api/v1/info).
+# Release CI overrides this with the tag; local builds describe the checkout.
+VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
+GO_LDFLAGS := -s -w -X main.version=$(VERSION)
 
 # Default: build both
 all: server desktop
 
+# --- Checks ---
+# `make check` is the single source of truth for "is this change OK": CI,
+# CONTRIBUTING, the release checklist and the project `check` skill all call it
+# instead of keeping their own command lists.
+
+check: check-server check-desktop
+
+check-server:
+	@cd vibe-remoted && unformatted=$$(gofmt -l .); \
+	if [ -n "$$unformatted" ]; then echo "gofmt needed:"; echo "$$unformatted"; exit 1; fi
+	cd vibe-remoted && go vet ./...
+	cd vibe-remoted && go test -race -count=1 ./...
+
+check-desktop:
+	cd desktop && npm run typecheck
+	cd desktop && npm test
+
 # --- Server (Go) ---
 
 server:
-	cd vibe-remoted && go build -o ../bin/vibe-remoted ./cmd/vibe-remoted
+	cd vibe-remoted && go build -ldflags "$(GO_LDFLAGS)" -o ../bin/vibe-remoted ./cmd/vibe-remoted
+
+# Cross-compiled daemon binaries for releases (the remote host usually has no Go).
+DIST_PLATFORMS := linux/amd64 linux/arm64 darwin/amd64 darwin/arm64
+
+dist-daemon:
+	@mkdir -p dist
+	@for p in $(DIST_PLATFORMS); do \
+		os=$${p%/*}; arch=$${p#*/}; \
+		out=dist/vibe-remoted-$(VERSION)-$$os-$$arch; \
+		echo "==> $$out"; \
+		(cd vibe-remoted && CGO_ENABLED=0 GOOS=$$os GOARCH=$$arch \
+			go build -trimpath -ldflags "$(GO_LDFLAGS)" -o ../$$out ./cmd/vibe-remoted) || exit 1; \
+	done
 
 dev-server:
 	cd vibe-remoted && go run ./cmd/vibe-remoted --config ../vibe-remoted.local.json
@@ -34,12 +70,12 @@ dev-desktop:
 	cd desktop && npm run dev
 
 install-desktop:
-	cd desktop && npm install
+	cd desktop && npm ci
 
 # --- Utilities ---
 
 clean:
-	rm -rf bin/ desktop/dist/
+	rm -rf bin/ dist/ desktop/dist/ desktop/release/
 
 # Quick smoke test: check server healthz
 smoke:
