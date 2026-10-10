@@ -32,7 +32,11 @@ desktop/src/main/machines.json
 
 # Local agent and test-tool state
 .agents/
-.claude/
+# Project skills in .claude/skills/ are shared; everything else under .claude/
+# (local settings, externally installed skills) stays private.
+.claude/*
+!.claude/skills/
+.claude/skills/redesign-existing-projects
 .playwright-mcp/
 .superpowers/
 skills-lock.json
