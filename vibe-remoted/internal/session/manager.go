@@ -3,6 +3,7 @@ package session
 import (
 	"crypto/rand"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"sync"
 	"time"
@@ -10,11 +11,28 @@ import (
 	"github.com/lflish/vibe-remote/vibe-remoted/internal/protocol"
 )
 
+// ErrSessionNotFound is wrapped by every "session %q not found" error so HTTP
+// handlers can map it to 404 without matching on the message.
+var ErrSessionNotFound = errors.New("not found")
+
+func sessionNotFound(id string) error {
+	return fmt.Errorf("session %q %w", id, ErrSessionNotFound)
+}
+
 // Manager tracks all sessions on this machine.
+//
+// Lock order: Manager.mu → Runner.mu → Runner.metaMu. Manager.mu is never
+// acquired while holding a Runner lock, metaMu is a leaf, and no tmux command
+// runs under Manager.mu (a slow tmux would otherwise stall every handler).
 type Manager struct {
 	mu       sync.RWMutex
 	sessions map[string]*Runner
 	subs     map[string][]chan protocol.NotifyFrame // sessionID → notify subscribers
+	// gen counts session-table mutations (create, delete, recovery). A tmux
+	// snapshot taken outside mu is only applied if gen hasn't moved since the
+	// query started — otherwise reconcile could evict a session created after
+	// the snapshot, or resurrect one deleted after it.
+	gen uint64
 
 	useTmux          bool
 	claudeCmd        string
@@ -22,7 +40,9 @@ type Manager struct {
 	shell            string
 	liveTmuxSessions func() (map[string]tmuxSessionInfo, bool)
 	eventsURL        string
-	token            string
+	// mainToken is held only to derive per-session hook tokens; it is never
+	// injected into a session's environment.
+	mainToken string
 }
 
 // NewManager creates a session manager.
@@ -38,12 +58,44 @@ func NewManager(useTmux bool, claudeCmd string, loginShell bool, shell string) *
 	}
 }
 
-// SetEventEnv configures the events endpoint URL and token injected into new
-// sessions' environment (for hook-based out-of-band reporting). Called once at
-// startup after the bind address/port/token are known.
-func (m *Manager) SetEventEnv(eventsURL, token string) {
+// SetEventEnv configures the events endpoint URL injected into new sessions'
+// environment, and the main token from which each session's hook token is
+// derived (for hook-based out-of-band reporting). Called once at startup after
+// the bind address/port/token are known.
+func (m *Manager) SetEventEnv(eventsURL, mainToken string) {
 	m.eventsURL = eventsURL
-	m.token = token
+	m.mainToken = mainToken
+}
+
+// hookTokenFor returns the session's hook token, or "" when no main token is
+// configured (nothing to derive from, so nothing is injected).
+func (m *Manager) hookTokenFor(id string) string {
+	if m.mainToken == "" {
+		return ""
+	}
+	return HookToken(m.mainToken, id)
+}
+
+// recoveredRunner builds the in-memory entry for a session that exists in tmux
+// but not in the table (daemon restart). It carries the same event env as a
+// freshly created runner so a later Reload injects the right values.
+func (m *Manager) recoveredRunner(id string, info tmuxSessionInfo, now time.Time) *Runner {
+	return &Runner{
+		ID:            id,
+		Workdir:       info.workdir,
+		Mode:          info.mode,
+		SourceWorkdir: info.sourceWorkdir,
+		SourceRepo:    info.sourceRepo,
+		WorktreeRoot:  info.worktreeRoot,
+		Branch:        info.branch,
+		Created:       now,
+		useTmux:       m.useTmux,
+		claudeCmd:     m.claudeCmd,
+		loginShell:    m.loginShell,
+		shell:         m.shell,
+		eventsURL:     m.eventsURL,
+		hookToken:     m.hookTokenFor(id),
+	}
 }
 
 // CreateOptions holds parameters for creating a new session.
@@ -52,6 +104,11 @@ type CreateOptions struct {
 	Mode              protocol.SessionMode
 	Cols, Rows        uint16
 	ClaudeCmdOverride string
+	// ValidateWorkdir, when set, re-checks the workdir a worktree session will
+	// actually run in. The caller validated the source directory, but the
+	// worktree is created next to the repo root — possibly outside the allowed
+	// roots — so the derived path needs the same check.
+	ValidateWorkdir func(string) (string, error)
 }
 
 // Create starts a new session and registers it. Worktree resources are created
@@ -74,6 +131,15 @@ func (m *Manager) Create(opts CreateOptions) (*Runner, error) {
 		if err != nil {
 			return nil, err
 		}
+		if opts.ValidateWorkdir != nil {
+			if _, err := opts.ValidateWorkdir(workdir); err != nil {
+				err = fmt.Errorf("worktree workdir %q: %w", workdir, err)
+				if rollbackErr := RollbackWorktree(meta); rollbackErr != nil {
+					return nil, fmt.Errorf("%v; rollback worktree: %w", err, rollbackErr)
+				}
+				return nil, err
+			}
+		}
 	}
 
 	claudeCmd := m.claudeCmd
@@ -95,7 +161,7 @@ func (m *Manager) Create(opts CreateOptions) (*Runner, error) {
 		Cols:          opts.Cols,
 		Rows:          opts.Rows,
 		EventsURL:     m.eventsURL,
-		Token:         m.token,
+		HookToken:     m.hookTokenFor(id),
 	})
 	if err != nil {
 		if mode == protocol.SessionModeWorktree {
@@ -108,6 +174,7 @@ func (m *Manager) Create(opts CreateOptions) (*Runner, error) {
 
 	m.mu.Lock()
 	m.sessions[id] = runner
+	m.gen++
 	m.mu.Unlock()
 	return runner, nil
 }
@@ -120,63 +187,99 @@ func (m *Manager) Get(id string) (*Runner, bool) {
 	return r, ok
 }
 
-// Attach re-attaches to an existing session (reconnect after disconnect).
-func (m *Manager) Attach(id string, cols, rows uint16) (*Runner, error) {
+// lookupOrRecover returns the registered runner for id, recovering it from
+// tmux (daemon restart) when the table doesn't have it. The tmux query runs
+// outside mu; the table is re-checked under the write lock so two concurrent
+// attaches to the same unregistered session share one Runner instead of each
+// installing their own (and fighting over the PTY epoch).
+func (m *Manager) lookupOrRecover(id string) (*Runner, error) {
 	m.mu.RLock()
 	runner, ok := m.sessions[id]
 	m.mu.RUnlock()
-	if m.useTmux {
-		if !ok {
-			// Reconcile this one session from tmux before attaching, so Ready has
-			// the persisted worktree metadata after a daemon restart.
-			if live, queryOK := m.liveTmuxSessions(); queryOK {
-				if info, exists := live[id]; exists {
-					runner = &Runner{ID: id, Workdir: info.workdir, Mode: info.mode, SourceWorkdir: info.sourceWorkdir, SourceRepo: info.sourceRepo, WorktreeRoot: info.worktreeRoot, Branch: info.branch, Created: time.Now(), useTmux: true, claudeCmd: m.claudeCmd, loginShell: m.loginShell, shell: m.shell, eventsURL: m.eventsURL, token: m.token}
-					m.mu.Lock()
-					m.sessions[id] = runner
-					m.mu.Unlock()
-					ok = true
-				}
-			}
-		}
-		if !ok {
-			return nil, fmt.Errorf("session %q not found", id)
-		}
-	} else if !ok {
-		return nil, fmt.Errorf("session %q not found", id)
+	if ok {
+		return runner, nil
 	}
+	if !m.useTmux {
+		return nil, sessionNotFound(id)
+	}
+	// Reconcile this one session from tmux before attaching, so Ready has the
+	// persisted worktree metadata after a daemon restart.
+	live, queryOK := m.liveTmuxSessions()
+	if !queryOK {
+		return nil, sessionNotFound(id)
+	}
+	info, exists := live[id]
+	if !exists {
+		return nil, sessionNotFound(id)
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if existing, ok := m.sessions[id]; ok {
+		return existing, nil
+	}
+	runner = m.recoveredRunner(id, info, time.Now())
+	m.sessions[id] = runner
+	m.gen++
+	return runner, nil
+}
 
+// Attach re-attaches to an existing session (reconnect after disconnect).
+func (m *Manager) Attach(id string, cols, rows uint16) (*Runner, error) {
+	runner, err := m.lookupOrRecover(id)
+	if err != nil {
+		return nil, err
+	}
 	if err := runner.AttachExisting(cols, rows); err != nil {
 		return nil, err
 	}
-
 	return runner, nil
+}
+
+// syncFromTmux queries tmux outside mu and then reconciles the table under it.
+// It returns the snapshot only if it was applied: when another goroutine
+// mutated the table while the query was in flight, the snapshot may predate
+// that change, so it is dropped (as if the query had failed) and the next poll
+// reconciles from fresh data.
+func (m *Manager) syncFromTmux() (map[string]tmuxSessionInfo, bool) {
+	if !m.useTmux {
+		return nil, false
+	}
+	m.mu.RLock()
+	startGen := m.gen
+	m.mu.RUnlock()
+
+	live, ok := m.liveTmuxSessions()
+	if !ok {
+		return nil, false
+	}
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.gen != startGen {
+		return nil, false
+	}
+	reconcileTmuxSessions(m.sessions, live, time.Now(), m.recoveredRunner)
+	return live, true
 }
 
 // Delete kills and removes a session. Worktree cleanup happens after the
 // runner is stopped; dirty resources are intentionally preserved and surfaced.
 func (m *Manager) Delete(id string) error {
-	if m.useTmux {
-		if live, ok := m.liveTmuxSessions(); ok {
-			m.mu.Lock()
-			reconcileTmuxSessions(m.sessions, live, time.Now(), m.useTmux, m.claudeCmd, m.shell, m.loginShell)
-			m.mu.Unlock()
-		}
-	}
-	m.mu.Lock()
+	m.syncFromTmux()
+	m.mu.RLock()
 	runner, ok := m.sessions[id]
-	m.mu.Unlock()
+	m.mu.RUnlock()
 	if !ok {
-		return fmt.Errorf("session %q not found", id)
+		return sessionNotFound(id)
 	}
 
 	runner.Kill()
-	if protocol.SessionMode(runner.Mode) == protocol.SessionModeWorktree {
+	if meta := runner.Metadata(); meta.Mode == protocol.SessionModeWorktree {
 		err := CleanupWorktree(WorktreeMetadata{
-			SourceWorkdir: runner.SourceWorkdir,
-			SourceRepo:    runner.SourceRepo,
-			WorktreeRoot:  runner.WorktreeRoot,
-			Branch:        runner.Branch,
+			SourceWorkdir: meta.SourceWorkdir,
+			SourceRepo:    meta.SourceRepo,
+			WorktreeRoot:  meta.WorktreeRoot,
+			Branch:        meta.Branch,
 		})
 		if err != nil {
 			return err
@@ -184,6 +287,7 @@ func (m *Manager) Delete(id string) error {
 	}
 	m.mu.Lock()
 	delete(m.sessions, id)
+	m.gen++
 	m.mu.Unlock()
 	return nil
 }
@@ -195,7 +299,7 @@ func (m *Manager) Rename(id, name string) error {
 	runner, ok := m.sessions[id]
 	m.mu.RUnlock()
 	if !ok {
-		return fmt.Errorf("session %q not found", id)
+		return sessionNotFound(id)
 	}
 	return runner.SetName(sanitizeSessionName(name))
 }
@@ -206,21 +310,19 @@ func (m *Manager) Reload(id, command string) error {
 	if !m.useTmux {
 		return ErrReloadRequiresTmux
 	}
-	if live, ok := m.liveTmuxSessions(); ok {
-		m.mu.Lock()
-		reconcileTmuxSessions(m.sessions, live, time.Now(), m.useTmux, m.claudeCmd, m.shell, m.loginShell)
-		m.mu.Unlock()
-	}
+	m.syncFromTmux()
 	m.mu.RLock()
 	runner, ok := m.sessions[id]
 	m.mu.RUnlock()
 	if !ok {
-		return fmt.Errorf("session %q not found", id)
+		return sessionNotFound(id)
 	}
 	return runner.Reload(command)
 }
 
 func applyTmuxSessionMetadata(r *Runner, info tmuxSessionInfo) {
+	r.metaMu.Lock()
+	defer r.metaMu.Unlock()
 	if r.Workdir == "" {
 		r.Workdir = info.workdir
 	}
@@ -259,6 +361,7 @@ func completeTmuxWorktreeMetadata(info tmuxSessionInfo) bool {
 		info.sourceWorkdir != "" && info.sourceRepo != "" && info.worktreeRoot != "" && info.branch != ""
 }
 
+// completeRunnerWorktreeMetadata expects the caller to hold r.metaMu.
 func completeRunnerWorktreeMetadata(r *Runner) bool {
 	return protocol.SessionMode(r.Mode) == protocol.SessionModeWorktree &&
 		r.SourceWorkdir != "" && r.SourceRepo != "" && r.WorktreeRoot != "" && r.Branch != ""
@@ -266,8 +369,9 @@ func completeRunnerWorktreeMetadata(r *Runner) bool {
 
 // reconcileTmuxSessions updates the in-memory session table from tmux's live
 // snapshot. Keeping this seam separate makes reconciliation testable without
-// depending on a running tmux daemon.
-func reconcileTmuxSessions(sessions map[string]*Runner, live map[string]tmuxSessionInfo, now time.Time, useTmux bool, claudeCmd, shell string, loginShell bool) {
+// depending on a running tmux daemon. recover builds the entry for a session
+// that tmux has but the table doesn't.
+func reconcileTmuxSessions(sessions map[string]*Runner, live map[string]tmuxSessionInfo, now time.Time, recover func(id string, info tmuxSessionInfo, now time.Time) *Runner) {
 	for id := range sessions {
 		if _, alive := live[id]; !alive {
 			delete(sessions, id)
@@ -278,46 +382,29 @@ func reconcileTmuxSessions(sessions map[string]*Runner, live map[string]tmuxSess
 			applyTmuxSessionMetadata(r, info)
 			continue
 		}
-		sessions[id] = &Runner{
-			ID:            id,
-			Workdir:       info.workdir,
-			Mode:          info.mode,
-			SourceWorkdir: info.sourceWorkdir,
-			SourceRepo:    info.sourceRepo,
-			WorktreeRoot:  info.worktreeRoot,
-			Branch:        info.branch,
-			Created:       now,
-			useTmux:       useTmux,
-			claudeCmd:     claudeCmd,
-			loginShell:    loginShell,
-			shell:         shell,
-		}
+		sessions[id] = recover(id, info, now)
 	}
 }
 
 // List returns info for all sessions.
 func (m *Manager) List() []protocol.SessionInfo {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-
 	// In tmux mode, tmux is the source of truth for which sessions exist.
 	// Query once (not per-session) so a transient failure can't wrongly evict
 	// live sessions: on query failure we fall back to the in-memory list. The
 	// query also brings back @vibe_remote_name, so Title assembly below needs no
-	// extra per-session tmux exec (which would block under m.mu).
-	var live map[string]tmuxSessionInfo
-	haveLive := false
-	if m.useTmux {
-		var ok bool
-		live, ok = m.liveTmuxSessions()
-		if ok {
-			haveLive = true
-			reconcileTmuxSessions(m.sessions, live, time.Now(), m.useTmux, m.claudeCmd, m.shell, m.loginShell)
-		}
-	}
+	// extra per-session tmux exec. The query runs outside m.mu; only the
+	// reconcile and the snapshot below hold it.
+	live, haveLive := m.syncFromTmux()
 
-	list := make([]protocol.SessionInfo, 0, len(m.sessions))
+	m.mu.RLock()
+	runners := make([]*Runner, 0, len(m.sessions))
 	for _, r := range m.sessions {
+		runners = append(runners, r)
+	}
+	m.mu.RUnlock()
+
+	list := make([]protocol.SessionInfo, 0, len(runners))
+	for _, r := range runners {
 		// Prefer the name from the batched tmux query; only fall back to a
 		// per-session read if we couldn't batch it (query failed / not in the
 		// live set). titleFrom applies the identical three-level fallback.
@@ -327,10 +414,11 @@ func (m *Manager) List() []protocol.SessionInfo {
 		} else if r.useTmux {
 			name = r.readName()
 		}
+		workdir := r.CurrentWorkdir()
 		list = append(list, protocol.SessionInfo{
 			ID:              r.ID,
-			Title:           titleFrom(name, r.Workdir, r.ID),
-			Workdir:         r.Workdir,
+			Title:           titleFrom(name, workdir, r.ID),
+			Workdir:         workdir,
 			Created:         r.Created.Format(time.RFC3339),
 			SessionMetadata: r.Metadata(),
 		})

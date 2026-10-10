@@ -171,13 +171,42 @@ PTY 字节流，base64 编码。
 | Method | Path | 说明 |
 |--------|------|------|
 | GET | `/healthz` | 存活探针（无需鉴权） |
-| GET | `/api/v1/info` | 机器信息（主机名、tmux 状态、默认目录等） |
+| GET | `/api/v1/info` | 机器信息：`{version, hostname, tmux_enabled, default_workdir, allowed_roots, claude_flags}`。`version` 是 daemon 构建版本（`-ldflags "-X main.version=..."` 注入，未注入为 `"dev"`），与 `vibe-remoted --version` 输出一致；`claude_flags` 只含 `id/label/default`，不下发 `arg` |
 | GET | `/api/v1/sessions` | 会话列表 |
 | DELETE | `/api/v1/sessions/{id}` | 关闭指定会话 |
 | POST | `/api/v1/sessions/{id}/rename` | 重命名会话，body `{"name":"..."}`，名字存 tmux 用户选项 |
 | POST | `/api/v1/sessions/{id}/reload` | 在原 tmux 会话和工作目录中重启 CLI，并继续最近的对话 |
-| GET | `/api/v1/fs?path=<dir>` | 列目录（仅目录项），供远程目录选择器用 |
-| POST | `/api/v1/events` | 带外事件上报，body `{sessionId,kind,message?}`，路由为该会话的 notify 帧 |
+| GET | `/api/v1/fs?path=<dir>` | 列目录（仅目录项），供远程目录选择器用。返回 `{path, parent, entries}`：`parent` 是规范化后的上级目录，**仅在其本身也可列出时才返回**，已在 `allowed_roots` 顶层时为空串。客户端据此隐藏「上一级」，避免点出必然的 403（`allowed_roots` 配的是符号链接解析前的路径如 `/tmp`，而 `path` 是规范化后的 `/private/tmp`，客户端无法自行比较） |
+| POST | `/api/v1/events` | 带外事件上报，body `{sessionId,kind,message?}`，路由为该会话的 notify 帧。鉴权见下文，与其它端点不同 |
+
+请求体（rename、events）上限 64 KiB，超出返回 413。rename：会话不存在返回 404，tmux 设置失败等其它错误返回 500。
+
+### `/api/v1/events` 鉴权与限制
+
+接受两种 Bearer token：
+
+- 主 token（与其它端点相同）：可上报任意 `sessionId`。
+- **hook token**：`hex(HMAC-SHA256(key=主token, msg="events:"+sessionId))`，只对 body 中**同一个** `sessionId` 有效。用于其它会话、或用于其它任何端点（含 WS `auth`）一律 401。
+
+服务端先解析 body 再校验（hook token 依赖 `sessionId`）。未通过鉴权时总是返回 401，即使 body 格式错误，因此 400/413 只会回给已鉴权的调用方。`kind` 最长 64 字节，`message` 最长 4096 字节，超出返回 400；缺 `sessionId` 或 `kind` 也返回 400。成功返回 204。
+
+### 会话环境变量（供 hook 使用）
+
+每个会话启动时，daemon 向 CLI 进程注入：
+
+| 变量 | 值 |
+|------|----|
+| `VIBE_REMOTE_SESSION_ID` | 会话 id |
+| `VIBE_REMOTE_EVENTS_URL` | `http://<bind_addr>:<port>/api/v1/events`（IPv6 地址带方括号） |
+| `VIBE_REMOTE_TOKEN` | 该会话的 **hook token**（不是主 token）。变量名沿用旧版，现有 hook 脚本无需改动 |
+
+tmux 模式下，上述变量通过 `tmux new-session` / `respawn-pane` 的 `-e` 逐个显式传入，否则同一 tmux server 上后建的会话会沿用首个会话的值。CLI 能读到的环境，它启动的所有子进程也都能读到，所以这里只放权限仅限上报本会话事件的 hook token。hook 示例：
+
+```sh
+curl -fsS -X POST "$VIBE_REMOTE_EVENTS_URL" \
+  -H "Authorization: Bearer $VIBE_REMOTE_TOKEN" \
+  -d "{\"sessionId\":\"$VIBE_REMOTE_SESSION_ID\",\"kind\":\"idle\"}"
+```
 
 ## 安全
 

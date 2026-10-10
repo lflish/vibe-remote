@@ -4,9 +4,11 @@ package config
 import (
 	"encoding/json"
 	"fmt"
+	"log"
 	"net"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 )
 
@@ -78,23 +80,54 @@ func DefaultConfig() *Config {
 	}
 }
 
+// Token length policy. The token is equivalent to shell access on the host, so
+// anything short enough to guess is rejected outright; between the two bounds
+// the daemon starts but warns (see main).
+const (
+	MinTokenLen         = 16
+	RecommendedTokenLen = 32
+	// exampleToken is the placeholder shipped in vibe-remoted.example.json. A
+	// copied-but-unedited config must not come up with a publicly known token.
+	exampleToken = "change-me-to-a-secure-token"
+)
+
 // Load reads a config file from the given path. Falls back to defaults for missing fields.
 func Load(path string) (*Config, error) {
 	cfg := DefaultConfig()
 
-	data, err := os.ReadFile(path)
+	f, err := os.Open(path)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return cfg, nil // use defaults if no config file
+			// Still allowed so a daemon can run purely from VIBE_REMOTED_*
+			// env vars, but say so: a typo'd -config path otherwise silently
+			// starts with defaults.
+			log.Printf("warning: config file %q not found; using defaults and env overrides", path)
+			return cfg, nil
 		}
 		return nil, fmt.Errorf("read config: %w", err)
 	}
+	defer f.Close()
 
-	if err := json.Unmarshal(data, cfg); err != nil {
-		return nil, fmt.Errorf("parse config: %w", err)
+	// Unknown fields are an error rather than silently ignored: a misspelled
+	// key (e.g. "allowed_root") would otherwise fall back to a default that is
+	// usually broader than what the user meant to configure.
+	dec := json.NewDecoder(f)
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(cfg); err != nil {
+		return nil, fmt.Errorf("parse config %s: %w", path, err)
+	}
+	if dec.More() {
+		return nil, fmt.Errorf("parse config %s: unexpected data after the JSON object", path)
 	}
 
 	return cfg, nil
+}
+
+// ListenAddr returns the host:port the daemon listens on. JoinHostPort
+// brackets IPv6 literals ("[fd7a::1]:8765"); plain concatenation would produce
+// an address that neither net.Listen nor a URL parser accepts.
+func (c *Config) ListenAddr() string {
+	return net.JoinHostPort(c.BindAddr, strconv.Itoa(c.Port))
 }
 
 // Validate checks that the config is usable.
@@ -108,12 +141,50 @@ func (c *Config) Validate() error {
 	if c.Token == "" {
 		return fmt.Errorf("token must not be empty")
 	}
+	if len(c.Token) < MinTokenLen {
+		return fmt.Errorf("token must be at least %d characters", MinTokenLen)
+	}
+	if c.Token == exampleToken {
+		return fmt.Errorf("token is still the example placeholder; generate one (e.g. `openssl rand -hex 32`)")
+	}
+	if len(c.AllowedRoots) == 0 {
+		return fmt.Errorf("allowed_roots must list at least one directory")
+	}
+	for _, root := range c.AllowedRoots {
+		if info, err := os.Stat(root); err != nil || !info.IsDir() {
+			return fmt.Errorf("allowed_roots entry %q is not an existing directory", root)
+		}
+	}
 	if c.DefaultWorkdir == "" {
 		return fmt.Errorf("default_workdir must not be empty")
 	}
 	// Verify default workdir exists
 	if info, err := os.Stat(c.DefaultWorkdir); err != nil || !info.IsDir() {
 		return fmt.Errorf("default_workdir %q is not an existing directory", c.DefaultWorkdir)
+	}
+	// Otherwise every attach without an explicit workdir would be rejected by
+	// the whitelist at runtime, which looks like a client bug rather than a
+	// config mistake.
+	if _, err := c.ResolveAllowedWorkdir(c.DefaultWorkdir); err != nil {
+		return fmt.Errorf("default_workdir %q is not inside allowed_roots", c.DefaultWorkdir)
+	}
+	if strings.TrimSpace(c.ClaudeCmd) == "" {
+		return fmt.Errorf("claude_cmd must not be empty")
+	}
+	seen := make(map[string]bool, len(c.ClaudeFlags))
+	for i, f := range c.ClaudeFlags {
+		if strings.TrimSpace(f.ID) == "" {
+			return fmt.Errorf("claude_flags[%d]: id must not be empty", i)
+		}
+		if strings.TrimSpace(f.Arg) == "" {
+			return fmt.Errorf("claude_flags[%d] (%q): arg must not be empty", i, f.ID)
+		}
+		// Clients select flags by id, so a duplicate would make one entry
+		// unreachable and the picker show two checkboxes that toggle together.
+		if seen[f.ID] {
+			return fmt.Errorf("claude_flags: duplicate id %q", f.ID)
+		}
+		seen[f.ID] = true
 	}
 	return nil
 }

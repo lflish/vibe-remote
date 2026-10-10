@@ -1,4 +1,4 @@
-import { VibeRemoteRest, type DirEntry } from './rest';
+import { VibeRemoteRest, type DirEntry, type DirListing } from './rest';
 import type { MachineConfig, SessionMode } from '../shared/protocol';
 import { t } from './i18n';
 import { activateModal } from './modal';
@@ -139,7 +139,7 @@ export function openDirPicker(
         if (closed || generation !== loadGeneration) return;
         currentPath = listing.path;
         renderPath(listing.path);
-        renderEntries(listing.path, listing.entries);
+        renderEntries(listing, listing.entries);
         (selectBtn as HTMLButtonElement).disabled = false;
       } catch (e) {
         if (closed || generation !== loadGeneration) return;
@@ -158,17 +158,27 @@ export function openDirPicker(
       pathBar.textContent = path;
     }
 
-    function renderEntries(path: string, entries: DirEntry[]) {
+    function renderEntries(listing: DirListing, entries: DirEntry[]) {
       list.textContent = '';
 
-      // Parent directory entry (go up)
-      const parent = parentPath(path);
-      if (parent && parent !== path) {
+      // Parent directory entry (go up). The server reports the parent only when
+      // it is actually listable, so at an allowed root we show a disabled hint
+      // instead of a button that would always 403. Older daemons omit `parent`
+      // entirely; fall back to deriving it so they keep working (an out-of-root
+      // click there still surfaces a readable error).
+      const parent = listing.parent !== undefined
+        ? listing.parent
+        : parentPath(listing.path);
+      if (parent && parent !== listing.path) {
         const up = el('button', 'modal-item modal-item-up') as HTMLButtonElement;
         up.type = 'button';
         up.textContent = t('picker.up');
         up.addEventListener('click', () => load(parent));
         list.appendChild(up);
+      } else {
+        const atRoot = el('div', 'modal-item modal-item-up modal-item-disabled');
+        atRoot.textContent = t('picker.atRoot');
+        list.appendChild(atRoot);
       }
 
       if (entries.length === 0) {

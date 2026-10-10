@@ -1,0 +1,156 @@
+name: Release
+
+# Pushing a v* tag builds every artifact from the tagged commit, checksums and
+# attests them, and opens a *draft* release. A maintainer reviews the draft and
+# publishes it by hand — nothing reaches users without that step.
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  prepare:
+    name: Verify version
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v7
+      - id: version
+        name: Tag, package.json and CHANGELOG must agree
+        run: |
+          tag="${GITHUB_REF_NAME}"
+          # Refs may legally contain shell metacharacters; only plain semver tags
+          # are allowed to flow into later build steps.
+          if ! printf '%s' "$tag" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$'; then
+            echo "::error::tag $tag is not of the form vX.Y.Z[-pre]"
+            exit 1
+          fi
+          version="${tag#v}"
+          pkg=$(node -p 'require("./desktop/package.json").version')
+          if [ "$pkg" != "$version" ]; then
+            echo "::error::tag $tag does not match desktop/package.json version $pkg"
+            exit 1
+          fi
+          awk -v v="$version" '
+            $0 ~ "^## \\[" v "\\]" { found = 1; next }
+            /^## \[/ { found = 0 }
+            found
+          ' CHANGELOG.md > notes.md
+          if [ ! -s notes.md ]; then
+            echo "::error::CHANGELOG.md has no section for [$version]"
+            exit 1
+          fi
+          cat >> notes.md <<'EOF'
+
+          ---
+
+          **Downloads**: `vibe-remote-*-arm64.dmg` for Apple silicon, `vibe-remote-*-x64.dmg` for Intel Macs, and `vibe-remoted-*-<os>-<arch>` for the daemon (`chmod +x` after download). Verify with `shasum -a 256 -c SHA256SUMS --ignore-missing` or `gh attestation verify <file> --repo ${{ github.repository }}`.
+
+          The DMGs are unsigned: right-click the app and choose *Open* on first launch, or run `xattr -dr com.apple.quarantine /Applications/vibe-remote.app`.
+          EOF
+          echo "version=$tag" >> "$GITHUB_OUTPUT"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: release-notes
+          path: notes.md
+
+  checks:
+    name: CI
+    needs: prepare
+    uses: ./.github/workflows/ci.yml
+
+  daemon:
+    name: Build daemon
+    needs: [prepare, checks]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: vibe-remoted/go.mod
+          # Runner caches lag behind Go patch releases; govulncheck needs the latest.
+          check-latest: true
+          cache-dependency-path: vibe-remoted/go.sum
+      - name: Cross-compile
+        env:
+          VERSION: ${{ needs.prepare.outputs.version }}
+        run: make dist-daemon VERSION="$VERSION"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: daemon
+          path: dist/vibe-remoted-*
+          if-no-files-found: error
+
+  desktop:
+    name: Build desktop DMGs
+    needs: [prepare, checks]
+    runs-on: macos-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: desktop/package-lock.json
+      - name: Install dependencies
+        working-directory: desktop
+        run: npm ci
+      - name: Build arm64 + x64 DMGs
+        working-directory: desktop
+        env:
+          # Unsigned until a Developer ID is available. To sign and notarize,
+          # drop this and provide CSC_LINK / CSC_KEY_PASSWORD / APPLE_ID /
+          # APPLE_APP_SPECIFIC_PASSWORD / APPLE_TEAM_ID from repository secrets.
+          CSC_IDENTITY_AUTO_DISCOVERY: "false"
+        # --publish never: this workflow, not electron-builder, owns the release.
+        run: npm run build -- --publish never
+      - uses: actions/upload-artifact@v7
+        with:
+          name: desktop
+          path: desktop/release/*.dmg
+          if-no-files-found: error
+
+  publish:
+    name: Draft GitHub release
+    needs: [prepare, daemon, desktop]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          path: assets
+          pattern: "{daemon,desktop}"
+          merge-multiple: true
+      - uses: actions/download-artifact@v8
+        with:
+          name: release-notes
+      - name: Checksums
+        working-directory: assets
+        run: sha256sum -- * > SHA256SUMS && cat SHA256SUMS
+      - uses: actions/attest-build-provenance@v4
+        with:
+          subject-path: assets/vibe-remote*
+      - name: Create draft release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.prepare.outputs.version }}
+        run: |
+          gh release create "$TAG" assets/* \
+            --repo "${{ github.repository }}" \
+            --draft --verify-tag \
+            --title "$TAG" \
+            --notes-file notes.md

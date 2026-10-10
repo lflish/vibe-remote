@@ -32,10 +32,9 @@ func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
 	}
 	defer conn.CloseNow()
 
-	// Raise the read limit well above the 32 KiB default: a large terminal
-	// paste arrives as one base64 `data` frame and would otherwise trip the
-	// limit and drop the connection mid-paste. 4 MiB covers realistic pastes.
-	conn.SetReadLimit(4 << 20)
+	// Before auth, the only legitimate frame is a tiny auth frame, so an
+	// unauthenticated peer may not make us buffer more than 64 KiB.
+	conn.SetReadLimit(64 << 10)
 
 	ctx := r.Context()
 
@@ -43,6 +42,11 @@ func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
 	if !s.wsAuth(ctx, conn) {
 		return
 	}
+
+	// Raise the read limit well above the 32 KiB default: a large terminal
+	// paste arrives as one base64 `data` frame and would otherwise trip the
+	// limit and drop the connection mid-paste. 4 MiB covers realistic pastes.
+	conn.SetReadLimit(4 << 20)
 
 	// Phase 2: Attach
 	runner, sessionID := s.wsAttach(ctx, conn)
@@ -140,6 +144,7 @@ func (s *Server) wsAttach(ctx context.Context, conn *websocket.Conn) (*session.R
 			Cols:              frame.Cols,
 			Rows:              frame.Rows,
 			ClaudeCmdOverride: claudeCmd,
+			ValidateWorkdir:   s.cfg.ResolveAllowedWorkdir,
 		})
 		if err != nil {
 			sendError(ctx, conn, "create session: "+err.Error())
@@ -180,7 +185,7 @@ func readyFrame(runner *session.Runner) protocol.ReadyFrame {
 	return protocol.ReadyFrame{
 		Type:            protocol.TypeReady,
 		SessionID:       runner.ID,
-		Workdir:         runner.Workdir,
+		Workdir:         runner.CurrentWorkdir(),
 		SessionMetadata: runner.Metadata(),
 	}
 }

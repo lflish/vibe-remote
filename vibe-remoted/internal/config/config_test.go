@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -68,69 +69,141 @@ func TestIsAllowedWorkdirEmptyRoots(t *testing.T) {
 	}
 }
 
+// validConfig returns a config that passes Validate; each case mutates one field.
+func validConfig(t *testing.T) *Config {
+	t.Helper()
+	root := t.TempDir()
+	return &Config{
+		BindAddr: "100.64.0.1", Port: 8765, Token: "0123456789abcdef0123456789abcdef",
+		DefaultWorkdir: root, AllowedRoots: []string{root}, ClaudeCmd: "claude",
+	}
+}
+
 func TestValidate(t *testing.T) {
 	tests := []struct {
 		name    string
-		cfg     *Config
-		wantErr bool
+		mutate  func(c *Config)
+		wantErr string // empty = valid
 	}{
-		{
-			name: "valid",
-			cfg: &Config{
-				BindAddr: "100.64.0.1", Port: 8765, Token: "secret",
-				DefaultWorkdir: "/tmp",
-			},
-			wantErr: false,
-		},
-		{
-			name: "bind 0.0.0.0 rejected",
-			cfg: &Config{
-				BindAddr: "0.0.0.0", Port: 8765, Token: "secret",
-				DefaultWorkdir: "/tmp",
-			},
-			wantErr: true,
-		},
-		{
-			name: "empty bind rejected",
-			cfg: &Config{
-				BindAddr: "", Port: 8765, Token: "secret",
-				DefaultWorkdir: "/tmp",
-			},
-			wantErr: true,
-		},
-		{
-			name: "empty token rejected",
-			cfg: &Config{
-				BindAddr: "100.64.0.1", Port: 8765, Token: "",
-				DefaultWorkdir: "/tmp",
-			},
-			wantErr: true,
-		},
-		{
-			name: "bad port rejected",
-			cfg: &Config{
-				BindAddr: "100.64.0.1", Port: 0, Token: "secret",
-				DefaultWorkdir: "/tmp",
-			},
-			wantErr: true,
-		},
-		{
-			name: "nonexistent workdir rejected",
-			cfg: &Config{
-				BindAddr: "100.64.0.1", Port: 8765, Token: "secret",
-				DefaultWorkdir: "/nonexistent/path/xyz",
-			},
-			wantErr: true,
-		},
+		{"valid", func(c *Config) {}, ""},
+		{"bind 0.0.0.0 rejected", func(c *Config) { c.BindAddr = "0.0.0.0" }, "all interfaces"},
+		{"empty bind rejected", func(c *Config) { c.BindAddr = "" }, "bind_addr"},
+		{"empty token rejected", func(c *Config) { c.Token = "" }, "token"},
+		{"bad port rejected", func(c *Config) { c.Port = 0 }, "port"},
+		{"nonexistent workdir rejected", func(c *Config) { c.DefaultWorkdir = "/nonexistent/path/xyz" }, "default_workdir"},
+
+		// Token policy: short tokens are rejected, 16–31 chars only warn (main).
+		{"15-char token rejected", func(c *Config) { c.Token = strings.Repeat("a", 15) }, "at least 16"},
+		{"16-char token accepted", func(c *Config) { c.Token = strings.Repeat("a", 16) }, ""},
+		{"example placeholder rejected", func(c *Config) { c.Token = "change-me-to-a-secure-token" }, "placeholder"},
+
+		{"no allowed roots rejected", func(c *Config) { c.AllowedRoots = nil }, "allowed_roots"},
+		{"missing allowed root rejected", func(c *Config) {
+			c.AllowedRoots = append(c.AllowedRoots, "/nonexistent/root/xyz")
+		}, "/nonexistent/root/xyz"},
+		{"default workdir outside roots rejected", func(c *Config) { c.DefaultWorkdir = os.TempDir() }, "not inside allowed_roots"},
+		{"blank claude_cmd rejected", func(c *Config) { c.ClaudeCmd = "   " }, "claude_cmd"},
+		{"flags valid", func(c *Config) {
+			c.ClaudeFlags = []ClaudeFlag{{ID: "continue", Arg: "-c"}, {ID: "skip", Arg: "--x"}}
+		}, ""},
+		{"flag without id rejected", func(c *Config) { c.ClaudeFlags = []ClaudeFlag{{Arg: "-c"}} }, "id must not be empty"},
+		{"flag without arg rejected", func(c *Config) { c.ClaudeFlags = []ClaudeFlag{{ID: "continue"}} }, "arg must not be empty"},
+		{"duplicate flag id rejected", func(c *Config) {
+			c.ClaudeFlags = []ClaudeFlag{{ID: "continue", Arg: "-c"}, {ID: "continue", Arg: "--continue"}}
+		}, "duplicate id"},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			err := tt.cfg.Validate()
-			if (err != nil) != tt.wantErr {
-				t.Errorf("Validate() error = %v, wantErr %v", err, tt.wantErr)
+			cfg := validConfig(t)
+			tt.mutate(cfg)
+			err := cfg.Validate()
+			if tt.wantErr == "" {
+				if err != nil {
+					t.Fatalf("Validate() = %v, want nil", err)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
+				t.Fatalf("Validate() = %v, want error containing %q", err, tt.wantErr)
 			}
 		})
+	}
+}
+
+func TestLoadRejectsUnknownFields(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "cfg.json")
+	if err := os.WriteFile(path, []byte(`{"token":"x","allowed_root":["/tmp"]}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Load(path); err == nil || !strings.Contains(err.Error(), "allowed_root") {
+		t.Fatalf("Load() = %v, want unknown-field error naming allowed_root", err)
+	}
+}
+
+func TestLoadRejectsTrailingData(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "cfg.json")
+	if err := os.WriteFile(path, []byte(`{"port":1} {"port":2}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Load(path); err == nil {
+		t.Fatal("Load() accepted trailing data after the config object")
+	}
+}
+
+// A missing file still starts from defaults so env-only setups work.
+func TestLoadMissingFileUsesDefaults(t *testing.T) {
+	cfg, err := Load(filepath.Join(t.TempDir(), "absent.json"))
+	if err != nil {
+		t.Fatalf("Load(missing) = %v, want defaults", err)
+	}
+	if cfg.Port != DefaultConfig().Port || cfg.ClaudeCmd != "claude" {
+		t.Fatalf("Load(missing) = %+v, want defaults", cfg)
+	}
+}
+
+// The configs checked into the repo root must keep loading with the strict
+// decoder, and the dev ones must keep validating (they are used by make
+// targets and the local smoke flow). The example deliberately carries the
+// placeholder token, so it only has to parse.
+func TestTrackedConfigs(t *testing.T) {
+	repoRoot := filepath.Join("..", "..", "..")
+	for _, name := range []string{"vibe-remoted.local.json", "vibe-remoted.tmux.json"} {
+		t.Run(name, func(t *testing.T) {
+			cfg, err := Load(filepath.Join(repoRoot, name))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := cfg.Validate(); err != nil {
+				t.Fatalf("Validate() = %v", err)
+			}
+		})
+	}
+	t.Run("vibe-remoted.example.json", func(t *testing.T) {
+		cfg, err := Load(filepath.Join(repoRoot, "vibe-remoted.example.json"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "placeholder") {
+			t.Fatalf("Validate() = %v, want the placeholder token rejected", err)
+		}
+	})
+}
+
+func TestListenAddr(t *testing.T) {
+	tests := []struct {
+		bind string
+		want string
+	}{
+		{"100.64.0.1", "100.64.0.1:8765"},
+		{"fd7a::1", "[fd7a::1]:8765"},
+		{"::1", "[::1]:8765"},
+	}
+	for _, tt := range tests {
+		cfg := &Config{BindAddr: tt.bind, Port: 8765}
+		if got := cfg.ListenAddr(); got != tt.want {
+			t.Errorf("ListenAddr(%q) = %q, want %q", tt.bind, got, tt.want)
+		}
 	}
 }
 

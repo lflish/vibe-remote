@@ -24,9 +24,31 @@ const tmuxSocket = "vibe-remote"
 
 var ErrReloadRequiresTmux = errors.New("session reload requires tmux mode")
 
-// tmuxCmd builds a tmux command on the dedicated vibe-remote socket.
+// tmuxCmd builds a tmux command on the dedicated vibe-remote socket. The env
+// goes through utf8Env because tmux mangles its own output without a UTF-8
+// locale — see utf8Env for why that matters here.
 func tmuxCmd(args ...string) *exec.Cmd {
-	return exec.Command("tmux", append([]string{"-L", tmuxSocket}, args...)...)
+	cmd := exec.Command("tmux", append([]string{"-L", tmuxSocket}, args...)...)
+	cmd.Env = utf8Env()
+	return cmd
+}
+
+// utf8Env returns the process environment with a UTF-8 locale guaranteed.
+//
+// tmux decides whether it is in UTF-8 mode from LC_ALL/LC_CTYPE/LANG. With none
+// set it assumes non-UTF-8 and rewrites every byte it deems unprintable as "_",
+// which corrupts two things at once: the tab delimiters in our `-F` format
+// strings (breaking list-sessions parsing) and the box-drawing/CJK bytes in the
+// attached PTY stream (breaking the byte-passthrough guarantee). launchd-started
+// daemons inherit no locale at all, so this is the default path in production.
+//
+// An inherited locale is left untouched — the user's own setting wins.
+func utf8Env(extra ...string) []string {
+	env := append(os.Environ(), extra...)
+	if os.Getenv("LC_ALL") == "" && os.Getenv("LC_CTYPE") == "" && os.Getenv("LANG") == "" {
+		env = append(env, "LC_CTYPE=UTF-8")
+	}
+	return env
 }
 
 // tmuxSessionInfo captures the per-session fields vibe-remote needs from a single
@@ -101,12 +123,21 @@ func liveTmuxSessions() (map[string]tmuxSessionInfo, bool) {
 		if errors.As(err, &exitErr) && isNoTmuxServer(exitErr.Stderr) {
 			return map[string]tmuxSessionInfo{}, true
 		}
+		if errors.As(err, &exitErr) {
+			log.Printf("tmux list-sessions failed: %v (stderr=%q)", err, exitErr.Stderr)
+		} else {
+			log.Printf("tmux list-sessions failed: %v", err)
+		}
 		return nil, false
 	}
 	sessions := make(map[string]tmuxSessionInfo)
 	for _, line := range strings.Split(strings.TrimRight(string(out), "\r\n"), "\n") {
 		info, ok := parseTmuxSessionLine(line)
 		if !ok {
+			// A line that doesn't parse means tmux and vibe-remote disagree on
+			// the format contract — the session would silently vanish from the
+			// list, so make it loud rather than skipping in silence.
+			log.Printf("tmux list-sessions unparsed line: %q", line)
 			continue
 		}
 		id := strings.TrimPrefix(strings.SplitN(line, "\t", 2)[0], "vibe-remote-")
@@ -117,9 +148,16 @@ func liveTmuxSessions() (map[string]tmuxSessionInfo, bool) {
 
 // Runner manages a single PTY session connected to tmux→claude (or bare claude).
 type Runner struct {
-	ID            string
+	ID      string
+	Created time.Time
+
+	// Workdir and the worktree metadata below are guarded by metaMu, not mu:
+	// reconcile fills them in from tmux under Manager.mu while relays and REST
+	// handlers read them concurrently, and none of those paths should contend
+	// with the PTY lock. Outside construction, read them through Metadata /
+	// CurrentWorkdir. metaMu is a leaf lock — nothing else is acquired under it.
+	metaMu        sync.Mutex
 	Workdir       string
-	Created       time.Time
 	Mode          string
 	SourceWorkdir string
 	SourceRepo    string
@@ -141,7 +179,7 @@ type Runner struct {
 	loginShell bool
 	shell      string
 	eventsURL  string
-	token      string
+	hookToken  string // per-session HookToken, never the main token
 }
 
 // RunnerConfig holds parameters for creating a new Runner.
@@ -160,7 +198,7 @@ type RunnerConfig struct {
 	Cols          uint16
 	Rows          uint16
 	EventsURL     string
-	Token         string
+	HookToken     string // injected as VIBE_REMOTE_TOKEN; see HookToken
 }
 
 // NewRunner creates and starts a new session.
@@ -179,7 +217,7 @@ func NewRunner(cfg RunnerConfig) (*Runner, error) {
 		loginShell:    cfg.LoginShell,
 		shell:         cfg.Shell,
 		eventsURL:     cfg.EventsURL,
-		token:         cfg.Token,
+		hookToken:     cfg.HookToken,
 	}
 
 	if err := r.start(cfg.Cols, cfg.Rows); err != nil {
@@ -189,11 +227,21 @@ func NewRunner(cfg RunnerConfig) (*Runner, error) {
 }
 
 func (r *Runner) Metadata() protocol.SessionMetadata {
+	r.metaMu.Lock()
+	defer r.metaMu.Unlock()
 	mode := protocol.SessionMode(r.Mode)
 	if mode == "" {
 		mode = protocol.SessionModeNormal
 	}
 	return protocol.SessionMetadata{Mode: mode, SourceWorkdir: r.SourceWorkdir, SourceRepo: r.SourceRepo, WorktreeRoot: r.WorktreeRoot, Branch: r.Branch}
+}
+
+// CurrentWorkdir returns the session's working directory under metaMu, since a
+// recovered runner's Workdir may still be filled in by a concurrent reconcile.
+func (r *Runner) CurrentWorkdir() string {
+	r.metaMu.Lock()
+	defer r.metaMu.Unlock()
+	return r.Workdir
 }
 
 // initial process). When loginShell is enabled, claude is launched through a
@@ -250,21 +298,26 @@ func (r *Runner) start(cols, rows uint16) error {
 	tmuxSessionName := fmt.Sprintf("vibe-remote-%s", r.ID)
 
 	launch := r.launchCommand()
+	workdir := r.CurrentWorkdir()
 
 	if r.useTmux {
-		// tmux new-session -A -s <name> -c <workdir> -- <launch...>
+		// tmux new-session -A -s <name> -c <workdir> -e K=V... -- <launch...>
 		// -A: attach if exists, create if not
 		// -c: set working directory
+		// -e: see tmuxEnvArgs — cmd.Env alone does not reach the session
 		args := append([]string{"new-session", "-A", "-s", tmuxSessionName,
-			"-c", r.Workdir, "--"}, launch...)
+			"-c", workdir}, r.tmuxEnvArgs()...)
+		args = append(append(args, "--"), launch...)
 		cmd = tmuxCmd(args...)
 	} else {
 		// Bare claude without tmux (no persistence)
 		cmd = exec.Command(launch[0], launch[1:]...)
-		cmd.Dir = r.Workdir
+		cmd.Dir = workdir
 	}
 
-	cmd.Env = append(os.Environ(),
+	// Still needed in tmux mode: it is the whole env in bare mode, and in tmux
+	// mode the first client's env seeds a freshly started server.
+	cmd.Env = utf8Env(
 		"TERM=xterm-256color",
 		"COLORTERM=truecolor",
 	)
@@ -279,9 +332,13 @@ func (r *Runner) start(cols, rows uint16) error {
 		return fmt.Errorf("pty start: %w", err)
 	}
 
+	// Install under mu like AttachExisting does. The lock is released before
+	// the tmux setup below because its failure path calls Kill, which takes mu.
+	r.mu.Lock()
 	r.ptmx = ptmx
 	r.cmd = cmd
 	r.epoch++
+	r.mu.Unlock()
 
 	if r.useTmux {
 		// The tmux server registers the new session asynchronously after the
@@ -291,12 +348,13 @@ func (r *Runner) start(cols, rows uint16) error {
 			r.Kill()
 			return fmt.Errorf("tmux session %s did not become ready", tmuxSessionName)
 		}
+		meta := r.Metadata()
 		options := []struct{ key, value string }{
-			{"@vibe_remote_mode", string(r.Metadata().Mode)},
-			{"@vibe_remote_source_workdir", r.SourceWorkdir},
-			{"@vibe_remote_source_repo", r.SourceRepo},
-			{"@vibe_remote_worktree_root", r.WorktreeRoot},
-			{"@vibe_remote_branch", r.Branch},
+			{"@vibe_remote_mode", string(meta.Mode)},
+			{"@vibe_remote_source_workdir", meta.SourceWorkdir},
+			{"@vibe_remote_source_repo", meta.SourceRepo},
+			{"@vibe_remote_worktree_root", meta.WorktreeRoot},
+			{"@vibe_remote_branch", meta.Branch},
 		}
 		for _, option := range options {
 			if err := setTmuxOption(tmuxSessionName, option.key, option.value); err != nil {
@@ -336,7 +394,7 @@ func (r *Runner) AttachExisting(cols, rows uint16) error {
 
 	// tmux attach-session -t <name>
 	cmd := tmuxCmd("attach-session", "-t", tmuxSessionName)
-	cmd.Env = append(os.Environ(),
+	cmd.Env = utf8Env(
 		"TERM=xterm-256color",
 		"COLORTERM=truecolor",
 	)
@@ -566,7 +624,8 @@ func (r *Runner) Reload(command string) error {
 
 	tmuxSessionName := fmt.Sprintf("vibe-remote-%s", r.ID)
 	launch := r.launchCommandFor(command)
-	args := append([]string{"respawn-pane", "-k", "-t", tmuxSessionName + ":0.0", "-c", r.Workdir, "--"}, launch...)
+	args := append([]string{"respawn-pane", "-k", "-t", tmuxSessionName + ":0.0", "-c", r.CurrentWorkdir()}, r.tmuxEnvArgs()...)
+	args = append(append(args, "--"), launch...)
 	if out, err := tmuxCmd(args...).CombinedOutput(); err != nil {
 		message := strings.TrimSpace(string(out))
 		if message != "" {
@@ -652,9 +711,11 @@ func (r *Runner) SetName(name string) error {
 	tmuxSessionName := fmt.Sprintf("vibe-remote-%s", r.ID)
 	if name == "" {
 		// Unset so displayTitle falls back to workdir/id.
-		return tmuxCmd("set-option", "-t", tmuxSessionName, "-u", "@vibe_remote_name").Run()
+		return tmuxCmd("set-option", "-t", tmuxSessionName, "-u", "--", "@vibe_remote_name").Run()
 	}
-	return tmuxCmd("set-option", "-t", tmuxSessionName, "@vibe_remote_name", name).Run()
+	// Through setTmuxOption so the "--" terminator keeps a name like "-g" or
+	// "-u" from being parsed as a tmux flag.
+	return setTmuxOption(tmuxSessionName, "@vibe_remote_name", name)
 }
 
 // readName reads the @vibe_remote_name user option, or "" if unset / tmux errors.
@@ -694,20 +755,37 @@ func titleFrom(name, workdir, id string) string {
 // user-set @vibe_remote_name → workdir basename → session ID. This reads the name
 // per-session; Manager.List batches the name read instead (see titleFrom).
 func (r *Runner) displayTitle() string {
-	return titleFrom(r.readName(), r.Workdir, r.ID)
+	return titleFrom(r.readName(), r.CurrentWorkdir(), r.ID)
 }
 
 // vibeRemoteEnv returns the VIBE_REMOTE_* environment variables injected into the claude
 // process so a hook (claude's child) can report out-of-band events back to this
 // daemon's events endpoint. These are inert unless a hook actually uses them —
 // the hook wiring itself is intentionally out of scope for now (see plan).
+// VIBE_REMOTE_TOKEN carries the per-session hook token, which only authorizes
+// events for this session — never the main token (see HookToken).
 func (r *Runner) vibeRemoteEnv() []string {
 	env := []string{"VIBE_REMOTE_SESSION_ID=" + r.ID}
 	if r.eventsURL != "" {
 		env = append(env, "VIBE_REMOTE_EVENTS_URL="+r.eventsURL)
 	}
-	if r.token != "" {
-		env = append(env, "VIBE_REMOTE_TOKEN="+r.token)
+	if r.hookToken != "" {
+		env = append(env, "VIBE_REMOTE_TOKEN="+r.hookToken)
 	}
 	return env
+}
+
+// tmuxEnvArgs renders vibeRemoteEnv as `-e KEY=VAL` arguments for new-session
+// and respawn-pane. Setting cmd.Env is not enough under tmux: the pane's
+// environment comes from the server, and a server that is already running was
+// seeded from whichever client started it. Without -e, every session after the
+// first inherits that first session's VIBE_REMOTE_SESSION_ID (and token), so
+// its hooks would report events against the wrong session.
+func (r *Runner) tmuxEnvArgs() []string {
+	env := r.vibeRemoteEnv()
+	args := make([]string, 0, 2*len(env))
+	for _, kv := range env {
+		args = append(args, "-e", kv)
+	}
+	return args
 }

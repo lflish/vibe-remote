@@ -592,6 +592,17 @@ html, body {
   font-style: italic;
 }
 
+/* Shown in place of "up" at an allowed root: explains why there is nowhere to
+   go rather than offering a button that would always fail. */
+.modal-item-disabled {
+  cursor: default;
+  opacity: 0.62;
+}
+.modal-item-disabled:hover {
+  background: transparent;
+  color: var(--text-muted);
+}
+
 .modal-item-icon {
   width: 15px;
   height: 15px;

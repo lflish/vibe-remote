@@ -113,8 +113,9 @@ function bytesToBase64(bytes: Uint8Array): string {
 // --- Init ---
 
 async function init() {
-  machines = await window.vibeRemote.getMachines();
+  // Set lang first so the init-error screen is announced in the right language too.
   document.documentElement.lang = getLocale() === 'zh' ? 'zh-CN' : 'en';
+  machines = await window.vibeRemote.getMachines();
   wireLanguageToggle();
   wireManageMachinesButton();
   wireWindowResize();
@@ -705,14 +706,14 @@ function openSession(machine: MachineConfig, sessionId: string, workdir?: string
   client.onExit = (code) => {
     // Write a visible marker into the terminal and surface it in the status bar
     // so a dead session isn't just a frozen screen.
-    if (view.terminal) view.terminal.write(`\r\n\x1b[33m[session exited, code ${code}]\x1b[0m\r\n`);
+    if (view.terminal) view.terminal.write(`\r\n\x1b[33m[${t('terminal.exited', { code })}]\x1b[0m\r\n`);
     updateStatusBar(t('status.sessionExited', { code }));
     refreshAllMachines();
   };
   client.onError = (msg) => {
     console.error(`[${machine.name}]`, msg);
     // Show the error to the user instead of leaving a blank terminal.
-    if (view.terminal) view.terminal.write(`\r\n\x1b[31m[error: ${msg}]\x1b[0m\r\n`);
+    if (view.terminal) view.terminal.write(`\r\n\x1b[31m[${t('terminal.error', { msg })}]\x1b[0m\r\n`);
     if (view.key === activeKey) updateStatusBar(t('status.error', { msg }));
   };
   client.onNotify = (kind, message) => {
@@ -724,8 +725,7 @@ function openSession(machine: MachineConfig, sessionId: string, workdir?: string
       }
       // waiting = 需要用户介入，可选弹桌面通知。
       if (kind === 'waiting' && notificationsEnabled()) {
-        const title = view.terminal ? (views.get(view.key)?.sessionId || 'vibe-remote') : 'vibe-remote';
-        notifyDesktop(`${machine.name} · ${title}`, message || t('session.waitingFallback'));
+        notifyDesktop(`${machine.name} · ${sessionDisplayTitle(machine, view.sessionId)}`, message || t('session.waitingFallback'));
       }
     }
   };
@@ -736,6 +736,14 @@ function openSession(machine: MachineConfig, sessionId: string, workdir?: string
 
   setActive(view.key);
   return view;
+}
+
+// sessionDisplayTitle is the name the sidebar shows for a session (custom
+// name, else the workdir-derived default from the server), falling back to the
+// raw id when the session list hasn't caught up yet (e.g. a brand-new session).
+function sessionDisplayTitle(machine: MachineConfig, sessionId: string): string {
+  const session = machineSessions.get(machineKey(machine))?.find((s) => s.id === sessionId);
+  return session?.title || sessionId || 'vibe-remote';
 }
 
 // setActive shows one session view and hides the rest, then fits + focuses it.
@@ -790,7 +798,7 @@ function renderSidebar() {
     toggle.className = 'machine-toggle';
     toggle.appendChild(rendererIcon('chevron'));
     toggle.setAttribute('aria-expanded', String(!collapsed));
-    toggle.setAttribute('aria-label', `${collapsed ? t('sidebar.expand') : t('sidebar.collapse')}：${machine.name}`);
+    toggle.setAttribute('aria-label', t('a11y.actionTarget', { action: collapsed ? t('sidebar.expand') : t('sidebar.collapse'), target: machine.name }));
     toggle.disabled = sessions.length === 0;
     toggle.addEventListener('click', () => {
       if (collapsedMachines.has(machineKey(machine))) collapsedMachines.delete(machineKey(machine));
@@ -878,7 +886,7 @@ function renderSidebar() {
       reload.className = 'session-action session-reload';
       reload.appendChild(rendererIcon('reload'));
       reload.title = t('session.reloadTitle');
-      reload.setAttribute('aria-label', `${t('session.reloadTitle')}：${s.title || s.id}`);
+      reload.setAttribute('aria-label', t('a11y.actionTarget', { action: t('session.reloadTitle'), target: s.title || s.id }));
       // Reflect any in-flight Reload for this session, so a sidebar rebuild
       // mid-request doesn't hand back an enabled button.
       const reloadKey = viewKey(machine, s.id);
@@ -916,7 +924,7 @@ function renderSidebar() {
       close.className = 'session-action session-close';
       close.appendChild(rendererIcon('close'));
       close.title = t('session.deleteTitle');
-      close.setAttribute('aria-label', `${t('session.deleteTitle')}：${s.title || s.id}`);
+      close.setAttribute('aria-label', t('a11y.actionTarget', { action: t('session.deleteTitle'), target: s.title || s.id }));
       // Deleting truly kills the remote tmux + claude; the current screen is
       // lost and unrecoverable. Confirm first (mirrors machine-delete in
       // machines.ts), showing the session's display name so a mis-hover on the
@@ -1139,9 +1147,37 @@ function notifyDesktop(title: string, body: string) {
   }
 }
 
+// showInitError replaces a blank window with the reason startup failed (most
+// often machines.json: the keychain refused to decrypt a token). Built with
+// textContent only — the message can contain file paths or machine names.
+function showInitError(error: unknown) {
+  console.error('init failed', error);
+  const container = document.getElementById('terminal-container');
+  if (!container) return;
+  container.querySelector('.init-error')?.remove();
+  const box = document.createElement('div');
+  box.className = 'empty-state init-error';
+  box.setAttribute('role', 'alert');
+  const h = document.createElement('h1');
+  h.className = 'empty-state-title';
+  h.textContent = t('init.failedTitle');
+  const p = document.createElement('p');
+  p.className = 'empty-state-description';
+  p.textContent = t('init.failedDesc', { msg: error instanceof Error ? error.message : String(error) });
+  const btn = document.createElement('button');
+  btn.type = 'button';
+  btn.className = 'btn-primary';
+  btn.textContent = t('init.reload');
+  btn.addEventListener('click', () => location.reload());
+  box.append(h, p, btn);
+  container.appendChild(box);
+}
+
+const boot = () => init().catch(showInitError);
+
 // --- Boot ---
 if (document.readyState === 'loading') {
-  document.addEventListener('DOMContentLoaded', init);
+  document.addEventListener('DOMContentLoaded', boot);
 } else {
-  init();
+  boot();
 }

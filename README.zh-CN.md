@@ -24,20 +24,7 @@ vibe-remote 是独立开源项目，与 Anthropic 无隶属或背书关系。Cla
 - **tmux 持久化**：客户端断开后 claude 会话存活，重连恢复现场。
 - **无中心 Hub**：每台机器各跑一个 vibe-remoted，客户端直连。服务端绑私有网段地址（LAN / tailscale），静态 token 为准入核心；跨网/加密可交给 Tailscale。
 
-## v0.1.3 更新
-
-- 恢复 Intel Mac 支持：现在分别提供 `-arm64`（M 系列）和 `-x64`（Intel）两个安装包。此前版本只有 arm64 构建，在 Intel 机器上无法启动。
-
-## v0.1.2 更新
-
-- 终端文本恢复可选中、可复制：拖拽选中、⌘C 复制、⌘V 粘贴。claude 会开启鼠标上报，此前会导致 xterm 关闭自身选区，复制到的是空内容。按住 ⌥ 时鼠标拖拽/点击交给远端应用；滚轮始终可用。
-- 内联重命名不再被 5s 会话轮询覆盖，重命名失败时回退到服务端标题。
-
-## v0.1.1 更新
-
-- 首次打开终端时，只有在 xterm 容器真正可见并完成布局后才测量尺寸，避免终端初始偏小，用户不需要再手动拉窗口触发填充。
-- 增加首次终端布局时序的回归检查。
-- 仓库已收敛为桌面单端：工作区中的 mobile、web、共享包和 portal 遗留目录已删除。
+版本历史见 [CHANGELOG.md](./CHANGELOG.md)。
 
 ## 主要特性
 - **会话命名 / 后台提示**：双击重命名，后台会话有输出/待输入时侧边栏亮圆点。
@@ -56,24 +43,30 @@ docs/       协议文档
 
 ## 快速开始
 
-1. 复制 `vibe-remoted.example.json`，在仓库外创建私有配置，并设置随机 token、
-   监听地址和目录白名单。
-2. 在远程机器构建并启动 `vibe-remoted`。
-3. 用 `make dev-desktop` 启动桌面端。
-4. 在 app 内的机器管理器中添加远程机器。
+1. 远程机器需装好 `tmux` 和 `claude`。从
+   [releases 页面](https://github.com/lflish/vibe-remote/releases) 下载
+   `vibe-remoted-<版本>-linux-<架构>`，并用 `SHA256SUMS` 校验。
+2. 复制 `vibe-remoted.example.json` 为私有配置（如
+   `~/.config/vibe-remoted/config.json`，权限 `0600`），设置随机 token
+   （`openssl rand -hex 32`）、私有网段监听地址和 `allowed_roots`。
+3. 启动 daemon，推荐以 systemd user service 运行，见[作为服务运行](#作为服务运行)。
+4. Mac 上安装同一 release 的 DMG（M 系列选 `-arm64`，Intel 选 `-x64`），在 app 的机器管理器中添加该机器。
 
-不要把 `vibe-remoted` 直接暴露到公网。部署前请阅读 [SECURITY.md](./SECURITY.md)。
+安装包未签名，首次打开会被 Gatekeeper 拦下：右键点应用选「打开」，或执行
+`xattr -dr com.apple.quarantine /Applications/vibe-remote.app`。
 
-预编译的 macOS 安装包见 [releases 页面](https://github.com/lflish/vibe-remote/releases) —— M 系列选 `-arm64`，Intel 选 `-x64`。安装包未签名，首次打开会被 Gatekeeper 拦下：右键点应用选「打开」，或执行 `xattr -dr com.apple.quarantine /Applications/vibe-remote.app`。
+不要把 `vibe-remoted` 直接暴露到公网。持有 token 即可以 daemon 用户身份获得等同
+shell 的交互会话；部署前请阅读 [SECURITY.md](./SECURITY.md)。
 
 ## 服务端 vibe-remoted
 
-### 构建
+### 从源码构建
+
+每个 release 都附带预编译二进制。自行构建需要 Go 1.26+：
 
 ```bash
-make server          # 产出 bin/vibe-remoted
-# 或
-cd vibe-remoted && go build -o ../bin/vibe-remoted ./cmd/vibe-remoted
+make server          # 为本机产出 bin/vibe-remoted
+make dist-daemon     # 交叉编译 linux/darwin × amd64/arm64 到 dist/
 ```
 
 ### 配置
@@ -85,7 +78,8 @@ cd vibe-remoted && go build -o ../bin/vibe-remoted ./cmd/vibe-remoted
   "bind_addr": "192.168.x.x",      // 私有网段地址(RFC1918/loopback/link-local
                                     //   /tailscale 100.64.0.0/10)，校验强制
   "port": 8765,
-  "token": "your-secure-token",     // 静态鉴权 token，准入核心边界（常量时间校验）
+  "token": "your-secure-token",     // 静态鉴权 token，准入核心边界；至少 16 字符
+                                    //   （建议 32+：`openssl rand -hex 32`）
   "default_workdir": "/home/user",
   "allowed_roots": ["/home/user"],  // workdir 白名单，防越权
   "use_tmux": true,                 // false = 降级直跑 claude（无持久化）
@@ -96,7 +90,7 @@ cd vibe-remoted && go build -o ../bin/vibe-remoted ./cmd/vibe-remoted
     { "id": "skip-perms", "label": "跳过权限确认",     "arg": "--dangerously-skip-permissions", "default": false }
   ],
   "login_shell": true,              // 通过登录 shell 启动，加载用户环境
-                                    //   （PATH、fnm/nvm 等），默认 true
+                                    //   （PATH、fnm/nvm 等），默认 true；需 POSIX shell（bash/zsh）
   "shell": "",                      // 登录 shell 路径，空=用 $SHELL 或 /bin/bash
   "allow_insecure_bind": false      // true 才允许绑公网地址(不建议)；wildcard 恒拒
 }
@@ -113,16 +107,31 @@ cd vibe-remoted && go build -o ../bin/vibe-remoted ./cmd/vibe-remoted
 
 也可用环境变量覆盖：`VIBE_REMOTED_BIND_ADDR`、`VIBE_REMOTED_TOKEN`。
 
+未知配置项、过短或示例 token、缺少 `allowed_roots`、`default_workdir` 不在
+`allowed_roots` 内，都会在启动时报错。
+
+**Hook 事件**：每个 claude 进程都会注入 `VIBE_REMOTE_SESSION_ID`、
+`VIBE_REMOTE_EVENTS_URL`、`VIBE_REMOTE_TOKEN`。其中 token 是按会话派生的 hook
+token，只能对本会话调用 `POST /api/v1/events`，不是 daemon 主 token。详见
+[docs/protocol.md](./docs/protocol.md)。
+
 ### 运行
 
 ```bash
 ./bin/vibe-remoted --config vibe-remoted.json
+./bin/vibe-remoted --version
 ```
+
+### 作为服务运行
+
+[`docs/deploy/vibe-remoted.service`](./docs/deploy/vibe-remoted.service) 是
+systemd user unit，文件头部有安装步骤。其中 `KillMode=process` 是必需的：
+systemd 默认配置下，重启 daemon 会连带杀掉 tmux server 和所有正在运行的会话。
 
 ### 测试
 
 ```bash
-cd vibe-remoted && go test ./...   # 单元测试（含路径越权防护）
+make check   # gofmt、vet、race 测试、桌面端 typecheck + 回归测试
 ```
 
 ## 客户端 desktop

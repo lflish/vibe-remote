@@ -1,7 +1,7 @@
-import { app, BrowserWindow, clipboard, ipcMain, screen } from 'electron';
+import { app, BrowserWindow, clipboard, ipcMain, safeStorage, screen } from 'electron';
 import * as path from 'path';
 import * as fs from 'fs';
-import type { MachineConfig } from '../shared/protocol';
+import { MachineStore } from './machine-store';
 
 let mainWindow: BrowserWindow | null = null;
 
@@ -73,8 +73,10 @@ function saveWindowState(win: BrowserWindow): void {
 }
 
 // Dev-only: open a CDP endpoint when VIBE_REMOTE_DEBUG_PORT is set, so the renderer
-// can be driven/inspected by tooling. Must be set before app is ready.
-if (process.env.VIBE_REMOTE_DEBUG_PORT) {
+// can be driven/inspected by tooling. Must be set before app is ready. Never in a
+// packaged build: an open CDP port with allow-origins=* hands the renderer (and
+// the plaintext tokens it holds) to anything that can reach the port.
+if (!app.isPackaged && process.env.VIBE_REMOTE_DEBUG_PORT) {
   app.commandLine.appendSwitch('remote-debugging-port', process.env.VIBE_REMOTE_DEBUG_PORT);
   app.commandLine.appendSwitch('remote-allow-origins', '*');
 }
@@ -119,6 +121,16 @@ function createWindow() {
     if (mainWindow && !mainWindow.isDestroyed()) saveWindowState(mainWindow);
   });
 
+  // The window only ever shows our own UI. Block any navigation away from it
+  // (a dropped link, a stray location change) and every window.open, so remote
+  // content can never end up running next to the preload bridge.
+  const devServerUrl = process.env.VITE_DEV_SERVER_URL;
+  mainWindow.webContents.on('will-navigate', (event, url) => {
+    if (devServerUrl && url.startsWith(devServerUrl)) return; // Vite HMR full reload
+    event.preventDefault();
+  });
+  mainWindow.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
+
   // In dev, load from Vite dev server; in prod, load built HTML
   if (process.env.VITE_DEV_SERVER_URL) {
     mainWindow.loadURL(process.env.VITE_DEV_SERVER_URL);
@@ -140,35 +152,34 @@ function createWindow() {
   });
 }
 
-// Load machine config from userData
-function getMachinesConfigPath(): string {
-  return path.join(app.getPath('userData'), 'machines.json');
-}
-
-function loadMachines(): MachineConfig[] {
-  const configPath = getMachinesConfigPath();
-  try {
-    const data = fs.readFileSync(configPath, 'utf-8');
-    return JSON.parse(data);
-  } catch {
-    // Return empty if no config exists yet
-    return [];
+// machines.json lives in userData. Tokens are encrypted with safeStorage (see
+// machine-store.ts); created lazily because both userData and safeStorage
+// need the app to be ready.
+let machineStore: MachineStore | null = null;
+function getMachineStore(): MachineStore {
+  if (!machineStore) {
+    machineStore = new MachineStore({
+      path: path.join(app.getPath('userData'), 'machines.json'),
+      crypto: {
+        isAvailable: () => safeStorage.isEncryptionAvailable(),
+        encrypt: (plain) => safeStorage.encryptString(plain),
+        decrypt: (encrypted) => safeStorage.decryptString(encrypted),
+      },
+      warn: (message) => console.warn(`[machines] ${message}`),
+    });
   }
+  return machineStore;
 }
 
-function saveMachines(machines: MachineConfig[]): void {
-  const configPath = getMachinesConfigPath();
-  fs.mkdirSync(path.dirname(configPath), { recursive: true });
-  fs.writeFileSync(configPath, JSON.stringify(machines, null, 2));
-}
-
-// IPC handlers for renderer process
+// IPC handlers for renderer process. Errors thrown here reject the renderer's
+// promise, which it surfaces (init error / "Save failed").
 ipcMain.handle('get-machines', () => {
-  return loadMachines();
+  return getMachineStore().load();
 });
 
-ipcMain.handle('save-machines', (_event, machines: MachineConfig[]) => {
-  saveMachines(machines);
+ipcMain.handle('save-machines', (_event, machines: unknown) => {
+  // Validated in the store: the renderer is not trusted to send well-formed data.
+  getMachineStore().save(machines);
   return true;
 });
 
@@ -180,7 +191,11 @@ ipcMain.handle('clipboard-write-text', (_event, text: string) => {
 });
 
 // App lifecycle
-app.whenReady().then(createWindow);
+app.whenReady().then(() => {
+  // Files written by older versions are 0644; tighten before anything reads them.
+  getMachineStore().tightenPermissions();
+  createWindow();
+});
 
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') {

@@ -13,7 +13,7 @@ The current repository contains one product line: a macOS Electron desktop clien
 
 Requirements:
 
-- Go 1.22 or newer
+- Go 1.26 or newer
 - Node.js 22 or newer
 - npm
 - tmux for persistence and worktree integration tests
@@ -49,12 +49,19 @@ tokens, personal paths, or local machine configuration.
 
 ## Checks
 
-Run these before opening a pull request:
+Run this before opening a pull request. It is exactly what CI runs:
 
 ```bash
-cd vibe-remoted && go test ./... && go vet ./...
-cd ../desktop && npm run typecheck && npm run test:preserved-notice && npm run test:attach-replay && npm run test:terminal-layout && npm run test:terminal-clipboard && npm run test:terminal-selection
+make check   # gofmt, go vet, go test -race, desktop typecheck + npm test
 ```
+
+Add new regression scripts to the desktop `test` script in `package.json` and
+new Go tests under `vibe-remoted/` — never to a separate command list, so local,
+CI and release checks cannot drift apart. tmux integration tests skip when tmux
+is missing locally; CI sets `VIBE_REMOTE_REQUIRE_TMUX=1` so they fail instead.
+
+Claude Code users can run the project skills in `.claude/skills/` (`/check`,
+`/protocol-sync`, `/verify`).
 
 ## Architecture rules
 
@@ -69,6 +76,7 @@ cd ../desktop && npm run typecheck && npm run test:preserved-notice && npm run t
 
 - Keep changes focused and explain user-visible behavior.
 - Add or update tests for server lifecycle, protocol, and security changes.
+- Add an entry under `## [Unreleased]` in `CHANGELOG.md` for user-visible changes.
 - Include screenshots for desktop UI changes.
 - Never include generated builds, dependency directories, private configs, or
   credentials.

@@ -1,0 +1,35 @@
+version: 2
+updates:
+  - package-ecosystem: gomod
+    directory: /vibe-remoted
+    schedule:
+      interval: weekly
+    groups:
+      go-deps:
+        patterns: ["*"]
+
+  - package-ecosystem: npm
+    directory: /desktop
+    schedule:
+      interval: weekly
+    ignore:
+      # Pinned to an exact 6.1 beta on purpose: `mouseEventsRequireAlt` (terminal
+      # selection under mouse reporting) only exists there. Bump by hand and run
+      # `npm run test:terminal-selection`.
+      - dependency-name: "@xterm/*"
+      # Electron majors need a manual GUI regression pass (selection, clipboard,
+      # layout), so only take patch/minor updates automatically.
+      - dependency-name: electron
+        update-types: ["version-update:semver-major"]
+    groups:
+      desktop-dev-deps:
+        dependency-type: development
+        exclude-patterns: ["electron"]
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      actions:
+        patterns: ["*"]

@@ -4,8 +4,9 @@ node_modules/
 bin/
 **/dist/
 # electron-builder output, kept out of dist/ so packaged artifacts are never
-# re-ingested into the next build's asar
-**/release/
+# re-ingested into the next build's asar. Anchored: a bare `release/` pattern
+# also swallowed .claude/skills/release/.
+/desktop/release/
 
 # OS
 .DS_Store
@@ -32,7 +33,11 @@ desktop/src/main/machines.json
 
 # Local agent and test-tool state
 .agents/
-.claude/
+# Project skills in .claude/skills/ are shared; everything else under .claude/
+# (local settings, externally installed skills) stays private.
+.claude/*
+!.claude/skills/
+.claude/skills/redesign-existing-projects
 .playwright-mcp/
 .superpowers/
 skills-lock.json

@@ -26,20 +26,7 @@ Desktop (Electron + xterm.js)  ──ws (JSON frames)──►  vibe-remoted (Go
 - **tmux persistence**: the claude session survives client disconnects and is restored on reconnect.
 - **No central hub**: each machine runs its own vibe-remoted and the client connects directly. The server binds a private-network address (LAN / tailscale) with a static token as the primary access boundary; cross-network reach and encryption can be delegated to Tailscale.
 
-## What's new in v0.1.3
-
-- Intel Macs are supported again: the release now ships separate `-arm64` (Apple silicon) and `-x64` (Intel) DMGs. Previous releases contained an arm64-only build that would not launch on Intel hardware.
-
-## What's new in v0.1.2
-
-- Terminal text is selectable and copyable again: drag to select, ⌘C to copy, ⌘V to paste. claude enables mouse reporting, which previously made xterm disable its own selection, so copying silently produced an empty clipboard. Mouse drags/clicks reach the remote app while ⌥ is held; the scroll wheel always does.
-- Inline session rename is no longer overwritten by the 5s session poll, and falls back to the server's title if the rename fails.
-
-## What's new in v0.1.1
-
-- First-launch terminal layout is now measured only after the xterm host is visible, so a newly opened terminal fills the window without requiring a manual resize.
-- Added a regression check for the initial terminal layout timing.
-- The repository is now desktop-only: the ignored mobile, web, shared-package, and portal trees have been removed from the working tree.
+Release history: [CHANGELOG.md](./CHANGELOG.md).
 
 ## Features
 - **Session naming / background hints**: double-click to rename; a sidebar dot lights up when a background session has output or is waiting for input.
@@ -58,25 +45,34 @@ docs/            protocol docs
 
 ## Quick start
 
-1. Copy `vibe-remoted.example.json` to a private config file outside the
-   repository and set a random token, bind address, and allowed roots.
-2. Build and start `vibe-remoted` on the remote machine.
-3. Run the desktop app with `make dev-desktop`.
-4. Add the remote machine from the app's machine manager.
+1. On the remote machine (needs `tmux` and `claude`), download
+   `vibe-remoted-<version>-linux-<arch>` from the
+   [releases page](https://github.com/lflish/vibe-remote/releases) and verify it
+   against `SHA256SUMS`.
+2. Copy `vibe-remoted.example.json` to a private config file
+   (e.g. `~/.config/vibe-remoted/config.json`, mode `0600`) and set a random
+   token (`openssl rand -hex 32`), a private bind address, and `allowed_roots`.
+3. Run it, ideally as a systemd user service — see
+   [Run as a service](#run-as-a-service).
+4. On the Mac, install the DMG from the same release (`-arm64` for Apple
+   silicon, `-x64` for Intel) and add the machine in the app's machine manager.
 
-Do not expose `vibe-remoted` directly to the public internet. Read
+The DMGs are unsigned, so Gatekeeper blocks the first launch: right-click the
+app and choose *Open*, or run `xattr -dr com.apple.quarantine /Applications/vibe-remote.app`.
+
+Do not expose `vibe-remoted` directly to the public internet. Anyone holding the
+token gets an interactive shell-equivalent session as the daemon's user; read
 [SECURITY.md](./SECURITY.md) before deployment.
-
-Prebuilt macOS DMGs are on the [releases page](https://github.com/lflish/vibe-remote/releases) — pick `-arm64` for Apple silicon or `-x64` for Intel. They are unsigned, so Gatekeeper blocks the first launch: right-click the app and choose *Open*, or run `xattr -dr com.apple.quarantine /Applications/vibe-remote.app`.
 
 ## Server: vibe-remoted
 
-### Build
+### Build from source
+
+Prebuilt binaries are attached to every release. To build yourself (Go 1.26+):
 
 ```bash
-make server          # produces bin/vibe-remoted
-# or
-cd vibe-remoted && go build -o ../bin/vibe-remoted ./cmd/vibe-remoted
+make server          # produces bin/vibe-remoted for this machine
+make dist-daemon     # cross-compiles linux/darwin × amd64/arm64 into dist/
 ```
 
 ### Configuration
@@ -88,7 +84,8 @@ Copy `vibe-remoted.example.json` and adjust per machine:
   "bind_addr": "192.168.x.x",      // private-network address (RFC1918 / loopback /
                                     //   link-local / tailscale 100.64.0.0/10); enforced
   "port": 8765,
-  "token": "your-secure-token",     // static auth token, the core access boundary (constant-time compare)
+  "token": "your-secure-token",     // static auth token, the core access boundary; ≥16 chars
+                                    //   (32+ recommended: `openssl rand -hex 32`)
   "default_workdir": "/home/user",
   "allowed_roots": ["/home/user"],  // workdir whitelist, prevents path escape
   "use_tmux": true,                 // false = run claude directly (no persistence)
@@ -98,7 +95,7 @@ Copy `vibe-remoted.example.json` and adjust per machine:
     { "id": "continue",   "label": "Continue last session (-c)", "arg": "-c",                             "default": false },
     { "id": "skip-perms", "label": "Skip permission prompts",    "arg": "--dangerously-skip-permissions", "default": false }
   ],
-  "login_shell": true,              // launch via login shell to load user env
+  "login_shell": true,              // launch via login shell to load user env (POSIX shells: bash/zsh)
                                     //   (PATH, fnm/nvm, etc.); default true
   "shell": "",                      // login shell path; empty = $SHELL or /bin/bash
   "allow_insecure_bind": false      // true allows binding a public address (not recommended); wildcards always rejected
@@ -117,16 +114,32 @@ initial checked state. If unset, `claude_cmd` is used as-is.
 
 Environment overrides: `VIBE_REMOTED_BIND_ADDR`, `VIBE_REMOTED_TOKEN`.
 
+Unknown keys, a too-short or example token, missing `allowed_roots`, and a
+`default_workdir` outside `allowed_roots` are rejected at startup.
+
+**Hook events**: each claude process gets `VIBE_REMOTE_SESSION_ID`,
+`VIBE_REMOTE_EVENTS_URL` and `VIBE_REMOTE_TOKEN`. The latter is a per-session
+hook token that can only `POST /api/v1/events` for that session — never the
+daemon's main token. See [docs/protocol.md](./docs/protocol.md).
+
 ### Run
 
 ```bash
 ./bin/vibe-remoted --config vibe-remoted.json
+./bin/vibe-remoted --version
 ```
+
+### Run as a service
+
+[`docs/deploy/vibe-remoted.service`](./docs/deploy/vibe-remoted.service) is a
+systemd user unit with install steps in its header. It sets
+`KillMode=process`, which is required: with systemd's default, restarting the
+daemon also kills the tmux server and every running session.
 
 ### Test
 
 ```bash
-cd vibe-remoted && go test ./...   # unit tests (incl. path-escape protection)
+make check   # gofmt, vet, race tests, desktop typecheck + regression tests
 ```
 
 ## Client: desktop

@@ -1,54 +1,56 @@
 # Release checklist
 
-## Before the first public release
+Releases are tag-driven. Pushing `vX.Y.Z` runs `.github/workflows/release.yml`,
+which re-runs CI, builds every artifact from the tagged commit, checksums and
+attests them, and opens a **draft** GitHub release. Nothing is public until a
+maintainer reviews and publishes the draft.
 
-- Publish from a repository history that contains no credentials, private
-  network details, usernames, or personal filesystem paths.
-- Rotate any token that has appeared in logs, local automation output, issues,
-  or shared development artifacts.
-- Confirm ignored local configs are not staged with `git status --ignored`.
-- Enable GitHub private vulnerability reporting.
+## Artifacts
 
-If an existing private repository history contains environment-specific data,
-prefer creating the public repository from a reviewed squash of the current
-tree instead of making the old history public.
+| File | Built on | Notes |
+|---|---|---|
+| `vibe-remote-X.Y.Z-arm64.dmg` | macos-latest | Apple silicon |
+| `vibe-remote-X.Y.Z-x64.dmg` | macos-latest (cross) | Intel |
+| `vibe-remoted-vX.Y.Z-{linux,darwin}-{amd64,arm64}` | ubuntu-latest | static (`CGO_ENABLED=0`), version via `-ldflags` |
+| `SHA256SUMS` | — | covers every file above |
 
-## Current artifact scope
+Every artifact also gets a GitHub build provenance attestation
+(`gh attestation verify <file> --repo lflish/vibe-remote`).
 
-The current release contains two supported artifacts: the macOS Electron desktop DMG for arm64 (Apple silicon) and for x64 (Intel). Both are built from an Apple silicon machine via electron-builder cross-compilation. Mobile, web, and portal artifacts are not built or published from this repository.
+The DMGs are unsigned. The x64 DMG is cross-built on Apple silicon and cannot
+be launch-tested there; confirm startup on real Intel hardware when the
+packaging setup changes.
 
-The x64 DMG cannot be launch-tested on an Apple silicon build host — verification there is limited to confirming the architecture slices (`lipo -info` on the executable and on Electron Framework) and mounting the image. Confirm startup on real Intel hardware before relying on it.
+## Steps
 
-## Build verification
-```bash
-cd vibe-remoted
-go test ./...
-go vet ./...
-go test -race ./internal/session ./internal/server
+1. Make sure `main` is green and `make check` passes locally.
+2. Move the `## [Unreleased]` entries in `CHANGELOG.md` under a new
+   `## [X.Y.Z] - YYYY-MM-DD` heading. The workflow fails if this heading is
+   missing, because it becomes the release notes.
+3. Bump the version: `cd desktop && npm version X.Y.Z --no-git-tag-version`
+   (updates `package.json` and `package-lock.json`). The workflow fails if the
+   tag and `package.json` disagree.
+4. `main` is protected (PR + the four CI checks required, no direct pushes),
+   so the release commit goes through a PR: commit `release: prepare vX.Y.Z`
+   on a `release/vX.Y.Z` branch, open a PR, and merge it once CI is green.
+   Then tag the merged commit on `main` and push only the tag:
+   `git checkout main && git pull && git tag -a vX.Y.Z -m vX.Y.Z && git push origin vX.Y.Z`.
+5. Wait for the Release workflow, open the draft release, check the notes and
+   the asset list, then publish it.
 
-cd ../desktop
-npm ci
-npm run typecheck
-npm run test:preserved-notice
-npm run test:attach-replay
-npm run test:terminal-layout
-npm run test:terminal-clipboard
-npm run test:terminal-selection
-npm run build
-```
+Do not reuse tags or replace artifacts after publishing a release. If a release
+is broken, fix forward with a new patch version.
 
-The desktop build currently produces an unsigned macOS DMG. State that clearly
-in the release notes and document the expected Gatekeeper prompt.
+## Signing (not yet enabled)
 
-## Versioning
+`release.yml` sets `CSC_IDENTITY_AUTO_DISCOVERY=false`. To sign and notarize,
+add `CSC_LINK`, `CSC_KEY_PASSWORD`, `APPLE_ID`, `APPLE_APP_SPECIFIC_PASSWORD`
+and `APPLE_TEAM_ID` as repository secrets, pass them to the desktop build step,
+and enable `hardenedRuntime` / `notarize` in the electron-builder config.
 
-1. Update `desktop/package.json` and `desktop/package-lock.json` to the release
-   version.
-2. Update user-facing release notes.
-3. Commit the release changes.
-4. Create an annotated tag such as `v0.1.1`.
-5. Build artifacts from the tagged commit.
-6. Publish SHA-256 checksums alongside downloadable artifacts.
+## Repository hygiene
 
-Do not reuse tags or replace artifacts after publishing a release.
-
+- Never commit tokens, `machines.json`, personal paths, or private network
+  details. Rotate any token that has appeared in logs, issues, or artifacts.
+- Confirm ignored local configs are not staged: `git status --ignored`.
+- Keep GitHub private vulnerability reporting enabled.

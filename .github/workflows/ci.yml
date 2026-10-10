@@ -2,37 +2,52 @@ name: CI
 
 on:
   push:
+    branches: [main]
   pull_request:
+  workflow_dispatch:
+  # release.yml gates publishing on this exact workflow.
+  workflow_call:
 
 permissions:
   contents: read
+
+# A newer push to the same branch/PR supersedes the run in flight.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
 
 jobs:
   server:
     name: Go server
     runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      # tmux integration tests skip when tmux is missing; in CI that would turn
+      # the persistence/reconnect coverage into a silent no-op, so fail instead.
+      VIBE_REMOTE_REQUIRE_TMUX: "1"
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - uses: actions/setup-go@v7
         with:
           go-version-file: vibe-remoted/go.mod
+          # Runner caches lag behind Go patch releases; govulncheck needs the latest.
+          check-latest: true
           cache-dependency-path: vibe-remoted/go.sum
-      - name: Test
+      - name: Install tmux
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends tmux
+      - name: Check (gofmt, vet, race tests)
+        run: make check-server
+      - name: govulncheck
         working-directory: vibe-remoted
-        run: go test ./...
-      - name: Vet
-        working-directory: vibe-remoted
-        run: go vet ./...
-      - name: Race-sensitive packages
-        working-directory: vibe-remoted
-        run: go test -race ./internal/session ./internal/server
+        run: go run golang.org/x/vuln/cmd/govulncheck@v1.8.0 ./...
 
   desktop:
     name: Desktop client
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v6
-      - uses: actions/setup-node@v6
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
           node-version: 22
           cache: npm
@@ -40,12 +55,47 @@ jobs:
       - name: Install dependencies
         working-directory: desktop
         run: npm ci
-      - name: Typecheck
+      - name: Check (typecheck, regression tests)
+        run: make check-desktop
+      - name: Bundle
         working-directory: desktop
-        run: npm run typecheck
-      - name: Regression checks
+        run: npx vite build
+
+  # Packaging only breaks on macOS, and previously only surfaced at release
+  # time. Build an unsigned, unpacked .app so electron-builder config changes
+  # are exercised on every PR without paying for a full DMG.
+  package-macos:
+    name: Package smoke (macOS)
+    runs-on: macos-latest
+    timeout-minutes: 25
+    needs: desktop
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: desktop/package-lock.json
+      - name: Install dependencies
         working-directory: desktop
-        run: |
-          npm run test:preserved-notice
-          npm run test:attach-replay
-          npm run test:terminal-layout
+        run: npm ci
+      - name: Build unpacked app
+        working-directory: desktop
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: "false"
+        run: npm run build -- --dir
+
+  workflows:
+    name: Lint workflows
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: vibe-remoted/go.mod
+          # Runner caches lag behind Go patch releases; govulncheck needs the latest.
+          check-latest: true
+          cache: false
+      - name: actionlint
+        run: go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.12
