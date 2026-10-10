@@ -34,6 +34,13 @@ whose heading matches the pushed tag, so every release needs one here first.
 - `vibe-remoted --version`, and `/api/v1/info` reports `version`.
 - Desktop defaults to English unless the system language is Chinese.
 
+- Desktop: Electron 33 → 44 (33 no longer receives security fixes).
+  **macOS 13 Ventura or later is now required.**
+- Desktop: background-session "waiting" notifications are sent from the main
+  process. Since Electron 42, macOS only delivers notifications for
+  code-signed apps, so in the unsigned release DMGs the app bounces the Dock
+  icon and shows a Dock badge instead (cleared when the window is focused).
+
 ### Added
 - Prebuilt `vibe-remoted` binaries for Linux and macOS (amd64/arm64) are
   attached to releases, with `SHA256SUMS` and build provenance attestations.

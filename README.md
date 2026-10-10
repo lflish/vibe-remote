@@ -57,8 +57,11 @@ docs/            protocol docs
 4. On the Mac, install the DMG from the same release (`-arm64` for Apple
    silicon, `-x64` for Intel) and add the machine in the app's machine manager.
 
-The DMGs are unsigned, so Gatekeeper blocks the first launch: right-click the
-app and choose *Open*, or run `xattr -dr com.apple.quarantine /Applications/vibe-remote.app`.
+The desktop app requires macOS 13 Ventura or later. The DMGs are unsigned, so
+Gatekeeper blocks the first launch: right-click the app and choose *Open*, or
+run `xattr -dr com.apple.quarantine /Applications/vibe-remote.app`. Unsigned
+builds also cannot post macOS notifications; background sessions that need
+input bounce the Dock icon and badge it instead.
 
 Do not expose `vibe-remoted` directly to the public internet. Anyone holding the
 token gets an interactive shell-equivalent session as the daemon's user; read

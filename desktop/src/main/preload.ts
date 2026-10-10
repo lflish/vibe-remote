@@ -9,4 +9,6 @@ contextBridge.exposeInMainWorld('vibeRemote', {
   readClipboardText: (): Promise<string> => ipcRenderer.invoke('clipboard-read-text'),
   writeClipboardText: (text: string): Promise<boolean> =>
     ipcRenderer.invoke('clipboard-write-text', text),
+  notify: (title: string, body: string): Promise<'shown' | 'fallback'> =>
+    ipcRenderer.invoke('notify', title, body),
 });
