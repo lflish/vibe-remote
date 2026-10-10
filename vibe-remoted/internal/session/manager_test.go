@@ -198,7 +198,7 @@ func TestReconcileTmuxSessionsAppliesWorktreeMetadataToExistingRunner(t *testing
 	sessions := map[string]*Runner{"s1": r}
 	info := tmuxSessionInfo{workdir: "/tmux", mode: "worktree", sourceWorkdir: "/source", sourceRepo: "/repo", worktreeRoot: "/tree", branch: "vibe/s1"}
 
-	reconcileTmuxSessions(sessions, map[string]tmuxSessionInfo{"s1": info}, time.Unix(42, 0), true, "claude", "/bin/sh", true)
+	reconcileTmuxSessions(sessions, map[string]tmuxSessionInfo{"s1": info}, time.Unix(42, 0), NewManager(true, "claude", true, "/bin/sh").recoveredRunner)
 
 	if r.Workdir != "/kept" {
 		t.Fatalf("existing runner workdir = %q, want preserved workdir", r.Workdir)
@@ -211,7 +211,7 @@ func TestReconcileTmuxSessionsDoesNotEraseAuthoritativeWorktreeMetadata(t *testi
 	sessions := map[string]*Runner{"s1": r}
 
 	// A tmux snapshot can observe the session before all user options are visible.
-	reconcileTmuxSessions(sessions, map[string]tmuxSessionInfo{"s1": {workdir: "/tree/sub"}}, time.Unix(42, 0), true, "claude", "/bin/sh", true)
+	reconcileTmuxSessions(sessions, map[string]tmuxSessionInfo{"s1": {workdir: "/tree/sub"}}, time.Unix(42, 0), NewManager(true, "claude", true, "/bin/sh").recoveredRunner)
 
 	got := r.Metadata()
 	if got.Mode != protocol.SessionModeWorktree || got.SourceWorkdir != "/repo/sub" || got.SourceRepo != "/repo" || got.WorktreeRoot != "/tree" || got.Branch != "vibe/s1" {
@@ -245,7 +245,7 @@ func TestReconcileTmuxSessionsAppliesWorktreeMetadataToRecoveredRunner(t *testin
 	sessions := map[string]*Runner{}
 	info := tmuxSessionInfo{workdir: "/tmux", mode: "worktree", sourceWorkdir: "/source", sourceRepo: "/repo", worktreeRoot: "/tree", branch: "vibe/s1"}
 
-	reconcileTmuxSessions(sessions, map[string]tmuxSessionInfo{"s1": info}, time.Unix(42, 0), true, "claude", "/bin/sh", true)
+	reconcileTmuxSessions(sessions, map[string]tmuxSessionInfo{"s1": info}, time.Unix(42, 0), NewManager(true, "claude", true, "/bin/sh").recoveredRunner)
 
 	r, ok := sessions["s1"]
 	if !ok {

@@ -13,10 +13,7 @@ import (
 )
 
 func TestSetTmuxOptionPersistsUnambiguousAndEmptyValues(t *testing.T) {
-	realTmux, err := exec.LookPath("tmux")
-	if err != nil {
-		t.Skip("tmux is not installed")
-	}
+	realTmux := requireTmux(t)
 
 	binDir := t.TempDir()
 	shim := filepath.Join(binDir, "tmux")
@@ -65,11 +62,79 @@ exec %q "$@"
 	}
 }
 
-func TestReloadRespawnsTmuxPaneInSameSession(t *testing.T) {
-	realTmux, err := exec.LookPath("tmux")
-	if err != nil {
-		t.Skip("tmux is not installed")
+// A daemon started by launchd inherits no LANG/LC_* at all. In that state tmux
+// treats its own output as non-UTF-8 and rewrites the tabs in our `-F` format
+// string as "_", so every list-sessions line failed to parse and the session
+// list came back empty even with live sessions. tmuxCmd must force a UTF-8
+// locale so the tab-delimited contract holds regardless of the parent env.
+func TestTmuxCmdKeepsTabDelimitersWithoutInheritedLocale(t *testing.T) {
+	requireTmux(t)
+	for _, key := range []string{"LC_ALL", "LC_CTYPE", "LANG"} {
+		t.Setenv(key, "")
+		os.Unsetenv(key)
 	}
+
+	// display-message needs a running server and a target. Start a throwaway
+	// session first, with the locale already stripped, so a freshly spawned
+	// server sees the same bare env a launchd-started daemon would give it.
+	sessionName := fmt.Sprintf("vibe-remote-localetest-%d", time.Now().UnixNano())
+	startTmuxSession(t, sessionName, "sleep", "30")
+
+	out, err := tmuxCmd("display-message", "-t", sessionName, "-p", "-F", "A\tB").Output()
+	if err != nil {
+		t.Fatalf("tmux display-message: %v", err)
+	}
+	if got := strings.TrimRight(string(out), "\r\n"); got != "A\tB" {
+		t.Fatalf("tmux rewrote the format delimiter: got %q, want %q", got, "A\tB")
+	}
+}
+
+// The PTY paths build their own env and must not drop the UTF-8 locale: a tmux
+// client started without one runs in non-UTF-8 mode and rewrites box-drawing and
+// CJK bytes as "_", which would corrupt the byte-passthrough stream the client
+// renders verbatim.
+func TestUTF8EnvGuaranteesLocaleForPTYWithoutInheritedLocale(t *testing.T) {
+	for _, key := range []string{"LC_ALL", "LC_CTYPE", "LANG"} {
+		t.Setenv(key, "")
+		os.Unsetenv(key)
+	}
+
+	env := utf8Env("TERM=xterm-256color")
+	var hasLocale, hasExtra bool
+	for _, kv := range env {
+		if strings.HasPrefix(kv, "LC_CTYPE=") && strings.Contains(strings.ToUpper(kv), "UTF-8") {
+			hasLocale = true
+		}
+		if kv == "TERM=xterm-256color" {
+			hasExtra = true
+		}
+	}
+	if !hasLocale {
+		t.Error("utf8Env did not supply a UTF-8 locale when the parent env had none")
+	}
+	if !hasExtra {
+		t.Error("utf8Env dropped the caller's extra env entries")
+	}
+}
+
+// An explicit locale from the user's environment must win — vibe-remote should
+// not silently retag a deliberately non-UTF-8 setup.
+func TestUTF8EnvPreservesInheritedLocale(t *testing.T) {
+	t.Setenv("LC_ALL", "")
+	os.Unsetenv("LC_ALL")
+	t.Setenv("LC_CTYPE", "")
+	os.Unsetenv("LC_CTYPE")
+	t.Setenv("LANG", "en_US.ISO8859-1")
+
+	for _, kv := range utf8Env() {
+		if strings.HasPrefix(kv, "LC_CTYPE=") {
+			t.Fatalf("utf8Env overrode an inherited locale with %q", kv)
+		}
+	}
+}
+
+func TestReloadRespawnsTmuxPaneInSameSession(t *testing.T) {
+	realTmux := requireTmux(t)
 
 	id := fmt.Sprintf("reload-test-%d", time.Now().UnixNano())
 	sessionName := "vibe-remote-" + id
@@ -138,10 +203,7 @@ func newTmuxSession(t *testing.T, realTmux, sessionName, workdir string) {
 // hands the old reader the *new* master and the two relays split the byte
 // stream, so both clients render a partial screen.
 func TestReadEpochRejectsSupersededEpoch(t *testing.T) {
-	realTmux, err := exec.LookPath("tmux")
-	if err != nil {
-		t.Skip("tmux is not installed")
-	}
+	realTmux := requireTmux(t)
 
 	id := fmt.Sprintf("epoch-guard-%d", time.Now().UnixNano())
 	sessionName := "vibe-remote-" + id
@@ -176,10 +238,7 @@ func TestReadEpochRejectsSupersededEpoch(t *testing.T) {
 // (closing a PTY master does not wake a blocked reader, so that goroutine would
 // hang forever). The tmux session itself must survive all of it.
 func TestReconnectReapsRetiredAttachProcesses(t *testing.T) {
-	realTmux, err := exec.LookPath("tmux")
-	if err != nil {
-		t.Skip("tmux is not installed")
-	}
+	realTmux := requireTmux(t)
 
 	id := fmt.Sprintf("reap-%d", time.Now().UnixNano())
 	sessionName := "vibe-remote-" + id

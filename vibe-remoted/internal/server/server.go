@@ -2,6 +2,7 @@
 package server
 
 import (
+	"context"
 	"crypto/subtle"
 	"encoding/json"
 	"errors"
@@ -11,25 +12,51 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/lflish/vibe-remote/vibe-remoted/internal/config"
 	"github.com/lflish/vibe-remote/vibe-remoted/internal/protocol"
 	"github.com/lflish/vibe-remote/vibe-remoted/internal/session"
 )
 
+// maxRESTBody caps JSON request bodies. Every REST body is a few small fields;
+// the cap stops a token holder's buggy or hostile client from making the
+// daemon buffer an unbounded body.
+const maxRESTBody = 64 << 10
+
+// Field caps for POST /api/v1/events. kind is a short enum-like tag; message
+// is a one-line notification text that clients surface in a desktop toast.
+const (
+	maxEventKind    = 64
+	maxEventMessage = 4096
+)
+
 // Server holds the HTTP server and dependencies.
 type Server struct {
-	cfg *config.Config
-	mgr *session.Manager
-	mux *http.ServeMux
+	cfg     *config.Config
+	mgr     *session.Manager
+	mux     *http.ServeMux
+	version string
+}
+
+// Option configures optional Server settings.
+type Option func(*Server)
+
+// WithVersion sets the daemon version reported by /api/v1/info.
+func WithVersion(v string) Option {
+	return func(s *Server) { s.version = v }
 }
 
 // New creates a new Server.
-func New(cfg *config.Config, mgr *session.Manager) *Server {
+func New(cfg *config.Config, mgr *session.Manager, opts ...Option) *Server {
 	s := &Server{
-		cfg: cfg,
-		mgr: mgr,
-		mux: http.NewServeMux(),
+		cfg:     cfg,
+		mgr:     mgr,
+		mux:     http.NewServeMux(),
+		version: "dev",
+	}
+	for _, opt := range opts {
+		opt(s)
 	}
 	s.routes()
 	return s
@@ -74,11 +101,44 @@ func (s *Server) handleReloadSession(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// ListenAndServe starts the server on the configured bind address.
-func (s *Server) ListenAndServe() error {
-	addr := fmt.Sprintf("%s:%d", s.cfg.BindAddr, s.cfg.Port)
-	log.Printf("vibe-remoted listening on %s", addr)
-	return http.ListenAndServe(addr, withCORS(s.mux))
+// shutdownTimeout bounds how long a SIGINT/SIGTERM waits for in-flight REST
+// requests. Sessions are unaffected either way: they live in tmux, and clients
+// reconnect to the next daemon instance.
+const shutdownTimeout = 5 * time.Second
+
+// ListenAndServe serves on the configured bind address until ctx is done, then
+// shuts down gracefully.
+//
+// Only ReadHeaderTimeout and IdleTimeout are set. ReadTimeout/WriteTimeout
+// would apply to the hijacked connection behind each WebSocket too, and kill
+// every long-lived terminal session after the timeout elapsed.
+func (s *Server) ListenAndServe(ctx context.Context) error {
+	srv := &http.Server{
+		Addr:              s.cfg.ListenAddr(),
+		Handler:           withCORS(s.mux),
+		ReadHeaderTimeout: 10 * time.Second,
+		IdleTimeout:       120 * time.Second,
+	}
+	log.Printf("vibe-remoted %s listening on %s", s.version, srv.Addr)
+
+	errCh := make(chan error, 1)
+	go func() { errCh <- srv.ListenAndServe() }()
+
+	select {
+	case err := <-errCh:
+		return err
+	case <-ctx.Done():
+	}
+
+	log.Printf("shutting down (tmux sessions keep running)")
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
+	defer cancel()
+	// Shutdown does not wait for hijacked WebSocket connections; those end when
+	// the process exits, and their tmux sessions survive that.
+	if err := srv.Shutdown(shutdownCtx); err != nil {
+		return fmt.Errorf("shutdown: %w", err)
+	}
+	return nil
 }
 
 // withCORS adds permissive CORS headers so the Electron renderer (which loads
@@ -124,6 +184,7 @@ func (s *Server) handleInfo(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 	info := map[string]any{
+		"version":         s.version,
 		"hostname":        hostname,
 		"tmux_enabled":    s.cfg.UseTmux,
 		"default_workdir": s.cfg.DefaultWorkdir,
@@ -187,12 +248,18 @@ func (s *Server) handleRenameSession(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		Name string `json:"name"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid body"})
+	if status, err := decodeJSONBody(w, r, &body); err != nil {
+		writeJSON(w, status, map[string]string{"error": err.Error()})
 		return
 	}
 	if err := s.mgr.Rename(id, body.Name); err != nil {
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": err.Error()})
+		if errors.Is(err, session.ErrSessionNotFound) {
+			writeJSON(w, http.StatusNotFound, map[string]string{"error": err.Error()})
+			return
+		}
+		// A tmux failure is not "no such session"; reporting it as 404 made the
+		// client drop a session that still exists.
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -200,18 +267,33 @@ func (s *Server) handleRenameSession(w http.ResponseWriter, r *http.Request) {
 
 // handleEvents receives an out-of-band session event (from a claude hook or any
 // tailnet-local reporter) and routes it to the session's WS subscribers as a
-// notify frame. Reuses the same Bearer auth as every other REST endpoint.
+// notify frame.
+//
+// Unlike every other endpoint it also accepts the per-session hook token that
+// sessions get as VIBE_REMOTE_TOKEN, but only for the sessionId it was derived
+// for. That is why the body is decoded before the auth check. An unauthorized
+// caller still gets 401 rather than 400, so a malformed body reveals nothing.
 func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
-	if !s.checkToken(r, w) {
+	var body protocol.EventRequest
+	status, decodeErr := decodeJSONBody(w, r, &body)
+	if !s.eventsAuthorized(r, body.SessionID) {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
 		return
 	}
-	var body protocol.EventRequest
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid body"})
+	if decodeErr != nil {
+		writeJSON(w, status, map[string]string{"error": decodeErr.Error()})
 		return
 	}
 	if body.SessionID == "" || body.Kind == "" {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "sessionId and kind required"})
+		return
+	}
+	if len(body.Kind) > maxEventKind {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": fmt.Sprintf("kind exceeds %d bytes", maxEventKind)})
+		return
+	}
+	if len(body.Message) > maxEventMessage {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": fmt.Sprintf("message exceeds %d bytes", maxEventMessage)})
 		return
 	}
 	s.mgr.PublishEvent(body.SessionID, protocol.NotifyFrame{
@@ -263,8 +345,21 @@ func (s *Server) handleFS(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// Report the parent only when it is itself listable. The client cannot work
+	// this out on its own: allowed_roots are configured pre-symlink-resolution
+	// (e.g. "/tmp") while these paths are canonical ("/private/tmp"), so a
+	// string comparison against the roots would wrongly offer a parent that the
+	// next request then rejects with 403. Empty means "already at a root".
+	parent := ""
+	if dir := filepath.Dir(absPath); dir != absPath {
+		if canonicalParent, err := s.cfg.ResolveAllowedWorkdir(dir); err == nil {
+			parent = canonicalParent
+		}
+	}
+
 	writeJSON(w, http.StatusOK, map[string]any{
 		"path":    absPath,
+		"parent":  parent,
 		"entries": dirs,
 	})
 }
@@ -278,6 +373,33 @@ func (s *Server) checkToken(r *http.Request, w http.ResponseWriter) bool {
 		return false
 	}
 	return true
+}
+
+// eventsAuthorized accepts the main token, or the hook token derived for
+// sessionID. Both comparisons always run, in constant time, so the response
+// time does not reveal which credential was presented.
+func (s *Server) eventsAuthorized(r *http.Request, sessionID string) bool {
+	auth := r.Header.Get("Authorization")
+	mainOK := tokenEqual(auth, "Bearer "+s.cfg.Token)
+	hookOK := false
+	if sessionID != "" {
+		hookOK = tokenEqual(auth, "Bearer "+session.HookToken(s.cfg.Token, sessionID))
+	}
+	return mainOK || hookOK
+}
+
+// decodeJSONBody decodes a size-capped JSON body. On failure it returns the
+// status to report: 413 when the body exceeds maxRESTBody, 400 otherwise.
+func decodeJSONBody(w http.ResponseWriter, r *http.Request, v any) (int, error) {
+	r.Body = http.MaxBytesReader(w, r.Body, maxRESTBody)
+	if err := json.NewDecoder(r.Body).Decode(v); err != nil {
+		var tooLarge *http.MaxBytesError
+		if errors.As(err, &tooLarge) {
+			return http.StatusRequestEntityTooLarge, fmt.Errorf("body exceeds %d bytes", maxRESTBody)
+		}
+		return http.StatusBadRequest, errors.New("invalid body")
+	}
+	return 0, nil
 }
 
 // tokenEqual compares two token strings in constant time. Since the static
