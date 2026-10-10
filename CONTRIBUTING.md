@@ -13,7 +13,7 @@ The current repository contains one product line: a macOS Electron desktop clien
 
 Requirements:
 
-- Go 1.25 or newer
+- Go 1.26 or newer
 - Node.js 22 or newer
 - npm
 - tmux for persistence and worktree integration tests

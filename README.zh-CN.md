@@ -62,7 +62,7 @@ shell 的交互会话；部署前请阅读 [SECURITY.md](./SECURITY.md)。
 
 ### 从源码构建
 
-每个 release 都附带预编译二进制。自行构建需要 Go 1.25+：
+每个 release 都附带预编译二进制。自行构建需要 Go 1.26+：
 
 ```bash
 make server          # 为本机产出 bin/vibe-remoted

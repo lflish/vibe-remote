@@ -68,7 +68,7 @@ token gets an interactive shell-equivalent session as the daemon's user; read
 
 ### Build from source
 
-Prebuilt binaries are attached to every release. To build yourself (Go 1.25+):
+Prebuilt binaries are attached to every release. To build yourself (Go 1.26+):
 
 ```bash
 make server          # produces bin/vibe-remoted for this machine

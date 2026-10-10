@@ -66,7 +66,7 @@
 | D2 | `ci.yml`：<br>- 触发：`push`（main）+ `pull_request` + `workflow_dispatch`<br>- `concurrency` 取消旧运行，每个 job 设 `timeout-minutes`<br>- 显式安装 tmux，并设 `VIBE_REMOTE_REQUIRE_TMUX=1`，让 tmux 缺失时测试失败而不是 skip<br>- 加跑 govulncheck<br>- desktop job 跑 `npm test` + `vite build`<br>- 新增 macOS job，执行 `electron-builder --dir` 做打包冒烟 |
 | D3 | 新增 `release.yml`，推送 `v*` tag 时触发：<br>- 校验 tag 与 `desktop/package.json` 版本一致<br>- 跑 `make check`<br>- 构建 daemon：linux/darwin × amd64/arm64，注入版本号<br>- 在 macOS runner 上构建 arm64/x64 DMG<br>- 生成 `SHA256SUMS` + build provenance attestation<br>- 用 `gh release create --draft` 建草稿 release，由维护者审核后发布<br>只用 GitHub 官方 actions |
 | D4 | `dependabot.yml`：覆盖 gomod、npm、github-actions，每周检查。`@xterm/*` 忽略（版本是刻意锁定的） |
-| D5 | `go.mod` 升到受支持的 Go 版本（1.25），CONTRIBUTING 同步 |
+| D5 | `go.mod` 升到受支持的 Go 版本（1.26；1.25 已停止安全修复，govulncheck 会报 stdlib 漏洞），CONTRIBUTING 同步 |
 | D6 | 新增 `CHANGELOG.md`，承接 README 中的 What's new；README 只保留链接 |
 
 ## E. 文档与部署
