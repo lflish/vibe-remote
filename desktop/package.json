@@ -35,8 +35,8 @@
     "@xterm/xterm": "6.1.0-beta.302"
   },
   "devDependencies": {
-    "electron": "33.4.11",
-    "electron-builder": "25.1.8",
+    "electron": "44.7.0",
+    "electron-builder": "26.15.3",
     "esbuild": "0.25.12",
     "typescript": "5.9.3",
     "vite": "6.4.3",

@@ -1,4 +1,4 @@
-import { app, BrowserWindow, clipboard, ipcMain, safeStorage, screen } from 'electron';
+import { app, BrowserWindow, clipboard, ipcMain, Notification, safeStorage, screen } from 'electron';
 import * as path from 'path';
 import * as fs from 'fs';
 import { MachineStore } from './machine-store';
@@ -81,6 +81,13 @@ if (!app.isPackaged && process.env.VIBE_REMOTE_DEBUG_PORT) {
   app.commandLine.appendSwitch('remote-allow-origins', '*');
 }
 
+// Dev-only: automated GUI runs (.claude/skills/verify/scripts/gui-smoke.mjs)
+// point userData at a throwaway directory so they never read or rewrite the
+// developer's real machines.json and window state.
+if (!app.isPackaged && process.env.VIBE_REMOTE_USER_DATA_DIR) {
+  app.setPath('userData', process.env.VIBE_REMOTE_USER_DATA_DIR);
+}
+
 function createWindow() {
   const windowState = loadWindowState();
   mainWindow = new BrowserWindow({
@@ -101,6 +108,10 @@ function createWindow() {
   });
 
   if (windowState.maximized) mainWindow.maximize();
+
+  // The Dock badge set by the notification fallback means "something needs
+  // you"; looking at the window acknowledges it.
+  mainWindow.on('focus', () => app.dock?.setBadge(''));
 
   // Persist geometry on the events that can change it. Debounced because resize
   // and move fire continuously while dragging.
@@ -141,8 +152,10 @@ function createWindow() {
   // In dev, forward renderer console to the main process stdout and open
   // DevTools for easier debugging. Set VIBE_REMOTE_NO_DEVTOOLS=1 to suppress.
   if (process.env.VITE_DEV_SERVER_URL && !process.env.VIBE_REMOTE_NO_DEVTOOLS) {
-    mainWindow.webContents.on('console-message', (_e, level, message, line, source) => {
-      console.log(`[renderer:${level}] ${message} (${source}:${line})`);
+    // Electron 35+ passes the details on the event; the positional arguments
+    // are deprecated.
+    mainWindow.webContents.on('console-message', ({ level, message, lineNumber, sourceId }) => {
+      console.log(`[renderer:${level}] ${message} (${sourceId}:${lineNumber})`);
     });
     mainWindow.webContents.openDevTools({ mode: 'detach' });
   }
@@ -183,10 +196,60 @@ ipcMain.handle('save-machines', (_event, machines: unknown) => {
   return true;
 });
 
+// Desktop notifications live in the main process so a failure is observable.
+// Since Electron 42, macOS notifications go through UNUserNotificationCenter,
+// which only delivers for code-signed apps: in the unsigned release DMGs a
+// renderer `new Notification()` fails silently, while the main-process
+// Notification at least emits `failed` (UNErrorDomain 1). On failure — or when
+// notifications are unsupported — fall back to a Dock bounce + badge so a
+// "needs input" session still gets the user's attention.
+type NotifyResult = 'shown' | 'fallback';
+let nativeNotificationsBroken = false;
+const liveNotifications = new Set<Notification>(); // keep refs until delivered or failed
+
+function attentionFallback(): NotifyResult {
+  if (mainWindow && !mainWindow.isDestroyed() && !mainWindow.isFocused()) {
+    app.dock?.bounce('informational');
+    app.dock?.setBadge('•');
+  }
+  return 'fallback';
+}
+
+function notify(title: string, body: string): Promise<NotifyResult> {
+  if (nativeNotificationsBroken || !Notification.isSupported()) return Promise.resolve(attentionFallback());
+  return new Promise((resolve) => {
+    const n = new Notification({ title, body });
+    liveNotifications.add(n);
+    const settle = (result: NotifyResult) => {
+      liveNotifications.delete(n);
+      resolve(result);
+    };
+    n.on('show', () => settle('shown'));
+    n.on('failed', (_event, error) => {
+      // Signing is a property of the build, so one failure means all will fail.
+      nativeNotificationsBroken = true;
+      console.warn(`[notify] native notification failed (${error}); using Dock fallback`);
+      settle(attentionFallback());
+    });
+    n.on('click', () => {
+      mainWindow?.show();
+      mainWindow?.focus();
+    });
+    n.show();
+  });
+}
+
+ipcMain.handle('notify', (_event, title: unknown, body: unknown) => {
+  if (typeof title !== 'string' || typeof body !== 'string') throw new Error('notify: title and body must be strings');
+  return notify(title.slice(0, 200), body.slice(0, 1000));
+});
+
+// Electron 44 made the clipboard API asynchronous. Await it so a failed native
+// write rejects the renderer's promise instead of reporting success.
 ipcMain.handle('clipboard-read-text', () => clipboard.readText());
 
-ipcMain.handle('clipboard-write-text', (_event, text: string) => {
-  clipboard.writeText(text);
+ipcMain.handle('clipboard-write-text', async (_event, text: string) => {
+  await clipboard.writeText(text);
   return true;
 });
 

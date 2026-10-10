@@ -1136,15 +1136,13 @@ function notificationsEnabled(): boolean {
   return localStorage.getItem('vibe-remote.notifications') !== 'off';
 }
 
+// notifyDesktop goes through the main process rather than the web Notification
+// API, which fails silently in unsigned builds (see notify() in main/index.ts).
+// The outcome is logged so GUI tests can observe it without stubbing anything.
 function notifyDesktop(title: string, body: string) {
-  if (!('Notification' in window)) return;
-  if (Notification.permission === 'granted') {
-    new Notification(title, { body });
-  } else if (Notification.permission !== 'denied') {
-    Notification.requestPermission().then((perm) => {
-      if (perm === 'granted') new Notification(title, { body });
-    });
-  }
+  void window.vibeRemote.notify(title, body)
+    .then((result) => console.debug(`[notify] ${result}: ${title}`))
+    .catch((e) => console.warn('[notify] failed', e));
 }
 
 // showInitError replaces a blank window with the reason startup failed (most
