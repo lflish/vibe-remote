@@ -30,6 +30,8 @@ jobs:
       - uses: actions/setup-go@v7
         with:
           go-version-file: vibe-remoted/go.mod
+          # Runner caches lag behind Go patch releases; govulncheck needs the latest.
+          check-latest: true
           cache-dependency-path: vibe-remoted/go.sum
       - name: Install tmux
         run: sudo apt-get update && sudo apt-get install -y --no-install-recommends tmux
@@ -92,6 +94,8 @@ jobs:
       - uses: actions/setup-go@v7
         with:
           go-version-file: vibe-remoted/go.mod
+          # Runner caches lag behind Go patch releases; govulncheck needs the latest.
+          check-latest: true
           cache: false
       - name: actionlint
         run: go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.12
