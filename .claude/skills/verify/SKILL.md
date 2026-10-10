@@ -35,15 +35,31 @@ VR_TOKEN=$TOKEN node .claude/skills/verify/scripts/ws-smoke.mjs 127.0.0.1:$PORT 
 Each line is `PASS`/`FAIL`; exit code is non-zero on any failure. Never print
 `$TOKEN` in your reply.
 
-## 3. GUI (only when desktop code changed)
+## 3. GUI (when desktop code, Electron, xterm or clipboard changed)
 
-The script covers the wire protocol, not rendering. For renderer changes, run
-the app with `VIBE_REMOTE_DEBUG_PORT=9222 VIBE_REMOTE_NO_DEVTOOLS=1 npm run dev`
-in `desktop/`, add the machine `127.0.0.1:$PORT` with the token, and inspect via
-raw CDP over WebSocket (`http://127.0.0.1:9222/json` lists targets; the
-chrome-devtools MCP is unreliable against this Electron version). Check: the
-terminal fills the window, typing echoes, drag-select + ⌘C copies, killing the
-daemon shows the reconnect banner and restarting it recovers the session.
+`ws-smoke.mjs` covers the wire protocol, not the app. For the desktop, run the
+CDP-driven GUI regression (macOS, needs a display; ~1 min). It starts its own
+daemon and launches the built app with a throwaway userData dir and
+`--use-mock-keychain`, so steps 1/2/4 here are not needed for it:
+
+```bash
+node .claude/skills/verify/scripts/gui-smoke.mjs          # builds desktop/dist first
+node .claude/skills/verify/scripts/gui-smoke.mjs --keep   # leave the app open afterwards
+```
+
+It checks:
+- legacy `machines.json` gets encrypted on launch;
+- new session via the picker, and the terminal fills its container;
+- typing echoes;
+- drag-select works under remote mouse reporting, and ⌘C copies;
+- ⌘V pastes;
+- navigation and `window.open` are blocked;
+- a hook event raises a desktop notification (it reports `shown` or `fallback`);
+- after a daemon restart the client reconnects and the session still works.
+
+Neither script covers packaged-build-only behaviour, which differs for
+notifications because unsigned builds use the Dock fallback. Check that by
+hand in `release/mac-*/vibe-remote.app` after `npm run build -- --dir`.
 
 ## 4. Clean up — always, even on failure
 

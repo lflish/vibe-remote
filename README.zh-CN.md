@@ -52,8 +52,10 @@ docs/       协议文档
 3. 启动 daemon，推荐以 systemd user service 运行，见[作为服务运行](#作为服务运行)。
 4. Mac 上安装同一 release 的 DMG（M 系列选 `-arm64`，Intel 选 `-x64`），在 app 的机器管理器中添加该机器。
 
-安装包未签名，首次打开会被 Gatekeeper 拦下：右键点应用选「打开」，或执行
-`xattr -dr com.apple.quarantine /Applications/vibe-remote.app`。
+桌面端需要 macOS 13 Ventura 或更高版本。安装包未签名，首次打开会被 Gatekeeper
+拦下：右键点应用选「打开」，或执行
+`xattr -dr com.apple.quarantine /Applications/vibe-remote.app`。未签名版本无法发送
+macOS 系统通知，后台会话等待输入时改为 Dock 图标弹跳并显示角标。
 
 不要把 `vibe-remoted` 直接暴露到公网。持有 token 即可以 daemon 用户身份获得等同
 shell 的交互会话；部署前请阅读 [SECURITY.md](./SECURITY.md)。

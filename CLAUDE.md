@@ -38,6 +38,12 @@ make smoke                      # curl localhost:8765/healthz
 
 打包时用国内镜像加速 electron 二进制：`ELECTRON_MIRROR=https://npmmirror.com/mirrors/electron/`。
 
+**Electron ≥42 不再在 `npm install` 时下载二进制**：首次 `require('electron')` / 运行时才同步下载（GitHub 慢时看似卡死）。新环境先跑 `ELECTRON_MIRROR=… npx install-electron --no` 预下载。electron-builder 打包时另行下载，同样需要 `ELECTRON_MIRROR`。
+
+**桌面通知走主进程**（`main/index.ts` 的 `notify()`）：Electron ≥42 的 macOS 通知改用 UNUserNotificationCenter，**只对已签名 app 生效**。未签名 DMG 里 renderer `new Notification()` 静默失败（show/error 都不触发），主进程 Notification 会发 `failed`（UNErrorDomain 1），于是降级为 Dock 弹跳 + 角标（窗口聚焦时清除）。不要改回 renderer 的 web Notification。
+
+**GUI 回归**：`node .claude/skills/verify/scripts/gui-smoke.mjs` 用 CDP 驱动构建产物（临时 daemon + 临时 userData + `--use-mock-keychain`，不碰真实 machines.json / 钥匙串），覆盖迁移、新建会话、输入、鼠标上报下拖选 ⌘C、⌘V、导航锁、通知、断线重连。升级 Electron / 改终端或剪贴板后必跑。
+
 ### 远程 daemon 部署同步
 
 桌面端与 `vibe-remoted` 必须保持兼容版本。修改 Go daemon 或协议后，先交叉编译再替换远程二进制；仅重启旧 daemon 不会更新协议。Windows/虚拟机 NAT 场景下，SSH Host 地址可能与 daemon 实际监听的 NAT 地址不同，桌面端应填写能实际返回 `/healthz`、`/api/v1/info`、`/api/v1/sessions` 的地址。
