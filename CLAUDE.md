@@ -13,6 +13,9 @@ vibe-remote 是一个「远程 Claude 终端」桌面工具：真正的 `claude`
 ## 常用命令
 
 ```bash
+make check                     # 唯一检查入口（CI/CONTRIBUTING/release 都只调它）：gofmt + vet + test -race + desktop typecheck + npm test
+make dist-daemon               # 交叉编译 linux/darwin × amd64/arm64 → dist/（版本经 -ldflags 注入）
+
 # 服务端（Go）
 make server                    # 构建 → bin/vibe-remoted
 make dev-server                # go run，读 ../vibe-remoted.json
@@ -139,6 +142,6 @@ shouldForceSelection(e) { return isMac ? e.altKey && macOptionClickForcesSelecti
 - 后台会话提示：A 圆点兜底（非活动会话有字节到达即亮蓝点，任何 agent 通用）+ C hook 事件增强（notify 帧把圆点升级为 idle 绿/waiting 黄 + 可选桌面通知）。
 - 重连体验：状态栏显示重连尝试次数 + 活动会话终端顶部断线横幅 + Retry now。
 
-**事件基建（通用可扩展）**：`POST /api/v1/events`（Bearer 鉴权，body `{sessionId,kind,message?}`）+ Manager pub/sub 路由表 + notify 帧。`kind` 为开放枚举，未来带外事件（token 用量等）复用此通道。claude 进程已注入 `VIBE_REMOTE_SESSION_ID`/`VIBE_REMOTE_EVENTS_URL`/`VIBE_REMOTE_TOKEN`。
+**事件基建（通用可扩展）**：`POST /api/v1/events`（Bearer 鉴权，body `{sessionId,kind,message?}`）+ Manager pub/sub 路由表 + notify 帧。`kind` 为开放枚举，未来带外事件（token 用量等）复用此通道。claude 进程已注入 `VIBE_REMOTE_SESSION_ID`/`VIBE_REMOTE_EVENTS_URL`/`VIBE_REMOTE_TOKEN`。其中 `VIBE_REMOTE_TOKEN` 是**按会话派生的 hook token**（`HMAC(主token, "events:"+id)`），只能调本会话的 `/api/v1/events`，主 token 绝不进 agent 环境。env 必须经 `tmux new-session/respawn-pane -e` 显式传入 —— tmux server 只捕获首个客户端的环境，不传则后续会话全部串用第一个会话的 SESSION_ID。
 
 **⚠️ 故意留空（本期不实现）**：vibe-remoted 自动生成 hook 配置让 claude 带上（`--settings` 注入方式需真机验证 claude 版本合并语义）。当前靠手动配 hook 或手动 curl events 端点即可验证全链路；日后补「自动注入」一小段，前面基建全不用动。

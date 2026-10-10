@@ -1,0 +1,33 @@
+# systemd *user* unit for vibe-remoted.
+#
+# Install (as the user whose shell/claude the sessions should run as):
+#   install -Dm0755 vibe-remoted-<version>-linux-amd64 ~/.local/bin/vibe-remoted
+#   install -Dm0600 vibe-remoted.json ~/.config/vibe-remoted/config.json
+#   install -Dm0644 vibe-remoted.service ~/.config/systemd/user/vibe-remoted.service
+#   systemctl --user daemon-reload
+#   systemctl --user enable --now vibe-remoted
+#   loginctl enable-linger "$USER"   # keep running while you are logged out
+#
+# Logs: journalctl --user -u vibe-remoted -f
+
+[Unit]
+Description=vibe-remoted (remote Claude terminal daemon)
+# Bind to a tailscale/LAN address that must exist before the daemon starts.
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+ExecStart=%h/.local/bin/vibe-remoted --config %h/.config/vibe-remoted/config.json
+WorkingDirectory=%h
+Restart=on-failure
+RestartSec=2
+
+# Required. The daemon spawns the tmux server that owns every session. With the
+# default KillMode=control-group, `systemctl restart` (e.g. after upgrading the
+# binary) would kill that tmux server too and every running session with it.
+# KillMode=process stops only the daemon; tmux and claude keep running and the
+# restarted daemon rediscovers them.
+KillMode=process
+
+[Install]
+WantedBy=default.target

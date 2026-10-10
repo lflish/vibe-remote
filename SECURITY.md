@@ -25,9 +25,18 @@ The supported product surface is the macOS Electron desktop client and the Go `v
 
 
 `vibe-remoted` gives an authenticated client interactive access to a shell-like
-CLI running with the daemon user's permissions. Treat it as remote shell access.
+CLI running with the daemon user's permissions. Treat it as remote shell access:
+the token is the boundary. `allowed_roots` and the `claude_flags` whitelist
+constrain what the *client UI* can request, but they are not a sandbox: once a
+session is running, its CLI can reach anything the daemon user can.
 
-- Use a unique, randomly generated token for every machine.
+Agent processes never receive the main token. Each session gets a hook token
+(`VIBE_REMOTE_TOKEN`, derived per session) that can only post events for that
+session to `/api/v1/events`, so a prompt-injected agent or one of its tools
+cannot use it to control other sessions or the daemon.
+
+- Use a unique, randomly generated token for every machine (at least 16
+  characters is enforced; use `openssl rand -hex 32`).
 - Never commit tokens or a `machines.json` file.
 - Bind only to loopback, a trusted private network, or a Tailscale address.
 - Prefer Tailscale because the application protocol currently uses plaintext
@@ -43,7 +52,10 @@ controlled development only and is not a secure production configuration.
 
 ## Credential handling
 
-Machine credentials are stored locally in Electron's user-data directory. They
-are not intended to be checked into this repository. If a token is ever printed
+Machine credentials are stored in Electron's user-data directory
+(`machines.json`, mode `0600`). Tokens are encrypted with the OS keychain via
+Electron `safeStorage`; if keychain encryption is unavailable they fall back to
+plaintext and the app logs a warning. They are not intended to be checked into
+this repository. If a token is ever printed
 in logs, copied into an issue, or committed to Git, rotate it immediately.
 
