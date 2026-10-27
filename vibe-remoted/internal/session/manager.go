@@ -28,6 +28,10 @@ type Manager struct {
 	mu       sync.RWMutex
 	sessions map[string]*Runner
 	subs     map[string][]chan protocol.NotifyFrame // sessionID → notify subscribers
+	// creating holds the client-chosen ids whose Create is still in flight;
+	// the channel closes when it finishes. A replayed attach for the same id
+	// waits on it instead of racing a second CreateWorktree / new-session.
+	creating map[string]chan struct{}
 	// gen counts session-table mutations (create, delete, recovery). A tmux
 	// snapshot taken outside mu is only applied if gen hasn't moved since the
 	// query started — otherwise reconcile could evict a session created after
@@ -50,6 +54,7 @@ func NewManager(useTmux bool, claudeCmd string, loginShell bool, shell string) *
 	return &Manager{
 		sessions:         make(map[string]*Runner),
 		subs:             make(map[string][]chan protocol.NotifyFrame),
+		creating:         make(map[string]chan struct{}),
 		useTmux:          useTmux,
 		claudeCmd:        claudeCmd,
 		loginShell:       loginShell,
@@ -98,8 +103,25 @@ func (m *Manager) recoveredRunner(id string, info tmuxSessionInfo, now time.Time
 	}
 }
 
+// ErrInvalidSessionID rejects a client-chosen session id that could not be
+// used safely as a tmux session name, branch name and directory name.
+var ErrInvalidSessionID = errors.New("invalid session id")
+
+// maxSessionIDLen bounds client-chosen ids; they end up in tmux session names,
+// git branch names and worktree paths.
+const maxSessionIDLen = 64
+
+// ValidSessionID reports whether id is acceptable as a client-chosen id.
+func ValidSessionID(id string) bool {
+	return len(id) <= maxSessionIDLen && safeSessionID.MatchString(id)
+}
+
 // CreateOptions holds parameters for creating a new session.
 type CreateOptions struct {
+	// ID is the client-chosen session id. When set, Create is idempotent: if a
+	// session with this id already exists (or is being created) the call
+	// attaches to it instead. Empty = generate one.
+	ID                string
 	Workdir           string
 	Mode              protocol.SessionMode
 	Cols, Rows        uint16
@@ -113,8 +135,33 @@ type CreateOptions struct {
 
 // Create starts a new session and registers it. Worktree resources are created
 // before the runner starts so a failed launch can roll them back safely.
+//
+// With opts.ID set the call is idempotent, which is what makes a client's
+// "attach sent, connection dropped before ready" replay safe: the replay
+// attaches to the session the first attempt created rather than creating a
+// second one (and, in worktree mode, a second worktree and branch).
 func (m *Manager) Create(opts CreateOptions) (*Runner, error) {
-	id := generateID()
+	id := opts.ID
+	if id == "" {
+		id = generateID()
+	} else {
+		if !ValidSessionID(id) {
+			return nil, ErrInvalidSessionID
+		}
+		done, exists := m.beginCreate(id)
+		if !exists && m.useTmux {
+			// The table can miss a session that tmux still has (daemon restarted
+			// between the first attempt and the replay).
+			if _, err := m.lookupOrRecover(id); err == nil {
+				exists = true
+				done()
+			}
+		}
+		if exists {
+			return m.Attach(id, opts.Cols, opts.Rows)
+		}
+		defer done()
+	}
 	mode := opts.Mode
 	if mode == "" {
 		mode = protocol.SessionModeNormal
@@ -179,6 +226,37 @@ func (m *Manager) Create(opts CreateOptions) (*Runner, error) {
 	return runner, nil
 }
 
+// beginCreate claims id for creation. It returns exists=true (and no done
+// func) when the session is already registered, waiting first for any
+// in-flight Create of the same id to finish. Otherwise the caller owns the
+// claim and must call done when its Create returns, success or not.
+func (m *Manager) beginCreate(id string) (done func(), exists bool) {
+	for {
+		m.mu.Lock()
+		if _, ok := m.sessions[id]; ok {
+			m.mu.Unlock()
+			return nil, true
+		}
+		inflight, busy := m.creating[id]
+		if !busy {
+			if m.creating == nil {
+				m.creating = make(map[string]chan struct{})
+			}
+			ch := make(chan struct{})
+			m.creating[id] = ch
+			m.mu.Unlock()
+			return func() {
+				m.mu.Lock()
+				delete(m.creating, id)
+				m.mu.Unlock()
+				close(ch)
+			}, false
+		}
+		m.mu.Unlock()
+		<-inflight
+	}
+}
+
 // Get returns a session by ID.
 func (m *Manager) Get(id string) (*Runner, bool) {
 	m.mu.RLock()
@@ -225,6 +303,12 @@ func (m *Manager) lookupOrRecover(id string) (*Runner, error) {
 
 // Attach re-attaches to an existing session (reconnect after disconnect).
 func (m *Manager) Attach(id string, cols, rows uint16) (*Runner, error) {
+	if !m.useTmux {
+		// Without tmux the CLI is the PTY's own child, and detaching killed it
+		// (see reap). Report the session as gone rather than failing in a way
+		// the client would keep retrying.
+		return nil, fmt.Errorf("session %q did not survive the disconnect (tmux disabled): %w", id, ErrSessionNotFound)
+	}
 	runner, err := m.lookupOrRecover(id)
 	if err != nil {
 		return nil, err

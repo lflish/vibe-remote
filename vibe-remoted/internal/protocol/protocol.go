@@ -1,6 +1,16 @@
 // Package protocol defines the JSON frame types for the vibe-remote WebSocket protocol.
 package protocol
 
+// Version is the protocol revision this daemon speaks, reported in ready and
+// /api/v1/info. Peers are expected to tolerate a newer peer (new fields are
+// optional, unknown frames and kinds are ignored); the number exists so a
+// client can tell an old daemon apart instead of silently losing features.
+// Bump it whenever a frame or endpoint gains behavior a peer may depend on.
+//
+//	1: implicit — daemons that predate the field and report nothing
+//	2: attach.newSessionId (idempotent create), error.code/fatal, proto itself
+const Version = 2
+
 // Frame types exchanged between client and server.
 const (
 	TypeAuth     = "auth"
@@ -47,13 +57,19 @@ type SessionMetadata struct {
 
 // AttachFrame requests opening or resuming a session.
 type AttachFrame struct {
-	Type      string      `json:"type"`
-	SessionID string      `json:"sessionId,omitempty"` // empty = create new
-	Cols      uint16      `json:"cols"`
-	Rows      uint16      `json:"rows"`
-	Workdir   string      `json:"workdir,omitempty"` // working directory for new sessions
-	Flags     []string    `json:"flags,omitempty"`   // selected claude_flags ids (new session only)
-	Mode      SessionMode `json:"mode,omitempty"`    // empty defaults to normal
+	Type      string `json:"type"`
+	SessionID string `json:"sessionId,omitempty"` // empty = create new
+	// NewSessionID is the client-chosen id for a session being created
+	// (SessionID empty). It makes create idempotent: a client that loses the
+	// connection before `ready` replays the same attach, and the daemon attaches
+	// to the session the first attempt created instead of starting a second
+	// one. Empty = the daemon picks an id (pre-v2 clients).
+	NewSessionID string      `json:"newSessionId,omitempty"`
+	Cols         uint16      `json:"cols"`
+	Rows         uint16      `json:"rows"`
+	Workdir      string      `json:"workdir,omitempty"` // working directory for new sessions
+	Flags        []string    `json:"flags,omitempty"`   // selected claude_flags ids (new session only)
+	Mode         SessionMode `json:"mode,omitempty"`    // empty defaults to normal
 }
 
 // ReadyFrame confirms attach success.
@@ -61,6 +77,7 @@ type ReadyFrame struct {
 	Type      string `json:"type"`
 	SessionID string `json:"sessionId"`
 	Workdir   string `json:"workdir"`
+	Proto     int    `json:"proto"` // daemon's protocol Version
 	SessionMetadata
 }
 
@@ -98,11 +115,29 @@ type ExitFrame struct {
 	Code int    `json:"code"`
 }
 
-// ErrorFrame reports an error to the client.
+// ErrorFrame reports an error to the client. Message is for humans; Code is
+// the stable machine-readable reason. Fatal means retrying the same request
+// cannot succeed (bad token, unknown session, rejected workdir), so a client
+// must stop reconnecting instead of replaying the attach forever.
 type ErrorFrame struct {
 	Type    string `json:"type"`
 	Message string `json:"message"`
+	Code    string `json:"code,omitempty"`
+	Fatal   bool   `json:"fatal,omitempty"`
 }
+
+// Error codes carried in ErrorFrame.Code. Open set: clients treat an unknown
+// code by its Fatal flag alone.
+const (
+	ErrCodeAuthFailed      = "auth_failed"        // fatal: wrong token or first frame not auth
+	ErrCodeAuthTimeout     = "auth_timeout"       // no auth frame in time
+	ErrCodeInvalidWorkdir  = "invalid_workdir"    // fatal: outside allowed_roots
+	ErrCodeInvalidMode     = "invalid_mode"       // fatal: unknown session mode
+	ErrCodeInvalidID       = "invalid_session_id" // fatal: malformed newSessionId
+	ErrCodeCreateFailed    = "create_failed"      // fatal: e.g. worktree in a non-git dir
+	ErrCodeSessionNotFound = "session_not_found"  // fatal: the session is gone
+	ErrCodeAttachFailed    = "attach_failed"      // transient: PTY/tmux trouble, retry
+)
 
 // NotifyFrame carries an out-of-band session event to the client (e.g. from a
 // claude hook via the events endpoint). Kind is an open string ("idle",
