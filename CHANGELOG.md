@@ -19,6 +19,20 @@ whose heading matches the pushed tag, so every release needs one here first.
   limit on WebSocket frames until authentication succeeds.
 
 ### Fixed
+- A dropped connection while creating a session no longer creates it twice.
+  The client now picks the new session's id and replays it, so the daemon
+  resumes the first attempt; in worktree mode this used to leave an orphaned
+  worktree and `vibe/*` branch behind.
+- The desktop app no longer reconnects forever to a session that is gone
+  (deleted elsewhere, tmux killed): the daemon marks such errors fatal and the
+  client stops, instead of retrying every 30s.
+- Half-open connections (lid closed, network switched) are detected on both
+  ends. The status bar no longer shows "connected" for a dead link, and the
+  daemon releases the session's PTY instead of holding it indefinitely.
+- REST calls time out after 8s, so an unreachable machine is marked offline
+  instead of piling up hung requests every poll.
+- "Retry now" during a session's creation sent nothing; it now replays the
+  create.
 - Every tmux session after the first inherited the first session's
   `VIBE_REMOTE_SESSION_ID`, so hook events were routed to the wrong session.
 - Desktop: retrying while a connection was still being established could start
@@ -28,6 +42,9 @@ whose heading matches the pushed tag, so every release needs one here first.
   outside `allowed_roots`.
 
 ### Changed
+- Protocol version 2 (`proto` in `ready` and `/api/v1/info`). The app warns
+  when a machine runs an older daemon, which accepts requests but silently
+  ignores newer fields. Update the daemon together with the app.
 - Config validation is stricter: unknown keys, tokens shorter than 16
   characters, the example token, missing `allowed_roots`, and a
   `default_workdir` outside `allowed_roots` are now startup errors.
