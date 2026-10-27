@@ -72,6 +72,38 @@ if (replay.mode !== 'worktree') lost.push(`mode=${replay.mode}`);
 if (replay.cols !== 120 || replay.rows !== 40) lost.push(`size=${replay.cols}x${replay.rows}`);
 if (lost.length) fail('replayed attach lost fields: ' + lost.join(', '));
 
+// The create carries a client-chosen id, and the replay reuses it: that is what
+// lets the daemon resume the session the first attempt made instead of
+// creating a second one (and, in worktree mode, a second worktree + branch).
+const firstCreate = attaches()[0];
+if (!/^\d+-[0-9a-f]{8}$/.test(firstCreate.newSessionId ?? '')) {
+  fail('create attach has no well-formed newSessionId: ' + JSON.stringify(firstCreate));
+}
+if (replay.newSessionId !== firstCreate.newSessionId) {
+  fail(`replay changed newSessionId ${firstCreate.newSessionId} → ${replay.newSessionId}; the daemon would create a duplicate`);
+}
+if (replay.sessionId) fail('replayed create must not claim an existing sessionId');
+
+// Manual "Retry now" in the same window must replay the create too. It used
+// to rebuild from currentSessionId, which is null until ready — so it sent no
+// attach at all.
+const beforeManual = attaches().length;
+client.reconnectNow();
+await new Promise((r) => setTimeout(r, 30));
+if (attaches().length <= beforeManual) fail('reconnectNow() before ready sent no attach');
+if (attaches().at(-1).newSessionId !== firstCreate.newSessionId) {
+  fail('reconnectNow() replay lost the newSessionId');
+}
+
+// Two separate creates get distinct ids.
+const other = new VibeRemoteClient({ name: 'm', addr: '127.0.0.1', port: 1, token: 't' });
+other.connect();
+await new Promise((r) => setTimeout(r, 30));
+other.attach('', 80, 24, '/home/u/other');
+const otherCreate = attaches().at(-1);
+if (otherCreate.newSessionId === firstCreate.newSessionId) fail('two creates shared one newSessionId');
+other.disconnect();
+
 // Once ready lands, reconnects should use the server-assigned sessionId.
 client.handleMessage(
   JSON.stringify({ type: 'ready', sessionId: 'sess-1', workdir: '/home/u/proj' }),

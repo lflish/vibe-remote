@@ -2,6 +2,7 @@ import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import '@xterm/xterm/css/xterm.css';
 import type { MachineConfig, SessionInfo, SessionMode } from '../shared/protocol';
+import { PROTOCOL_VERSION } from '../shared/protocol';
 import { VibeRemoteClient, ConnectionState } from './client';
 import { VibeRemoteRest, DeleteSessionError } from './rest';
 import { openDirPicker } from './dirpicker';
@@ -27,6 +28,7 @@ interface SessionView {
   banner: HTMLElement; // reconnect banner overlay, hidden by default
   activity: 'none' | 'output' | 'idle' | 'waiting'; // sidebar dot state
   suppressUntil: number; // ms timestamp: ignore onData activity until then (attach repaint)
+  warnedProto: boolean; // already told the user this daemon is older than the client
 }
 
 // --- App state ---
@@ -640,7 +642,7 @@ function openSession(machine: MachineConfig, sessionId: string, workdir?: string
   const banner = document.createElement('div');
   banner.className = 'reconnect-banner';
   banner.style.display = 'none';
-  const view: SessionView = { key, machine, sessionId, client, terminal: term, fitAddon: fit, container, banner, activity: 'none', suppressUntil: 0 };
+  const view: SessionView = { key, machine, sessionId, client, terminal: term, fitAddon: fit, container, banner, activity: 'none', suppressUntil: 0, warnedProto: false };
   views.set(key, view);
 
   // Classed so a locale switch can retranslate banners that already exist:
@@ -676,7 +678,7 @@ function openSession(machine: MachineConfig, sessionId: string, workdir?: string
     }
   };
 
-  client.onReady = (sid: string) => {
+  client.onReady = (sid: string, _workdir: string, proto: number) => {
     view.banner.style.display = 'none';
     // A new session gets its real id here; re-key the view and refresh sidebar.
     if (view.sessionId !== sid) {
@@ -692,6 +694,15 @@ function openSession(machine: MachineConfig, sessionId: string, workdir?: string
     view.suppressUntil = Date.now() + 500;
     refreshAllMachines();
     updateStatusBar();
+    // An older daemon accepts the attach but silently ignores what it doesn't
+    // know (newSessionId, worktree mode on very old builds). Say so once per
+    // view instead of letting the user assume features that aren't there. The
+    // status bar, not the terminal: tmux repaints the whole screen right after
+    // ready, which would wipe a line written into xterm before anyone reads it.
+    if (proto < PROTOCOL_VERSION && !view.warnedProto && view.key === activeKey) {
+      view.warnedProto = true;
+      updateStatusBar(t('terminal.oldDaemon', { proto, want: PROTOCOL_VERSION }));
+    }
   };
 
   client.onStateChange = (state, attempt) => {
@@ -710,10 +721,17 @@ function openSession(machine: MachineConfig, sessionId: string, workdir?: string
     updateStatusBar(t('status.sessionExited', { code }));
     refreshAllMachines();
   };
-  client.onError = (msg) => {
+  client.onError = (msg, fatal) => {
     console.error(`[${machine.name}]`, msg);
     // Show the error to the user instead of leaving a blank terminal.
     if (view.terminal) view.terminal.write(`\r\n\x1b[31m[${t('terminal.error', { msg })}]\x1b[0m\r\n`);
+    if (fatal) {
+      // The client has stopped reconnecting; a "reconnecting…" banner would
+      // promise something that will never happen.
+      view.banner.style.display = 'none';
+      if (view.terminal) view.terminal.write(`\x1b[33m[${t('terminal.fatal')}]\x1b[0m\r\n`);
+      refreshAllMachines();
+    }
     if (view.key === activeKey) updateStatusBar(t('status.error', { msg }));
   };
   client.onNotify = (kind, message) => {

@@ -1,5 +1,6 @@
 import { VibeRemoteRest, type DirEntry, type DirListing } from './rest';
 import type { MachineConfig, SessionMode } from '../shared/protocol';
+import { PROTOCOL_VERSION } from '../shared/protocol';
 import { t } from './i18n';
 import { activateModal } from './modal';
 
@@ -80,6 +81,15 @@ export function openDirPicker(
     rest
       .info()
       .then((info) => {
+        // Warn before the user commits to a session on an older daemon: it
+        // accepts the attach and quietly ignores what it doesn't understand.
+        const proto = info.proto ?? 1;
+        if (proto < PROTOCOL_VERSION && !closed) {
+          const warn = el('div', 'modal-mode-note');
+          warn.setAttribute('role', 'note');
+          warn.textContent = t('picker.oldDaemon', { proto, want: PROTOCOL_VERSION, version: info.version ?? '?' });
+          modal.insertBefore(warn, modesBox);
+        }
         const flags = info.claude_flags || [];
         if (flags.length === 0) return;
         const title = el('div', 'modal-flags-title');

@@ -70,6 +70,8 @@ const zh: Dict = {
   // terminal markers (written into xterm, so keep them short)
   'terminal.exited': '会话已退出，代码 {code}',
   'terminal.error': '错误：{msg}',
+  'terminal.fatal': '无法恢复，已停止重连。请从侧边栏重新打开或新建会话。',
+  'terminal.oldDaemon': '远程 daemon 协议版本 {proto} 低于桌面端 {want}，部分功能（如断线时新建会话去重）不可用，请更新 vibe-remoted',
   // startup failure
   'init.failedTitle': '启动失败',
   'init.failedDesc': '无法加载机器配置：{msg}',
@@ -86,6 +88,7 @@ const zh: Dict = {
   'picker.sessionMode': '会话模式',
   'picker.modeNote': 'Worktree 模式会从所选仓库创建一个隔离分支。',
   'picker.launchOptions': '启动选项',
+  'picker.oldDaemon': '这台机器的 vibe-remoted（{version}，协议 {proto}）比桌面端（协议 {want}）旧：断线时可能重复创建会话。建议先更新 daemon。',
   'picker.cancel': '取消',
   'picker.openHere': '在此打开',
   'picker.loading': '正在读取目录…',
@@ -183,6 +186,8 @@ const en: Dict = {
   'status.error': 'Error: {msg}',
   'terminal.exited': 'session exited, code {code}',
   'terminal.error': 'error: {msg}',
+  'terminal.fatal': 'cannot recover; stopped reconnecting. Reopen the session from the sidebar or start a new one.',
+  'terminal.oldDaemon': 'remote daemon speaks protocol {proto}, older than this app ({want}); some features (e.g. duplicate-safe session creation on a dropped connection) are unavailable — update vibe-remoted',
   'init.failedTitle': 'Couldn’t start',
   'init.failedDesc': 'Failed to load the machine list: {msg}',
   'init.reload': 'Reload',
@@ -195,6 +200,7 @@ const en: Dict = {
   'picker.sessionMode': 'Session mode',
   'picker.modeNote': 'Worktree mode creates an isolated branch from the selected repository.',
   'picker.launchOptions': 'Launch options',
+  'picker.oldDaemon': 'This machine runs an older vibe-remoted ({version}, protocol {proto}; this app speaks {want}): a dropped connection while creating a session may create it twice. Consider updating the daemon first.',
   'picker.cancel': 'Cancel',
   'picker.openHere': 'Open here',
   'picker.loading': 'Loading folders…',

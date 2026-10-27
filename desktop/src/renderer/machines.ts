@@ -1,5 +1,5 @@
 import type { MachineConfig } from '../shared/protocol';
-import { VibeRemoteRest } from './rest';
+import { VibeRemoteRest, timedFetch } from './rest';
 import { t } from './i18n';
 import { activateModal } from './modal';
 
@@ -26,7 +26,7 @@ export interface TestResult {
 export async function testConnection(machine: MachineConfig): Promise<TestResult> {
   const base = `http://${machine.addr}:${machine.port}`;
   try {
-    const health = await fetch(`${base}/healthz`);
+    const health = await timedFetch(`${base}/healthz`);
     if (!health.ok) return { ok: false, reason: 'unreachable', error: `healthz ${health.status}` };
   } catch (e) {
     return { ok: false, reason: 'unreachable', error: (e as Error).message };
