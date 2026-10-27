@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -129,8 +130,21 @@ func TestWSReplayedCreateResumesSameSession(t *testing.T) {
 		}
 		conn.CloseNow()
 	}
-	if n := len(s.mgr.List()); n != 1 {
-		t.Fatalf("sessions after replay = %d, want 1", n)
+	// Count only sessions in this test's own workdir: the tmux socket is shared
+	// with tests in other packages that `go test` runs in parallel, and List
+	// rightly reports every vibe-remote session on it.
+	canonicalRoot, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var ours []string
+	for _, info := range s.mgr.List() {
+		if info.Workdir == canonicalRoot {
+			ours = append(ours, info.ID)
+		}
+	}
+	if len(ours) != 1 || ours[0] != id {
+		t.Fatalf("sessions in %s after replay = %v, want exactly [%s]", canonicalRoot, ours, id)
 	}
 }
 

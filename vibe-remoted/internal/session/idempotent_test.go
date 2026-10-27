@@ -57,7 +57,8 @@ func TestCreateWithIDRecoversSessionMissingFromTable(t *testing.T) {
 	startTmuxSession(t, "vibe-remote-"+id, "sleep", "30")
 
 	m := NewManager(true, "sleep 30", false, "")
-	r, err := m.Create(CreateOptions{ID: id, Workdir: t.TempDir(), Cols: 80, Rows: 24})
+	requested := t.TempDir()
+	r, err := m.Create(CreateOptions{ID: id, Workdir: requested, Cols: 80, Rows: 24})
 	if err != nil {
 		t.Fatalf("create: %v", err)
 	}
@@ -65,8 +66,14 @@ func TestCreateWithIDRecoversSessionMissingFromTable(t *testing.T) {
 	if r.ID != id {
 		t.Fatalf("id = %q, want %q", r.ID, id)
 	}
-	if n := len(m.List()); n != 1 {
-		t.Fatalf("sessions = %d, want 1 (the recovered one)", n)
+	// A fresh create would have started a session in the requested workdir.
+	// Filter rather than count all of List: the tmux socket is shared with
+	// tests in other packages running in parallel.
+	canonical, _ := filepath.EvalSymlinks(requested)
+	for _, info := range m.List() {
+		if info.ID != id && (info.Workdir == requested || info.Workdir == canonical) {
+			t.Fatalf("create made a new session %s instead of recovering %s", info.ID, id)
+		}
 	}
 }
 
