@@ -66,13 +66,13 @@ func (s *Server) wsAuth(ctx context.Context, conn *websocket.Conn) bool {
 
 	var frame protocol.AuthFrame
 	if err := wsjson.Read(authCtx, conn, &frame); err != nil {
-		sendError(ctx, conn, "auth timeout or invalid frame")
+		sendError(ctx, conn, protocol.ErrCodeAuthTimeout, false, "auth timeout or invalid frame")
 		conn.Close(websocket.StatusPolicyViolation, "auth failed")
 		return false
 	}
 
 	if frame.Type != protocol.TypeAuth || !tokenEqual(frame.Token, s.cfg.Token) {
-		sendError(ctx, conn, "invalid token")
+		sendError(ctx, conn, protocol.ErrCodeAuthFailed, true, "invalid token")
 		conn.Close(websocket.StatusPolicyViolation, "auth failed")
 		return false
 	}
@@ -80,10 +80,25 @@ func (s *Server) wsAuth(ctx context.Context, conn *websocket.Conn) bool {
 	return true
 }
 
+// Liveness defaults. A peer that vanishes without a close (laptop lid, Wi-Fi
+// switch, NAT timeout) leaves a half-open TCP connection that never errors on
+// its own, so both phases bound how long silence is tolerated. Copied into each
+// Server so tests can shorten them without racing other tests' relays.
+const (
+	// defaultIdleReadTimeout bounds the wait for the next frame before attach.
+	// The client pings every 25s while idle, so silence this long means it is gone.
+	defaultIdleReadTimeout = 90 * time.Second
+	// defaultPingInterval / defaultPongTimeout drive WebSocket-level pings
+	// during the relay. The client's JSON ping cannot be relied on there: an
+	// idle terminal may legitimately exchange no frames for hours.
+	defaultPingInterval = 30 * time.Second
+	defaultPongTimeout  = 20 * time.Second
+)
+
 // wsAttach waits for an attach frame and creates or resumes a session.
 // After auth the client may stay idle (browsing sessions) before attaching,
-// so there is no short timeout here — the connection lives until the client
-// sends attach or disconnects. ping/pong frames received while waiting are
+// so there is no deadline on the attach itself — only on silence (see
+// defaultIdleReadTimeout). ping/pong frames received while waiting are
 // answered so keepalive works during the idle window.
 func (s *Server) wsAttach(ctx context.Context, conn *websocket.Conn) (*session.Runner, string) {
 	// Push the current session list so the client can populate its sidebar
@@ -95,8 +110,11 @@ func (s *Server) wsAttach(ctx context.Context, conn *websocket.Conn) (*session.R
 
 	var frame protocol.AttachFrame
 	for {
-		if err := wsjson.Read(ctx, conn, &frame); err != nil {
-			// Client disconnected while idle — expected, not an error.
+		readCtx, cancel := context.WithTimeout(ctx, s.idleReadTimeout)
+		err := wsjson.Read(readCtx, conn, &frame)
+		cancel()
+		if err != nil {
+			// Client disconnected (or went silent) while idle — expected, not an error.
 			return nil, ""
 		}
 		if frame.Type == protocol.TypePing {
@@ -121,7 +139,7 @@ func (s *Server) wsAttach(ctx context.Context, conn *websocket.Conn) (*session.R
 		}
 		canonicalWorkdir, resolveErr := s.cfg.ResolveAllowedWorkdir(workdir)
 		if resolveErr != nil {
-			sendError(ctx, conn, "workdir not in allowed roots")
+			sendError(ctx, conn, protocol.ErrCodeInvalidWorkdir, true, "workdir not in allowed roots")
 			conn.Close(websocket.StatusPolicyViolation, "bad workdir")
 			return nil, ""
 		}
@@ -132,13 +150,19 @@ func (s *Server) wsAttach(ctx context.Context, conn *websocket.Conn) (*session.R
 			mode = protocol.SessionModeNormal
 		}
 		if mode != protocol.SessionModeNormal && mode != protocol.SessionModeWorktree {
-			sendError(ctx, conn, "unknown session mode")
+			sendError(ctx, conn, protocol.ErrCodeInvalidMode, true, "unknown session mode")
 			conn.Close(websocket.StatusPolicyViolation, "bad session mode")
+			return nil, ""
+		}
+		if frame.NewSessionID != "" && !session.ValidSessionID(frame.NewSessionID) {
+			sendError(ctx, conn, protocol.ErrCodeInvalidID, true, "invalid newSessionId")
+			conn.Close(websocket.StatusPolicyViolation, "bad session id")
 			return nil, ""
 		}
 
 		claudeCmd := s.cfg.ResolveClaudeCmd(frame.Flags)
 		runner, err = s.mgr.Create(session.CreateOptions{
+			ID:                frame.NewSessionID,
 			Workdir:           workdir,
 			Mode:              mode,
 			Cols:              frame.Cols,
@@ -147,7 +171,13 @@ func (s *Server) wsAttach(ctx context.Context, conn *websocket.Conn) (*session.R
 			ValidateWorkdir:   s.cfg.ResolveAllowedWorkdir,
 		})
 		if err != nil {
-			sendError(ctx, conn, "create session: "+err.Error())
+			// Create only attaches (instead of creating) when the id already
+			// exists, so a not-found here is that session having died meanwhile.
+			code, fatal := protocol.ErrCodeCreateFailed, true
+			if errors.Is(err, session.ErrSessionNotFound) {
+				code = protocol.ErrCodeSessionNotFound
+			}
+			sendError(ctx, conn, code, fatal, "create session: "+err.Error())
 			conn.Close(websocket.StatusInternalError, "create failed")
 			return nil, ""
 		}
@@ -155,7 +185,13 @@ func (s *Server) wsAttach(ctx context.Context, conn *websocket.Conn) (*session.R
 		// Resume existing session
 		runner, err = s.mgr.Attach(frame.SessionID, frame.Cols, frame.Rows)
 		if err != nil {
-			sendError(ctx, conn, "attach session: "+err.Error())
+			// A missing session will stay missing; anything else (PTY or tmux
+			// trouble) may clear up, so let the client keep retrying.
+			code, fatal := protocol.ErrCodeAttachFailed, false
+			if errors.Is(err, session.ErrSessionNotFound) {
+				code, fatal = protocol.ErrCodeSessionNotFound, true
+			}
+			sendError(ctx, conn, code, fatal, "attach session: "+err.Error())
 			conn.Close(websocket.StatusInternalError, "attach failed")
 			return nil, ""
 		}
@@ -186,6 +222,7 @@ func readyFrame(runner *session.Runner) protocol.ReadyFrame {
 		Type:            protocol.TypeReady,
 		SessionID:       runner.ID,
 		Workdir:         runner.CurrentWorkdir(),
+		Proto:           protocol.Version,
 		SessionMetadata: runner.Metadata(),
 	}
 }
@@ -221,6 +258,32 @@ func (s *Server) wsRelay(ctx context.Context, conn *websocket.Conn, runner *sess
 	defer func() {
 		detaching.Store(true)
 		runner.DetachEpoch(epoch)
+	}()
+
+	// Ping the client so a half-open connection is noticed: without this the
+	// relay (and the tmux attach behind it) would sit on a dead socket forever.
+	// Ping needs a concurrent reader to see the pong — the WS→PTY loop below.
+	go func() {
+		ticker := time.NewTicker(s.pingInterval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+			}
+			pingCtx, pingCancel := context.WithTimeout(ctx, s.pongTimeout)
+			err := conn.Ping(pingCtx)
+			pingCancel()
+			if err != nil {
+				if ctx.Err() == nil {
+					log.Printf("ws [%s]: no pong within %v, dropping connection", sessionID, s.pongTimeout)
+				}
+				cancel()
+				conn.CloseNow()
+				return
+			}
+		}
 	}()
 
 	// PTY → WebSocket (read from PTY, send to client)
@@ -323,10 +386,13 @@ func (s *Server) wsRelay(ctx context.Context, conn *websocket.Conn, runner *sess
 	}
 }
 
-// sendError writes an error frame to the WebSocket.
-func sendError(ctx context.Context, conn *websocket.Conn, msg string) {
+// sendError writes an error frame to the WebSocket. fatal tells the client
+// that retrying the same request cannot succeed (see protocol.ErrorFrame).
+func sendError(ctx context.Context, conn *websocket.Conn, code string, fatal bool, msg string) {
 	wsjson.Write(ctx, conn, protocol.ErrorFrame{
 		Type:    protocol.TypeError,
 		Message: msg,
+		Code:    code,
+		Fatal:   fatal,
 	})
 }

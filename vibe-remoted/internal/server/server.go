@@ -37,6 +37,11 @@ type Server struct {
 	mgr     *session.Manager
 	mux     *http.ServeMux
 	version string
+
+	// WebSocket liveness; see the defaults in ws.go.
+	idleReadTimeout time.Duration
+	pingInterval    time.Duration
+	pongTimeout     time.Duration
 }
 
 // Option configures optional Server settings.
@@ -50,10 +55,13 @@ func WithVersion(v string) Option {
 // New creates a new Server.
 func New(cfg *config.Config, mgr *session.Manager, opts ...Option) *Server {
 	s := &Server{
-		cfg:     cfg,
-		mgr:     mgr,
-		mux:     http.NewServeMux(),
-		version: "dev",
+		cfg:             cfg,
+		mgr:             mgr,
+		mux:             http.NewServeMux(),
+		version:         "dev",
+		idleReadTimeout: defaultIdleReadTimeout,
+		pingInterval:    defaultPingInterval,
+		pongTimeout:     defaultPongTimeout,
 	}
 	for _, opt := range opts {
 		opt(s)
@@ -185,6 +193,7 @@ func (s *Server) handleInfo(w http.ResponseWriter, r *http.Request) {
 	}
 	info := map[string]any{
 		"version":         s.version,
+		"proto":           protocol.Version,
 		"hostname":        hostname,
 		"tmux_enabled":    s.cfg.UseTmux,
 		"default_workdir": s.cfg.DefaultWorkdir,

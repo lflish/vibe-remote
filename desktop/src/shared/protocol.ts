@@ -1,5 +1,11 @@
 // Protocol frame types — mirrors vibe-remoted/internal/protocol/protocol.go
 
+/**
+ * Protocol revision this client speaks (protocol.Version in Go). Daemons that
+ * predate the field report nothing, which reads as 1.
+ */
+export const PROTOCOL_VERSION = 2;
+
 export const FrameType = {
   Auth: 'auth',
   Attach: 'attach',
@@ -28,6 +34,10 @@ export interface AuthFrame {
 export interface AttachFrame {
   type: typeof FrameType.Attach;
   sessionId?: string; // empty = create new
+  // Client-chosen id for a session being created. Makes create idempotent: a
+  // replay after a drop before `ready` resumes the session instead of making a
+  // second one. Ignored by pre-v2 daemons.
+  newSessionId?: string;
   cols: number;
   rows: number;
   workdir?: string; // working directory for new sessions
@@ -56,6 +66,7 @@ export interface ReadyFrame {
   type: typeof FrameType.Ready;
   sessionId: string;
   workdir: string;
+  proto?: number; // daemon's protocol version; absent = 1
   mode: SessionMode;
   sourceWorkdir?: string;
   sourceRepo?: string;
@@ -93,6 +104,10 @@ export interface ExitFrame {
 export interface ErrorFrame {
   type: typeof FrameType.Error;
   message: string;
+  // Stable reason (open set, e.g. 'session_not_found'). Absent on pre-v2 daemons.
+  code?: string;
+  // Retrying the same request cannot succeed: stop reconnecting.
+  fatal?: boolean;
 }
 
 export interface PongFrame {

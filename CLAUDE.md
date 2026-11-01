@@ -83,7 +83,13 @@ docs/          协议与发布文档
 
 JSON 分帧 WebSocket，帧靠 `type` 区分，PTY 字节走 base64（`data` 帧）。Go 端 `vibe-remoted/internal/protocol/protocol.go` 与 TS 端 `desktop/src/shared/protocol.ts` **必须手动保持对齐**（无代码生成）—— 改协议时两端都要改，并同步 `docs/protocol.md`。
 
-握手时序：`auth`（首帧，10s 超时）→ 服务端推 `sessions` 列表 → 客户端可空闲浏览（ping/pong 保活，**无 attach 超时**）→ `attach`（空 sessionId=新建，带 workdir）→ `ready` → 双向 `data`。
+握手时序：`auth`（首帧，10s 超时）→ 服务端推 `sessions` 列表 → 客户端可空闲浏览（ping/pong 保活，**无 attach 超时**，但 90s 无任何帧即断）→ `attach`（空 sessionId=新建，带 workdir + 客户端生成的 `newSessionId`）→ `ready`（带 `proto`）→ 双向 `data`。
+
+**协议版本**：`protocol.Version`（Go）/ `PROTOCOL_VERSION`（TS）当前为 2，`ready` 和 `/api/v1/info` 下发 `proto`（旧 daemon 不发 = 1）。帧/端点新增对端可能依赖的行为时 +1，并更新 protocol.md 的版本表。旧 daemon 会**静默忽略**新字段，所以客户端看到低版本要提示用户，而不是假设功能存在。
+
+**错误帧 `code` + `fatal`**：`fatal: true` = 原样重试不可能成功（`session_not_found`、`invalid_workdir`、`auth_failed`…），客户端清空待重放的 attach 并**停止重连**。只有真正的暂时故障（`attach_failed`）才不标 fatal。新增错误路径时务必选对——标错 fatal 会让可恢复的会话被放弃，漏标会让死会话无限重连。
+
+**存活检测**：服务端 relay 阶段发 WebSocket 协议层 ping（30s/20s 超时），客户端看门狗在**连续 2 个 ping 都没换来任何入站帧**时判死重连。半开连接不会触发 onclose，别删这两层。客户端**不能**改成「N 秒无数据」的静默超时：窗口隐藏时 Chromium 把定时器节流到约 1 次/分钟，健康的后台会话会被反复断开（`test-client-liveness.mjs` 的 throttled 用例守着这点）。
 
 辅助 REST（除 `/healthz` 外均需 Bearer token）：`/api/v1/info`、`/api/v1/sessions`、`DELETE /api/v1/sessions/{id}`、`POST /api/v1/sessions/{id}/rename`、`POST /api/v1/sessions/{id}/reload`、`/api/v1/fs?path=`（远程目录选择器，受 workdir 白名单约束）、`POST /api/v1/events`。`/healthz` 故意免鉴权（存活探针），只回 `ok`、不含任何信息。
 
@@ -92,6 +98,8 @@ JSON 分帧 WebSocket，帧靠 `type` 区分，PTY 字节走 base64（`data` 帧
 `desktop/src/renderer/index.ts` 的 **SessionView** 抽象：每个打开的会话 = **独立 WebSocket（VibeRemoteClient）+ 独立 xterm 实例**。切换会话 = 显示/隐藏对应 term-instance，未聚焦会话由 tmux 服务端保活。所有机器级 Map 用 **`addr:port`（machineKey）** 做 key（不是 addr，防同主机多端口冲突）。侧边栏靠 REST 每 5s 轮询各机器会话列表。
 
 `client.ts` 重连：指数退避，`reconnectAttempt` 在收到 **`ready`（连接确认健康）后才归零**（不是 onopen —— 否则坏 token 每秒锤服务端）。重连按 `lastCols/lastRows` re-attach，`pendingAttach` **必须带 workdir**（曾因丢 workdir 导致新会话总落默认目录）。
+
+**新建会话幂等**：新建时客户端在 `attach()` 里就生成 `newSessionId`（`<ms>-<8hex>`），`ready` 前断线的重放（自动退避和手动 Retry 都走 `replayIntent()`）带**同一个** id，服务端 `Manager.Create` 见 id 已存在/创建中就转为 attach。曾经的 bug：id 由服务端生成，重放 = 再建一个，worktree 模式留下孤儿 worktree + 分支。`Manager.beginCreate` 用 `creating` map 串行化同 id 的并发 Create（防两次 `CreateWorktree`）。
 
 ### UTF-8 字节处理（易踩坑）
 
