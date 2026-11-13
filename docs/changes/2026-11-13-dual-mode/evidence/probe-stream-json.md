@@ -244,3 +244,209 @@ ExitPlanMode **没有** `permission_suggestions` / `description`，但有 `requi
 7. **stdin 关闭 ≠ 停止**：claude 会跑完当前回合以及队列里的消息，然后 exit 0。要"关闭会话"应先 `interrupt`，再关 stdin，超时后再 kill。客户端断开时 daemon 应**保持管道打开并持续读 stdout 到缓冲区**（回合在后台继续完成；不读会在约 64KB 后让 claude 写阻塞）。
 8. **回合边界 / 状态**：一个回合以 `result` 结束；`system/status {"status":"requesting"}` 表示正在请求 API；`api_retry` 可用来显示"网关重试中"（haiku 那次 503 重试了约 3 分钟才出 result）。`total_cost_usd` 是进程内累计值。流中有多种未知 `system` 子类型（hook_*、thinking_tokens…）→ 协议层必须容忍并透传/忽略未知类型。
 9. **排队**：回合进行中写入新的 user 消息会被排队（JSONL 里有 `queue-operation enqueue/dequeue`），当前回合结束后自动执行。可以利用这一点，不需要 daemon 自己做输入队列；interrupt 应答里的 `still_queued` 会告诉你还有哪些在排队。
+
+---
+
+## 第二批（V9–V23）
+
+同一驱动（`driver.mjs`，新增场景 `v9 v12b v13 v14 v11 v18b v21 v23`），同样 unset `CLAUDECODE`/`CLAUDE_CODE_ENTRYPOINT`，全部带 `--strict-mcp-config`，默认模型。每个场景用独立 cwd（`.devflow-tmp/probe/ws9`、`ws12`…），避免 `.claude/settings.local.json` 互相影响。日志 `logs/<场景>.ndjson`。
+模型回合合计 **14**：v13×1、v9×4（含 /compact）、v12b×3（其中 V14 第一次尝试作废，见 V14）、v14×2、v11×2、v18b×1、v23×1；v21 与 v23-parent 不产生模型调用。
+
+| V | 结果 | 一句话 |
+|---|------|--------|
+| V9 | ✅ | `updatedPermissions`=[addRules, addDirectories] → 规则写进 `<cwd>/.claude/settings.local.json`，同一命令第二次不再询问；只回 `[setMode]` → 立刻 `system/status{permissionMode:"acceptEdits"}` |
+| V10 | ✅ | 多选答案用 `"Apple, Banana"`、自填文字用任意字符串都被接受，tool_result 原样复述 |
+| V11 | ✅ | deny ExitPlanMode → claude 改计划文件后再次发 ExitPlanMode；期间没有模式变化（仍 plan） |
+| V12 | ✅ | 待答时 interrupt → claude **自己**先发 `control_cancel_request`，不需要先回答；回合以 `aborted_tools` 结束，进程存活 |
+| V13 | ✅ | 不回答的 `can_use_tool` 挂了 15 分钟（900 s）没有超时、没有任何输出；之后 allow，工具照常执行，回合 success |
+| V14 | ✅（有意外） | 回合中写入的第二条消息**会执行**（不被丢弃），但 interrupt 回复的 `still_queued` 是 `[]`，**不列出**它 |
+| V18 | ✅ | `init.permissionMode = "bypassPermissions"`；`touch` 不询问；但 AskUserQuestion **仍然**以 `can_use_tool` 到达 |
+| V19 | ✅ | 形状 `{"type":"control_cancel_request","request_id":"<被取消的 can_use_tool 的 request_id>"}` |
+| V20 | ✅ | `/compact` 作为普通 user 文本即执行（`status:"compacting"` → `compact_boundary` → `result`，`num_turns:0`）；`slash_commands` 无 `login`/`logout`/`theme` |
+| V21 | ✅ | `--resume <不存在的 uuid>`：stderr 一行 + stdout 一条 `result{error_during_execution, errors:[…]}`，exit 1，约 1 s |
+| V22 | ✅（与设计假设不同） | 两种时机最终都是 `acceptEdits`、Write 不询问；但计划批准后 claude 切回的是**进入 plan 之前的模式**，不一定是 `default` |
+| V23 | ✅（安全相关） | `-p` 在**从未信任**的目录里直接加载项目 `.claude/settings.json`，SessionStart 与 PreToolUse hook 都执行，无任何信任提示，也不写信任记录 |
+
+### V13 — 15 分钟后才回答（`logs/v13.ndjson`，cwd `ws13`，后台进程）
+
+```
+  5093 ← can_use_tool Bash "touch v13_done.txt && echo V13_OK"
+         （之后 900 s 内 claude 没有输出任何一行：没有 keep_alive、没有 control_cancel_request）
+905116 → allow（原 input）
+905843 ← tool_result "V13_OK"
+910207 ← result success, duration_ms 909144, duration_api_ms 7226
+910657   exit 0；v13_done.txt 存在
+```
+
+### V9 — updatedPermissions 回传（`logs/v9.ndjson`，cwd `ws9`）
+
+```json
+→ {"type":"control_response","response":{"subtype":"success","request_id":"5311dad4-…","response":{
+     "behavior":"allow","updatedInput":{"command":"touch v9x.txt","description":"Create empty file v9x.txt"},
+     "updatedPermissions":[
+       {"type":"addRules","rules":[{"toolName":"Bash","ruleContent":"touch v9x.txt"}],"behavior":"allow","destination":"localSettings"},
+       {"type":"addDirectories","directories":[".../ws9"],"destination":"session"}]}}}
+```
+
+回合 1 结束后 `ws9/.claude/settings.local.json`（claude 自建目录和文件）：
+
+```json
+{ "permissions": { "allow": [ "Bash(touch v9x.txt)" ] } }
+```
+
+回合 2 同一条 `touch v9x.txt`：tool_use → tool_result，**没有 `can_use_tool`**（计数仍为 1）。
+回合 3 `touch v9y.txt`（新命令，再次询问），只回 setMode：
+
+```json
+→ …"response":{"behavior":"allow","updatedInput":{…},"updatedPermissions":[{"type":"setMode","mode":"acceptEdits","destination":"session"}]}
+← {"type":"system","subtype":"status","status":null,"permissionMode":"acceptEdits",…}     // 同一毫秒
+```
+
+之后的 `system/init.permissionMode` 为 `acceptEdits`。`addDirectories`（destination `session`）不落盘。
+
+### V10 — 多选 + 自填（`logs/v18b.ndjson`，与 V18 同一回合）
+
+```json
+← can_use_tool AskUserQuestion input.questions = [
+    {"question":"Which fruits do you like?","header":"Fruits","options":[{"label":"Apple",…},{"label":"Banana",…},{"label":"Cherry",…}],"multiSelect":true},
+    {"question":"Favorite color?","header":"Color","options":[{"label":"Red",…},{"label":"Blue",…}],"multiSelect":false}]
+→ updatedInput.answers = {"Which fruits do you like?":"Apple, Banana","Favorite color?":"Purple with green stripes"}
+← tool_result: "Your questions have been answered: \"Which fruits do you like?\"=\"Apple, Banana\", \"Favorite color?\"=\"Purple with green stripes\". You can now continue with these answers in mind."
+← 最终回复: Which fruits do you like? — "Apple, Banana" / Favorite color? — "Purple with green stripes"
+```
+
+答案值就是一个字符串，claude 不校验它是否是选项 label。多选用 `", "` 连接，「其他」直接放文字。
+
+### V11 + V22 — 计划拒绝与批准后切模式（`logs/v11.ndjson`，cwd `ws11`，`--permission-mode plan`）
+
+第 1 回合（a.txt）：
+
+```
+11401 ← can_use_tool ExitPlanMode #1
+11401 → deny "Not yet: the file content must be \"a2\" instead of \"a\". Revise the plan and call ExitPlanMode again."
+11403 ← tool_result is_error:true（内容 = deny message）
+16761 ← tool_use Edit ~/.claude/plans/<slug>.md         // plan 模式下改计划文件不询问；期间无 system/status
+19548 ← can_use_tool ExitPlanMode #2（改过的计划）
+19548 → allow；同一 tick 再发 set_permission_mode acceptEdits      ← V22 第一种时机：立刻发
+19549 ← control_response {"mode":"acceptEdits"}
+19549 ← system/status permissionMode="acceptEdits"
+19915 ← tool_result "User has approved your plan…"                // 之后没有再出现切回 default 的 status
+22338 ← tool_use Write a.txt（content "a2"）→ 无 can_use_tool，直接写入
+25593 ← result success
+```
+
+第 2 回合：先 `set_permission_mode plan`（回 `{mode:"plan"}` + status plan），再要 b.txt 的计划；驱动设计为「等到 `status.permissionMode=="default"` 再发 acceptEdits」：
+
+```
+34339 ← can_use_tool ExitPlanMode → allow（不立即切）
+34340 ← system/status permissionMode="acceptEdits"      ← 自动切回的是进入 plan 前的模式（acceptEdits），不是 default
+34777 ← tool_result "User has approved your plan…"
+37219 ← Write b.txt → 无 can_use_tool
+```
+
+因为 `default` 从未出现，驱动等待的 `set_permission_mode` **一直没有发出**；最终模式仍是 acceptEdits。结论：
+
+- 批准后的自动切换 = 恢复进入 plan 之前的模式（V6a 是 default 只是因为那次从 default 进入）；`system/status` 先于 ExitPlanMode 的 `tool_result`（与 V6a 一致）。
+- 批准后立刻发 `set_permission_mode`：没有被覆盖（claude 根本没有再发切换），最终 acceptEdits。
+- 设计里「等 claude 自己切回 **default** 之后再发」会在「从非 default 进入 plan」时永远等不到 → 应改为等**批准后的第一条 `system/status`（任意 permissionMode）或 ExitPlanMode 的 tool_result**，或者直接立刻发。
+
+### V12 + V19 — 待答时 interrupt（`logs/v12b.ndjson`，cwd `ws12`）
+
+```
+5652 ← control_request can_use_tool (request_id 211c6da5-1c36-49ed-9b57-b91624feacec)   // 不回答
+7652 → {"type":"control_request","request_id":"int-12","request":{"subtype":"interrupt"}}
+7653 ← {"type":"control_cancel_request","request_id":"211c6da5-1c36-49ed-9b57-b91624feacec"}
+7653 ← {"type":"control_response","response":{"subtype":"success","request_id":"int-12","response":{"still_queued":[]}}}
+7654 ← user tool_result is_error:true "The user doesn't want to proceed with this tool use. The tool use was rejected … STOP what you are doing and wait for the user to tell you how to proceed."
+7655 ← user text "[Request interrupted by user for tool use]"
+7655 ← result {"subtype":"error_during_execution","is_error":true,"stop_reason":"tool_use","terminal_reason":"aborted_tools",
+               "permission_denials":[{"tool_name":"Bash","tool_use_id":"toolu_01US…","tool_input":{…}}],…}
+8756   进程存活，下一条消息正常执行
+```
+
+- 不需要先回答；cancel 在 interrupt 应答**之前**发出（同一毫秒）。
+- 与普通流式中断不同：文本是 `[Request interrupted by user for tool use]`，`terminal_reason:"aborted_tools"`，被取消的工具出现在 `permission_denials` 里。
+- 工具执行**进行中**（不是等权限）的 interrupt 也一样是 `aborted_tools` + 拒绝文本 tool_result（V14 日志，`sleep 25` 被打断）。
+
+### V14 — 排队消息与 interrupt（`logs/v14.ndjson`，cwd `ws14`）
+
+第一次尝试（v12b 后半）作废：数数回合太快，第二条消息写入时第一回合已结束，被中断的是第二条本身。重做：
+
+```
+4567 ← tool_use Bash "sleep 25 && echo SLEPT"            // sleep 被视为只读，未询问
+6068 → user "Reply with exactly: QUEUED_RAN"              // 工具执行中写入
+7575 → interrupt
+7599 ← control_response {"still_queued":[]}               // ← 空，没有列出排队的消息
+7607 ← tool_result is_error "The user doesn't want to proceed…"; 7608 user "[Request interrupted by user for tool use]"
+7609 ← result#1 error_during_execution / aborted_tools
+7999 ← system/init（新回合）
+9404 ← assistant "QUEUED_RAN"; 9809 ← result#2 success "QUEUED_RAN"
+```
+
+JSONL 里对应 `queue-operation enqueue`（15:11:42.173，"Reply with exactly: QUEUED_RAN"）→ 中断 → `dequeue`（15:11:43.711）→ user → assistant。
+结论：排队的消息**不会被 interrupt 丢弃**，会在中断后作为下一个回合执行；`still_queued` 不能用来统计 stdin 排队的用户消息（本例为空）。
+
+### V18 — `--dangerously-skip-permissions`（`logs/v18b.ndjson`，cwd `ws18`）
+
+```
+2178 ← system/init permissionMode="bypassPermissions"
+5973 ← tool_use Bash "touch v18.txt && echo V18" → 6993 tool_result "V18"      // 无 can_use_tool
+10702 ← control_request can_use_tool AskUserQuestion … "requires_user_interaction":true   // 仍然询问
+```
+
+### V20 — `/compact`（`logs/v9.ndjson` 第 4 回合）
+
+```json
+→ {"type":"user","message":{"role":"user","content":"/compact"}}
+← {"type":"system","subtype":"status","status":"compacting",…}                           // 立即
+← {"type":"system","subtype":"status","status":null,"compact_result":"success",…}         // +18.9 s
+← {"type":"system","subtype":"init",…,"permissionMode":"acceptEdits"}
+← {"type":"system","subtype":"compact_boundary","compact_metadata":{"trigger":"manual","pre_tokens":56462,"post_tokens":1575,…}}
+← {"type":"user","message":{"role":"user","content":"This session is being continued from a previous conversation … Summary: …"}}   // content 是字符串
+← {"type":"user","message":{"role":"user","content":"<local-command-stdout>Compacted </local-command-stdout>"}}
+← {"type":"result","subtype":"success","num_turns":0,"result":"",…}
+```
+
+注意：这里 claude **会**输出 `content` 为字符串的 user 消息（摘要、`<local-command-stdout>`），与 V8「只有 tool_result 与中断标记」不同——客户端渲染时要识别这两种（摘要可折叠显示，local-command-stdout 当作命令输出）。
+`slash_commands`（v2 日志，263 项）包含 `clear compact config context init model review`，**不含** `login`、`logout`、`theme`。
+
+### V21 — resume 不存在的会话（`logs/v21.ndjson`）
+
+```
+ 572 stderr: "No conversation found with session ID: 8e71ce56-bbbc-4c8b-bd90-921c49276c62\n"
+ 573 stdout: {"type":"result","subtype":"error_during_execution","duration_ms":0,"is_error":true,"num_turns":0,
+              "session_id":"8e71ce56-…","total_cost_usd":0,"permission_denials":[],
+              "errors":["No conversation found with session ID: 8e71ce56-bbbc-4c8b-bd90-921c49276c62"]}
+ 974 exit code=1
+```
+
+没有发送任何 stdin 也会这样（无模型调用）；之前没有 `system/init`。假 claude 除了 stderr 那行，还应输出这条 `result`。
+
+### V23 — 未信任目录与项目 hooks（`logs/v23-untrusted.ndjson`、`logs/v23-parent.ndjson`）
+
+准备：`CLAUDE_CONFIG_DIR=.devflow-tmp/probe/v23/cfg-*`，其中 `.claude.json` 是 `~/.claude.json` 去掉 `projects`（和 `mcpServers`）的拷贝；认证走环境变量 `ANTHROPIC_AUTH_TOKEN`，所以不需要 credentials。目录 `v23/untrusted`（自己 `git init`）里放 `.claude/settings.json`：SessionStart 与 PreToolUse(Bash) hook 各 `touch "$CLAUDE_PROJECT_DIR/<标记>"`。
+
+```
+ 405 ← system/hook_started SessionStart:startup          // 未发任何输入就执行了
+ 425 ← system/hook_response exit_code 0 outcome success
+3004   SESSIONSTART_RAN 已存在
+5826 ← tool_use Bash "ls" → tool_result "PRETOOLUSE_RAN\nSESSIONSTART_RAN"
+8015   退出后：SessionStart=true PreToolUse=true
+```
+
+- 没有任何信任提示或报错；跑完后 `cfg-untrusted/.claude.json` 里 `projects` 仍为 null（`-p` 不写信任记录）。
+- 父目录信任变体（`projects["…/v23/parent"].hasTrustDialogAccepted=true`，在 `parent/child`（自己 `git init`）里启动，不发消息）：SessionStart 同样执行。由于未信任目录本来就会加载，这个变体**区分不出**父目录信任是否会被子目录继承；`-p` 下信任状态对 hooks 加载没有影响。
+- 关闭 stdin 且从未发消息 → 不调用模型，exit 0（可用来零成本触发 SessionStart）。
+
+### 第二批对设计的影响
+
+1. **R5.4 成立**：待答的 `can_use_tool` 不会超时（15 分钟实测），daemon 保存待答请求、重连补发的方案可行；期间 claude 不发任何保活行，daemon 的回合看门狗不能把「有待答请求」判为卡死。
+2. **interrupt 时不必先 deny**：claude 自己发 `control_cancel_request{request_id}` 并结束回合（`aborted_tools`），daemon 收到 cancel 后对该请求记 `vr_resolved cancelled/interrupted` 即可。普通中断与「工具中」中断的文本、`terminal_reason` 不同（`aborted_streaming` vs `aborted_tools`），UI 都显示为「已中断」。
+3. **`still_queued` 不可靠**：stdin 写入的排队消息不出现在里面，但会在中断后照常执行 → `outstanding` 不应按 `still_queued` 扣减；排队消息一律视为「仍会执行」，靠后续 `result` 配对。
+4. **计划批准后的切模式**：claude 恢复的是「进入 plan 前的模式」，不一定是 `default`；立刻发 `set_permission_mode` 未被覆盖。6.7 的「等 status=default」需改为「等批准后的第一条 `system/status`（任意值）或 ExitPlanMode 的 tool_result，再发」，或直接立刻发。
+5. **`updatedPermissions` 可用**：addRules 会写 `<cwd>/.claude/settings.local.json`（在用户项目里留下文件，UI 应说明「始终允许」会写入该文件）；setMode 建议立刻切模式并广播 status。
+6. **`--dangerously-skip-permissions`**：`permissionMode:"bypassPermissions"`，普通工具不再询问，但 AskUserQuestion 仍然走 `can_use_tool` → 对话 UI 在 bypass 模式下也必须能显示问答卡片。
+7. **AskUserQuestion 答案**：值是自由字符串；多选用 `", "` 连接 label，「其他」直接填文字，claude 都原样接受。
+8. **slash 命令**：`/compact` 作为文本即可执行，会产生 `status:compacting`、`compact_boundary`、两条 **content 为字符串**的 user 消息（摘要、`<local-command-stdout>`）和 `num_turns:0` 的 result —— 客户端渲染器要处理字符串 content 的 user 消息。`slash_commands` 本身已不含 login/logout/theme。
+9. **`--resume` 不存在的 id**：exit 1，stderr 一行 + stdout 一条 `result{error_during_execution, errors:[…]}`，约 1 s；假 claude 应同时输出这条 result。
+10. **工作区信任（c3）**：`-p` 完全不看信任状态，未信任目录里的项目 hooks（SessionStart 在启动时、无需任何输入即执行）和 settings 都会加载，也不写信任记录。daemon 若要保护用户，只能自己做信任检查（c3 默认方案成立）；「父目录信任是否继承」在 `-p` 下无从观察。

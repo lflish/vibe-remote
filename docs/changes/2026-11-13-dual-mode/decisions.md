@@ -29,3 +29,8 @@
 | d12 | dev-design | 通知不可用（未签名包）时 R16.3 降级为 Dock 弹跳 + 角标 + 侧边栏黄点，不自动切换会话 | 口味型 | 评审 #13：未签名包没有可点的通知 | 不打断用户 | 聚焦时自动切到等待的会话 | 低 | 已定 |
 | c3 | dev-design | `-p` 模式可能跳过 claude 的「信任此工作区」确认，项目里的 hook 会直接执行。设计默认：daemon 查 `~/.claude.json` 的 `hasTrustDialogAccepted`，未信任的目录不允许新建对话会话并提示先用终端打开一次（V23 待实测） | 只有人能做 | 评审 #10，安全敏感 | 不替用户降低安全边界 | 不检查；在对话界面里做信任确认 | 高：错误放行会执行不信任仓库的 hook | 等用户（关口 B 汇总）；只影响 T2/T6/T11 的一个小分支，不阻塞 |
 | 11 | dev-design | 工程评审第 2 轮 10 条全部按明确改法修订：重启不释放占用、opMu 改 WithOp 不可重入、交接跳过二次 beginCreate、reload 202 加 reloading 标志、只有交接出的终端会话占用 U、c3 的 unknown 按 untrusted 处理且测试生成信任文件、中断路径同样先入队、看门狗迟到 result 标 vr_stale、T2/T3/T4 依赖理顺、黄金帧只比本测试目录的条目 | 机械型 | 评审有锁顺序分析与代码依据 | 明确错误 | — | — | 已改 |
+| 12 | dev-design | 机器关口 B 第 1 轮：不通过（验证者 codex）。拦下 6 项：V9–V23 未实测、历史 2000 行上限违背 R1.5、V9/V13 失败预案擅改验收、tasks 残留旧 Stop/Restart 接口、T13 命令缺参数、终端 -c 自动启动未登记占用（F7） | 机械型 | design.md §11 | — | — | — | 已安排：探针补测 + 设计修订 |
+| d13 | dev-design | 历史不设上限：daemon 分块流式发送全部 JSONL 历史，客户端先渲染最新 300 条、上滚再实例化更早的 | 口味型 | R1.5/H6/H13「完整历史」 | 守住 spec | 2000 行上限 + 后续分页 | 低 | 已定 |
+| d14 | dev-design | daemon 自己以 continue 语义启动的终端会话，启动时按目录最近一次对话做尽力的占用登记，tmux 会话消失即释放；此后对话 -c 冲突返回 claude_session_busy。残留情况（启动与解析之间 JSONL 变化）仍在 H12 之外 | 口味型 | 关口 B 阻挡项 6 | 守 R2 | 只在 spec 声明不保证 | 低 | 已定 |
+| 13 | dev-design | 探针第二批 V9–V23 实测全部通过，4 处与设计假设不同并据此改设计：待答时 interrupt 由 claude 自行发 cancel（不再先 deny）；still_queued 不含 stdin 排队消息（outstanding 不按它重算）；bypass 下 AskUserQuestion 仍询问；计划批准后恢复进入 plan 前的模式、立即发 set_permission_mode 不会被覆盖 | 机械型 | 实验 | evidence/probe-stream-json.md 第二批 | — | — | 已改 |
+| c3（补充） | dev-design | V23 实测：-p 在从未信任的目录会直接执行项目 .claude/settings.json 里的 hook，无任何提示。信任门槛不是假设而是必需 | 只有人能做 | 实验 | 同上 | — | 高 | 等用户（关口 B 汇总） |
