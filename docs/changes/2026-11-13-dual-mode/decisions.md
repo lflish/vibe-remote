@@ -34,3 +34,7 @@
 | d14 | dev-design | daemon 自己以 continue 语义启动的终端会话，启动时按目录最近一次对话做尽力的占用登记，tmux 会话消失即释放；此后对话 -c 冲突返回 claude_session_busy。残留情况（启动与解析之间 JSONL 变化）仍在 H12 之外 | 口味型 | 关口 B 阻挡项 6 | 守 R2 | 只在 spec 声明不保证 | 低 | 已定 |
 | 13 | dev-design | 探针第二批 V9–V23 实测全部通过，4 处与设计假设不同并据此改设计：待答时 interrupt 由 claude 自行发 cancel（不再先 deny）；still_queued 不含 stdin 排队消息（outstanding 不按它重算）；bypass 下 AskUserQuestion 仍询问；计划批准后恢复进入 plan 前的模式、立即发 set_permission_mode 不会被覆盖 | 机械型 | 实验 | evidence/probe-stream-json.md 第二批 | — | — | 已改 |
 | c3（补充） | dev-design | V23 实测：-p 在从未信任的目录会直接执行项目 .claude/settings.json 里的 hook，无任何提示。信任门槛不是假设而是必需 | 只有人能做 | 实验 | 同上 | — | 高 | 等用户（关口 B 汇总） |
+| 14 | dev-design | 机器关口 B 第 2 轮：不通过（codex）。阻挡 3 项：R6.2「逐个确认」未强制切手动；终端 -c 占用的 U 与实际启动的 U 可能不一致（d14 扩大了 H12 例外，不可自行扩大）；停进程测试预期与「interrupt 后排队消息仍执行」冲突 | 机械型 | design.md §11（第 2 轮） | — | — | — | 已安排修订 |
+| 15 | dev-design | 推翻 d14：不扩大 H12 例外，改为固定身份——daemon 自己以 continue 语义启动的终端会话，启动时把 -c 改写成 --resume <当时最近的会话 U> 并原子占用；无记录时去掉 -c | 机械型 | 关口 B 第 2 轮 | 守 R2 且不改需求边界 | 保留 d14 | — | 已改设计；因改写用户配置的 flag 记 c4 |
+| c4 | dev-design | 终端会话（daemon 启动）带 continue 语义时，-c 改写为 --resume <U>（无记录则去掉 -c）。常见情况与 -c 选中的对话相同；唯一可观察差异是启动瞬间有新对话产生时仍接上解析时的那段 | 只有人能做 | 改写用户配置的 flag，触及 P1 | 这是唯一不扩大 H12 又能守 R2 的做法 | 保留 -c、在 spec 里声明不保证 | 中 | 等用户（关口 B 汇总）；只阻塞 T5/T6 的 continue 分支 |
+| 16 | dev-design | 停进程改为：interrupt → 等本回合 result ≤2s → 立即 SIGTERM 进程组 → 1s → SIGKILL；不再依赖关 stdin（V5/V14：EOF 会跑完队列） | 机械型 | 探针 V14 | 明确错误 | — | — | 已改 |

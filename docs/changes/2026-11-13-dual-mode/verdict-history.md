@@ -309,3 +309,102 @@ decisions.md:26 的第一轮15项含11条明确错误及 d10/d11/d12/c3；decisi
 #### 记录保全
 
 本节只追加design.md末尾，未改前624行，也未改spec.md/tasks.md/decisions.md/evidence/probe-stream-json.md或代码。追加程序按evidence/gate-b-document-baseline.json核对原design前80206字节SHA256为2e4029202b027d30eab775669b59f5144e445dcb511a0c9ec83c4475574608b6，并在写入后再次核对前缀及另外四份文档哈希。没有进入开发，没有提交。未决编号仅c2/c3；坚持历史缩减、V9降级/V13超时改验收等改变已确认需求的决定必须用户确认，按原spec修订方案可以直接推进。
+
+## 第 2 轮（4679886，codex）：不通过
+
+
+- 结论：**不通过**。上一轮 6 个阻挡项中，1–5 的主要问题已闭合，6（F7）只部分闭合；另外发现 R6.2 的模式选择违背已确认验收，以及停进程测试预期与 V14/夹具行为冲突。具体原因见下文。核心第二批探针已有证据，不再以「V9–V23 全部未测」作为阻挡理由。
+- 验证者：**codex（独立模型），第 2 轮**。本验证者未参与设计。
+- 验证范围：只读提交 `46798868b65eb01d3e15f67ea96998457c195552` 的 worktree、需求/设计/任务/裁决及现有探针日志。**没有重跑任何探针，没有调用外部模型，没有运行未来尚未实现的测试**；实际执行的是 Python 日志断言、任务依赖/名称解析和 `zsh -n -c` 命令语法检查。
+- 行号约定：D = 本文件追加前的第 1–656 行；T = `tasks.md`；S = `spec.md`；E = `evidence/probe-stream-json.md`；C = `decisions.md`；H = `verdict-history.md`。日志行号均为 `.devflow-tmp/probe/logs/` 下原文件的物理行号。
+
+### 11.1 阻挡项闭合情况：6 条逐条核对
+
+| 上一轮阻挡项 | 本轮核对落点 | 结论 |
+|---|---|---|
+| 1. 核心 V9–V23 未实测 | D:550、562–577；E:250–268、270–452；T:238、269、345、412。V9–V14、V18–V23 的核心协议观察已有原始日志，抽查详见 11.3。D:568–570 明确保留 V15（风险评估）、V16（T3 实现验证）、V17（远程 Linux/dev-test）待验证，D:576 的 V24 为可选信任继承验证。 | **主要阻挡已闭合**。不能将区间内所有编号写成「全部实测通过」；V15–V17 尚未实测。V22 第二回合没有实际发送模式切换，V9 时间描述差 1 ms，属于证据表述备注。 |
+| 2. 2000 行/16 MiB 历史总上限违背完整历史 | D:179–181、333–334、375–381 已取消历史总条数/总字节上限，按 200 帧流式发送；T:24–26、277、283、352、361 承接 `TestHistoryFullStream`、`test-chat-window` 和 3000 条浏览器验收；T:422–425 不再把完整历史加载列为后续。C:33 的 d13 覆盖旧 d8 的历史总上限。 | **已闭合**。保留的是单行 16 MiB 防护（D:381、483），不是原来的整份历史 16 MiB 截断；本轮确认取消的是上一轮的历史总量缩减。 |
+| 3. V9/V13 失败预案擅改验收 | D:562、566 改为实测结果；D:642、655 说明不能自行改验收，实测成立后原失败预案不再需要；T:63、65、68、269、412 仍按保存规则/持续等待安排验证。 | **已闭合**。设计正文不再把 R5.2 改成 setMode 降级，也不再把 R5.4 改成超时重试；无需新增未决 c4/c5。 |
+| 4. tasks 残留旧 Stop/Restart 接口 | D:121、297–299 定义 `WithOp` + `OpHandle.StopLocked/RestartLocked`；T:246、248–249、260、265–266、292–293、309、314 均承接新版接口。实际对任务正文搜索独立 `Stop(`/`Restart(`，结果为 0。 | **已闭合**。不存在旧公开调用签名残留。 |
+| 5. T13 缺参数、GUI 名不一致、7.1 Go 命令缺 cwd | T:406–411 明确仓库根目录、临时终端 daemon 的启动来源、`VR_TOKEN` 和 `127.0.0.1:<端口>`；现有 `ws-smoke.mjs`:8、11–16 要求的两个参数都已给出。T:408 明确新 ws-chat-smoke 自建临时 daemon、无需参数。T:14–15、62 与 T:403 的 3 个 GUI 名逐字相同。D:505、507–511、513–514 所有 Go 命令均含 `cd vibe-remoted &&`。T:361 也明确 desktop 与仓库根各自的 cwd。 | **已闭合**。10 条 shell 规则命令通过语法检查；D:506 的已有 `/protocol-sync` 仍是人工 skill，未写显式 cwd，另列小备注，不当作自动 shell 检查通过。 |
+| 6. F7：自动终端 -c 先运行 U 未登记占用 | D:115、117、119、263、280、469–476；T:46、290、293、300 已增加终端 continue 的 claim、tmux 选项及 reconcile 恢复，补 `TestTerminalContinueClaimsLatest`。但是 D:476 与 C:34 把「解析 U 与启动之间 JSONL 变化、claude 实际选到另一个 U」排除在 H12 保证之外。S:471 的例外仅限用户在终端自行手敲 `claude -c`，没有排除 daemon 自动启动竞态。 | **部分闭合，仍阻挡**。登记已解析出的 U 修复了原先稳定顺序的反例，但不能保证 claim 的 U 与实际启动的 U 一致，也不能由 d14 自行扩大已确认 H12 的例外。见 11.2。 |
+
+### 11.2 本轮仍阻挡的问题及证据
+
+1. **R6.2「批准，逐个确认」没有强制切到手动。** S:228–231 明确要求模式切到手动、之后编辑弹权限请求；D:456 却规定选项 2 只 allow、不带 setMode，让 claude 恢复原模式；T:79 的 `TestPlanApproveManual` 甚至把从 acceptEdits 进入 plan 后仍为 acceptEdits 写成正确断言。现有运行证据 `v11.ndjson`:286–290 是从 acceptEdits 切入 plan；:385 只发 allow；:386（34340 ms）自动恢复 acceptEdits；:406（37219 ms）Write b.txt，:410 成功，期间没有 `can_use_tool`。这恰好证明「只 allow」会违背 R6.2。应按原 spec 明确选项 2 的 `setMode:"default"`、控制发送顺序及编辑询问断言；不能用如实显示恢复后的模式替代用户选择的手动模式。该修正可直接按 spec 做，无需新用户裁决。
+
+2. **F7 的实际进程身份仍未固定，d14 扩大了 H12 例外。** 可按 D:471–476 构造方案反例：终端请求先解析最近记录 A 并 claim A；在其 claude 真正启动前，另一个 daemon 对话新建 B，claim B 并写出更新的 JSONL；终端仍执行 `-c`，由 claude 自选最近的 B。此时占用表是「A → 终端、B → 对话」，实际两个自动启动的进程都使用 B。这里没有用户手敲 claude，也没有违反设计的任何 claim 规则。D:476 自己承认实际 U 可能不同，故不能同时成立 D:507 的「同 U 任何时刻最多一个进程」。这是**方案规则反例，未运行 claude，也不声称未来代码已复现**。应在启动前固定实际会话身份并保持原子 claim/失败回滚，或提供其他能守住原 H12 的方案；如果坚持扩大例外，才需要用户另行批准，当前 d14 的口味型裁决不能代替批准。
+
+3. **停进程的测试预期与已采纳的队列语义互相冲突。** T:167 的 `TestStopInterruptsBeforeClosingStdin` 要求「先 interrupt 再关 stdin，排队消息不再执行」。但 D:431 的流程是先 interrupt、等本回合 result，再关 stdin并等待；D:587、608 的假 claude 明确规定 interrupt 后继续执行排队回合、EOF 也会跑完队列。运行证据 `v14.ndjson`:30 写入排队消息；:31–35 中断当前回合、still_queued=[]、aborted_tools；:37 已开始下一回合；:47 success/QUEUED_RAN。第一批 EOF 证据也明确会排空队列（E:244）。当前流程没有定义阻止下一条开始的机制，因此不能把这条测试当作可由现方案保证的完成条件。需要让停止流程、夹具和测试预期一致，并继续保证旧进程确认退出后才重启/交接；不应将正常 interrupt 的计数修正视为该停止问题已解决。
+
+### 11.3 第二批证据抽查：文件 → 核对点 → 结果
+
+实际以 Python 逐行解析 NDJSON，按方向、消息类型、request_id、时间和内容做断言；下列核对均通过，只有列明的表述差异与证据边界。
+
+| 文件 | 核对点与实际日志 | 与证据文档/设计的关系 |
+|---|---|---|
+| `logs/v9.ndjson` | :27 can_use_tool 给 addRules/addDirectories/setMode；:29 回传的只有 addRules+addDirectories，含原 updatedInput；:40 记录 turn1 的 `settings.local.json` 为 `permissions.allow=["Bash(touch v9x.txt)"]`，当前 `ws9/.claude/settings.local.json` 与该记录完全一致。:41–70 第二回合相同命令正常执行，无 can_use_tool；:71 计数仍为 1。:95 只回 setMode，:96 status=acceptEdits。 | E:281–305 与 D:455、562 的主要描述一致。**小差异**：:95 为 20271 ms、:96 为 20272 ms，实际差 1 ms，并非 E:302/D:562 的「同一毫秒」。session addDirectories 没有出现在落盘结果中。 |
+| `logs/v12b.ndjson` | :29（5652 ms）待答请求；:31（7652 ms）直接 interrupt，无先行 control_response/deny；:32（7653 ms）cancel 引用该 can_use_tool 的 request_id；:33（同为 7653 ms）才是 int-12 成功应答。:34–36 为 is_error tool_result、中断文本和 aborted_tools；:38 标记存活；:149 后续回合 success。 | E:353–369 与 D:202、235、565、572 一致。cancel **行序在 interrupt 应答之前**，时间相同。文件后半作废的 V14 尝试未用于 V14 的结论。 |
+| `logs/v13.ndjson` | :31（5093 ms）can_use_tool；:34（905116 ms）才 allow，间隔 **900023 ms**。中间 :32–33 只有驱动自己的 meta 记录，没有任何 claude 输出、keep_alive 或 cancel。:35（905843 ms）工具输出 V13_OK；:48（910207 ms）success；:50 exit0；:51 文件存在。 | E:270–278、443 与 D:371、566 一致。证据支持本次 900 秒观测窗口内等待不中断、之后允许成功；不能把有限观测说成已实测无限等待。设计继续保留「有待答时看门狗不计时」，未擅改验收。 |
+| `logs/v11.ndjson`：V11 | :102–104 ExitPlanMode 被 deny，意见成为 is_error tool_result；:228 Edit 计划文件；:241 再次 ExitPlanMode，期间无 permissionMode 变化。 | E:320–336 与 D:456、564 一致，支持继续完善后仍在 plan，选项 3 不需再切模式。 |
+| `logs/v11.ndjson`：V22 两种时机 | 第一回合 :242 allow、:243 mode-a=acceptEdits 同为 19548 ms；:244–245 确认及 status acceptEdits；:246（19915 ms）批准 tool_result；:265 Write a.txt，无权限询问。第二回合 :385 只 allow；:386 自动恢复 acceptEdits；:387 批准 tool_result；:406/410 Write 成功且无询问；:386–423 没有任何出站 set_permission_mode。 | E:338–351 **准确披露**第二种等待 default 的分支从未发送 mode-b；D:574 方法列「等 status 再发」不准确，应写「等待 default 未触发」。因此这里只验证了立即发送与只 allow 的两个结果，不能宣称已经验证「等 status 后发送」成功。立即发送不被覆盖、恢复进入 plan 前的模式有证据；由此也发现 11.2 的 R6.2 问题。 |
+| `logs/v23-untrusted.ndjson` | :1 用独立 CLAUDE_CONFIG_DIR 和 `-p`；:2（405 ms）SessionStart hook；:3 success；:4（3004 ms）SESSIONSTART_RAN 已存在；:5 才发第一条用户消息；:26 工具输出包含 PRETOOLUSE_RAN 和 SESSIONSTART_RAN；:41 exit0；:42 两标记均 true。当前临时 `v23/cfg-untrusted/.claude.json` 的 projects 缺失/null。 | E:425–439 与 D:488–494、575 的 hook 行为一致。**日志直接证明 hook 在首条输入前执行及两种 hook 的标记；日志没有启动前后信任配置快照**，「从未信任/不写记录」由 E:427 的准备说明及保留的临时配置旁证。未把父目录变体当作信任继承已验证。 |
+| `logs/v14.ndjson`（补充） | :30（6068 ms）第二条消息写入；:32（7599 ms）still_queued=[]；:35 aborted_tools；:37 新回合；:47（9809 ms）success/QUEUED_RAN；:50 exit0。 | E:371–387 与 D:235、371、567 一致，支持 outstanding 逐条计数，不能按 still_queued 重算；也揭示 T:167 停进程断言尚未闭合。 |
+| `logs/v18b.ndjson`（补充 V10/V18） | :7 init=bypassPermissions；:32 Bash touch、:36 输出 V18，未询问权限；:100 AskUserQuestion，requires_user_interaction=true；:101 的答案含 `Apple, Banana` 和自由文字；:102 工具结果复述；:116 success；:118 exit0。 | E:307–318、389–395 与 D:457、563、571 一致。已直接验证的是 **bypass 下 AskUserQuestion**；该日志没有 bypass 下 ExitPlanMode 的实测，不能将 T:28 的夹具计划当成这项真 claude 证据。客户端遇到这类待答仍渲染的策略合理，扩展观察范围作为备注。 |
+| `logs/v9.ndjson`（补充 V20） | :108 /compact；:109 compacting；:113 compact_result=success；:114 init；:115 compact_boundary；:116–117 是两条 **content 为字符串**的 user 消息（摘要/local-command-stdout）；:118 success、num_turns=0。 | E:397–411 与 D:195、321、577 一致；客户端与 T:88、345–346 已按字符串 content 调整。 |
+| `logs/v21.ndjson`、`logs/v23-parent.ndjson`（补充） | v21 :2 stderr No conversation found、:3 error_during_execution/errors、:4 exit1（974 ms），无 init。v23-parent :2–3 SessionStart success，:4 标记存在，:6 exit0，未发用户输入。 | E:413–439 与 D:417、573、575–576 一致。无记录 resume 的错误形状已承接；父目录变体仅证明 -p 同样执行 hook，**不能区分信任继承**，V24 仍待验证。 |
+
+设计 §9.1 的范围口径（D:550）与实际第二批证据一致；D:562、574 有上述两处文字精度问题。C:35 的「V9–V23 实测全部通过」则比 E 的实际范围更宽，应在后续记录中明确 V15–V17 尚未验证，而不是改旧裁决行。
+
+正文按差异调整的落点逐项核对：
+
+| 必须调整的差异 | 正文与任务落点 | 结果 |
+|---|---|---|
+| interrupt 不先 deny | D:202、235、431；T:89、144、257、269 | 已调整为一条 interrupt，由 cancel 解决待答。 |
+| outstanding 不按 still_queued 重算 | D:235、371；T:148、263、269 | 已调整为写入消息/result 逐条计数。D:620 只在旧变更记录出现旧说法，D:649 明确覆盖；不视为正文残留。 |
+| bypass 下 AskUserQuestion 仍渲染 | D:221、321、404；T:28–29、346 | 已调整；AskUserQuestion 有真日志依据，ExitPlanMode 的额外推断边界已注明。 |
+| 计划批准后立即 set_permission_mode | D:234、456；T:78、145、149、258、269 | 选项 1 已调整，不再等待 default/status/5 s；**选项 2 尚未按 R6.2 强制 default**。 |
+| /compact 的字符串 content user 消息 | D:195、321；T:88、238、345–346 | 已调整为摘要折叠块/命令输出块，处理 compact_boundary，不误作用户气泡。 |
+
+### 11.4 备注闭合情况：逐条核对
+
+| 上轮备注 | 本轮设计/任务落点 | 结论 |
+|---|---|---|
+| H3 能力检测没有明确判断/测试（H:299） | D:223、406 定义 capabilities 缺失/缺 interrupt_receipt_v1 的降级及非致命处理；T:113、267 的 `TestInitCapabilitiesMissingDegrades` 分别覆盖缺字段、缺必需项和具备能力。 | **定义和测试计划闭合**；这是方案核对，尚未把未来测试记为已通过。 |
+| 孤儿清理必须确认退出，未退出不能放行 U | D:447 明确 TERM→等 2 s→KILL→等 1 s、ESRCH 确认；仍活着保留 orphan 占用并拒绝 reload。T:39、277 对齐退出确认与占用返回。 | **定义闭合**。建议补一个仍存活/不释放 U 的可注入失败用例；现任务对该分支的断言仍不够显式，进后续。 |
+| 忙时本端没有上一条消息，发送策略不明确 | D:463 明确首次发送时 running/waiting 先排队、idle 再发；T:157、346 的 `test-chat-queue: first send while busy queues` 对齐。 | **已闭合**。 |
+| slash_commands 两个来源及优先级 | D:224 明确 initialize.commands 优先、init 不覆盖、10 s 失败回退及迟到替换；T:114、249、267 的 `TestSlashCommandsPrecedence` 对齐。 | **已闭合**。超时回退已定义，宜在该用例加入 10 s 无回复分支。 |
+| 只有 setMode 建议时第二项的语义（上一轮 11.1/11.3 备注） | D:455 明确有 addRules 才保存规则，否则有 setMode 显示「本会话内允许所有编辑」，两者都无则仅允许/拒绝；T:64、66、172、368–369 承接权限构建与分组。 | **语义已闭合**，无需交用户重新定方案；可补 only-setMode 的具名断言。 |
+| 并发交接/重载的串行重查与终态（H:300） | D:263、437 明确拿到 WithOp 后重查删除/交接；T:45、312、314、316 要求串行、每时刻≤1进程、无 VIOLATION、202 幂等。 | **定义已闭合，实施时验证**；没有运行新代码，仍不凭推断宣称该并发用例通过。 |
+| stubborn 夹具需忽略 SIGTERM，并证明走到 KILL（H:302） | D:604 与 T:39、266 明确忽略 interrupt/EOF/SIGTERM、记录 `SIGTERM ignored`、最终 KILL。 | **行为与断言已补齐，有实现表述备注**：D:604 指定 `signal.Ignore(syscall.SIGTERM)` 后又要求收到该信号写日志，字面实现不能同时做到；需要捕获/消费 SIGTERM 并不退出（例如 signal.Notify），才能留下日志。此技术细节可自行修，不是用户决定。 |
+| gui-smoke 的信任文件路径（H:301） | D:489、494；T:220–221、398 统一为各测试独立的临时 `$CLAUDE_CONFIG_DIR/.claude.json`，不写真实 `~/.claude.json`。 | **已闭合**。 |
+| 未决编号与授权边界（H:303–305） | C:18–19 及 S:498 证明 c1、R18/R19 已获关口 A 授权；D:516/T:398 暂停 c2 登记，D:488/T:220、317、380–381 暂停 c3 信任小分支；V9/V13 的擅改验收预案已删除。 | **登记的未决仍仅 c2、c3**。坚持新增 H12 例外或改变 R6.2 才需要新用户批准；按原 spec 修正当前错误，不需要增加 c 编号。 |
+
+### 11.5 快速复核
+
+- **依赖无环**：实际解析 T:211、242、270、286、302、320、337、348、362、373、383、394、413，共 13 个任务；有效拓扑顺序为 `T1 → T2 → T7 → T3 → T8 → T4 → T9 → T5 → T10 → T6 → T11 → T12 → T13`。相邻节点不表示一定有直接依赖。
+- **完成定义入口**：T1–T8/T10–T12 的 Go/npm 路径明确；T9 明确 desktop 构建与根目录 GUI；T13 明确根目录、参数及临时环境来源。T2:240 的单独 `go vet ./...` 必须继承前一条的 vibe-remoted cwd，T1:204 的黄金帧生成同理，建议把独立代码片段也补齐 cwd。命令可规划执行，不代表当前尚未实现的测试已经通过；T:167 的停止断言仍与方案冲突，见 11.2。
+- **测试名一致性**：测试计划里标 Tn 的用例通过各任务「标 Tn 的全部用例」承接；旧 GUI 名问题已修。实际集合比较发现任务额外列出的 21 个 Go 测试尚未回填测试计划，它们已有任务及断言，不是同一场景被改名或没有测试，仅记文档同步备注。`TestPlanApproveManual` 名字一致，但 T:79 的断言违背 R6.2，名字一致不能证明验收一致。
+- **7.1 检查入口**：共 11 条规则，10 条有含 cwd 的 shell 命令，逐条运行 `zsh -n -c <命令>` 均退出 0。所有 Go 命令已修正模块 cwd。D:506 的第 3 条仍是 `/protocol-sync` 人工 skill，当前不满足字面上的「每条都有带 cwd 的检查命令」；现有 skill:14–29 定义人工三处核对，T:411 已安排执行，应注明「仓库根执行该 skill，人工核对」，不能用命令语法通过冒充协议一致性已通过。
+- **范围**：持久化、虚拟历史窗口、claim/opMu、净化及版本/能力检测都是落实原需求所需机制；没有发现新增模型选择、附件、checkpoint 或新的付费设施。c3 是已登记且暂停的安全准入决定。D:476/C:34 的新增 H12 豁免属于未经确认的需求边界改动，仍阻挡；D:456/T:79 则缩减了 R6.2 验收，仍阻挡。
+
+### 11.6 未决定、只能由用户决定的事
+
+- **c2**：是否把 design §7.1 的新增 9 条 invariants 登记进 `.devflow.yml`（C:25，D:516，T:398）。仅暂停规则文件登记；测试与 make check 接入可按计划实施。
+- **c3**：是否采用工作区信任准入检查及对应的 `/fs.chatTrust` 和置灰提示（C:30、36，D:264、414、488–494，T:220、317、380–381）。仅暂停 T2/T6/T11 的信任小分支，测试环境仍须隔离。V23 已证明 hook 执行风险，父目录继承不算已验证。
+
+当前正式未决清单只有以上两项；本轮不擅自创建其他 c 编号。R6.2、F7 和停止测试冲突可按已确认 spec 修正，属于设计返工。若设计者坚持现有验收缩减/H12 豁免，必须另记人类裁决并取得用户批准，不能将其作为已授权默认方案放行。
+
+### 11.7 备注（进「后续」的小问题）
+
+- 修正 E:302/D:562 的「同一毫秒」为实际 1 ms；D:574 的第二种时机写清没有发出 mode-b；对 C:35 追加实际实测范围说明；保留第一批 E:227–228、242、246 的原记录时注明已被第二批补充/覆盖。
+- T:28/D:221、404 对 bypass 下 ExitPlanMode 的表述超过 v18b 的直接观察范围；后续验证明确区分 AskUserQuestion 已实测与 ExitPlanMode 待观察。本轮不补跑。
+- 将任务额外 21 个 Go 测试同步进测试计划；给 only-setMode、initialize 无回复超时、孤儿仍存活保留 owner 补明确断言。
+- D:604 的 stubborn 信号实现用能记录收到 SIGTERM、同时不退出的捕获机制；避免照抄 signal.Ignore 后等待其日志。
+- 明确 `/protocol-sync` 的仓库根 cwd 与人工性质；T2 vet/T1 黄金生成的独立片段补 cwd；D:507 命令内的竖线在 Markdown 表格源码中宜转义，防止表格显示错列。
+
+以上仅记录应进入「后续」的小问题，**本验证者没有修改 tasks.md**；11.2 的三项阻挡不得移入后续来放行。
+
+### 11.8 记录保全
+
+本节只追加在原 design.md 第 656 行之后。原前缀 **93724 字节**，SHA256 为 `9e92d497c9c275c8f616fd63a1533a67ddde91a9bf4090eb5a7d11372af85c8d`；追加前后检查该前缀完全一致，同时确认 spec.md、tasks.md、decisions.md、verdict-history.md、evidence/probe-stream-json.md 的哈希没有变化。worktree 验证前后 HEAD 均为 `46798868b65eb01d3e15f67ea96998457c195552`，`git status --short` 及 `git diff --name-only HEAD` 均无输出。未修改仓库代码、未提交、未推进下一阶段。

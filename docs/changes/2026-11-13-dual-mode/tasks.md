@@ -1,6 +1,6 @@
 # 任务：双模式会话（终端 + 对话）
 
-依据：spec.md、design.md　共 13 个任务　更新：2026-11-13（工程评审 15 条 + 复审 10 条 + 关口 B 意见 + 第二批前置验证已修订）
+依据：spec.md、design.md　共 13 个任务　更新：2026-11-13（工程评审 15 条 + 复审 10 条 + 关口 B 两轮意见 + 第二批前置验证已修订）
 
 ## 测试计划
 
@@ -36,15 +36,15 @@
 | R2.4 | Go | TestTwoClientsShareProcess | 两个 WS 各发一条 → 两边都收到两条回显、顺序一致，进程数 1 | T6 |
 | R2.4 | 协议冒烟 | chat: two clients | 同上，经真实 daemon | T13 |
 | R2.5 | Go | TestLoadChatsMarksDaemonRestart | store 中 running 记录加载后为 `ended/daemon_restart`，名字保留 | T5 |
-| R2.5 | Go | TestOrphanCleanup | 记录的 pid 仍活且命令行含 claude 会话 id → 被结束并确认消失（`kill(pid,0)` 为 ESRCH）后才记 `daemon_restart`；`FAKE_CLAUDE_STUBBORN=1` 的孤儿：`$FAKE_CLAUDE_SIGNAL_LOG` 有 `SIGTERM ignored`、最终被 SIGKILL；命令行不含该 id 的进程不碰 | T4 |
+| R2.5 | Go | TestOrphanCleanup | 记录的 pid 仍活且命令行含 claude 会话 id → 被结束并确认消失（`kill(pid,0)` 为 ESRCH）后才记 `daemon_restart`；`FAKE_CLAUDE_STUBBORN=1` 的孤儿：`$FAKE_CLAUDE_SIGNAL_LOG` 有 `SIGTERM ignored`、最终被 SIGKILL；**仍存活分支**：把发信号函数注入为空操作 → 截止后进程仍在 → `claudeOwners[U]="orphan:<pid>"`、该会话重载返回 409 `claude_session_busy`（owner 为 orphan）；之后真正结束该进程，下一次重载请求检查到 pid 消失 → 释放并 202；命令行不含该 id 的进程不碰 | T4 |
 | R2.5 | 协议冒烟 | chat: daemon restart → ended | 重启 daemon 后接入：`chat_state.ended.reason=daemon_restart`，历史来自 JSONL；reload 后可继续 | T13 |
 | R2.6 | Go | TestContinueReusesRunningSession | 第二个 `-c` 新建 → `ready{sessionId=原会话, existing:true}`，进程数 1 | T5 |
 | R2 | Go | TestConcurrentContinueCreatesOneProcess | 两个不同 `newSessionId` 的 `-c` 新建并发（`-race`）→ 只起一个进程；第二个得到 `existing:true` 或 `claude_session_busy`，无 VIOLATION | T5 |
 | R2 | Go | TestRestartRefusedWhenUResumedElsewhere | X 已结束；Y 以 `-c` 接上 X 的 U 并在运行 → 重启 X 返回 `claude_session_busy`，Y 不受影响 | T5 |
 | R2 | Go | TestReloadVsDeleteSerialized | 同一对话会话并发 reload 与 delete（`-race`）→ 最终会话不存在、无存活进程、`claudeOwners` 无残留 | T5 |
 | R2 / R14 | Go | TestHandoffVsReloadOneWins | 并发交接与重载（`-race`，重复 20 次）→ 任何时刻该 U 的进程 ≤1、无 VIOLATION；终态 ∈ {对话会话 `handed_off` 且终端会话持有 U，对话会话重载后运行且交接返回 `claude_session_busy`}；重载 REST 一律 202，第二次重载不再起第二次重启 | T6 |
-| R2 / d14 | Go | TestTerminalContinueClaimsLatest | 目录已有 JSONL U；终端会话以 continue 语义新建 → `claudeOwners[U]=终端会话 id`、tmux 选项 `@vibe_remote_claude_u=U`；随后对话 `-c` 新建 → `claude_session_busy`，message 含终端会话名，无第二个进程；重建 Manager 并 reconcile 后占用恢复；删除终端会话（或 kill 其 tmux 会话后 reconcile）→ 释放，对话 `-c` 成功；不带 continue 的终端会话不占用 | T5 |
-| P1 / d11 | Go | TestTerminalContinueBusyWhenChatOwns | 同目录对话会话运行中，终端会话带 continue flag 新建 → `claude_session_busy`（fatal，消息含对话会话名），失败的新建不留下占用；没有对话会话时终端新建/重载的可见行为与 v2 相同（多出的 tmux 用户选项不影响 PTY 输出） | T5（Manager）、T6（attach 错误帧与 reload 409） |
+| R2 / c4 | Go | TestTerminalContinueClaimsLatest（**阻塞 c4**） | 目录已有 JSONL U；终端会话以 continue 语义新建 → 实际启动命令（`$FAKE_CLAUDE_ARGV_LOG`）含 `--resume U`、不含 `-c`，`claudeOwners[U]=终端会话 id`、tmux 选项 `@vibe_remote_claude_u=U`；随后对话 `-c` 新建 → `claude_session_busy`（message 含终端会话名），无第二个进程；在解析之后、启动之前写出一份更新的 JSONL B（测试钩子）→ 终端仍以 `--resume U` 启动，对话 `-c` 可以 claim B，两个进程的会话 id 不同、无 VIOLATION；目录没有任何 JSONL → 命令里 `-c` 被去掉、不 claim；重建 Manager 并 reconcile 后占用恢复；删除终端会话（或 kill 其 tmux 会话后 reconcile）→ 释放；不带 continue 的终端会话命令原样、不占用 | T5 |
+| P1 / d11 / c4 | Go | TestTerminalContinueBusyWhenChatOwns（**阻塞 c4**） | 同目录对话会话运行中，终端会话带 continue flag 新建 → claim 失败、`claude_session_busy`（fatal，消息含对话会话名），失败的新建不留下占用、不启动进程；没有对话会话时终端新建/重载的 PTY 输出与 v2 相同（只多一个 tmux 用户选项，命令由 `-c` 变为解析时的 `--resume U`） | T5（Manager）、T6（attach 错误帧与 reload 409） |
 | R14 | Go | TestHandedOffTerminalReloadUsesResume | 交接创建的终端会话重载 → respawn 命令含 `--resume U`（无 JSONL 时 `--session-id U`），不含 `-c`；删除该终端会话或其 tmux 会话消失后 U 被释放，原对话会话可重新启动 | T6 |
 | R3.1 | Go | TestSendEchoAndStream | `chat_send` → 合成回显（带 `vr_client_msg_id`）→ stream_event → assistant → result，状态 running→idle | T3 |
 | R3.1 | TS | test-chat-session: echo → stream → result | 用户消息立即出现，预览逐段增长，result 后 idle | T8 |
@@ -61,7 +61,8 @@
 | R5.1 | Go | TestRespondAllowOnce | allow 后工具执行；同命令下次仍 can_use_tool | T3 |
 | R5.1 | 浏览器 | permission allow once resumes | 发 `perm touch x` → `chat-perm` 出现 → 点 `chat-perm-allow` → 提示关闭、回复继续出现 | T13 |
 | R5.2 | Go | TestRespondAlwaysWithSuggestion | allow+建议 → 假 claude 记规则，下次同命令不再询问；daemon 未写任何文件 | T3 |
-| R5.2 | TS | test-chat-permission: describeSuggestion | addRules/localSettings → 「对 <目录> 里的 `npm test` 不再询问」与保存位置 key | T8 |
+| R5.2 | TS | test-chat-permission: describeSuggestion | addRules/localSettings → 「对 <目录> 里的 `npm test` 不再询问」与保存位置 key，发送的 `updatedPermissions` 只含 addRules + addDirectories（不含同一请求里的 setMode 建议） | T8 |
+| R5.2 | TS | test-chat-permission: only setMode suggestion | 建议只有 `setMode acceptEdits/session` → 第二项文案为「本会话内允许所有编辑」，发送 `updatedPermissions=[该 setMode 建议]`；建议为空 → 只有允许/拒绝（R5.2b） | T8 |
 | R5.2 | 真机 | R5.2 规则写进远程设置 | 真 claude 下 `.claude/settings.local.json` 出现规则，再请求不弹 | dev-test |
 | R5.2b | TS | test-chat-permission: no suggestions | 无建议 → 选项只有 allow/deny | T8 |
 | R5.3 | Go | TestRespondDenyWithMessage | deny+message → 假 claude 回「denied: 先别改这个文件」，有 `vr_resolved denied` | T3 |
@@ -76,7 +77,8 @@
 | R5.8 | Go | TestCancelRequestResolves | 假 claude `cancel`（没有进行中的 interrupt）→ 待答表清空，`vr_resolved cancelled`；之后回答 ack `request_not_pending` | T3 |
 | R5.8 | TS | test-chat-session: cancelled | 提示标「已取消」不可答 | T8 |
 | R6.1 | Go | TestPlanApproveSetsMode | allow+`setMode:acceptEdits` → stdin 上 control_response 之后**紧接着**就是 set_permission_mode（中间不等任何输出）；最终 `chat_state.permissionMode=acceptEdits`，之后 `tool Write` 不询问 | T3 |
-| R6.2 | Go | TestPlanApproveManual | 从 default 进入 plan：allow 不带 setMode → 模式随 claude 的 `system/status` 变为 default，stdin 无 set_permission_mode；从 acceptEdits 进入 plan：同样操作后 `permissionMode=acceptEdits`（claude 恢复原模式，V22），切换器如实显示 | T3 |
+| R6.2 | Go | TestPlanApproveManual | 选项 2 = allow + `setMode:"default"`：stdin 上 control_response 之后紧接 `set_permission_mode default`；从 acceptEdits 进入 plan（claude 会恢复 acceptEdits，V22）→ 批准后最终 `permissionMode=default`，接下来的 `tool Write` **会**产生 `can_use_tool`；从 default 进入 plan 同样以 default 结束、Write 询问 | T3 |
+| R6.1/R6.2 | TS | test-chat-permission: buildAnswer plan options | 选项 1 → `{behavior:allow, updatedInput:原 input}` + `setMode:'acceptEdits'`；选项 2 → 同上 + `setMode:'default'`；选项 3 → `{behavior:deny, message}`、无 setMode | T8 |
 | R6.3 | Go | TestPlanReviseStaysPlan | deny+意见 → 模式仍 plan，stdin 无 set_permission_mode，假 claude 回「revising: …」并再次发 ExitPlanMode（V11），新的待答出现在 `chat_state.pending` | T3 |
 | R6 | 浏览器 | R6 计划审阅三选项 | 三个选项行为与切换器同步 | dev-test |
 | R7.1/R7.2 | TS | test-chat-permission: buildAnswer question | 单选/多选/其他 → `updatedInput.answers` 形状 | T8 |
@@ -111,7 +113,7 @@
 | R13.2 | Go | TestCrashEmitsExitAndEnded | `crash 1` → `vr_exit{code:1,stderrTail}`、`exit` 帧、`chat_state.ended.reason=exited`、待答记 exited | T3/T6 |
 | R13.2 | 浏览器 | R13.2 会话已结束 | `chat-ended` 有「重新启动」「新建终端会话接上」 | dev-test |
 | H3 | Go | TestInitCapabilitiesMissingDegrades | `FAKE_CLAUDE_CAPS=""`（无 capabilities）或只有 `msg_lifecycle_v1` → 会话不结束，`chat_state.degraded=["interrupt_receipt"]`，日志一次；中断照常生效（入队即 ack，回合以 result 结束）；有 `interrupt_receipt_v1` 时 `degraded` 不出现 | T3 |
-| R10.1 | Go | TestSlashCommandsPrecedence | initialize 回复先到 → `slashCommands` 为它（带 description）；之后每回合的 init 不覆盖；initialize 失败 → 用 init 列表；initialize 迟到成功 → 替换为它 | T3 |
+| R10.1 | Go | TestSlashCommandsPrecedence | initialize 回复先到 → `slashCommands` 为它（带 description）；之后每回合的 init 不覆盖；initialize 回 error → 用 init 列表；`FAKE_CLAUDE_NO_INIT_REPLY=1` 且把 10 s 等待注入为 200 ms → 超时后用 init 列表；initialize 迟到成功 → 替换为它 | T3 |
 | R13.4 | Go | TestInitVersionTooOldEnds | `FAKE_CLAUDE_INIT_VERSION=1.0.0` 或 `none` → ended `version_unsupported`，连接不断 | T3 |
 | R13.4 | 浏览器 | R13.4 版本过旧 | 显示需要的版本与交接按钮，不重连 | dev-test |
 | R14.1 | Go | TestHandoffCreatesTerminalWithResume | 终端 argv 含 `--resume <uuid>`，不含 `-c`，保留其它 flag；对话 `ended.handed_off` + `handedOffTo` | T6 |
@@ -133,6 +135,34 @@
 | R18.1 | Go | TestInfoAndReadyProto3 | info 与 ready 的 `proto=3` | T1 |
 | R18.2 | 检查 | /protocol-sync | 三处无差异，版本表第 3 行 | T13 |
 | R19.1 | 检查 | grep CLAUDE.md | 含「终端模式」「对话模式」「只支持 claude」三处描述 | T13 |
+
+### 任务内补充的 Go 测试（跨场景或机制性）
+
+以下测试此前只写在任务里，这里补进测试计划；断言见对应任务。
+
+| 场景 | 层级 | 测试名 | 要点 | 谁写 |
+|------|------|--------|------|------|
+| R18.2 | Go | TestProtocolChatFramesJSON | 新帧 JSON 键名与 design 4.x 一致，终端 ready 无 `ui` 键 | T1 |
+| R1.3 | Go | TestParseNotClaude | `/bin/bash`、`codex` → `not_claude`；带路径的 claude 通过 | T2 |
+| c3 | Go | TestWorkdirTrusted | TrustState 三态与「只看目录本身」（待 c3 确认） | T2 |
+| 7.1 | Go | TestCommandFromConfigOnly | 对话 argv 只由配置与常量拼成 | T2 |
+| R1.4 | Go | TestParseVersion | 版本解析与最低版本比较 | T2 |
+| R1.4 | Go | TestProbeCachesAndRecheck | 版本探测缓存、recheck、找不到 claude | T2 |
+| 9.2 | Go | TestFakeClaudeEcho | 假 claude 基本输出顺序与 `message.id` | T2 |
+| 9.2 | Go | TestFakeClaudeMatchesProbe | 假 claude 与探针实测样本的键集合一致 | T2 |
+| 7.1 | Go | TestNoCredentialAccess | `internal/` 源码不出现凭据路径/变量名 | T2 |
+| R5.5 / 7.1 | Go | TestPendingSurvivesRingEviction | 待答请求不被缓冲淘汰 | T3 |
+| R2.2 | Go | TestSingleProcessRestart | 连续重启 + 并发 `-c` 新建，owner 不变、无 VIOLATION | T3 |
+| 锁设计 | Go | TestExitCallbackNoSessionLock | 退出回调不持 `Session.mu` | T3 |
+| R2.2 | Go | TestStopIsIdempotent | 并发 `StopLocked` 被 `opMu` 串行、只结束一次 | T3 |
+| R2.2 | Go | TestStopTimings | stubborn 进程走到 SIGKILL 阶段、5 s 内结束 | T3 |
+| R1.5 | Go | TestHistoryFiltersSidechainAndMeta | 历史只含主线 user/assistant | T4 |
+| 安全 | Go | TestStorePermissions | 状态文件 0600、目录 0700 | T4 |
+| R17 | Go | TestListMergesChatAndTmux | reconcile 不删对话条目 | T5 |
+| R2 | Go | TestOwnersReleasedOnExit | 进程退出、会话删除后释放占用 | T5 |
+| R14 / R2.5 | Go | TestLoadChatsReclaimsHandoff | 交接终端会话的占用跨重启恢复 | T5 |
+| R14 / R2.1 | Go | TestHandoffReplayNoSelfWait | 交接重放不自等、接入同一终端会话 | T6 |
+| R15.3 / d10 | Go | TestReloadChatReturns202 | 重载 202、幂等、成功后历史完整可续聊、失败 `restart_failed` | T6 |
 
 ### 容易出问题的情况
 
@@ -164,7 +194,7 @@
 | 客户端带旧 epoch 重连 | `reset:true` | TestStaleEpochResets | T3 |
 | 登录 shell 往 stdout 打印非 JSON | 跳过并计数，不中断 | TestNonJSONLinesSkipped | T3 |
 | 没有订阅者时 claude 大量输出 | daemon 照常排空 stdout，进程不阻塞（V16） | TestDrainWithoutSubscribers | T3 |
-| 停进程时还有排队消息 | 先 interrupt 再关 stdin，排队消息不再执行 | TestStopInterruptsBeforeClosingStdin | T3 |
+| 停进程时还有排队消息 | interrupt → 等当前回合 result ≤2 s → 立即 SIGTERM → 1 s → SIGKILL；排队回合的 result 不会出现 | TestStopDoesNotLetQueuedTurnComplete | T3 |
 | `system/init` 每回合重发 | 只更新元信息，不清缓冲、不改 epoch | TestInitResentEachTurnUpdatesMeta | T3 |
 | 全局 hook 产生 `system/hook_*` 行 | 透传，客户端忽略，不影响状态 | TestHookLinesPassThrough | T3 |
 | daemon 从 claude 会话里启动（继承 `CLAUDECODE`） | 对话进程环境里没有 `CLAUDECODE`/`CLAUDE_CODE_ENTRYPOINT` | TestChatEnvStripsNestedGuard | T5 |
@@ -201,7 +231,7 @@
   - 提供（Go）：`Version = 3`；`TypeChat/TypeChatSync/TypeChatState/TypeChatAck/TypeChatSend/TypeChatRespond/TypeChatInterrupt/TypeChatSetMode`；`AttachFrame` 加 `UI`、`Epoch`、`Since`、`HandoffFrom`（均 `omitempty`）；`ReadyFrame` 加 `UI`、`ClaudeSessionID`、`Existing`、`HandoffFrom`；`SessionInfo` 加 `UI`、`State`、`ActivitySeq`、`Epoch`、`EndReason`；`ChatFrame{Seq uint64; H bool; Msg json.RawMessage}`、`ChatSyncFrame`、`ChatStateFrame`、`PendingRequest`、`ChatEnded`、`ChatAckFrame`、`ChatSendFrame`、`ChatRespondFrame`、`ChatSetModeFrame`；错误码 `ErrCodeUIMismatch`、`ErrCodeChatUnsupported`、`ErrCodeClaudeSessionBusy`；`UITerminal/UIChat` 常量
   - 提供（TS）：同名类型与 `PROTOCOL_VERSION = 3`；`MachineInfo.chat?: {supported; reason?; claudeVersion?; minClaudeVersion}`
   - 文档：design 4.1–4.10 全部帧、字段、错误码、REST 变化、版本表第 3 行
-- 第一步（改协议之前单独提交）：在 HEAD 上新增 `vibe-remoted/internal/server/golden_test.go`，其中 `TestTerminalFramesUnchangedV3` 用现有测试夹具（tmux + `/bin/bash`）跑一遍终端 attach，把 `ready`（normal / worktree）、`sessions`、`exit`、`error{session_not_found}` 帧序列化后与 `testdata/v2-golden/*.json` 比较。`sessions` 帧只比较 `workdir` 位于本测试临时目录下的条目（共享的 `tmux -L vibe-remote` 上可能有别的会话），按 `id` 排序后再比；所有帧中的时间戳、会话 id、临时路径先归一化为固定占位符（如 `<TS>`、`<ID1>`、`<TMP>/…`）；`VR_WRITE_GOLDEN=1` 时改为写入。先以 `VR_WRITE_GOLDEN=1 go test ./internal/server -run TestTerminalFramesUnchangedV3` 生成并提交 v2 黄金文件（`proto` 比较时归一化，时间戳/id/路径用夹具固定值替换），之后的所有任务都只比较不写入
+- 第一步（改协议之前单独提交）：在 HEAD 上新增 `vibe-remoted/internal/server/golden_test.go`，其中 `TestTerminalFramesUnchangedV3` 用现有测试夹具（tmux + `/bin/bash`）跑一遍终端 attach，把 `ready`（normal / worktree）、`sessions`、`exit`、`error{session_not_found}` 帧序列化后与 `testdata/v2-golden/*.json` 比较。`sessions` 帧只比较 `workdir` 位于本测试临时目录下的条目（共享的 `tmux -L vibe-remote` 上可能有别的会话），按 `id` 排序后再比；所有帧中的时间戳、会话 id、临时路径先归一化为固定占位符（如 `<TS>`、`<ID1>`、`<TMP>/…`）；`VR_WRITE_GOLDEN=1` 时改为写入。先以 `cd vibe-remoted && VR_WRITE_GOLDEN=1 go test ./internal/server -run TestTerminalFramesUnchangedV3` 生成并提交 v2 黄金文件（`proto` 比较时归一化，时间戳/id/路径用夹具固定值替换），之后的所有任务都只比较不写入
 - 场景：R18.1、R18.2（部分）、R17.1
 - 测试：
   - `TestTerminalFramesUnchangedV3`：黄金文件生成后，协议改到 v3 仍逐字节一致（除 `proto`）
@@ -237,7 +267,7 @@
   - `TestFakeClaudeEcho`：直接驱动假 claude：不发 initialize 也能工作；每回合先 `system/init`；`echo` 的 stream_event 与完整 assistant 同 `message.id`、顺序与探针日志一致
   - `TestFakeClaudeMatchesProbe`：本任务从探针日志 `.devflow-tmp/probe/logs/` 的 v2/v3/v6a/v6b/v7 与第二批 v9（含 /compact）/v11/v12b/v14/v18b/v21 生成 `vibe-remoted/internal/chat/testdata/probe-stream.jsonl`（去除个人路径与长列表，随代码提交）；对其中每种消息，假 claude 输出的键集合与实测样本一致（防止假 claude 与真 claude 漂移）
   - `TestNoCredentialAccess`：扫描 `vibe-remoted/internal/**/*.go`（不含本测试文件），出现 `.credentials` 或 `ANTHROPIC_API_KEY` 即失败
-- 完成定义：`cd vibe-remoted && go test -race ./internal/chat/...`；`go vet ./...`
+- 完成定义：`cd vibe-remoted && go test -race ./internal/chat/... && go vet ./...`
 - 前置：V23 已实测（`-p` 不看信任、直接执行项目 hooks）；可选补测 V24（交互式 claude 的父目录信任继承），结果追加进 evidence，成立才把查找放宽为逐级向上
 - 依赖：T1
 
@@ -263,6 +293,7 @@
   - `TestStillQueuedIgnored`：`slow` 中再写两条后 interrupt（假 claude 的 `still_queued` 为 `[]`）→ `outstanding` 仍为 3，中断回合的 result 后为 2，排队的两条依次执行完才 idle（V14）
   - `TestBypassStillAsksQuestions`、`TestResumeMissingTranscriptFails`（见测试计划；后者用测试钩子在 `FindTranscript` 之后删除 JSONL，假 claude 按 V21 输出 `result{errors}` + stderr 并 exit 1）
   - `TestRestartWithoutTranscriptUsesSessionID`：会话从未写出 JSONL 时 `WithOp(func(ops){ ops.RestartLocked(spec) })` 的 argv 含 `--session-id U` 而非 `--resume`；有 JSONL 时为 `--resume U`
+  - `TestStopDoesNotLetQueuedTurnComplete`：`slow 50 200` 回合中再写一条 `echo queued`，然后 `WithOp(func(ops){ ops.StopLocked("stopped") })` → 4 s 内返回；订阅者收到中断回合的 result，但**从未**收到 `queued` 回合的 result；收到该消息的 `vr_notice dropped_on_stop`；进程已不存在（退出码 143）；pid 目录无 VIOLATION
   - `TestStopTimings`：假 claude `FAKE_CLAUDE_STUBBORN=1`（忽略 interrupt、stdin EOF 与 SIGTERM）→ `WithOp(func(ops){ ops.StopLocked("stopped") })` 在 5 s 内返回；`$FAKE_CLAUDE_SIGNAL_LOG` 含 `SIGTERM ignored`（证明走过 SIGTERM 阶段）且进程已被 SIGKILL 结束
   - `TestInitCapabilitiesMissingDegrades`、`TestSlashCommandsPrecedence`（见测试计划）
 - 完成定义：`cd vibe-remoted && go test -race -count=3 ./internal/chat/...`
@@ -290,7 +321,8 @@
 - 文件：修改 `vibe-remoted/internal/session/runner.go`（`liveTmuxSessions` 的 `-F` 格式与 `parseTmuxSessionLine` 多读一列 `@vibe_remote_claude_u`，`tmuxSessionInfo` 加 `claudeU`；现有 `tmux_helpers_test.go`、`hardening_test.go` 断言不改，只补新列的用例）、`vibe-remoted/internal/session/manager.go`（`chats` map、`Create` 按 `UI` 分支、`List` 合并、`Delete`/`Rename`/`Reload` 分派、`LoadChats`、`Shutdown`、`ChatGet`）、`vibe-remoted/internal/config/config.go`（`StateDir`、`Load` 默认值）、`vibe-remoted/cmd/vibe-remoted/main.go`（建 store、`LoadChats`、启动 `Prober`、退出时 `Shutdown`）、`vibe-remoted.example.json`（`state_dir` 示例注释用法见 CLAUDE.md）；测试新建 `vibe-remoted/internal/session/chat_manager_test.go`，`config_test.go` 补用例
 - 接口：
   - 使用：`chat.Start`、`(*chat.Session).WithOp` + `OpHandle.StopLocked/RestartLocked`、`chat.Store`、`CreateWorktree/RollbackWorktree/CleanupWorktree`（现有）
-  - 提供：`claudeOwners` + `claimClaude/releaseClaude`（design 第 2 节，所有 spawn 之前 claim）；`Delete`/`Reload` 各调用一次 `WithOp`（不嵌套）；`Reload` 的同步检查（`Manager.mu` 下，不碰 `opMu`）、`reloading` 幂等与后台重查（已删除 → 不做；已交接 → 只广播 `handed_off`）；终端会话的占用：交接创建的终端会话持有 U；以 continue 语义新建/重载的终端会话按当时 `LatestSessionForWorkdir` 尽力占用 U（design 6.9，d14）；两者都写 tmux 选项 `@vibe_remote_claude_u`，reconcile 恢复条目时据此重新 claim、tmux 会话消失时释放；`(*Manager).persist()` + 单一 persist 协程（最新快照胜出）；终端新建/重载的 continue 冲突检查与尽力占用（design 6.9，d11、d14）；`CreateOptions{UI, ChatArgs …}`；`(*Manager).Create` 对话分支（design 6.2，含 R2.6 `existing`）；`(*Manager).ChatGet(id) (*chat.Session, bool)`；`(*Manager).Reload` 对话分支（同步检查后后台执行，进度经 `chat_state`；U 被占 → `ErrClaudeSessionBusy`；失败 → `ended.reason=restart_failed`，d10）；`(*Manager).LoadChats(store)`；`(*Manager).Shutdown(ctx)`；`List()` 条目带 design 4.8 字段；`lookupOrRecover`/`Attach` 遇对话 id 返回 `ErrUIMismatch`
+  - 提供：`claudeOwners` + `claimClaude/releaseClaude`（design 第 2 节，所有 spawn 之前 claim）；`Delete`/`Reload` 各调用一次 `WithOp`（不嵌套）；`Reload` 的同步检查（`Manager.mu` 下，不碰 `opMu`）、`reloading` 幂等与后台重查（已删除 → 不做；已交接 → 只广播 `handed_off`）；终端会话的占用：交接创建的终端会话持有 U，写 tmux 选项 `@vibe_remote_claude_u`，reconcile 恢复条目时据此重新 claim、tmux 会话消失时释放；`(*Manager).persist()` + 单一 persist 协程（最新快照胜出）；`CreateOptions{UI, ChatArgs …}`；`(*Manager).Create` 对话分支（design 6.2，含 R2.6 `existing`）；`(*Manager).ChatGet(id) (*chat.Session, bool)`；`(*Manager).Reload` 对话分支（同步检查后后台执行，进度经 `chat_state`；U 被占 → `ErrClaudeSessionBusy`；失败 → `ended.reason=restart_failed`，d10）；`(*Manager).LoadChats(store)`；`(*Manager).Shutdown(ctx)`；`List()` 条目带 design 4.8 字段；`lookupOrRecover`/`Attach` 遇对话 id 返回 `ErrUIMismatch`
+- 子项阻塞（等 c4）：design 6.9 的 continue 终端会话固定身份（`-c` 改写为 `--resume U` 并原子 claim、找不到则去掉 `-c`）与 `TestTerminalContinueClaimsLatest`、`TestTerminalContinueBusyWhenChatOwns` 的 Manager 部分。阻塞原因：改写用户配置的终端参数，需用户确认 c4。c4 确认前终端会话保持现状（不改写、不 claim），其余部分照常实现并完成本任务
 - 场景：R1.5、R1.7、R2.1、R2.2、R2.5、R2.6、R15.1–R15.3
 - 测试：测试计划中标 T5 的全部用例（含 `-race` 并发用例 `TestConcurrentContinueCreatesOneProcess`、`TestRestartRefusedWhenUResumedElsewhere`、`TestReloadVsDeleteSerialized`，以及 `TestTerminalContinueBusyWhenChatOwns` 的 Manager 部分），另加：
   - `TestListMergesChatAndTmux`：tmux reconcile 不删对话条目、对话条目不进 tmux 查询
@@ -315,7 +347,7 @@
   - `TestHandedOffTerminalReloadUsesResume`（见测试计划）
   - `TestReloadChatReturns202`：REST 202 立即返回（<500 ms，假 claude `slow` 中）；重载进行中再调一次 → 也是 202 且 pid 目录只出现一次新进程；订阅者依次收到 `ended.reason=stopped` → 新 epoch 的 reset 同步 → `idle`；重载成功后的 reset 同步含重载前的全部历史（`historyCount` 等于重载前 JSONL 的 user/assistant 行数），随后 `chat_send` 能收到新回复；假 claude 启动失败时收到 `ended.reason=restart_failed` 与 message
   - `TestCreateChatUntrustedWorkdir`（待 c3 确认）：临时 `$CLAUDE_CONFIG_DIR/.claude.json` 未信任该目录、或文件不存在（unknown）→ 都是 `error{code:chat_unsupported, fatal:true}`，message 含 `workdir_untrusted`；worktree 模式检查源仓库；`/api/v1/fs` 返回 `chatTrust`
-  - `TestTerminalContinueBusyWhenChatOwns` 的 attach/REST 部分：attach 收到 fatal `claude_session_busy`，终端 reload 返回 409
+  - `TestTerminalContinueBusyWhenChatOwns` 的 attach/REST 部分（**阻塞 c4**，子项）：attach 收到 fatal `claude_session_busy`，终端 reload 返回 409
 - 完成定义：`cd vibe-remoted && go test -race ./...`；现有 `ws_test.go`、`contract_test.go`、`hardening_test.go` 不改断言通过
 - 依赖：T5
 

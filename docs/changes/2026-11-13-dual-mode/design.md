@@ -1,6 +1,6 @@
 # 技术设计：双模式会话（终端 + 对话）
 
-对应需求：spec.md（R1–R19，H1–H17，关口 A：Q1 按 H1、Q2=A、Q3=A、c1 同意）　更新：2026-11-13（工程评审 15 条 + 复审 10 条 + 关口 B 意见 + 第二批前置验证已修订，见第 10 节）
+对应需求：spec.md（R1–R19，H1–H17，关口 A：Q1 按 H1、Q2=A、Q3=A、c1 同意）　更新：2026-11-13（工程评审 15 条 + 复审 10 条 + 关口 B 两轮意见 + 第二批前置验证已修订，见第 10 节）
 
 术语：**会话 id** = vibe-remote 会话 id（`<ms>-<8hex>`，客户端生成的 `newSessionId`）；**claude 会话 id** = claude 自己的 UUID（`--session-id` / `--resume` 的参数，JSONL 文件名）。两者由 daemon 保存映射（H12）。
 
@@ -112,7 +112,7 @@ daemon 新包 `vibe-remoted/internal/chat`：
 `session.Manager` 增加 `chats map[string]*chat.Session`，与 `sessions`（终端 Runner）共用 id 空间、`beginCreate` 幂等和 `gen` 计数；tmux reconcile 只碰 `sessions`。
 
 **单进程守卫 `claudeOwners`**（R2 的唯一判定点）：`Manager.claudeOwners map[claudeSessionID]ownerID`，owner 是 vibe-remote 会话 id（对话或终端）。
-- 任何会启动 claude 进程、且进程会占用某个 claude 会话 id U 的操作，都必须**先**在 `Manager.mu` 下 `claimClaude(U, owner)`，成功后才 spawn：对话新建（新 UUID 或 `-c` 解析出的 U）、交接（由交接创建的新终端会话 claim 原对话的 U）。对话会话的重载/重启是**同一 owner 的停止再启动**：停止阶段不释放 U（见下），启动前再次 claim 时因 owner 相同而直接成功；若 U 已不归它（例如它结束后被别的会话用 `-c` 接走）则 claim 失败 → `claude_session_busy`。daemon 自己以 continue 语义启动的终端会话（`claude_cmd` 或勾选的 flag 含 `-c`/`--continue`，新建或重载）做**尽力而为的 claim**：启动前按当时的 `LatestSessionForWorkdir` 解析出 U 并登记 `claudeOwners[U] = 终端会话 id`，此后对话会话 `-c` 解析到同一 U 会得到 `claude_session_busy`（见 6.9，d11、d14）。不带 continue 语义的终端会话不 claim。
+- 任何会启动 claude 进程、且进程会占用某个 claude 会话 id U 的操作，都必须**先**在 `Manager.mu` 下 `claimClaude(U, owner)`，成功后才 spawn：对话新建（新 UUID 或 `-c` 解析出的 U）、交接（由交接创建的新终端会话 claim 原对话的 U）。对话会话的重载/重启是**同一 owner 的停止再启动**：停止阶段不释放 U（见下），启动前再次 claim 时因 owner 相同而直接成功；若 U 已不归它（例如它结束后被别的会话用 `-c` 接走）则 claim 失败 → `claude_session_busy`。daemon 自己以 continue 语义启动的终端会话（`claude_cmd` 或勾选的 flag 含 `-c`/`--continue`，新建或重载）**固定身份后再 claim**：启动前解析出 U，把命令里的 `-c` 改写成 `--resume U` 并原子地 claim U，使实际进程的会话 id 与占用表一致（见 6.9；该规则改写了用户配置的终端参数，**待 c4 确认**，确认前不实现）。不带 continue 语义的终端会话不 claim。
 - U 已被别的 owner 持有 → 返回 `ErrClaudeSessionBusy{Owner}`；持有者是同一个 owner → 视为成功（幂等重放）。
 - 释放：对话会话在其进程 `Wait()` 返回、且停止原因**不是** `restart` 时释放（已结束的对话会话不持有 U；重载/重启期间「停 → 等退出 → 启动」全程占用不释放）；终端会话（交接创建的，或以 continue 语义启动的）在被删除或其 tmux 会话消失（reconcile 移除）时释放；任何会话被删除时释放它持有的全部 U。
 - 退出回调：进程 `Wait()` 返回后的处理（记录结束、按上条释放 owner、`persist()`）在**独立的 goroutine** 里执行，执行时**不持有** `Session.mu`，只获取 `Manager.mu`（以及之后短暂的 `Session.mu` 更新状态），因此不会与持 `opMu`/`Session.mu` 的路径形成环。
@@ -200,7 +200,7 @@ daemon 新包 `vibe-remoted/internal/chat`：
 |------------|------|------|
 | `user`（合成回显） | `message:{role:"user",content:[{type:"text",text}]}`, `vr_client_msg_id` | daemon 写入 stdin 的用户消息原样入缓冲，供所有桌面显示（R2.4）。claude 不回显用户写入的文本（V8） |
 | `vr_resolved` | `request_id`, `outcome: "allowed"\|"denied"\|"cancelled"\|"interrupted"\|"exited"`, `message?` | 某个待答请求被解决（R5.7/R5.8/R8.2），入缓冲，补发时可重现。claude 发来 `control_cancel_request` 时：若本会话有一个已发出、尚未收到回复的 `interrupt`，记 `interrupted`（R8.2），否则记 `cancelled`（R5.8） |
-| `vr_notice` | `code: "line_dropped"\|"stderr"\|"stale_turn"\|"set_mode_failed"`, `text`, `clientMsgId?` | 超长行被丢弃（>16 MiB）；回合看门狗判定某条消息不会再有 `result`（5.2）；计划批准后的模式切换未能入队（4.7） |
+| `vr_notice` | `code: "line_dropped"\|"stderr"\|"stale_turn"\|"set_mode_failed"\|"dropped_on_stop"`, `text`, `clientMsgId?` | 超长行被丢弃（>16 MiB）；回合看门狗判定某条消息不会再有 `result`（5.2）；计划批准后的模式切换未能入队（4.7）；停进程时某条已写入的消息没有执行完（6.4） |
 
 看门狗之后迟到的 `result`：daemon 原样转发但在 `msg` 顶层加 `"vr_stale": true`，客户端不拿它做回显配对（6.8）。
 | `vr_exit` | `code`, `reason`, `stderrTail` | 进程结束（R13.2，带 stderr 最后 8 KiB） |
@@ -218,7 +218,7 @@ daemon 新包 `vibe-remoted/internal/chat`：
 |------|------|
 | `status` | `idle`/`running`/`waiting`（running 且有待答请求）/`ended`。进程起来即 `idle`：`initialize` 不是必需的握手（探针 V1），stdin 在进程启动期间会被缓冲（探针 V7） |
 | `permissionMode` | `default`/`acceptEdits`/`plan`/`bypassPermissions`；以 claude 报告为准：每回合的 `system/init.permissionMode`、`set_permission_mode` 成功回复的 `mode`、`system/status.permissionMode`（如计划批准后 claude 自动恢复**进入 plan 之前的模式**并广播 status，探针 V6、V22）。首回合前取启动参数推断值 |
-| `permissionLocked` | 启动参数含 `--dangerously-skip-permissions` 或 `--permission-mode bypassPermissions`（R1.6/R11.2）。此时 claude 报告 `bypassPermissions`，普通工具不再发 `can_use_tool`，但 **AskUserQuestion 与 ExitPlanMode 仍以 `can_use_tool` 到达**（探针 V18），客户端照常显示提问/计划卡片；只是不会再出现工具权限提示 |
+| `permissionLocked` | 启动参数含 `--dangerously-skip-permissions` 或 `--permission-mode bypassPermissions`（R1.6/R11.2）。此时 claude 报告 `bypassPermissions`，普通工具不再发 `can_use_tool`，但 **AskUserQuestion 仍以 `can_use_tool` 到达**（探针 V18 实测；ExitPlanMode 在 bypass 下未直接观察，按同一机制处理并由 V25 补看），客户端照常显示提问/计划卡片；只是不会再出现工具权限提示 |
 | `pending` | **权威**的待答请求列表（不受缓冲淘汰影响）；客户端的提示框只按它显示（R5.5/R5.6/R6.4） |
 | `degraded` | 可选，字符串数组；缺少的 claude 能力（目前只有 `interrupt_receipt`，6.1），客户端只用于诊断显示 |
 | `slashCommands` | 来源优先级：`initialize` 回复的 `commands`（name/description/argumentHint，首条消息前即可用，R10.1）**高于** `system/init.slash_commands`。拿到 initialize 列表后，之后每回合重发的 init 不再覆盖它；只有 `initialize` 失败或 10 s 无回复时才用 init 的列表（只有名字），且之后若 initialize 迟到成功仍以它替换 |
@@ -231,7 +231,7 @@ daemon 新包 `vibe-remoted/internal/chat`：
 | 帧 | 形状 | daemon 处理 |
 |----|------|-------------|
 | `chat_send` | `{type, clientMsgId, text}` | `text` 去首尾空白后为空 → ack `empty`；>256 KiB → ack `too_large`；`clientMsgId`（≤64 字符）在最近 256 个里已出现 → ack ok、不重复写（客户端手动重发安全）；进程不在 → ack `chat_not_running`；否则写 stdin、追加合成回显、`outstanding++` |
-| `chat_respond` | `{type, requestId, response:{behavior:"allow"\|"deny", updatedInput?, updatedPermissions?, message?, interrupt?}, setMode?}` | 请求不在待答表 → ack `request_not_pending`（R5.7）；`updatedPermissions` 每一项必须与该请求 `permission_suggestions` 中某一项 JSON 相等，否则 ack `foreign_rule`（H17）；`behavior:"allow"` 缺 `updatedInput` 时 daemon 补上原请求的 `input`（claude 要求 allow 必须带它，探针 V2）；通过后在 `Session.mu` 内**先**把 `control_response` 非阻塞放进 stdin 写队列；放入成功才从待答表删除、追加 `vr_resolved`、广播 `chat_state`；写队列满 → 待答保持不变，ack `chat_busy`（客户端提示稍后再点，不会出现「显示已回答、claude 还在等」，R5.6）。`setMode` 存在时，紧接在 `control_response` 之后（同一次持锁内）再非阻塞入队一条 `set_permission_mode`（R6.1；探针 V22：立刻发不会被 claude 的自动恢复覆盖）；只有 `control_response` 入队成功而这一条入队失败时 → 广播 `vr_notice{code:"set_mode_failed"}`，切换器保持 claude 报告的模式，用户可手动再切 |
+| `chat_respond` | `{type, requestId, response:{behavior:"allow"\|"deny", updatedInput?, updatedPermissions?, message?, interrupt?}, setMode?}` | 请求不在待答表 → ack `request_not_pending`（R5.7）；`updatedPermissions` 每一项必须与该请求 `permission_suggestions` 中某一项 JSON 相等，否则 ack `foreign_rule`（H17）；`behavior:"allow"` 缺 `updatedInput` 时 daemon 补上原请求的 `input`（claude 要求 allow 必须带它，探针 V2）；通过后在 `Session.mu` 内**先**把 `control_response` 非阻塞放进 stdin 写队列；放入成功才从待答表删除、追加 `vr_resolved`、广播 `chat_state`；写队列满 → 待答保持不变，ack `chat_busy`（客户端提示稍后再点，不会出现「显示已回答、claude 还在等」，R5.6）。`setMode`（只允许 `acceptEdits` 或 `default`，其它值 ack `invalid_mode`）存在时，紧接在 `control_response` 之后（同一次持锁内）再非阻塞入队一条 `set_permission_mode`（R6.1 用 acceptEdits，R6.2 用 default；探针 V22：立刻发不会被 claude 的自动恢复覆盖）；只有 `control_response` 入队成功而这一条入队失败时 → 广播 `vr_notice{code:"set_mode_failed"}`，切换器保持 claude 报告的模式，用户可手动再切 |
 | `chat_interrupt` | `{type}` | 非 running → ack ok 不做事（R8.3）；否则在 `Session.mu` 内把**一条** `interrupt` 控制请求非阻塞放进写队列（只需 1 个空位），成功才记「中断进行中」并 ack ok；写队列满 → ack `chat_busy`，什么都不改。daemon **不**替待答请求回 deny：claude 收到 interrupt 后自己先对每个待答请求发 `control_cancel_request{request_id}`，daemon 据此删待答、记 `vr_resolved interrupted`（4.5）；随后 claude 回 interrupt 的 control_response（`{still_queued:[]}`）并结束回合（探针 V12、V19）。两种结束形态都显示为「已中断」，不是回合出错：普通流式中断——带部分文本的完整 `assistant`、文本 user `[Request interrupted by user]`、`result{subtype:"error_during_execution",terminal_reason:"aborted_streaming"}`（V3）；工具等待或执行中中断——`is_error` 的 tool_result「The user doesn't want to proceed…」、文本 user `[Request interrupted by user for tool use]`、`result{…,terminal_reason:"aborted_tools", permission_denials:[…]}`（V12）。进程存活。`still_queued` **不可靠**（stdin 里排队的用户消息不会列出，但仍会在中断后作为下一回合执行，V14），daemon 不用它改 `outstanding` |
 | `chat_set_mode` | `{type, mode}` | `mode` ∉ {default, acceptEdits, plan} → ack `invalid_mode`；`permissionLocked` → ack `mode_locked`；否则发 `set_permission_mode`，成功回复后更新 `permissionMode` 并广播 |
 | `ping` | 同现有 | 回 `pong` |
@@ -260,7 +260,7 @@ daemon 新包 `vibe-remoted/internal/chat`：
 | GET | `/api/v1/sessions` | 条目新增 4.8 字段 |
 | DELETE | `/api/v1/sessions/{id}` | 对话会话：停进程（第 6.4 节）、按 worktree 规则清理、删记录；JSONL 保留（R15.2）。worktree 有改动时同终端返回 409 `worktree_preserved` |
 | POST | `/api/v1/sessions/{id}/rename` | 对话会话：名字写进 `chat-sessions.json`（R15.1） |
-| POST | `/api/v1/sessions/{id}/reload` | 对话会话：在 `Manager.mu` 下做同步检查（不碰 `opMu`）：会话不存在 → 404；U 被别的会话（如交接出去的终端会话）持有 → 409 `{"error":"claude_session_busy","owner":"<会话 id>"}`；`reloading` 已为真 → 直接 202，不再起第二次重启（幂等）；否则置 `reloading=true` 并返回 **202**。后台 goroutine 调 `WithOp`：拿到锁后**重新检查**——会话已被删除 → 什么都不做；已交接（`handedOffTo` 非空）→ 只广播一次不变的 `chat_state`（`ended.reason="handed_off"`），什么都不做；否则 `RestartLocked`：停 → 等退出 → 按 6.2 第 6 步选 `--resume`/`--session-id` 启动，**占用不释放**（R2.2/R15.3/R13.2「重新启动」）。结束时清 `reloading`。进度和结果只走 `chat_state` 广播（4.6），`rest.ts` 的 8 s 超时不变（d10）。由交接创建的终端会话：重载命令不是 `ResolveClaudeReloadCmd()` 的 `-c`，而是 `HandoffCommand(exe, args, U, FindTranscript(U) 是否存在)`（`--resume U` 或 `--session-id U`），它持有的 U 不变。以 continue 语义启动的终端会话：重载前按当时的 `LatestSessionForWorkdir` 重新解析 U′，U′ 被运行中的对话会话持有 → 409 `claude_session_busy`；否则释放旧 U、claim U′ 后照常 respawn（d14）。其它终端会话：行为不变 |
+| POST | `/api/v1/sessions/{id}/reload` | 对话会话：在 `Manager.mu` 下做同步检查（不碰 `opMu`）：会话不存在 → 404；U 被别的会话（如交接出去的终端会话）持有 → 409 `{"error":"claude_session_busy","owner":"<会话 id>"}`；`reloading` 已为真 → 直接 202，不再起第二次重启（幂等）；否则置 `reloading=true` 并返回 **202**。后台 goroutine 调 `WithOp`：拿到锁后**重新检查**——会话已被删除 → 什么都不做；已交接（`handedOffTo` 非空）→ 只广播一次不变的 `chat_state`（`ended.reason="handed_off"`），什么都不做；否则 `RestartLocked`：停 → 等退出 → 按 6.2 第 6 步选 `--resume`/`--session-id` 启动，**占用不释放**（R2.2/R15.3/R13.2「重新启动」）。结束时清 `reloading`。进度和结果只走 `chat_state` 广播（4.6），`rest.ts` 的 8 s 超时不变（d10）。由交接创建的终端会话：重载命令不是 `ResolveClaudeReloadCmd()` 的 `-c`，而是 `HandoffCommand(exe, args, U, FindTranscript(U) 是否存在)`（`--resume U` 或 `--session-id U`），它持有的 U 不变。以 continue 语义启动的终端会话（**待 c4 确认**）：重载命令同样按 6.9 改写——重新解析 U′，找到则命令里的 `-c` 改为 `--resume U′` 并原子 claim（被别人持有 → 409 `claude_session_busy`），找不到则去掉 `-c`、不 claim；成功后释放旧 U。其它终端会话：行为不变 |
 | GET | `/api/v1/fs` | 响应新增可选 `chatTrust: "trusted"\|"untrusted"\|"unknown"`（当前列出目录的 `TrustState`，第 7 节；**待 c3 确认**）。目录选择器与 daemon 一致：只有 `trusted` 可选「对话」，`untrusted` 与 `unknown` 都置灰并提示「先用终端界面在该目录打开一次 claude 以信任此目录」 |
 
 `/api/v1/info.chat`：
@@ -277,7 +277,7 @@ daemon 新包 `vibe-remoted/internal/chat`：
 |------|-------|----------|------------|
 | `ui_mismatch` | ✓ | 接入的会话类型与 `ui` 不符（含旧桌面接入对话会话，R17.3） | 停止重连，显示「这是对话会话，请升级桌面端」/「这是终端会话」 |
 | `chat_unsupported` | ✓ | 新建对话但 4.9 的任一 `reason` 成立 | 停止重连，显示原因 |
-| `claude_session_busy` | ✓ | `claimClaude` 失败：对话 `-c`、交接、重启指向的 claude 会话正被终端会话（交接或 continue 启动的，d14）持有；或终端会话带 continue 语义新建时 U 正被运行中的对话会话持有（d11）。`message` 写明持有者会话名 | 停止重连，提示去那个会话 |
+| `claude_session_busy` | ✓ | `claimClaude` 失败：对话 `-c`、交接、重启指向的 claude 会话正被终端会话（交接创建的，或 c4 确认后以 continue 语义启动的）持有；或终端会话带 continue 语义新建时 U 正被运行中的对话会话持有（d11）。`message` 写明持有者会话名 | 停止重连，提示去那个会话 |
 | `create_failed` | ✓ | 对话进程启动失败（spawn 失败、worktree 失败） | 同现有 |
 | `session_not_found` | ✓ | `handoffFrom` 指向的会话不存在 | 同现有 |
 
@@ -401,7 +401,7 @@ stateDiagram-v2
   ended --> idle: 重载(reload)，交接占用时拒绝
 ```
 
-固定 bypass（R1.6/R11.2）：`permissionLocked` 会话里工具权限提示消失，但 AskUserQuestion 与 ExitPlanMode 仍会作为待答请求出现（V18），其处理与非 bypass 会话相同。
+固定 bypass（R1.6/R11.2）：`permissionLocked` 会话里工具权限提示消失，但 AskUserQuestion 仍会作为待答请求出现（V18 实测；ExitPlanMode 同样处理，V25 待观察），其处理与非 bypass 会话相同。
 
 能力检测（H3）：每次 `system/init` 读 `capabilities`。必需项只有 `interrupt_receipt_v1`（interrupt 的 control_response 会立即确认，见 4.7、6.4）；`msg_lifecycle_v1` 只记录不依赖。缺少 `interrupt_receipt_v1`（含整个字段缺失）**不致命**：打一次日志，`chat_state.degraded` 加入 `"interrupt_receipt"`，中断改为不等确认（入队即 ack），停进程时第一段改为「等 `result` 最多 2 s」不再看确认。
 
@@ -428,7 +428,7 @@ stateDiagram-v2
 
 ### 6.4 停进程（重载、交接、删除、daemon 退出共用）
 
-在 `WithOp` 内（`StopLocked`），记 `stopping=reason` → 若 running 先发 `interrupt` 并等 `result`（≤2 s）→ 关 stdin → 等 1 s → `SIGTERM` 进程组 → 等 1 s → `SIGKILL` 进程组 → 等 `Wait()` 返回 → 退出回调（独立 goroutine，不持 `Session.mu`）：`reason≠restart` 时 `releaseClaude(U)`；`reason=restart`（`RestartLocked`）时**占用不释放**，随后直接启动新进程（停 → 等退出 → 启动，占用不释放）。最坏约 4 s（d10）。先中断是必须的：只关 stdin 时 claude 会跑完当前回合**和排队的消息**再退出（探针 V5）。只有 `Wait()` 返回后才允许启动新进程（R2.2/R2.3）。读协程见到 EOF 时按 `stopping` 区分「我方停止」与「真退出」，与终端 `detaching` 同义。WS 断开从不触发停进程（R12.1/R13.3）。
+在 `WithOp` 内（`StopLocked`），记 `stopping=reason` → 若 running 先发 `interrupt` 并等当前回合的 `result`（≤2 s；能力降级时同样只等 result）→ **立即** `SIGTERM` 进程组（不依赖 stdin EOF：EOF 会让 claude 跑完已排队的消息，V5、V14）→ 等 1 s → `SIGKILL` 进程组 → 等 `Wait()` 返回 → 关闭 stdin 管道（只做清理）→ 对每条已写入但没有拿到 `result` 的用户消息发 `vr_notice{code:"dropped_on_stop", clientMsgId}`（客户端标「未送达」，可在新进程里重发，6.8）→ 退出回调（独立 goroutine，不持 `Session.mu`）：`reason≠restart` 时 `releaseClaude(U)`；`reason=restart`（`RestartLocked`）时**占用不释放**，随后直接启动新进程（停 → 等退出 → 启动，占用不释放）。最坏约 4 s（d10）。先中断让当前回合以「已中断」正常收尾、写完 JSONL；随后直接发信号，排队中的消息即使已开始也不会产生 `result`（只关 stdin 时 claude 会跑完当前回合**和排队的消息**再退出，探针 V5、V14，不能用来停止）。只有 `Wait()` 返回后才允许启动新进程（R2.2/R2.3）。读协程见到 EOF 时按 `stopping` 区分「我方停止」与「真退出」，与终端 `detaching` 同义。WS 断开从不触发停进程（R12.1/R13.3）。
 
 ### 6.5 交接（attach `handoffFrom`）
 
@@ -453,27 +453,30 @@ stateDiagram-v2
 | 提示 | 选项 → 发送 |
 |------|-------------|
 | 工具权限（R5） | 允许：`allow` + `updatedInput=原 input`。允许并且不再询问（R5.2/R5.2b）：claude 的 `permission_suggestions` 是一组不同类型的建议（探针 V2 实测：`addRules`→`localSettings`、`addDirectories`→`session`、`setMode acceptEdits`→`session`），不能整组回传（会顺带切权限模式）。规则：有 `addRules` → 第二项为「对 <cwd 或 directories> 里的 <ruleContent> 不再询问」，发送 `updatedPermissions` = 全部 `addRules` + `addDirectories` 建议；否则有 `setMode` → 第二项为「本会话内允许所有编辑」（原型场景 2），发送该 `setMode` 建议；两者都没有 → 只有允许/拒绝。保存位置按建议的 `destination` 显示（localSettings=本项目仅自己、projectSettings=本项目共享、userSettings=所有项目、session=本会话）。拒绝：`deny` + `message=说明`（空则默认句；message 原样成为 is_error 的 tool_result，探针 V2）。已实测（V9）：回传 addRules 后 claude 自建 `<cwd>/.claude/settings.local.json` 写入 `permissions.allow:["Bash(<规则>)"]`，同一命令不再询问；`addDirectories`（session）不落盘；只回 setMode 时 claude 立刻广播 `system/status{permissionMode:"acceptEdits"}`。因此第二项的说明文字要写明「会写入远程项目的 `.claude/settings.local.json`」 |
-| 计划（ExitPlanMode，R6） | 请求带 `requires_user_interaction:true`、无建议，`input.plan` 为 Markdown（探针 V6）。批准后 claude 自己恢复**进入 plan 之前的模式**（不一定是 default），并在 ExitPlanMode 的 `tool_result` **之前**广播 `system/status`（V22）。1 批准自动接受编辑：`allow`+原 input + `setMode:"acceptEdits"`，daemon 在 `control_response` 之后立刻发 `set_permission_mode acceptEdits`，不等待（V22 实测不会被覆盖）；2 批准逐个确认：`allow`+原 input，不带 setMode，模式按 claude 的 status 显示（从 acceptEdits 进入 plan 的会恢复为 acceptEdits，切换器如实显示）；3 继续完善：`deny` + `message=意见`，claude 留在 plan 模式、修改计划文件后再次发 ExitPlanMode（V11），不需要额外切模式 |
+| 计划（ExitPlanMode，R6） | 请求带 `requires_user_interaction:true`、无建议，`input.plan` 为 Markdown（探针 V6）。批准后 claude 自己恢复**进入 plan 之前的模式**（不一定是 default），并在 ExitPlanMode 的 `tool_result` **之前**广播 `system/status`（V22）。1 批准自动接受编辑：`allow`+原 input + `setMode:"acceptEdits"`，daemon 在 `control_response` 之后立刻发 `set_permission_mode acceptEdits`，不等待（V22 实测不会被覆盖）；2 批准逐个确认：`allow`+原 input + `setMode:"default"`，同样在 `control_response` 之后立刻发 `set_permission_mode default`——不论进入 plan 之前是什么模式（claude 会恢复原模式，V22），之后的编辑都会弹权限请求（R6.2）；3 继续完善：`deny` + `message=意见`，claude 留在 plan 模式、修改计划文件后再次发 ExitPlanMode（V11），不需要额外切模式 |
 | AskUserQuestion（R7） | 题目字段 `question`/`header`/`options[{label,description}]`/`multiSelect`。`allow` + `updatedInput={…原 input, answers:{<question 原文>: <所选 label>}}`（单选已实测，探针 V6）；多选用 `", "` 连接多个 label、「其他」直接填自填文字（V10 实测：值是自由字符串，claude 不校验是否为选项）；有题未答时提交按钮禁用并标红（R7.3） |
 
 点击后提示进入「提交中」且不可再点；收到对应 `vr_resolved` 才关闭；收到 `chat_ack request_not_pending` 显示「已在别处处理」；连接在此期间断开 → 重同步后按 `chat_state.pending` 恢复为未回答（R5.6）。
 
 ### 6.8 发送队列（客户端，H16）
 
-- 发送条件 = **本端上一条已收到回显且已配到它的 `result`**（不看全局 `status`，避免别的桌面或计数漂移卡住本端）：客户端把对话里的用户回显按顺序排队，每个 `result`（含中断产生的；带 `vr_stale:true` 的除外）先进先出地配给最早未配对的回显；收到 `vr_notice stale_turn` 时把它点名的回显视为已配对。满足条件 → 直接发；否则入队显示「排队中」，可删除（R9.2）。本端**还没有发过消息**（没有可配对的上一条）时：会话 `status` 为 `idle` → 直接发；为 `running`/`waiting`（别的桌面的回合在跑）→ 按「尚未回显」处理入队，等 `chat_state.status` 回到 `idle` 再发（看门狗保证状态最终会回到 idle，不会永久卡住）。
+- 发送条件 = **本端上一条已收到回显且已配到它的 `result`**（不看全局 `status`，避免别的桌面或计数漂移卡住本端）：客户端把对话里的用户回显按顺序排队，每个 `result`（含中断产生的；带 `vr_stale:true` 的除外）先进先出地配给最早未配对的回显；收到 `vr_notice stale_turn` 或 `dropped_on_stop` 时把它点名的回显视为已配对（后者另标「未送达」，可重发）。满足条件 → 直接发；否则入队显示「排队中」，可删除（R9.2）。本端**还没有发过消息**（没有可配对的上一条）时：会话 `status` 为 `idle` → 直接发；为 `running`/`waiting`（别的桌面的回合在跑）→ 按「尚未回显」处理入队，等 `chat_state.status` 回到 `idle` 再发（看门狗保证状态最终会回到 idle，不会永久卡住）。
 - 条件变为满足 → 发队首一条，等它回显后再看下一条（R9.1 顺序）。
 - 中断时队列整体退回输入框（多条以空行连接），不自动发送（R9.3）。
 - 发送后断线：重同步后若回显里没有该 `clientMsgId`，消息标「未送达」并提供「重发」（同 id，daemon 去重）。
 - `/xxx` 不在 `slashCommands` 里且属于终端专用集合（`login`、`logout`、`theme`、`vim`、`terminal-setup`、`ide`、`config`、`doctor`、`exit`、`resume`）→ 不发送，显示「这条命令只能在终端界面使用」+「新建终端会话接上」（R10.2）。
 
-### 6.9 终端会话的 `-c` 与对话会话冲突（d11、d14）
+### 6.9 终端会话的 `-c`：固定会话身份（d11；整条**待 c4 确认**）
 
-终端会话新建或重载时，若 `ParseClaudeCmd(最终命令)` 成功且 `Continue` 为真（新建：`ResolveClaudeCmd(flags)`；重载：`ResolveClaudeReloadCmd()`），daemon 在启动前用当时的 `LatestSessionForWorkdir(workdir)` 解析出 U（找不到则什么也不做，行为与现在一样）：
-1. 在 `Manager.mu` 下查 `claudeOwners[U]`：被运行中的对话会话持有 → 新建返回 `error{code:"claude_session_busy", fatal:true}`、重载返回 409，消息写明对话会话名（d11）。
-2. 否则 `claimClaude(U, 终端会话 id)`（尽力而为的占用，d14），并写 tmux 选项 `@vibe_remote_claude_u`；随后照常启动。此后对话会话 `-c` 解析到 U 时 claim 失败，得到 `claude_session_busy`，消息写明该终端会话名。
-3. 释放：终端会话被删除，或 reconcile 发现其 tmux 会话已消失；重载时按上面第 1–2 步重新解析，U 变了就释放旧的、占用新的。
+问题：终端里的 `-c` 由 claude 启动时自己挑「最近一次对话」，daemon 事先解析出的 U 与 claude 实际打开的会话可能不同（中间若有新 JSONL 写出），占用表就和真实进程对不上（关口 B 的 F7）。做法是**固定身份**，而不是扩大 H12 的例外：
 
-已知局限（如实记录）：终端里的 claude 用 `-c` 时由它自己挑选「最近一次对话」，如果在 daemon 解析 U 与 claude 真正启动之间该目录的 JSONL 有变化（例如另一个进程刚写完一份新对话），claude 选中的可能不是 U，这种残留情况与「用户在终端里手敲 `claude -c`」一样不在 H12 保证范围内。`claude_cmd` 不是 claude、或不含 continue 语义时完全不检查也不占用。现在不存在对话会话，第 1 步不会触发；第 2 步只多写一个 tmux 用户选项，不改变终端会话的任何可见行为，P1 成立。
+1. 触发条件：daemon 自己启动的终端会话（新建，或重载），`ParseClaudeCmd(最终命令)` 成功且 `Continue` 为真（`claude_cmd` 自带 `-c`/`--continue`，或勾选的 flag 带它；新建用 `ResolveClaudeCmd(flags)`，重载用 `ResolveClaudeReloadCmd()`）。`claude_cmd` 不是 claude、含 shell 语法无法安全拆词、或不含 continue 语义时：命令原样不动、不 claim，与现在完全一样。
+2. 启动前解析 U = `LatestSessionForWorkdir(workdir)`（文件 IO，在锁外做）。
+3. 找到 U：在 `Manager.mu` 下 `claimClaude(U, 终端会话 id)`——被别人持有（例如运行中的对话会话）→ 新建返回 `error{code:"claude_session_busy", fatal:true}`、重载返回 409，消息写明持有者名字；成功 → 用 `ShellJoin` 重新拼出命令，把 `-c`/`--continue` **替换为 `--resume U`**（其余参数顺序不变），写 tmux 选项 `@vibe_remote_claude_u=U`，再启动。启动失败 → `releaseClaude`。
+4. 找不到 U（该目录没有任何对话记录）：**去掉** `-c`/`--continue`（此时 claude 用 `-c` 也只会开一段新对话），不 claim。
+5. 释放：终端会话被删除，或 reconcile 发现其 tmux 会话已消失；重载按 2–4 重新解析，U 变了就先 claim 新的再释放旧的。
+
+为什么 P1 在常见情况下成立：解析与启动之间没有新对话写出时，`--resume U` 打开的正是 `-c` 在那一刻会选中的同一段对话，内容、TUI 和后续行为一致；第 4 步去掉 `-c` 时 claude 本来也是新开对话。唯一可观察的差别是那个竞态窗口：若在解析后、启动前恰好有另一段对话写出了更新的 JSONL，终端打开的是解析时最新的 U，而不是那段更新的对话——这正是保证「同一 U 只有一个进程」所需要的。由于这条规则改写了用户在终端模式下配置的参数，记 **c4** 交用户确认；确认前本节不实现，终端会话保持现状（不改写、不 claim），F7 的风险在汇总里如实列出。不存在任何对话会话时第 3 步的冲突分支不会触发。
 
 ## 7. 错误处理和安全
 
@@ -503,8 +506,8 @@ stateDiagram-v2
 |------|------------------|-------------|
 | 终端模式纯字节透传，客户端不解析 PTY 输出 | `cd desktop && npm test` | 已有 |
 | 终端会话的 v2 帧除 `proto` 外逐字节不变 | `cd vibe-remoted && go test -race ./internal/server -run TestTerminalFramesUnchangedV3` | 新增 |
-| 协议在 protocol.go / protocol.ts / docs/protocol.md 三处一致 | `/protocol-sync` skill | 已有 |
-| 同一 claude 会话 id 任何时刻最多一个 claude 进程（`claudeOwners` 先 claim 后 spawn；continue 终端会话尽力占用，d14） | `cd vibe-remoted && go test -race ./internal/chat -run TestSingleProcess && go test -race ./internal/session ./internal/server -run 'TestReloadWaitsForOldProcess|TestChatCreateReplaySameID|TestContinueReusesRunningSession|TestConcurrentContinueCreatesOneProcess|TestRestartRefusedWhenUResumedElsewhere|TestHandoffVsReloadOneWins|TestReloadVsDeleteSerialized|TestTerminalContinueBusyWhenChatOwns|TestTerminalContinueClaimsLatest|TestOrphanCleanup'`（假 claude 的 pid 目录检测并发，出现 VIOLATION 即失败） | 新增 |
+| 协议在 protocol.go / protocol.ts / docs/protocol.md 三处一致 | 在仓库根运行 `/protocol-sync` skill（人工三处核对，不是自动命令） | 已有 |
+| 同一 claude 会话 id 任何时刻最多一个 claude 进程（`claudeOwners` 先 claim 后 spawn；continue 终端会话固定身份后 claim，待 c4） | `cd vibe-remoted && go test -race ./internal/chat -run TestSingleProcess && go test -race ./internal/session ./internal/server -run 'TestReloadWaitsForOldProcess\|TestChatCreateReplaySameID\|TestContinueReusesRunningSession\|TestConcurrentContinueCreatesOneProcess\|TestRestartRefusedWhenUResumedElsewhere\|TestHandoffVsReloadOneWins\|TestReloadVsDeleteSerialized\|TestTerminalContinueBusyWhenChatOwns\|TestTerminalContinueClaimsLatest\|TestOrphanCleanup'`（假 claude 的 pid 目录检测并发，出现 VIOLATION 即失败） | 新增 |
 | 客户端断开不停对话进程、不发 exit | `cd vibe-remoted && go test -race ./internal/server -run TestChatDisconnectKeepsProcess` | 新增 |
 | 待答请求只因回答/取消/中断/退出而消失，不被缓冲淘汰 | `cd vibe-remoted && go test -race ./internal/chat -run TestPendingSurvivesRingEviction` | 新增 |
 | 「不再询问」规则只能来自 claude 的建议 | `cd vibe-remoted && go test -race ./internal/chat -run TestRespondRejectsForeignRule` | 新增 |
@@ -547,7 +550,7 @@ stateDiagram-v2
 
 ### 9.1 结果
 
-V1–V7 为第一批、V9–V14 与 V18–V23 为第二批，均由探针 agent 用本机 claude 2.1.210 实测（`evidence/probe-stream-json.md`，原始日志 `.devflow-tmp/probe/logs/*.ndjson`）；V8 是本设计复核第一批日志得出（V20 补充：`/compact` 会产生 content 为字符串的 user 消息）。仍待验证：V15（风险评估用）、V16（T3 的 Go 测试）、V17（远程 Linux，dev-test）、V24（信任查找放宽，可选）。
+V1–V7 为第一批、V9–V14 与 V18–V23 为第二批，均由探针 agent 用本机 claude 2.1.210 实测（`evidence/probe-stream-json.md`，原始日志 `.devflow-tmp/probe/logs/*.ndjson`）；V8 是本设计复核第一批日志得出（V20 补充：`/compact` 会产生 content 为字符串的 user 消息）。**待验证（未实测）：V15**（风险评估用）、**V16**（T3 的 Go 测试）、**V17**（远程 Linux，dev-test）；可选：V24（信任查找放宽）、V25（bypass 下 ExitPlanMode）。
 
 | # | 假设 | 验证方法（命令或操作） | 通过标准 | 结果 |
 |---|------|------------------------|----------|------|
@@ -559,7 +562,7 @@ V1–V7 为第一批、V9–V14 与 V18–V23 为第二批，均由探针 agent 
 | V6 | ExitPlanMode / AskUserQuestion | `node driver.mjs v6a`（plan 模式）、`v6b` | 能回答并继续 | ✅ 都以 `can_use_tool` 到达并带 `requires_user_interaction:true`；ExitPlanMode 无建议，allow+原 input 即批准，之后 claude 发 `system/status{permissionMode:"default"}`；AskUserQuestion 用 `updatedInput.answers{question 原文: label}` 回答（单选）。plan 模式写计划文件不询问 |
 | V7 | 运行中 `set_permission_mode` | `node driver.mjs v7`（首条消息前切 acceptEdits） | 之后 Write 不询问 | ✅ 回复 `{mode:"acceptEdits"}`，随后 `system/status.permissionMode`；进程启动期间写入的 stdin 被缓冲 |
 | V8 | claude 不回显 stdin 写入的用户文本 | 复核 V1–V7 全部日志中 `out` 方向的 user 消息 | 只有 tool_result 与中断标记 | ✅ 无回显（daemon 合成回显，4.5） |
-| V9 | `updatedPermissions` 回传 `addRules`(+`addDirectories`) 后规则落盘、同类请求不再询问；回传 `setMode` 后切 acceptEdits | `driver.mjs v9`（cwd `ws9`，4 回合） | 规则落盘且不再询问 | ✅ claude 自建 `<cwd>/.claude/settings.local.json` = `{"permissions":{"allow":["Bash(touch v9x.txt)"]}}`，同一命令第二次无 `can_use_tool`；`addDirectories`(session) 不落盘；只回 `[setMode]` → 同一毫秒 `system/status{permissionMode:"acceptEdits"}`。6.7 不变 |
+| V9 | `updatedPermissions` 回传 `addRules`(+`addDirectories`) 后规则落盘、同类请求不再询问；回传 `setMode` 后切 acceptEdits | `driver.mjs v9`（cwd `ws9`，4 回合） | 规则落盘且不再询问 | ✅ claude 自建 `<cwd>/.claude/settings.local.json` = `{"permissions":{"allow":["Bash(touch v9x.txt)"]}}`，同一命令第二次无 `can_use_tool`；`addDirectories`(session) 不落盘；只回 `[setMode]` → 1 ms 内 `system/status{permissionMode:"acceptEdits"}`。6.7 不变 |
 | V10 | AskUserQuestion 多选与「其他」的答案格式 | `driver.mjs v18b`（与 V18 同一回合） | claude 复述全部所选 | ✅ `answers` 值是自由字符串：多选 `"Apple, Banana"`、自填 `"Purple with green stripes"` 都原样接受；`buildAnswer` 不变 |
 | V11 | ExitPlanMode `deny`+意见后仍在 plan 模式并修改计划 | `driver.mjs v11`（`--permission-mode plan`） | 再次出现 ExitPlanMode，模式仍 plan | ✅ deny 的 message 成为 is_error tool_result，claude 编辑计划文件（plan 模式下不询问）后再次发 ExitPlanMode，期间无模式变化；选项 3 不需要额外 `set_permission_mode` |
 | V12 | 有待答 `can_use_tool` 时发 `interrupt` | `driver.mjs v12b`（不回答，直接 interrupt） | 回合结束、进程存活 | ✅ claude **自己**先发 `control_cancel_request{request_id}`（与 interrupt 应答同一毫秒、在其之前），再 is_error tool_result「The user doesn't want to proceed…」、文本 user `[Request interrupted by user for tool use]`、`result{error_during_execution, terminal_reason:"aborted_tools", permission_denials:[…]}`；工具执行中中断同样是 `aborted_tools`。4.7 改为只发一条 interrupt、不先 deny |
@@ -571,9 +574,10 @@ V1–V7 为第一批、V9–V14 与 V18–V23 为第二批，均由探针 agent 
 | V18 | `--dangerously-skip-permissions` 的模式与询问 | `driver.mjs v18b` | 成立 | ✅ `init.permissionMode="bypassPermissions"`；`touch` 不询问；但 **AskUserQuestion 仍以 `can_use_tool` 到达** → bypass 会话照常显示提问/计划卡片（4.6、6.1） |
 | V19 | `control_cancel_request` 形状与触发条件 | 随 V12 | 记录形状 | ✅ `{"type":"control_cancel_request","request_id":"<被取消的 can_use_tool 的 request_id>"}`；由 interrupt 触发（4.5 的 interrupted/cancelled 区分） |
 | V21 | `--resume <不存在的 uuid>` 的行为 | `driver.mjs v21` | 记录行为 | ✅ 约 1 s：stderr `No conversation found with session ID: <id>`，stdout 一条 `result{subtype:"error_during_execution",is_error:true,num_turns:0,errors:["No conversation found…"]}`，无 `system/init`，exit 1。daemon 按 `create_failed`/`restart_failed` 处理（6.2 第 6 步）；假 claude 照此模仿 |
-| V22 | 计划批准后的模式恢复与 `set_permission_mode` 的时机 | `driver.mjs v11` 两回合（立刻发 / 等 status 再发） | 最终 acceptEdits、Write 不询问 | ✅（与假设不同）批准后 claude 恢复**进入 plan 之前的模式**（从 acceptEdits 进入则恢复 acceptEdits，不一定是 default），`system/status` 先于 ExitPlanMode 的 tool_result；allow 后**立刻**发 `set_permission_mode acceptEdits` 不会被覆盖。6.7 改为立刻发，取消等待与 5 s 兜底 |
+| V22 | 计划批准后的模式恢复与 `set_permission_mode` 的时机 | `driver.mjs v11` 两回合（第一回合 allow 后立刻发；第二回合设计为等 status=default 再发，因 default 从未出现，该分支未触发、未发出） | 最终 acceptEdits、Write 不询问 | ✅（与假设不同）批准后 claude 恢复**进入 plan 之前的模式**（从 acceptEdits 进入则恢复 acceptEdits，不一定是 default），`system/status` 先于 ExitPlanMode 的 tool_result；allow 后**立刻**发 `set_permission_mode acceptEdits` 不会被覆盖。6.7 改为立刻发，取消等待与 5 s 兜底 |
 | V23 | `-p` 是否跳过工作区信任、是否加载未信任目录的项目 hooks；父目录信任是否被继承 | `driver.mjs v23`（临时 `CLAUDE_CONFIG_DIR`，项目 SessionStart/PreToolUse hook 写标记） | 记录行为 | ✅（安全相关）`-p` 在从未信任的目录里直接加载项目 `.claude/settings.json`，SessionStart 与 PreToolUse hook 都执行，无信任提示，也不写信任记录 → c3 的信任检查必要（第 7 节）。父目录变体**无法区分**继承与否（`-p` 不看信任），信任查找先取「只看目录本身」，见 V24 |
 | V24 | 交互式 claude（终端会话里）中，父目录的 `hasTrustDialogAccepted:true` 是否让子目录不再弹信任对话框 | 临时 `CLAUDE_CONFIG_DIR` 只信任 `parent`，在 tmux 里于 `parent/child` 启动交互式 claude，看是否出现信任对话框 | 记录行为 | 待验证（T2 前，零模型调用）。只用于决定能否把第 7 节的信任查找放宽为逐级向上；不验证则保持「只看目录本身」（更严格，不改变任何验收） |
+| V25 | bypass（`--dangerously-skip-permissions`）会话里 ExitPlanMode 是否仍以 `can_use_tool` 到达 | 真 claude 以 bypass 启动后切 plan（或 `--permission-mode plan` 加 bypass 参数）并让它提交计划 | 记录行为 | 待验证（可选，T10 前）。不成立 → 只影响 bypass 会话里是否会出现计划卡片，客户端按收到的待答渲染，无需改代码 |
 | V20 | stream-json 下文本 `/compact` 可执行；`slash_commands` 不含 `/login`、`/theme` | `driver.mjs v9` 第 4 回合 | 成立 | ✅ `/compact` 作为 user 文本即执行：`status:"compacting"` → `status{compact_result:"success"}` → `init` → `compact_boundary` → 两条 **content 为字符串**的 user 消息（摘要、`<local-command-stdout>Compacted </local-command-stdout>`）→ `result{num_turns:0}`；客户端相应渲染（4.12）。`slash_commands` 不含 login/logout/theme，6.8 的固定终端专用集合保留作兜底 |
 
 ### 9.2 假 claude（`vibe-remoted/internal/chat/fakeclaude/main.go`）
@@ -591,7 +595,7 @@ CI 与 verify 不依赖真 claude，全部对话测试跑这个程序（`go buil
   - `md`：回复含标题、列表、表格、代码块、`<script>alert(1)</script>`、`<img src=x onerror=alert(1)>`、`[x](javascript:alert(1))`、`[ok](https://example.com)`。
   - `tool <Read|Grep|Bash|Edit|Write> [fail]`：`tool_use`（Edit 带 old/new_string）→ 默认模式下 Bash/Edit/Write 先 `can_use_tool`（Read/Grep 不问，V2）→ 回答后发 `tool_result`（`fail` 或 deny 时 `is_error:true`，deny 内容 = message）→ 文本 → `result`。allow 不带 `updatedInput` 时假 claude 报错退出（守 4.7 的补全）。
   - `perm <Bash 命令> [suggest|mode]`：`suggest` 时附 V2 实测的三类建议（addRules/localSettings、addDirectories/session、setMode/session），`mode` 时只附 setMode；收到带 addRules 的 `updatedPermissions` 把规则记进 `$FAKE_CLAUDE_RULES`，之后同命令不再询问；收到 setMode 建议则切 acceptEdits 并发 `system/status`。
-  - `plan`：`ExitPlanMode` 的 `can_use_tool`（`input:{plan,planFilePath}`、`requires_user_interaction:true`、无建议），allow → 先 `system/status{permissionMode:<进入 plan 之前的模式>}`（假 claude 记住最近一次切到 plan 前的模式，启动即 plan 时为 default），再 ExitPlanMode 的 `tool_result`（`User has approved your plan…`），再文本「plan approved」（顺序同探针 V6、V22）；allow 之后立刻到达的 `set_permission_mode` 照常生效、不被覆盖；deny → is_error tool_result（内容 = message）、文本「revising: <message>」、保持 plan 模式并再次发 ExitPlanMode（V11）。
+  - `plan`：`ExitPlanMode` 的 `can_use_tool`（`input:{plan,planFilePath}`、`requires_user_interaction:true`、无建议），allow → 先 `system/status{permissionMode:<进入 plan 之前的模式>}`（假 claude 记住最近一次切到 plan 前的模式，启动即 plan 时为 default），再 ExitPlanMode 的 `tool_result`（`User has approved your plan…`），再文本「plan approved」（顺序同探针 V6、V22）；allow 之后立刻到达的 `set_permission_mode`（acceptEdits 或 default）照常生效、不被覆盖；之后的 `tool Write` 是否询问按最终模式决定；deny → is_error tool_result（内容 = message）、文本「revising: <message>」、保持 plan 模式并再次发 ExitPlanMode（V11）。
   - `ask`：AskUserQuestion（一单选、一 `multiSelect:true`），allow 后 tool_result 与文本原样复述 `answers`（值是任意字符串，不校验，V10）。
   - `/compact`：照 V20 输出 `status:"compacting"` → `status{compact_result:"success"}` → `system/init` → `system/compact_boundary` → content 为字符串的 user 摘要 → `<local-command-stdout>Compacted </local-command-stdout>` → `result{num_turns:0}`。
   - `burst <n> [bytes]`：连发 n 条完整 `assistant` 文本消息（每条可指定大小）后 `result`。
@@ -601,7 +605,8 @@ CI 与 verify 不依赖真 claude，全部对话测试跑这个程序（`go buil
   - `cancel`：`can_use_tool` 后 200 ms 发 `control_cancel_request`。
   - `swallow`：不产生任何输出、也不发 `result`（看门狗测试用）。
   - 其它文本：等同 `echo`。
-- `FAKE_CLAUDE_STUBBORN=1`：忽略 `interrupt`、stdin EOF **和 SIGTERM**（`signal.Ignore(syscall.SIGTERM)`），只能被 SIGKILL 结束；收到 SIGTERM 时向 `$FAKE_CLAUDE_SIGNAL_LOG` 追加一行 `SIGTERM ignored`，供测试断言确实走到了 SIGKILL 阶段（停进程时序与孤儿清理测试用）。
+- SIGTERM：默认立即以退出码 143 结束（不跑完排队消息）。`FAKE_CLAUDE_STUBBORN=1`：忽略 `interrupt` 与 stdin EOF，并用 `signal.Notify` 捕获 SIGTERM——每收到一次就向 `$FAKE_CLAUDE_SIGNAL_LOG` 追加一行 `SIGTERM ignored` 后继续运行（不能用 `signal.Ignore`，那样收不到信号也写不了日志），只能被 SIGKILL 结束，供测试断言确实走到了 SIGKILL 阶段（停进程时序与孤儿清理测试用）。
+- `FAKE_CLAUDE_NO_INIT_REPLY=1`：收到 `initialize` 不回复（斜杠命令来源回退测试用）。
 - `FAKE_CLAUDE_CAPS`：覆盖 `system/init.capabilities`（逗号分隔；设为空串时省略整个字段，能力降级测试用）。
 - `set_permission_mode` → 回 `{mode}` 并发 `system/status{permissionMode}`（V7）。
 - 每条用户/助手消息按 claude 格式追加到 `$CLAUDE_CONFIG_DIR/projects/<cwd 的 / 和 . 换成 ->/<会话 id>.jsonl`（含一行 `queue-operation`，供历史过滤测试）。
@@ -653,4 +658,9 @@ CI 与 verify 不依赖真 claude，全部对话测试跑这个程序（`go buil
   - `--resume` 不存在（V21）：按 `create_failed`/`restart_failed` 处理，假 claude 照实模仿（6.2、9.2）。
   - 信任（V23）：`-p` 不看信任、直接执行项目 hooks，c3 检查必要；父目录继承无法在 `-p` 下观察，查找先取「只看目录本身」，新增 V24（第 7 节、9.1）。
   - V9、V10、V13 实测成立，原失败预案（c4、c5）不再需要；V9–V14、V18–V23 结果写入 9.1。
+- 2026-11-13 关口 B 第二轮修订（第 11 节报告不改）：
+  - R6.2：选项 2 在 allow 之后立刻发 `set_permission_mode default`，不论进入 plan 前是什么模式，之后的编辑都会询问（4.7、6.7、9.2）。
+  - F7：不再扩大 H12 例外；continue 终端会话改为固定身份——`-c` 改写为 `--resume U` 并原子 claim，找不到 U 则去掉 `-c`；因改写用户配置的终端参数，整条记 **c4** 待用户确认，确认前不实现（第 2 节、4.9、4.10、6.9、7.1）。原 d14 由 lead 在 decisions 里作废。
+  - 停进程：interrupt → 等当前回合 result ≤2 s → 立即 SIGTERM（不依赖 stdin EOF）→ 1 s → SIGKILL → Wait；未执行完的已写入消息发 `vr_notice dropped_on_stop`（4.5、6.4、6.8、9.2）。
+  - 备注：stubborn 夹具改用 `signal.Notify`；V9「1 ms 内」、V22 方法如实写；V15–V17 明确标「待验证（未实测）」；bypass 下 ExitPlanMode 未直接观察（新增 V25，可选）；7.1 注明 `/protocol-sync` 为仓库根人工 skill，表格内竖线转义。
 
