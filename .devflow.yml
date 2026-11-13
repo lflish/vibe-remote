@@ -1,0 +1,56 @@
+# devflow 项目配置（草稿，关口 A 请确认）
+context: |
+  vibe-remote：远程 Claude 终端桌面工具。
+  daemon：Go 1.26（vibe-remoted/），REST + WebSocket + PTY/tmux 会话生命周期。
+  桌面端：Electron + 原生 TypeScript（无前端框架）+ xterm.js（desktop/）。
+  终端模式是纯字节透传：客户端绝不解析 PTY 输出，tmux 是会话的唯一事实来源。
+  协议三处必须手动保持一致：vibe-remoted/internal/protocol/protocol.go、
+  desktop/src/shared/protocol.ts（含 rest.ts）、docs/protocol.md；改协议用 /protocol-sync 核对。
+  新增错误路径要选对 error.fatal；PTY 生命周期改动要保持 go test -race 通过。
+  界面文案中英双语（i18n parity 测试守着）；文档用简体中文。
+
+docs_dir: docs/changes
+autonomy: L1
+
+commands:
+  install: cd desktop && npm ci
+  lint: make check          # gofmt + go vet + tsc，均在 make check 内
+  test: make check
+  build: make server && cd desktop && npm run build
+  e2e: node .claude/skills/verify/scripts/gui-smoke.mjs
+
+environments:
+  local:
+    start: make dev-server
+    url_env: VIBE_REMOTE_LOCAL_URL
+    default_url: http://localhost:8765
+    data: 可随意
+
+test:
+  e2e_env: local
+  verify_env: local
+  cloud_browser: forbidden
+
+human_decisions:
+  - 协议版本号变更与破坏兼容的帧改动
+  - CLAUDE.md 架构约束的改写
+  - 发布 tag
+
+invariants:
+  - rule: 终端模式纯字节透传，客户端不解析 PTY 输出
+    check: cd desktop && npm test
+  - rule: 协议在 protocol.go / protocol.ts / docs/protocol.md 三处一致
+    check: /protocol-sync skill
+
+rules:
+  requirements: []
+  design: []
+  build: []
+  test: []
+
+release:
+  bump: minor
+  tag_prefix: v
+  publish: "使用 /release {version}（走 PR，不直推 main）"
+  production: "无（桌面 app 由用户自行下载 DMG）"
+  post_check: "GitHub Release 页面有 arm64/x64 DMG 且 CI 绿"
