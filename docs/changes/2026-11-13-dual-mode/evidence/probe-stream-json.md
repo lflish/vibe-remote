@@ -299,7 +299,7 @@ ExitPlanMode **没有** `permission_suggestions` / `description`，但有 `requi
 
 ```json
 → …"response":{"behavior":"allow","updatedInput":{…},"updatedPermissions":[{"type":"setMode","mode":"acceptEdits","destination":"session"}]}
-← {"type":"system","subtype":"status","status":null,"permissionMode":"acceptEdits",…}     // 同一毫秒
+← {"type":"system","subtype":"status","status":null,"permissionMode":"acceptEdits",…}     // 1 ms 内
 ```
 
 之后的 `system/init.permissionMode` 为 `acceptEdits`。`addDirectories`（destination `session`）不落盘。

@@ -408,3 +408,76 @@ decisions.md:26 的第一轮15项含11条明确错误及 d10/d11/d12/c3；decisi
 ### 11.8 记录保全
 
 本节只追加在原 design.md 第 656 行之后。原前缀 **93724 字节**，SHA256 为 `9e92d497c9c275c8f616fd63a1533a67ddde91a9bf4090eb5a7d11372af85c8d`；追加前后检查该前缀完全一致，同时确认 spec.md、tasks.md、decisions.md、verdict-history.md、evidence/probe-stream-json.md 的哈希没有变化。worktree 验证前后 HEAD 均为 `46798868b65eb01d3e15f67ea96998457c195552`，`git status --short` 及 `git diff --name-only HEAD` 均无输出。未修改仓库代码、未提交、未推进下一阶段。
+
+## 第 3 轮（78ca901，codex）：不通过
+
+
+- 结论：**不通过**。R6.2 已闭合；F7 的「解析 A、实际启动 B」竞态及 d14 擅自扩大 H12 已修正，但无记录分支仍漏登记新进程的 U；停止流程已改用信号，仍不能保证排队回合绝不产生 result。后二者属于方案规则反例，不能移入备注放行。c4 的局部暂停边界本身正确，不是整份方案不通过的原因。
+- 验证者：**codex（独立模型），第 3 轮**。本验证者未参与设计。
+- 验证范围：只读提交 `78ca901cc8422eb8b82061b93ce87deec077c9d4` 的 worktree、需求/设计/任务/裁决、前两轮结论及已有原始日志；只向本文件末尾追加结论。没有重跑探针，没有调用模型，没有运行尚未实现的产品测试。实际执行 Python 原始日志断言、文档名称/依赖解析，以及 `zsh -n -c <命令>` 语法检查。
+- 行号约定：D = 本文件追加前第 1–666 行；S = spec.md；T = tasks.md；C = decisions.md；E = evidence/probe-stream-json.md；H = verdict-history.md。日志行号为 `.devflow-tmp/probe/logs/` 下原文件的物理行号。引用现有运行证据与下面的方案推理分开，未声称未来代码已复现反例。
+
+### 11.1 阻挡项闭合情况：3 条逐条核对
+
+1. **R6.2「批准，逐个确认」未强制切手动：已闭合（方案与测试计划）。**
+
+   S:228–231 要求切手动并询问之后的编辑。D:234 明确 setMode 只允许 acceptEdits/default，同一次持锁内把 set_permission_mode 紧接在 control_response 后入队；D:456 的选项 2 为 allow + 原 input + `setMode:"default"`，不再依赖 claude 自动恢复的模式。D:598 的假 claude 先恢复进入 plan 前的模式，再接受立即到达的 default 控制请求，之后 Write 按最终模式询问。T:80 的 `TestPlanApproveManual` 覆盖从 acceptEdits 和 default 进入 plan 两种情况，断言最终 default、Write 产生 can_use_tool；T:81 的客户端 buildAnswer 也发送 default，T:283/T:378 分别承接 T3/T8 用例。
+
+   V22 证据与此修订一致：`v11.ndjson`:242–245 为 allow 后同一 tick 发 acceptEdits 并成功；:385–387 为只 allow 后恢复 acceptEdits；:406、410 的 Write 成功，中间没有权限请求。D:577 已准确注明第二回合没有发出等待中的 mode-b，不能把它当作「等 status 再切模式」成功。**已有日志直接验证的是立即切 acceptEdits，不是本轮新增的立即切 default 后 Write 询问**；后者属于依据同一控制接口设计的验证计划，不能记成真 claude 已实测通过。D:234/T:175、288 的写队列部分入队失败仍明确报 set_mode_failed，是已有错误处理分支，不是把选项 2 默认恢复 acceptEdits 当作正确验收。
+
+2. **F7：占用 U 与实际进程 U 不一致，且 d14 扩大 H12：已关闭原竞态与越权例外，但无记录分支仍阻挡。**
+
+   C:38（#15）明确推翻 C:34 的 d14；D:471、479、663 不再把 daemon 自动启动竞态排除在 H12 外。S:471 的例外仍只有用户在终端自行手敲 `claude -c`。D:115、473–475 改为解析 U、原子 claim、实际命令 `--resume U`，失败回滚；T:46 对解析后插入更新 JSONL B 的情况检查实际 argv 仍为 `--resume U`，另一个对话可以 claim B，两个进程身份不同。该子项在 C:39、T:325、350 明确阻塞 c4，尚未获用户批准，也尚未实现。
+
+   **固定身份路径的推理：**解析时选中 A → 在 Manager.mu 下 claim(A, X) → X 的最终 argv 固定为 `--resume A`。JSONL 此后出现更新的 B 只会影响另一次 LatestSessionForWorkdir，不能把 X 改成 B；已有 V4 证据及 D:417 的规则表明不带 fork 的 `--resume A` 继续使用 A。另一个 owner Y 若也解析到 A，claim(A, Y) 按 D:116 失败，不得 spawn；若解析到 B，则使用 B，不能与 X 同用 A。同一 owner 的幂等 claim 本身不是进程锁，同 id 新建重放还依赖 beginCreate（D:112、473；现有 manager.go:151–163、233–256），重载依赖串行替换；现有 runner.go:622–629 在 Runner.mu 下调用 respawn-pane。**因此，已找到 U 的固定 argv 路径排除了前轮 A→B 的身份竞态；原子 claim 也排除了不同 owner 同时获准启动同一 U。**这不等于仅靠一张 owner 表就证明全部进程生命周期已通过。
+
+   **仍存在的方案反例：**D:476 明确无记录时去掉 -c、**不 claim**；D:115 又规定不带 continue 的终端会话不 claim。可以按这些规则依次发生：①目录没有 JSONL，daemon 按该分支启动终端 claude，开启新会话 U；②该终端仍在运行，U 的 JSONL 已写出；③用户通过桌面新建对话并勾 -c，D:378、415 找到 U，而 claudeOwners 无 U，claim 成功；④D:417 启动另一个 `--resume U` 进程。两个进程都由 daemon 启动，没有用户手敲命令，故 S:110、471 的 R2/H12 仍被违反。T:46 当前只检查无记录时去掉 -c、不 claim，没有覆盖终端产生 JSONL 后再开对话这一顺序。这里不依赖解析与启动间文件变化，撤回 d14 也不能消除它。
+
+   需要在该分支同样固定并登记新 U（例如服务端生成 UUID、原子 claim 后以 `--session-id U` 启动），或提供等效且覆盖后续对话 -c 的准入机制，并补对应的双进程防重测试；用户配置参数的改写仍归 c4 处理。不能把 c4 同意现有改写等同于同意新增 H12 例外。终端重载交替占用还应在实现中保留旧 U 至旧进程确认退出、失败保留/回滚原占用；D:263、477 的「成功后释放旧 U」不能被实现为启动前先释放。
+
+3. **停进程与「interrupt 后排队消息仍执行」冲突：时序文字与测试名已同步，绝不完成的断言仍未闭合。**
+
+   D:431 与 C:40（#16）均改为 interrupt → 等当前回合 result ≤2 s → SIGTERM → 等 1 s → SIGKILL → Wait → 清理 stdin；D:608 的假 claude 默认收到 SIGTERM 退出 143，不再依靠 EOF，stubborn 用 signal.Notify 记录并不退出。T:197、296 均采用 `TestStopDoesNotLetQueuedTurnComplete`，T:296 还要求 4 s 内返回、当前回合有中断 result、**从未**收到 queued 回合 result、queued 有 dropped_on_stop、进程退出 143。旧 `TestStopInterruptsBeforeClosingStdin` 在 tasks 中出现次数为 0。D:431、437、440 仍要求旧进程退出后才能重启或交接，未改成中断应答即放行 U。
+
+   但是，D:591 保留「interrupt 后继续执行排队回合」，D:594 的 `echo` 没有等待 daemon 收到上一回合 result 的握手。信号只阻止**生效之后**的继续执行，不能撤回已经产生的 result。方案允许以下事件顺序：claude 输出中断回合 result → claude 从队列取出 `echo queued` 并输出其 result → daemon 读到中断回合 result → daemon 立即发 SIGTERM。即便 daemon 没有故意延迟，两个进程也不共享执行顺序；stdout 中的两条短 result 可以先进入管道，D:373「持续排空」不提供 daemon 必须先于 claude 下一回合获得调度的保证。这一顺序同时遵守 D:431、591、594、608，却违反 T:197、296 和 D:431「即使已开始也不会产生 result」的断言。
+
+   已有运行证据 `v14.ndjson`:30–35 为排队消息、interrupt、当前回合 aborted_tools；:37 开始下一回合，:47 输出 success/QUEUED_RAN。该日志没有 SIGTERM/SIGKILL，**不能证明新停止流程失败，也不能证明新流程保证零 queued result**；它证明的队列自主继续语义正是上述推理的前提。需要明确停止边界：若要求排队回合绝不能完成，必须提供真正阻止队列继续的机制；若按实际进程语义终止，则须一致地记录信号生效前已完成的回合、仅为退出时未配到 result 的消息发 dropped_on_stop，并使测试验证这个边界。不能仅靠「立即」二字或在假 claude 的快速 echo 中人为加延迟证明保证成立。
+
+### 11.2 备注处理情况（对照前轮 11.7）
+
+| 前轮备注 | 本轮落点 | 状态 |
+|---|---|---|
+| V9 时间精度、V22 第二种时机、实测编号范围、第一批被覆盖说明（H:400） | D:565 已写「1 ms 内」，D:577 写清 mode-b 未触发，D:553、571–573、660、665 区分实际实测与 V15–V17 待测 | **部分处理**：E:302 仍为「同一毫秒」；C:35 的「V9–V23 实测全部通过」未见追加的编号范围更正；E:227–228、242、244、246 旧记录保留，但未显式注明被第二批补充/覆盖。 |
+| bypass 下 ExitPlanMode 的直接证据边界（H:401） | D:221、404、580、665 明确 AskUserQuestion 已实测、ExitPlanMode 待可选 V25 | **主要处理**：T:28 与 D:588 仍将 ask/plan 合写并引用 V18，易让读者把假 claude 的 plan 行为当成直接实测；应同步标明边界。 |
+| 额外 21 个 Go 测试及三个缺失断言（H:402） | T:139–165 的补充表恰好 21 项；T:65 only-setMode；T:116 无 initialize 回复超时，D:609 提供夹具；T:39 注入不发信号后孤儿仍存活、保留 owner、reload 409，随后消失再放行 | **已处理**。实际集合比较：任务显式列出的 57 个 Go 测试名全部存在于计划的 122 个测试名中，差集为空。 |
+| stubborn 的信号记录机制（H:403） | D:608 改 signal.Notify，每次收到 SIGTERM 写 `SIGTERM ignored` 后继续；T:39、297 分别覆盖孤儿清理和停进程升级至 KILL | **已处理**，不再要求 signal.Ignore 后还能接收该信号写日志。 |
+| protocol-sync 的 cwd/人工性质、T1/T2 cwd、表格竖线（H:404） | D:509 指明仓库根人工 skill；T:234 黄金生成显式 cd vibe-remoted；T:270 的 go vet 与 go test 在同一 cd 链；D:510 表格中的竖线已转义 | **已处理**。10 条 shell 命令经 zsh -n 检查均退出 0，人工 skill 不算作自动检查已执行。 |
+
+### 11.3 修订交叉复核
+
+- **R6.2 与 V22**：控制顺序、客户端答案、假 claude 和测试预期一致；V22 第二回合未发 mode-b 的边界已披露。没有把旧「恢复 acceptEdits」当成 R6.2 正确行为；具体证据与尚未实测部分见 11.1 第 1 条。
+- **停进程三处**：D:431/C:40 的时序、D:608 的信号行为、T:197/296 的新名称一致；D:591/613 保留普通 interrupt/EOF 跑队列的真实语义是正确的。剩余矛盾在于 D:431/T:296 的零 queued result 保证，不在于 EOF 清理顺序或名字，见 11.1 第 3 条。
+- **c4 暂停范围**：C:39 明确只阻塞 T5/T6 的 continue 子项；T5 状态仍待办、T:325 明确其余部分照常实现；T:350 仅暂停 T6 的 attach/reload 409 子项；D:115、263、469、479、663 均注明待 c4。没有把对话会话自己的 -c（S:465、473；D:415、417；T:22）或交接的固定 --resume（S:474；D:438、440；T:48、341）错误纳入 c4。D:479/T:325 如实披露确认前终端不改写、不 claim；该阶段可以推进其它开发，不能宣称 F7 已在产品中消失，未决项未处理完不能完成整体验收。
+- **任务依赖无环**：实际解析 T:241、272、301、317、334、352、369、380、394、405、415、426、445 共 13 个依赖行。依赖为 T1 无；T2←T1；T3←T2；T4←T3；T5←T4；T6←T5；T7←T1；T8←T1/T2；T9←T7/T8；T10←T9；T11←T10/T6；T12←T11；T13←T12。有效拓扑顺序：`T1 → T2 → T7 → T3 → T8 → T4 → T9 → T5 → T10 → T6 → T11 → T12 → T13`。相邻节点不表示必有直接依赖。
+- **测试名一致**：`TestPlanApproveManual`（T:80）、`TestPlanApproveSetsMode`（T:79、179）、`TestStopDoesNotLetQueuedTurnComplete`（T:197、296）、两项 TerminalContinue 测试（T:46–47、325、327、332、350）均被对应任务承接；三个 GUI 名 T:14–15、62 与 T:435 逐字一致。旧 Stop 名已删除；新名一致不代表其断言已可保证。没有运行未来测试，集合比较和语法检查不算产品测试通过。
+- **裁决记录**：C:38 已明确推翻 d14，C:40 覆盖旧停进程流程；D:624–625、639–640、647、650、656 为历史变更，后续记录 D:654–665 已说明覆盖，不能重新照旧行实现。D:530 覆盖表仍残留「continue 终端会话尽力占用」，与 D:469 的固定身份术语不一致，列为文字备注。
+
+### 11.4 未决定、只能由用户决定的事
+
+- **c2**：是否把 D:503–519 的新增 9 条不变规则登记到 `.devflow.yml.invariants`（C:25、T:430）。仅暂停规则文件登记；测试及 make check 的接入照常实施。
+- **c3**：是否采用工作区信任准入检查及 `/api/v1/fs.chatTrust`、未信任/unknown 时置灰提示（C:30、36；D:264、414、491–497；T:250、262、349、412–413）。仅暂停 T2/T6/T11 的信任子项。V23 支持 hook 风险，父目录继承仍没有直接证明；测试继续使用隔离配置。
+- **c4**：是否允许 daemon 对 continue 终端新建/重载改写用户配置参数，固定为解析时的 `--resume U`，以及无记录时的行为（C:39；D:469–479；T:325、350）。仅暂停 T5/T6 的 continue 子项；现有无记录方案应先补齐 11.1 第 2 条的占用缺口，再形成满足 R2 的可审阅方案。批准参数改写不能代替修复唯一性缺口，也不授权扩大 H12。
+
+正式未决清单仍为 **c2、c3、c4**；c1 已于关口 A 获准（C:18–19、S:498）。本验证者不新增或代替用户决定 c 编号；上述无记录身份遗漏与停止断言属于当前方案的技术返工，不因第三轮仍不通过而自动变成已获授权的需求缩减。
+
+### 11.5 备注（进「后续」）
+
+- 同步 E:302 的 1 ms 精度；以追加方式更正 C:35 的实测编号范围；给 E:227–228、242、244、246 的第一批说明加上第二批补充/覆盖指引，保留旧证据。
+- 给 T:28/D:588 的 bypass plan 夹具说明补「AskUserQuestion 实测，ExitPlanMode 按收到的请求渲染、V25 待观察」，不把夹具计划当作真 claude 证据。
+- 将 D:530 的「尽力占用」改成与 6.9 一致的固定身份描述；D:602 的 slow interrupt 示例 `still_queued:[…]` 宜明确写 `[]`，与 D:591/T:293 的统一夹具规则一致。
+
+以上仅为应进入后续的备注清单，本验证者没有修改 tasks.md。**11.1 第 2 条的无记录身份缺口与第 3 条的停止保证不属于后续，不能靠备注放行。**
+
+### 11.6 记录保全
+
+本节只追加在原 design.md 第 666 行之后。追加前原文 **97775 字节**，SHA256 为 `910b303c5ca89c63843bc18edcb0eddc3ea824fe32d61ecc34eabaeadd5ed7d9`。追加后核对该前缀字节及哈希完全一致，并核对 spec.md、tasks.md、decisions.md、verdict-history.md、evidence/probe-stream-json.md 的哈希未变。worktree 前后 HEAD 均为 `78ca901cc8422eb8b82061b93ce87deec077c9d4`，git status --short 与 git diff --name-only HEAD 均无输出。没有改仓库代码、提交或推进开发阶段。

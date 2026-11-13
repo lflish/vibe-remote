@@ -38,3 +38,6 @@
 | 15 | dev-design | 推翻 d14：不扩大 H12 例外，改为固定身份——daemon 自己以 continue 语义启动的终端会话，启动时把 -c 改写成 --resume <当时最近的会话 U> 并原子占用；无记录时去掉 -c | 机械型 | 关口 B 第 2 轮 | 守 R2 且不改需求边界 | 保留 d14 | — | 已改设计；因改写用户配置的 flag 记 c4 |
 | c4 | dev-design | 终端会话（daemon 启动）带 continue 语义时，-c 改写为 --resume <U>（无记录则去掉 -c）。常见情况与 -c 选中的对话相同；唯一可观察差异是启动瞬间有新对话产生时仍接上解析时的那段 | 只有人能做 | 改写用户配置的 flag，触及 P1 | 这是唯一不扩大 H12 又能守 R2 的做法 | 保留 -c、在 spec 里声明不保证 | 中 | 等用户（关口 B 汇总）；只阻塞 T5/T6 的 continue 分支 |
 | 16 | dev-design | 停进程改为：interrupt → 等本回合 result ≤2s → 立即 SIGTERM 进程组 → 1s → SIGKILL；不再依赖关 stdin（V5/V14：EOF 会跑完队列） | 机械型 | 探针 V14 | 明确错误 | — | — | 已改 |
+| 17 | dev-design | 机器关口 B 第 3 轮：不通过（codex）。剩 2 项：continue 无记录分支未登记新 U；停进程不能保证排队回合零 result | 机械型 | design.md §11（第 3 轮） | — | — | — | 已安排修订 |
+| 18 | dev-design | 无记录分支：daemon 生成 UUID、原子占用后以 --session-id U 启动（仍在 c4 范围内）；停进程边界改为「SIGTERM 生效前的 result 照记，未配到 result 的消息发 dropped_on_stop，每条消息恰得其一」 | 机械型 | 关口 B 第 3 轮推理 | 明确错误 | 保留「绝不产生 result」的承诺 | — | 已改 |
+| 19 | dev-design | 更正 #13：探针第二批实测的是 V9–V14、V18–V23；V15–V17 仍待验证（V16 在 T3 内以假 claude 验证，V17 远程 Linux 交 dev-test） | 机械型 | 关口 B 第 2/3 轮备注 | 记录精确 | — | — | 已记 |
