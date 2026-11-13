@@ -225,7 +225,7 @@ ExitPlanMode **没有** `permission_suggestions` / `description`，但有 `requi
 
 - 没有测**不加** `--permission-prompt-tool stdio` 的情况（该参数被接受，所以按任务说明没有降级测试；为节省调用也未额外测）。
 - 未测 `updatedPermissions`（把 `permission_suggestions` 回传以"始终允许"）——suggestion 的 `destination: "localSettings"` 意味着会写入项目里的 `.claude/settings.local.json`。
-- 未测管道写满时的阻塞、未测 multiSelect 问题、未测 resume 一个正被另一进程使用的会话。
+- 未测管道写满时的阻塞、未测 multiSelect 问题、未测 resume 一个正被另一进程使用的会话。（multiSelect、updatedPermissions 已被第二批补充/覆盖，见下文「第二批（V9–V23）」）
 - 本机全局 hooks（iTerm2 cc-status）会在流中产生 `system/hook_*` 行，并在非 iTerm 环境下报 "No session is showing that tmux pane"（无害）。远程 Linux 上的 hooks 情况会不同。
 
 ## 对 daemon 设计的意义
@@ -237,13 +237,13 @@ ExitPlanMode **没有** `permission_suggestions` / `description`，但有 `requi
    - 允许：`{"type":"control_response","response":{"subtype":"success","request_id":ID,"response":{"behavior":"allow","updatedInput":<input>}}}`（`updatedInput` 要带上，原样回传即可）。
    - 拒绝：`…"response":{"behavior":"deny","message":"<原因>"}` → 回合继续，claude 看到一个 is_error 的 tool_result。
    - AskUserQuestion：allow 并带 `updatedInput.answers = {question 原文: option label}`。ExitPlanMode：allow = 批准计划，之后会收到 `system/status.permissionMode`。
-   - 出站 `interrupt` → 应答 `{"still_queued":[…]}`；`set_permission_mode` → 应答 `{"mode":…}`。
+   - 出站 `interrupt` → 应答 `{"still_queued":[…]}`；`set_permission_mode` → 应答 `{"mode":…}`。（已被第二批补充/覆盖：`still_queued` 不统计 stdin 队列，EOF 不能代替停止信号——见下文「第二批（V9–V23）」）
 4. **权限 UI 只针对 `can_use_tool`**：只读工具（`echo`、`ls`、Read）在 default 模式下不会询问；带 `requires_user_interaction: true` 的（AskUserQuestion / ExitPlanMode）应渲染为专门的交互卡片，而不是普通的"允许/拒绝"。
 5. **待处理的权限请求会挂住回合**：tool 在 control_response 回来之前不会执行（探针里总是立即应答，**没有测试长时间不应答是否超时**）。daemon 应在客户端断开期间**保存未应答的 can_use_tool**，重连时补发；否则回合会卡住。
 6. **中断结果**：`result.subtype = "error_during_execution"`、`is_error: true`、`terminal_reason: "aborted_streaming"`，之前还会有一条带部分文本的 `assistant` 和一条 `user` "[Request interrupted by user]"。UI 应把它显示为"已中断"，而不是报错。进程保持存活。
-7. **stdin 关闭 ≠ 停止**：claude 会跑完当前回合以及队列里的消息，然后 exit 0。要"关闭会话"应先 `interrupt`，再关 stdin，超时后再 kill。客户端断开时 daemon 应**保持管道打开并持续读 stdout 到缓冲区**（回合在后台继续完成；不读会在约 64KB 后让 claude 写阻塞）。
+7. **stdin 关闭 ≠ 停止**：claude 会跑完当前回合以及队列里的消息，然后 exit 0。要"关闭会话"应先 `interrupt`，再关 stdin，超时后再 kill。客户端断开时 daemon 应**保持管道打开并持续读 stdout 到缓冲区**（回合在后台继续完成；不读会在约 64KB 后让 claude 写阻塞）。（已被第二批补充/覆盖：`still_queued` 不统计 stdin 队列，EOF 不能代替停止信号——见下文「第二批（V9–V23）」）
 8. **回合边界 / 状态**：一个回合以 `result` 结束；`system/status {"status":"requesting"}` 表示正在请求 API；`api_retry` 可用来显示"网关重试中"（haiku 那次 503 重试了约 3 分钟才出 result）。`total_cost_usd` 是进程内累计值。流中有多种未知 `system` 子类型（hook_*、thinking_tokens…）→ 协议层必须容忍并透传/忽略未知类型。
-9. **排队**：回合进行中写入新的 user 消息会被排队（JSONL 里有 `queue-operation enqueue/dequeue`），当前回合结束后自动执行。可以利用这一点，不需要 daemon 自己做输入队列；interrupt 应答里的 `still_queued` 会告诉你还有哪些在排队。
+9. **排队**：回合进行中写入新的 user 消息会被排队（JSONL 里有 `queue-operation enqueue/dequeue`），当前回合结束后自动执行。可以利用这一点，不需要 daemon 自己做输入队列；interrupt 应答里的 `still_queued` 会告诉你还有哪些在排队。（已被第二批补充/覆盖：`still_queued` 不统计 stdin 队列，EOF 不能代替停止信号——见下文「第二批（V9–V23）」）
 
 ---
 

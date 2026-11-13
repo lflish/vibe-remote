@@ -1,6 +1,6 @@
 # 技术设计：双模式会话（终端 + 对话）
 
-对应需求：spec.md（R1–R19，H1–H17，关口 A：Q1 按 H1、Q2=A、Q3=A、c1 同意）　更新：2026-11-14（工程评审 15 条 + 复审 10 条 + 关口 B 三轮意见 + 第二批前置验证已修订，见第 10 节）
+对应需求：spec.md（R1–R19，H1–H17，关口 A：Q1 按 H1、Q2=A、Q3=A、c1 同意）　更新：2026-11-14（工程评审 15 条 + 复审 10 条 + 关口 B 四轮意见 + 第二批前置验证已修订，见第 10 节）
 
 术语：**会话 id** = vibe-remote 会话 id（`<ms>-<8hex>`，客户端生成的 `newSessionId`）；**claude 会话 id** = claude 自己的 UUID（`--session-id` / `--resume` 的参数，JSONL 文件名）。两者由 daemon 保存映射（H12）。
 
@@ -260,7 +260,7 @@ daemon 新包 `vibe-remoted/internal/chat`：
 | GET | `/api/v1/sessions` | 条目新增 4.8 字段 |
 | DELETE | `/api/v1/sessions/{id}` | 对话会话：停进程（第 6.4 节）、按 worktree 规则清理、删记录；JSONL 保留（R15.2）。worktree 有改动时同终端返回 409 `worktree_preserved` |
 | POST | `/api/v1/sessions/{id}/rename` | 对话会话：名字写进 `chat-sessions.json`（R15.1） |
-| POST | `/api/v1/sessions/{id}/reload` | 对话会话：在 `Manager.mu` 下做同步检查（不碰 `opMu`）：会话不存在 → 404；U 被别的会话（如交接出去的终端会话）持有 → 409 `{"error":"claude_session_busy","owner":"<会话 id>"}`；`reloading` 已为真 → 直接 202，不再起第二次重启（幂等）；否则置 `reloading=true` 并返回 **202**。后台 goroutine 调 `WithOp`：拿到锁后**重新检查**——会话已被删除 → 什么都不做；已交接（`handedOffTo` 非空）→ 只广播一次不变的 `chat_state`（`ended.reason="handed_off"`），什么都不做；否则 `RestartLocked`：停 → 等退出 → 按 6.2 第 6 步选 `--resume`/`--session-id` 启动，**占用不释放**（R2.2/R15.3/R13.2「重新启动」）。结束时清 `reloading`。进度和结果只走 `chat_state` 广播（4.6），`rest.ts` 的 8 s 超时不变（d10）。由交接创建的终端会话：重载命令不是 `ResolveClaudeReloadCmd()` 的 `-c`，而是 `HandoffCommand(exe, args, U, FindTranscript(U) 是否存在)`（`--resume U` 或 `--session-id U`），它持有的 U 不变。以 continue 语义启动的终端会话（**待 c4 确认**）：重载按 6.9 第 6 步执行——先确定并 claim 新的 U′（被别人持有 → 409 `claude_session_busy`，什么都不改），旧 U 在旧进程确认退出、新进程启动成功之前**一直保持占用**；启动失败则释放 U′、保留原占用。持有 U 的终端会话（交接创建的、continue 启动的）重载时都先停旧进程并确认退出，再 `respawn-pane`（6.9 第 6 步），不用 `respawn-pane -k` 的「边杀边起」。其它终端会话：行为不变 |
+| POST | `/api/v1/sessions/{id}/reload` | 对话会话：在 `Manager.mu` 下做同步检查（不碰 `opMu`）：会话不存在 → 404；U 被别的会话（如交接出去的终端会话）持有 → 409 `{"error":"claude_session_busy","owner":"<会话 id>"}`；`reloading` 已为真 → 直接 202，不再起第二次重启（幂等）；否则置 `reloading=true` 并返回 **202**。后台 goroutine 调 `WithOp`：拿到锁后**重新检查**——会话已被删除 → 什么都不做；已交接（`handedOffTo` 非空）→ 只广播一次不变的 `chat_state`（`ended.reason="handed_off"`），什么都不做；否则 `RestartLocked`：停 → 等退出 → 按 6.2 第 6 步选 `--resume`/`--session-id` 启动，**占用不释放**（R2.2/R15.3/R13.2「重新启动」）。结束时清 `reloading`。进度和结果只走 `chat_state` 广播（4.6），`rest.ts` 的 8 s 超时不变（d10）。由交接创建的终端会话：重载命令不是 `ResolveClaudeReloadCmd()` 的 `-c`，而是 `HandoffCommand(exe, args, U, FindTranscript(U) 是否存在)`（`--resume U` 或 `--session-id U`），它持有的 U 不变。以 continue 语义启动的终端会话（**待 c4 确认**）：重载按 6.9 第 6 步执行——先确定并 claim 新的 U′（被别人持有 → 409 `claude_session_busy`，什么都不改），旧 U 在旧进程确认退出、新进程启动成功之前**一直保持占用**；启动失败时仅当 U′≠U 且本次新增了 claim 才释放 U′，U′=U 时不释放原 claim（旧 U 始终归该会话）。持有 U 的终端会话（交接创建的、continue 启动的）重载时都先停旧进程并确认退出，再 `respawn-pane`（6.9 第 6 步），不用 `respawn-pane -k` 的「边杀边起」。其它终端会话：行为不变 |
 | GET | `/api/v1/fs` | 响应新增可选 `chatTrust: "trusted"\|"untrusted"\|"unknown"`（当前列出目录的 `TrustState`，第 7 节；**待 c3 确认**）。目录选择器与 daemon 一致：只有 `trusted` 可选「对话」，`untrusted` 与 `unknown` 都置灰并提示「先用终端界面在该目录打开一次 claude 以信任此目录」 |
 
 `/api/v1/info.chat`：
@@ -428,7 +428,7 @@ stateDiagram-v2
 
 ### 6.4 停进程（重载、交接、删除、daemon 退出共用）
 
-在 `WithOp` 内（`StopLocked`），记 `stopping=reason` → 若 running 先发 `interrupt` 并等当前回合的 `result`（≤2 s；能力降级时同样只等 result）→ **立即** `SIGTERM` 进程组（不依赖 stdin EOF：EOF 会让 claude 跑完已排队的消息，V5、V14）→ 等 1 s → `SIGKILL` 进程组 → 等 `Wait()` 返回 → 关闭 stdin 管道（只做清理）→ 对每条已写入但没有拿到 `result` 的用户消息发 `vr_notice{code:"dropped_on_stop", clientMsgId}`（客户端标「未送达」，可在新进程里重发，6.8）→ 退出回调（独立 goroutine，不持 `Session.mu`）：`reason≠restart` 时 `releaseClaude(U)`；`reason=restart`（`RestartLocked`）时**占用不释放**，随后直接启动新进程（停 → 等退出 → 启动，占用不释放）。最坏约 4 s（d10）。先中断让当前回合以「已中断」正常收尾、写完 JSONL；随后直接发信号（只关 stdin 时 claude 会跑完当前回合**和排队的消息**再退出，探针 V5、V14，不能用来停止）。停止边界按真实进程语义定义：daemon 与 claude 是两个进程，中断回合的 `result` 之后 claude 可能已经取出排队的消息并跑完，SIGTERM 不能撤回已经写出的输出。因此——**SIGTERM 生效前 claude 已经输出的任何 `result` 都正常记录（含排队回合）；Stop 后对每条已写入但没有配到 `result` 的消息发 `vr_notice dropped_on_stop`；每条写入的消息恰好得到 `result` 或 `dropped_on_stop` 之一**，不保证排队回合一定不完成。只有 `Wait()` 返回后才允许启动新进程（R2.2/R2.3）。读协程见到 EOF 时按 `stopping` 区分「我方停止」与「真退出」，与终端 `detaching` 同义。WS 断开从不触发停进程（R12.1/R13.3）。
+在 `WithOp` 内（`StopLocked`），记 `stopping=reason` → 若 running 先发 `interrupt` 并等当前回合的 `result`（≤2 s；能力降级时同样只等 result）→ **立即** `SIGTERM` 进程组（不依赖 stdin EOF：EOF 会让 claude 跑完已排队的消息，V5、V14）→ 等 1 s → `SIGKILL` 进程组 → 等 `Wait()` 返回 → **再等 stdout 读协程读到 EOF、并把已读到的每一行都处理完（join 读协程）** → 关闭 stdin 管道（只做清理）→ 然后在 `Session.mu` 下结算：对每条已写入但仍没有配到 `result` 的用户消息恰好发一条 `vr_notice{code:"dropped_on_stop", clientMsgId}`（客户端标「未送达」，可在新进程里重发，6.8）→ 退出回调（独立 goroutine，不持 `Session.mu`）：`reason≠restart` 时 `releaseClaude(U)`；`reason=restart`（`RestartLocked`）时**占用不释放**，随后直接启动新进程（停 → 等退出 → 启动，占用不释放）。最坏约 4 s（d10）。先中断让当前回合以「已中断」正常收尾、写完 JSONL；随后直接发信号（只关 stdin 时 claude 会跑完当前回合**和排队的消息**再退出，探针 V5、V14，不能用来停止）。停止边界按真实进程语义定义：daemon 与 claude 是两个进程，中断回合的 `result` 之后 claude 可能已经取出排队的消息并跑完，SIGTERM 不能撤回已经写出的输出。因此——**SIGTERM 生效前 claude 已经输出的任何 `result` 都正常记录（含排队回合）；Stop 后对每条已写入但没有配到 `result` 的消息发 `vr_notice dropped_on_stop`；每条写入的消息恰好得到 `result` 或 `dropped_on_stop` 之一**，不保证排队回合一定不完成。只有 `Wait()` 返回、读协程 join 完毕、结算完成后才允许启动新进程（R2.2/R2.3）。管道归属：stdout 管道由 daemon 自己用 `os.Pipe()` 创建并持有读端（不用 `exec.Cmd.StdoutPipe`——它会在 `Wait()` 时自动关闭读端，可能丢掉已写入管道但尚未读出的行）；子进程启动后 daemon 关闭自己手里的写端，读协程读到 EOF 后才关闭读端。读协程绑定其所属 epoch：它只往该 epoch 的缓冲与状态里写，结算后旧 epoch 即封闭，新 epoch 由新进程的新读协程负责，旧读协程任何迟到的处理都不会写进新 epoch。读协程见到 EOF 时按 `stopping` 区分「我方停止」与「真退出」，与终端 `detaching` 同义。WS 断开从不触发停进程（R12.1/R13.3）。
 
 ### 6.5 交接（attach `handoffFrom`）
 
@@ -475,7 +475,7 @@ stateDiagram-v2
 3. 找到 U：在 `Manager.mu` 下 `claimClaude(U, 终端会话 id)`——被别人持有（例如运行中的对话会话）→ 新建返回 `error{code:"claude_session_busy", fatal:true}`、重载返回 409，消息写明持有者名字；成功 → 用 `ShellJoin` 重新拼出命令，把 `-c`/`--continue` **替换为 `--resume U`**（其余参数顺序不变），写 tmux 选项 `@vibe_remote_claude_u=U`，再启动。启动失败 → `releaseClaude`。
 4. 找不到 U（该目录没有任何对话记录）：daemon 生成 UUID v4 作为 U，同样在 `Manager.mu` 下 `claimClaude(U, 终端会话 id)`，把 `-c`/`--continue` **替换为 `--session-id U`**，写 `@vibe_remote_claude_u=U` 再启动（此时 claude 用 `-c` 也只会开一段新对话，所以对用户是同样的结果，但会话 id 由 daemon 事先固定）。这样终端随后写出 U 的 JSONL 时，桌面上对该目录新建对话并勾 `-c` 会解析到 U，claim 失败 → `claude_session_busy`（消息写明该终端会话名），不会再起第二个进程。启动失败 → `releaseClaude`。
 5. 释放：终端会话被删除，或 reconcile 发现其 tmux 会话已消失。
-6. 重载（持有 U 的终端会话，包括交接创建的）：① 按 2–4 确定 U′（交接创建的会话 U′ = U；有 U 的记录用 `--resume U′`，仍无记录用 `--session-id U′`）；② U′≠U 时先 `claimClaude(U′)`，失败 → 409，什么都不改；③ 停旧进程并确认退出：临时给该 pane 设 `remain-on-exit on`，取 `#{pane_pid}` 向其进程组发 SIGTERM → 最多等 2 s → SIGKILL → 确认 pid 消失（同 6.6 的确认方式）；④ `respawn-pane`（不带 `-k`，pane 此时已是 dead 状态）启动新命令，恢复 `remain-on-exit`；⑤ 启动成功后 U′≠U 时才释放旧 U；启动失败 → 释放 U′、旧 U 保持占用（pane 停在 dead 状态，用户可再次重载或删除，reconcile 在 tmux 会话消失时释放）。旧 U 在第 ③ 步确认退出之前任何时候都不释放，新进程永远在旧进程确认退出之后才启动。
+6. 重载（持有 U 的终端会话，包括交接创建的）：① 按 2–4 确定 U′（交接创建的会话 U′ = U；有 U 的记录用 `--resume U′`，仍无记录用 `--session-id U′`）；② U′≠U 时先 `claimClaude(U′)`（记下「本次新增了 claim」），失败 → 409，什么都不改；U′=U 时不新增 claim，沿用原占用；③ 停旧进程并确认退出：临时给该 pane 设 `remain-on-exit on`，取 `#{pane_pid}` 向其进程组发 SIGTERM → 最多等 2 s → SIGKILL → 确认 pid 消失（同 6.6 的确认方式）；④ `respawn-pane`（不带 `-k`，pane 此时已是 dead 状态）启动新命令，恢复 `remain-on-exit`；⑤ 启动成功后 U′≠U 时才释放旧 U；启动失败 → 仅当 U′≠U 且本次新增了 claim 时释放 U′，U′=U 时不释放原 claim（旧 U 始终归该会话）（pane 停在 dead 状态，用户可再次重载或删除，reconcile 在 tmux 会话消失时释放）。旧 U 在第 ③ 步确认退出之前任何时候都不释放，新进程永远在旧进程确认退出之后才启动。
 
 为什么 P1 在常见情况下成立：解析与启动之间没有新对话写出时，`--resume U` 打开的正是 `-c` 在那一刻会选中的同一段对话，内容、TUI 和后续行为一致；第 4 步改成 `--session-id U` 时 claude 本来也是新开对话，只是会话 id 由 daemon 预先给定。唯一可观察的差别是那个竞态窗口：若在解析后、启动前恰好有另一段对话写出了更新的 JSONL，终端打开的是解析时最新的 U，而不是那段更新的对话——这正是保证「同一 U 只有一个进程」所需要的。由于这条规则改写了用户在终端模式下配置的参数，记 **c4** 交用户确认；确认前本节不实现，终端会话保持现状（不改写、不 claim），F7 的风险在汇总里如实列出。不存在任何对话会话时第 3 步的冲突分支不会触发。
 
@@ -608,6 +608,7 @@ CI 与 verify 不依赖真 claude，全部对话测试跑这个程序（`go buil
   - 其它文本：等同 `echo`。
 - SIGTERM：默认立即以退出码 143 结束（不跑完排队消息）。`FAKE_CLAUDE_STUBBORN=1`：忽略 `interrupt` 与 stdin EOF，并用 `signal.Notify` 捕获 SIGTERM——每收到一次就向 `$FAKE_CLAUDE_SIGNAL_LOG` 追加一行 `SIGTERM ignored` 后继续运行（不能用 `signal.Ignore`，那样收不到信号也写不了日志），只能被 SIGKILL 结束，供测试断言确实走到了 SIGKILL 阶段（停进程时序与孤儿清理测试用）。
 - `FAKE_CLAUDE_NO_INIT_REPLY=1`：收到 `initialize` 不回复（斜杠命令来源回退测试用）。
+- `FAKE_CLAUDE_EXIT_AFTER_RESULT=<n>`：输出第 n 个 `result` 行后立即以 143 退出（模拟「某条消息的 result 已写入管道、进程随即被信号结束」）；配合 daemon 侧测试钩子「读协程处理每一行前暂停」，可构造「result 已写出/已读出但尚未登记时进程已退出」的时序。
 - `FAKE_CLAUDE_CAPS`：覆盖 `system/init.capabilities`（逗号分隔；设为空串时省略整个字段，能力降级测试用）。
 - `set_permission_mode` → 回 `{mode}` 并发 `system/status{permissionMode}`（V7）。
 - 每条用户/助手消息按 claude 格式追加到 `$CLAUDE_CONFIG_DIR/projects/<cwd 的 / 和 . 换成 ->/<会话 id>.jsonl`（含一行 `queue-operation`，供历史过滤测试）。
@@ -668,4 +669,14 @@ CI 与 verify 不依赖真 claude，全部对话测试跑这个程序（`go buil
   - 6.9 无记录分支：不再「去掉 `-c`、不 claim」，改为 daemon 生成 UUID v4、原子 claim 后以 `--session-id U` 启动；终端随后写出 JSONL 时，对话 `-c` 解析到 U 会得到 `claude_session_busy`（仍属 c4 范围）。重载新增第 6 步：先 claim 新 U′、停旧进程并确认退出、再 `respawn-pane`，旧 U 在旧进程确认退出前不释放，启动失败保留原占用（第 2 节、4.9、6.9、第 8 节）。
   - 6.4 停止边界改为真实进程语义：SIGTERM 生效前已输出的 result（含排队回合）正常记录，其余已写入的消息发 `dropped_on_stop`，每条消息恰好得到其一；删除「排队回合绝不会产生 result」的说法。
   - 假 claude 的 `slow` 中断应答 `still_queued` 改为 `[]`；bypass 下 `plan` 标注为假定行为（V25）。
+- 2026-11-14 关口 B 第四轮修订（第 11 节报告不改）：
+  - 重载启动失败的回滚：仅当 U′≠U 且本次新增了 claim 才释放 U′，U′=U 时原 claim 保留（4.9、6.9 第 6 步）。
+  - 停进程结算：`Wait()` 后再 join stdout 读协程（读到 EOF 并处理完已读的行），然后在 `Session.mu` 下给仍未配到 result 的消息各发一条 `dropped_on_stop`；stdout 管道由 daemon 自持（不用 `StdoutPipe`），读协程绑定 epoch，不会写进新 epoch（6.4、9.2）。
 
+## 11. 方案验证（机器关口 B）
+
+- 结论：**未由独立验证者放行**（4 轮 codex 验证全部为「不通过」，每轮阻挡项递减：6 → 3 → 2 → 2 处条文；第 4 轮剩下的两处条文已按验证者给出的改法修正，但验证者轮次已到本机上限 6/6，未再验证）。是否以此状态进入开发 = **c5**，等用户决定。
+- 验证者：codex（独立模型）×4 轮；工程评审 same ×2 轮。历次完整结论见 `verdict-history.md`。
+- 对照：70 个场景 → 设计 → 任务/测试的对照表见 verdict-history 第 1 轮 11.3；此后各轮只核对增量。
+- 重跑的前置验证：第 1 轮重跑 `driver.mjs v3`（interrupt 序列与证据一致）；V1–V14、V18–V23 由探针实测；V15–V17 待验证（V16 在 T3 内用假 claude，V17 远程 Linux 交 dev-test）。
+- 未决定、只能由用户决定的事：c2（9 条 invariants 登记进 .devflow.yml）、c3（工作区信任准入）、c4（终端 continue 参数改写为固定会话身份）、c5（验证轮次用尽后是否放行）。

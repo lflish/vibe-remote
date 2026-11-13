@@ -41,3 +41,5 @@
 | 17 | dev-design | 机器关口 B 第 3 轮：不通过（codex）。剩 2 项：continue 无记录分支未登记新 U；停进程不能保证排队回合零 result | 机械型 | design.md §11（第 3 轮） | — | — | — | 已安排修订 |
 | 18 | dev-design | 无记录分支：daemon 生成 UUID、原子占用后以 --session-id U 启动（仍在 c4 范围内）；停进程边界改为「SIGTERM 生效前的 result 照记，未配到 result 的消息发 dropped_on_stop，每条消息恰得其一」 | 机械型 | 关口 B 第 3 轮推理 | 明确错误 | 保留「绝不产生 result」的承诺 | — | 已改 |
 | 19 | dev-design | 更正 #13：探针第二批实测的是 V9–V14、V18–V23；V15–V17 仍待验证（V16 在 T3 内以假 claude 验证，V17 远程 Linux 交 dev-test） | 机械型 | 关口 B 第 2/3 轮备注 | 记录精确 | — | — | 已记 |
+| 20 | dev-design | 机器关口 B 第 4 轮：不通过（codex）。剩 2 处条文：同 U 重载失败回滚不得释放原占用；停进程须等读协程处理完 stdout 再结算 dropped_on_stop | 机械型 | design.md §11（第 4 轮） | — | — | — | 已改条文；验证者轮次已到上限（6/6） |
+| c5 | dev-design | 验证者轮次用尽（budget verify_rounds_per_change=6），第 4 轮剩下的两处条文修正没有经过独立验证。是否接受「已按验证者给出的明确改法修正」作为关口 B 放行，进入开发；或追加一轮验证（超出上限） | 只有人能做 | 超出花费上限 | 两处都是验证者给出明确改法的条文修正，开发阶段的测试（TestReaderJoinBeforeSettle、T:46 失败注入）会再次覆盖 | 追加第 5 轮验证 | 低 | 等用户 |
