@@ -72,10 +72,17 @@ func main() {
 	// Chat sessions: their table lives in state_dir. Records of the previous
 	// daemon's still-running chats are ended (their processes stopped) here.
 	mgr.SetChatConfig(session.ChatConfig{ProjectsDir: chat.ProjectsDir()})
-	if store, err := chat.NewStore(cfg.StateDir); err != nil {
-		log.Printf("warning: state_dir %s is not writable (%v); chat sessions are unavailable", cfg.StateDir, err)
+	store, chatStateErr := chat.NewStore(cfg.StateDir)
+	if chatStateErr != nil {
+		log.Printf("warning: state_dir %s is not writable (%v); chat sessions are unavailable", cfg.StateDir, chatStateErr)
 	} else if err := mgr.LoadChats(store); err != nil {
 		log.Printf("warning: load chat sessions from %s: %v", store.Path(), err)
+	}
+	// Probe `claude --version` in the background now, so the first
+	// /api/v1/info can already tell whether chat is supported.
+	prober := server.NewProber(cfg)
+	if _, reason := chat.ParseClaudeCmd(cfg.ClaudeCmd); reason == "" {
+		prober.Start()
 	}
 
 	// Stop on SIGINT/SIGTERM with a graceful HTTP shutdown. tmux sessions are
@@ -84,7 +91,8 @@ func main() {
 	defer stop()
 
 	// Start server
-	srv := server.New(cfg, mgr, server.WithVersion(version))
+	srv := server.New(cfg, mgr, server.WithVersion(version), server.WithProber(prober),
+		server.WithChatStateError(chatStateErr))
 	err = srv.ListenAndServe(ctx)
 	// Chat processes cannot outlive the daemon (unlike tmux sessions); stop
 	// them and record daemon_restart either way.

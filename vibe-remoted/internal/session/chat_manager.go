@@ -660,3 +660,83 @@ func (m *Manager) recordsLocked() []chat.Record {
 	})
 	return out
 }
+
+// --- handoff ---
+
+// Handoff moves chat session chatID's conversation to a new terminal session
+// newID running `claude --resume U` (design 6.5, R14). It is idempotent like
+// Create: a replay of newID attaches to the session the first attempt made,
+// and a chat already handed off to a live terminal session returns that one.
+// The chat process is stopped (its turn interrupted first) before the
+// terminal's claude starts, and the terminal session holds U from then on.
+func (m *Manager) Handoff(chatID, newID string, cols, rows uint16) (*Runner, error) {
+	if newID == "" {
+		newID = generateID()
+	} else {
+		if !ValidSessionID(newID) {
+			return nil, ErrInvalidSessionID
+		}
+		done, exists := m.beginCreate(newID)
+		if exists {
+			return m.Attach(newID, cols, rows)
+		}
+		// Held until the end: the new terminal session is created under this
+		// placeholder (createTerminalLocked), never through beginCreate again.
+		defer done()
+	}
+	m.mu.RLock()
+	e := m.chats[chatID]
+	m.mu.RUnlock()
+	if e == nil {
+		return nil, sessionNotFound(chatID)
+	}
+	var runner *Runner
+	var err error
+	e.sess.WithOp(func(ops chat.OpHandle) {
+		m.mu.RLock()
+		cur := m.chats[chatID]
+		rec := e.rec
+		m.mu.RUnlock()
+		if cur != e {
+			err = sessionNotFound(chatID)
+			return
+		}
+		if rec.HandedOffTo != "" {
+			if r, aerr := m.Attach(rec.HandedOffTo, cols, rows); aerr == nil {
+				runner = r
+				return
+			}
+		}
+		_ = ops.StopLocked(protocol.EndReasonStopped) // releases U before returning
+		u := rec.ClaudeSessionID
+		if err = m.claimClaude(u, newID); err != nil {
+			return
+		}
+		_, found := chat.FindTranscript(m.projectsDir(), u)
+		opts := CreateOptions{
+			Workdir: rec.Workdir, Mode: protocol.SessionMode(rec.Mode), Cols: cols, Rows: rows,
+			ClaudeCmdOverride: chat.HandoffCommand(rec.Exe, rec.Args, u, found), ClaudeU: u,
+		}
+		worktree := protocol.SessionMode(rec.Mode) == protocol.SessionModeWorktree
+		if worktree {
+			// The terminal session takes the worktree over; deleting the chat
+			// later leaves it alone.
+			opts.Worktree = &WorktreeMetadata{SourceWorkdir: rec.SourceWorkdir, SourceRepo: rec.SourceRepo,
+				WorktreeRoot: rec.WorktreeRoot, Branch: rec.Branch}
+		}
+		if runner, err = m.createTerminalLocked(newID, opts); err != nil {
+			m.releaseClaude(u, newID)
+			runner = nil
+			return
+		}
+		m.mu.Lock()
+		e.rec.HandedOffTo = newID
+		if worktree {
+			e.rec.WorktreeHandedOff = true
+		}
+		m.persistLocked()
+		m.mu.Unlock()
+		e.sess.SetHandedOff(newID)
+	})
+	return runner, err
+}
