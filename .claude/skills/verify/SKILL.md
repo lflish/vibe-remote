@@ -1,6 +1,6 @@
 ---
 name: verify
-description: End-to-end smoke test of the real client↔daemon path on this Mac, without a remote machine — starts a throwaway vibe-remoted (tmux + /bin/bash) and drives it over the actual WebSocket/REST protocol (auth, attach, PTY round-trip, hook env/token, events→notify, per-session env isolation, delete). Use after changing vibe-remoted, the protocol, or desktop connection code, before claiming the change works.
+description: End-to-end smoke test of the real client↔daemon path on this Mac, without a remote machine — starts a throwaway vibe-remoted (tmux + /bin/bash) and drives it over the actual WebSocket/REST protocol (auth, attach, PTY round-trip, hook env/token, events→notify, per-session env isolation, delete), plus a chat-session smoke against a throwaway daemon running the fake claude. Use after changing vibe-remoted, the protocol, or desktop connection code, before claiming the change works.
 ---
 
 # verify
@@ -35,6 +35,24 @@ VR_TOKEN=$TOKEN node .claude/skills/verify/scripts/ws-smoke.mjs 127.0.0.1:$PORT 
 Each line is `PASS`/`FAIL`; exit code is non-zero on any failure. Never print
 `$TOKEN` in your reply.
 
+### Chat sessions (protocol v3)
+
+Chat mode only runs claude, so `/bin/bash` can't stand in. `ws-chat-smoke.mjs`
+needs no daemon from step 1: it builds vibe-remoted and the fake claude
+(`vibe-remoted/internal/chat/fakeclaude`), starts its own daemon with
+`claude_cmd` pointing at the fake, its own `state_dir`, `CLAUDE_CONFIG_DIR`
+(with a workspace-trust file for its temp folders) and tmux server
+(`TMUX_TMPDIR`), and removes all of it afterwards:
+
+```bash
+node .claude/skills/verify/scripts/ws-chat-smoke.mjs
+```
+
+Cases: `chat: create`, `chat: replay before ready`, `chat: two clients`,
+`chat: pending survives reconnect`, `chat: resync 50`, `chat: handoff`,
+`chat: daemon restart → ended`, `chat: state without hooks`,
+`chat: delete keeps jsonl`. Same PASS/FAIL output and exit code.
+
 ## 3. GUI (when desktop code, Electron, xterm or clipboard changed)
 
 `ws-smoke.mjs` covers the wire protocol, not the app. For the desktop, run the
@@ -55,7 +73,12 @@ It checks:
 - ⌘V pastes;
 - navigation and `window.open` are blocked;
 - a hook event raises a desktop notification (it reports `shown` or `fallback`);
-- after a daemon restart the client reconnects and the session still works.
+- after a daemon restart the client reconnects and the session still works;
+- chat (a second throwaway daemon running the fake claude, listed as a second
+  machine): `chat session created via picker`, `chat reply rendered`,
+  `permission allow once resumes`.
+
+The terminal cases stay on the `/bin/bash` daemon.
 
 Neither script covers packaged-build-only behaviour, which differs for
 notifications because unsigned builds use the Dock fallback. Check that by

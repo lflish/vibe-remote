@@ -8,10 +8,16 @@
 //   typing → PTY echo; drag-select under mouse reporting + ⌘C; ⌘V paste
 //   navigation / window.open blocked; hook event → desktop notification
 //   daemon restart → reconnect banner → session recovered
+//   chat (second daemon, fake claude): new chat session via the picker →
+//   reply rendered → permission prompt allowed once → turn resumes
 //
 // It launches the *built* app (dist/) with the stock Electron binary against a
 // throwaway daemon and a throwaway userData dir, so the developer's real
-// machines.json, window state and tmux sessions are never touched. macOS only:
+// machines.json, window state and tmux sessions are never touched. The chat
+// cases use a second throwaway daemon whose claude_cmd is the fake claude
+// (vibe-remoted/internal/chat/fakeclaude), with its own port, state_dir,
+// CLAUDE_CONFIG_DIR (holding the workspace-trust file for its temp folder) and
+// tmux server; the terminal cases stay on the /bin/bash daemon. macOS only:
 // it needs a display and tmux.
 //
 // Usage (from the repo root):  node .claude/skills/verify/scripts/gui-smoke.mjs
@@ -20,7 +26,7 @@
 // Requires Node 22+ (global WebSocket).
 
 import { spawn, spawnSync } from 'node:child_process';
-import { mkdtempSync, rmSync, writeFileSync, readFileSync, existsSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, realpathSync, rmSync, writeFileSync, readFileSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -59,6 +65,14 @@ const cdpPort = 30000 + Math.floor(Math.random() * 10000);
 const token = randomBytes(32).toString('hex');
 const daemonBin = join(work, 'vibe-remoted');
 const daemonCfg = join(work, 'daemon.json');
+// Chat daemon: fake claude, isolated claude config + tmux server (short path:
+// macOS caps socket paths at ~104 bytes).
+const chatPort = 20000 + ((port - 20000 + 1 + Math.floor(Math.random() * 9998)) % 10000);
+const chatToken = randomBytes(32).toString('hex');
+const chatCfg = join(work, 'chat-daemon.json');
+const claudeBin = join(work, 'bin', 'claude');
+const chatTmux = mkdtempSync('/tmp/vr-gt-');
+let chatDaemon = null;
 const keychainService = 'vibe-remote Safe Storage';
 const keychainExisted = keychainHas(keychainService);
 let daemon = null;
@@ -84,6 +98,32 @@ async function stopDaemon() {
   daemon = null;
   d.kill('SIGTERM');
   await new Promise((r) => { d.once('exit', r); setTimeout(r, 3000); });
+}
+
+// The chat daemon's environment: no nested-claude guard from the shell running
+// this script, claude's config (transcripts, trust) and tmux in temp dirs.
+function chatEnv(configDir) {
+  const env = {};
+  for (const [k, v] of Object.entries(process.env)) {
+    if (['CLAUDECODE', 'CLAUDE_CODE_ENTRYPOINT', 'CLAUDE_CONFIG_DIR', 'TMUX', 'TMUX_PANE'].includes(k) || k.startsWith('FAKE_CLAUDE_')) continue;
+    env[k] = v;
+  }
+  return { ...env, CLAUDE_CONFIG_DIR: configDir, TMUX_TMPDIR: chatTmux };
+}
+
+function startChatDaemon(configDir) {
+  chatDaemon = spawn(daemonBin, ['--config', chatCfg], { env: chatEnv(configDir), stdio: ['ignore', 'pipe', 'pipe'] });
+  chatDaemon.stdout.on('data', () => {});
+  chatDaemon.stderr.on('data', () => {});
+  return waitFor(async () => (await fetch(`http://127.0.0.1:${chatPort}/healthz`)).ok, 15000, 'chat daemon /healthz');
+}
+
+async function stopChatDaemon() {
+  if (!chatDaemon) return;
+  const d = chatDaemon;
+  chatDaemon = null;
+  d.kill('SIGTERM');
+  await new Promise((r) => { d.once('exit', r); setTimeout(r, 8000); });
 }
 
 async function restSessions() {
@@ -161,6 +201,26 @@ async function main() {
   ok(`daemon up on 127.0.0.1:${port}`);
   const preexisting = new Set((await restSessions()).map((s) => s.id));
 
+  // Second daemon for the chat cases: claude_cmd is the fake claude, and its
+  // temp workdir is marked trusted in its own CLAUDE_CONFIG_DIR (never the
+  // real ~/.claude.json).
+  const fake = spawnSync('go', ['build', '-o', claudeBin, './internal/chat/fakeclaude'], { cwd: join(ROOT, 'vibe-remoted'), stdio: 'inherit' });
+  if (fake.status !== 0) throw new Error('go build fakeclaude failed');
+  const chatDir = join(work, 'chat-proj');
+  const chatConfigDir = join(work, 'chat-claude-config');
+  mkdirSync(chatDir, { recursive: true });
+  mkdirSync(chatConfigDir, { recursive: true, mode: 0o700 });
+  const chatWorkdir = realpathSync(chatDir);
+  writeFileSync(join(chatConfigDir, '.claude.json'), JSON.stringify({ projects: { [chatWorkdir]: { hasTrustDialogAccepted: true } } }), { mode: 0o600 });
+  writeFileSync(chatCfg, JSON.stringify({
+    bind_addr: '127.0.0.1', port: chatPort, token: chatToken,
+    default_workdir: chatWorkdir, allowed_roots: [chatWorkdir],
+    use_tmux: true, claude_cmd: claudeBin, claude_reload_cmd: claudeBin, login_shell: false,
+    state_dir: join(work, 'chat-state'),
+  }), { mode: 0o600 });
+  await startChatDaemon(chatConfigDir);
+  ok(`chat daemon (fake claude) up on 127.0.0.1:${chatPort}`);
+
   if (!args.has('--no-build')) {
     const vb = spawnSync('npx', ['vite', 'build'], { cwd: DESKTOP, stdio: ['ignore', 'ignore', 'inherit'] });
     if (vb.status !== 0) throw new Error('vite build failed');
@@ -170,7 +230,8 @@ async function main() {
   // on first launch through the real safeStorage code path.
   spawnSync('mkdir', ['-p', userData]);
   const machine = { name: 'gui-smoke', addr: '127.0.0.1', port, token };
-  writeFileSync(join(userData, 'machines.json'), JSON.stringify([machine], null, 2), { mode: 0o644 });
+  const chatMachine = { name: 'gui-chat', addr: '127.0.0.1', port: chatPort, token: chatToken };
+  writeFileSync(join(userData, 'machines.json'), JSON.stringify([machine, chatMachine], null, 2), { mode: 0o644 });
 
   const electronBin = createRequire(join(DESKTOP, 'package.json'))('electron');
   const electronVersion = JSON.parse(readFileSync(join(DESKTOP, 'node_modules/electron/package.json'), 'utf-8')).version;
@@ -333,6 +394,9 @@ async function main() {
     (e) => fail(`post-reconnect session — ${e.message}`),
   );
 
+  // 9. Chat sessions on the second machine (fake claude).
+  await chatCases();
+
   const exceptions = cdp.events.filter((e) => e.method === 'Runtime.exceptionThrown')
     .map((e) => e.params.exceptionDetails.exception?.description || e.params.exceptionDetails.text);
   check(exceptions.length === 0, 'no uncaught renderer exceptions', exceptions.join(' | '));
@@ -341,6 +405,61 @@ async function main() {
   if (args.has('--keep')) {
     console.log('--keep: app left running; press Ctrl+C to clean up');
     await new Promise((r) => process.once('SIGINT', r));
+  }
+}
+
+const $tid = (id) => `document.querySelector('[data-testid="${id}"]')`;
+const visibleChat = `[...document.querySelectorAll('.chat-instance')].find((c) => c.style.display !== 'none')`;
+
+async function chatCases() {
+  // chat session created via picker: open the gui-chat machine, pick "Chat".
+  try {
+    await cdp.evaluate(`[...document.querySelectorAll('.machine-name')].find((b) => b.textContent.includes('gui-chat')).click(), true`);
+    await waitFor(() => cdp.evaluate(`!!document.querySelector('.workspace-mode-card:not([disabled])')`), 15000, 'chat machine online');
+    await cdp.evaluate(`document.querySelector('.workspace-mode-card:not([disabled])').click(), true`);
+    await waitFor(() => cdp.evaluate(`(() => { const c = ${$tid('picker-ui-chat')}; return !!c && !c.disabled; })()`), 15000, 'chat card enabled');
+    await cdp.evaluate(`${$tid('picker-ui-chat')}.click(), true`);
+    await waitFor(() => cdp.evaluate(`(() => { const b = document.querySelector('.modal .modal-footer .btn-primary'); return !!b && !b.disabled && ${$tid('picker-ui-chat')}.getAttribute('aria-pressed') === 'true'; })()`), 10000, 'picker ready with chat chosen');
+    await cdp.evaluate(`document.querySelector('.modal .modal-footer .btn-primary').click(), true`);
+    await waitFor(() => cdp.evaluate(`(() => {
+      const v = ${visibleChat};
+      const input = v?.querySelector('[data-testid="chat-input"]');
+      return !!v && v.dataset.testid === 'chat-view' && !!input && !input.disabled
+        && !!document.querySelector('.session-item[data-ui="chat"]');
+    })()`), 20000, 'chat view open with a chat sidebar entry');
+    ok('chat session created via picker');
+  } catch (e) {
+    fail(`chat session created via picker — ${e.message}`);
+    return;
+  }
+
+  const sendChat = async (text) => {
+    await cdp.evaluate(`${visibleChat}.querySelector('[data-testid="chat-input"]').focus(), true`);
+    await cdp.send('Input.insertText', { text });
+    await pressKey('Enter');
+  };
+  const assistantText = () => cdp.evaluate(`[...${visibleChat}.querySelectorAll('[data-testid="chat-msg-assistant"]')].map((m) => m.textContent).join('\\n')`);
+
+  // chat reply rendered
+  try {
+    await sendChat('echo hi from gui');
+    await waitFor(() => cdp.evaluate(`[...${visibleChat}.querySelectorAll('[data-testid="chat-msg-user"]')].some((m) => m.textContent.includes('echo hi from gui'))`), 10000, 'user message');
+    await waitFor(async () => (await assistantText()).includes('hi from gui'), 15000, 'assistant reply');
+    ok('chat reply rendered');
+  } catch (e) {
+    fail(`chat reply rendered — ${e.message}`);
+  }
+
+  // permission allow once resumes
+  try {
+    await sendChat('perm touch gui-smoke.txt');
+    await waitFor(() => cdp.evaluate(`!!${visibleChat}.querySelector('[data-testid="chat-perm"] [data-testid="chat-perm-allow"]')`), 15000, 'permission prompt');
+    await cdp.evaluate(`${visibleChat}.querySelector('[data-testid="chat-perm-allow"]').click(), true`);
+    await waitFor(() => cdp.evaluate(`!${visibleChat}.querySelector('[data-testid="chat-perm"]')`), 10000, 'prompt closed');
+    await waitFor(async () => (await assistantText()).includes('done Bash'), 15000, 'reply after allow');
+    ok('permission allow once resumes');
+  } catch (e) {
+    fail(`permission allow once resumes — ${e.message}`);
   }
 }
 
@@ -354,6 +473,9 @@ async function cleanup() {
   try { cdp?.ws.close(); } catch { /* closed */ }
   if (electron) { electron.kill('SIGTERM'); await new Promise((r) => { electron.once('exit', r); setTimeout(r, 3000); }); }
   await stopDaemon();
+  await stopChatDaemon();
+  spawnSync('tmux', ['-L', 'vibe-remote', 'kill-server'], { env: { ...process.env, TMUX_TMPDIR: chatTmux }, stdio: 'ignore' });
+  rmSync(chatTmux, { recursive: true, force: true });
   // --use-mock-keychain should keep Chromium off the login keychain; if a run
   // ever did create the app's Safe Storage item, remove only one we created.
   if (!keychainExisted && keychainHas(keychainService)) {
