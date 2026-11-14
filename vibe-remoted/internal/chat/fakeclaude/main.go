@@ -5,7 +5,8 @@
 // probe-stream-json.md); TestFakeClaudeMatchesProbe keeps them in step.
 //
 // A user message's text is a command: echo, md, tool, perm, plan, ask,
-// /compact, burst, slow, fail, crash, cancel, swallow (anything else = echo).
+// multi, /compact, burst, slow, fail, crash, cancel, swallow (anything else =
+// echo).
 // Environment knobs: FAKE_CLAUDE_VERSION, FAKE_CLAUDE_INIT_VERSION,
 // FAKE_CLAUDE_CAPS, FAKE_CLAUDE_HOOK_LINES, FAKE_CLAUDE_NO_INIT_REPLY,
 // FAKE_CLAUDE_STUBBORN, FAKE_CLAUDE_EXIT_AFTER_RESULT, FAKE_CLAUDE_ARGV_LOG,
@@ -896,6 +897,67 @@ func (f *fake) runAsk(t *turn) {
 	f.say(t, "answers: "+strings.Join(pairs, ", "))
 }
 
+// runMulti asks for two Bash permissions at once, so two requests are open at
+// the same time (tests for several pending requests).
+func (f *fake) runMulti(t *turn) {
+	inputs := []map[string]any{
+		{"command": "echo one", "description": "Run echo one"},
+		{"command": "echo two", "description": "Run echo two"},
+	}
+	ps := make([]*pendingReq, len(inputs))
+	for i, in := range inputs {
+		ps[i] = &pendingReq{id: newUUID(), tool: "Bash", toolUseID: f.toolUse("Bash", in), input: in,
+			ch: make(chan map[string]any, 1), t: t}
+	}
+	f.mu.Lock()
+	for _, p := range ps {
+		f.pending[p.id] = p
+		t.pending = append(t.pending, p)
+		f.emit(map[string]any{"type": "control_request", "request_id": p.id, "request": map[string]any{
+			"subtype": "can_use_tool", "tool_name": "Bash", "display_name": "Bash", "input": p.input,
+			"tool_use_id": p.toolUseID, "description": "Run Bash"}})
+	}
+	f.mu.Unlock()
+	answers := make([]map[string]any, len(ps))
+	waitAll := func() bool {
+		for i, p := range ps {
+			select {
+			case answers[i] = <-p.ch:
+			case <-t.ctx.Done():
+				return false
+			case <-f.eofCh:
+				return false
+			}
+		}
+		return true
+	}
+	if !waitAll() {
+		var denials []any
+		f.mu.Lock()
+		for _, p := range ps {
+			delete(f.pending, p.id)
+		}
+		f.mu.Unlock()
+		for _, p := range ps {
+			f.toolResult(p.toolUseID, rejectedText, true, "Error: "+rejectedText)
+			denials = append(denials, map[string]any{"tool_name": "Bash", "tool_use_id": p.toolUseID, "tool_input": p.input})
+		}
+		f.emit(f.userBlocks([]any{map[string]any{"type": "text", "text": "[Request interrupted by user for tool use]"}}, nil))
+		f.emit(f.resultAborted("aborted_tools", denials))
+		return
+	}
+	for i, p := range ps {
+		if answers[i]["behavior"] == "allow" {
+			f.toolResult(p.toolUseID, "fake output", false, map[string]any{"stdout": "fake output", "stderr": "",
+				"interrupted": false, "isImage": false, "noOutputExpected": false})
+		} else {
+			msg, _ := answers[i]["message"].(string)
+			f.toolResult(p.toolUseID, msg, true, "Error: "+msg)
+		}
+	}
+	f.say(t, "multi done")
+}
+
 func (f *fake) runCompact() {
 	f.emit(f.system("status", map[string]any{"status": "compacting"}))
 	f.emit(f.system("status", map[string]any{"status": nil, "compact_result": "success"}))
@@ -1004,6 +1066,8 @@ func (f *fake) runTurn(t *turn, text string) {
 		f.runPlan(t)
 	case "ask":
 		f.runAsk(t)
+	case "multi":
+		f.runMulti(t)
 	case "burst":
 		n := 1
 		if len(words) > 1 {

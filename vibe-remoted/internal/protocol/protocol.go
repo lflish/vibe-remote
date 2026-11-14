@@ -328,7 +328,10 @@ const (
 	AckForeignRule       = "foreign_rule"
 	AckChatBusy          = "chat_busy"
 	AckInvalidMode       = "invalid_mode"
-	AckModeLocked        = "mode_locked"
+	// AckInvalidResponse: chat_respond.response is not an object with
+	// behavior allow|deny (a client bug; never sent by a correct client).
+	AckInvalidResponse = "invalid_response"
+	AckModeLocked      = "mode_locked"
 )
 
 // ChatSendFrame sends one user message. ClientMsgID (≤64 chars) deduplicates
