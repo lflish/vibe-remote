@@ -291,6 +291,42 @@ test('undelivered after resync', () => {
   assert.equal(userBubbles(s.getState())[0].delivery, 'undelivered');
 });
 
+test('reset sync past an overflow: a missing echo is unconfirmed, not undelivered; duplicate ack settles it', () => {
+  const s = ready();
+  const turns = [];
+  s.onTurn = (ev) => turns.push(ev);
+  s.addLocalUser('m7', 'burst');
+  // Its echo was evicted from the ring while we were away (omitted > 0).
+  s.applySync(sync({ epoch: 'e1', omitted: 300, backlog: 2 }));
+  feed(s, [assistant('msg_late', [text('tail')]), result()]);
+  s.applyState(state());
+  const u = userBubbles(s.getState());
+  assert.equal(u.length, 1);
+  assert.equal(u[0].delivery, 'sending', 'not judged from the missing echo');
+  assert.equal(turns.some((e) => e.kind === 'undelivered'), false);
+  assert.ok(turns.some((e) => e.kind === 'unconfirmed' && e.clientMsgId === 'm7'), 'asks to confirm with the daemon');
+  // The daemon already has it, and its turn is done.
+  s.markDuplicate('m7', true);
+  assert.equal(userBubbles(s.getState())[0].delivery, 'sent');
+  assert.ok(turns.some((e) => e.kind === 'duplicate' && e.clientMsgId === 'm7' && e.completed === true));
+  // A later sync does not judge it again.
+  turns.length = 0;
+  s.applySync(sync({ epoch: 'e1', reset: false }));
+  s.applyState(state());
+  assert.equal(userBubbles(s.getState())[0].delivery, 'sent');
+  assert.equal(turns.some((e) => e.kind === 'undelivered'), false);
+
+  // Without an overflow a missing echo still means undelivered.
+  const t = ready();
+  const tt = [];
+  t.onTurn = (ev) => tt.push(ev);
+  t.addLocalUser('m8', 'lost');
+  t.applySync(sync({ epoch: 'e2' }));
+  t.applyState(state());
+  assert.equal(userBubbles(t.getState())[0].delivery, 'undelivered');
+  assert.ok(tt.some((e) => e.kind === 'undelivered' && e.clientMsgId === 'm8'));
+});
+
 test('prompt state transitions', () => {
   const s = ready();
   const bash = { subtype: 'can_use_tool', tool_name: 'Bash', input: { command: 'touch x' }, tool_use_id: 'tu1' };

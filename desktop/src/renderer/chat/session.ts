@@ -33,6 +33,12 @@ export type TurnEvent =
   | { kind: 'result'; stale: boolean }
   | { kind: 'staleTurn'; clientMsgId: string }
   | { kind: 'undelivered'; clientMsgId: string }
+  // A reset sync past a ring overflow ended without its echo: the echo may
+  // just have been evicted. Send it again under the same id; the daemon's ack
+  // says whether it already had it (markDuplicate).
+  | { kind: 'unconfirmed'; clientMsgId: string; text: string }
+  // The daemon already had this message (chat_ack duplicate); `completed` = its turn is over.
+  | { kind: 'duplicate'; clientMsgId: string; completed: boolean }
   | { kind: 'reset' }
   | { kind: 'status'; status: ChatStatus };
 
@@ -99,6 +105,8 @@ export class ChatSession {
   private syncing = false;
   private syncGen = 0;
   private pendingOmitted = 0;
+  // The open sync is a reset that skipped evicted messages (omitted > 0).
+  private syncOverflow = false;
 
   /** Current renderable state. `messages` is shared, treat it as read-only. */
   getState(): ChatState {
@@ -149,6 +157,7 @@ export class ChatSession {
   /** Opens a sync (design 4.4). */
   applySync(sync: ChatSyncFrame) {
     this.syncGen++;
+    this.syncOverflow = sync.reset && sync.omitted > 0;
     if (sync.reset) {
       this.reset();
       this.omitted = sync.omitted;
@@ -202,9 +211,16 @@ export class ChatSession {
     });
 
     if (closingSync) {
-      // Sent before this sync and still not echoed: it never got there.
+      // Sent before this sync and still not echoed: it never got there —
+      // unless the sync skipped evicted messages, which may include its echo.
       for (const [id, rec] of this.localSending) {
         if (rec.gen >= this.syncGen) continue;
+        if (this.syncOverflow) {
+          rec.gen = this.syncGen;
+          if (!this.messages.includes(rec.msg)) this.messages.push(rec.msg);
+          this.onTurn?.({ kind: 'unconfirmed', clientMsgId: id, text: textOf(rec.msg) });
+          continue;
+        }
         this.localSending.delete(id);
         rec.msg.delivery = 'undelivered';
         rec.msg.rev++;
@@ -234,16 +250,19 @@ export class ChatSession {
     return msg;
   }
 
-  /** Re-sends an undelivered message under the same id. Returns its text, or null. */
+  /**
+   * Re-sends a message under the same id, reusing its bubble (one bubble per
+   * id). Returns its text, or null if there is no such message.
+   */
   resend(clientMsgId: string): string | null {
-    const msg = this.messages.find(
-      (m): m is UserMessage => m.role === 'user' && m.clientMsgId === clientMsgId && m.delivery === 'undelivered',
-    );
+    const msg = this.messages.find((m): m is UserMessage => m.role === 'user' && m.clientMsgId === clientMsgId);
     if (!msg) return null;
-    msg.delivery = 'sending';
-    msg.rev++;
-    this.localSending.set(clientMsgId, { msg, gen: this.syncGen });
-    this.emit();
+    if (msg.delivery !== 'sent') {
+      msg.delivery = 'sending';
+      msg.rev++;
+      this.localSending.set(clientMsgId, { msg, gen: this.syncGen });
+      this.emit();
+    }
     return textOf(msg);
   }
 
@@ -256,6 +275,22 @@ export class ChatSession {
       msg.rev++;
     }
     this.onTurn?.({ kind: 'undelivered', clientMsgId });
+    this.emit();
+  }
+
+  /**
+   * chat_ack duplicate: the daemon had already written this message (its echo
+   * was evicted or is still to come), so it is delivered; `completed` = its
+   * turn already has its result.
+   */
+  markDuplicate(clientMsgId: string, completed: boolean) {
+    this.localSending.delete(clientMsgId);
+    const msg = this.messages.find((m): m is UserMessage => m.role === 'user' && m.clientMsgId === clientMsgId);
+    if (msg && msg.delivery !== 'sent') {
+      msg.delivery = 'sent';
+      msg.rev++;
+    }
+    this.onTurn?.({ kind: 'duplicate', clientMsgId, completed });
     this.emit();
   }
 

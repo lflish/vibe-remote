@@ -22,13 +22,14 @@ Desktop (Electron + xterm.js)  ──ws (JSON frames)──►  vibe-remoted (Go
     "dumb terminal", raw byte passthrough              one per machine       bidirectional bytes
 ```
 
-- **Raw byte passthrough**: the client never parses claude's output. PTY bytes are relayed verbatim in both directions, so streaming / colors / cursor render with zero loss.
+- **Raw byte passthrough (terminal mode)**: in terminal sessions the client never parses claude's output. PTY bytes are relayed verbatim in both directions, so streaming / colors / cursor render with zero loss.
 - **tmux persistence**: the claude session survives client disconnects and is restored on reconnect.
 - **No central hub**: each machine runs its own vibe-remoted and the client connects directly. The server binds a private-network address (LAN / tailscale) with a static token as the primary access boundary; cross-network reach and encryption can be delegated to Tailscale.
 
 Release history: [CHANGELOG.md](./CHANGELOG.md).
 
 ## Features
+- **Chat mode (claude ≥ 2.1.210 only)**: when creating a session, pick Chat instead of the default Terminal. The daemon holds a `claude -p` stream-json process and the app renders structured messages, tool blocks, diffs and permission / plan / question cards. Terminal sessions are unchanged.
 - **Session naming / background hints**: double-click to rename; a sidebar dot lights up when a background session has output or is waiting for input.
 - **Reconnection**: the status bar shows reconnect progress, with a disconnect banner + Retry on the active session.
 - **claude flag presets**: the server defines a `claude_flags` whitelist; on new-session you multi-select flags (e.g. `-c` to continue, skip-permissions) — applied per-session.
@@ -101,6 +102,8 @@ Copy `vibe-remoted.example.json` and adjust per machine:
   "login_shell": true,              // launch via login shell to load user env (POSIX shells: bash/zsh)
                                     //   (PATH, fnm/nvm, etc.); default true
   "shell": "",                      // login shell path; empty = $SHELL or /bin/bash
+  "state_dir": "",                  // chat session table; empty = <config dir>/vibe-remoted-state/
+                                    //   (if unwritable only chat mode is disabled)
   "allow_insecure_bind": false      // true allows binding a public address (not recommended); wildcards always rejected
 }
 ```

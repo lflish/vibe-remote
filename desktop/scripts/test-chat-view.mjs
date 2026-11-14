@@ -202,6 +202,26 @@ test('question prompt', () => {
   assert.deepEqual(responds(client).at(-1).response.updatedInput.answers, { 'Tea or coffee?': 'Tea', 'Fruits?': 'Apple, Banana' });
 });
 
+test('question titled __proto__ keeps its answer', () => {
+  const { client, $ } = makeView();
+  const input = { questions: [{ question: '__proto__', options: [{ label: 'Object.prototype' }], multiSelect: false }] };
+  client.onChatState(state({ status: 'waiting', pending: [{ requestId: 'q-proto', seq: 1, request: { subtype: 'can_use_tool', tool_name: 'AskUserQuestion', input } }] }));
+  flush();
+  const radio = $('chat-question').querySelector('input[type=radio]');
+  radio.checked = true;
+  radio.dispatchEvent(new Event('change', { bubbles: true }));
+  const submit = $('chat-question-submit');
+  assert.equal(submit.disabled, false);
+  click(submit);
+  const response = responds(client).at(-1).response;
+  const answers = response.updatedInput.answers;
+  assert.ok(Object.prototype.hasOwnProperty.call(answers, '__proto__'), 'answer is an own key');
+  assert.equal(Object.getOwnPropertyDescriptor(answers, '__proto__').value, 'Object.prototype');
+  const wire = JSON.parse(JSON.stringify(response));
+  assert.equal(Object.getOwnPropertyDescriptor(wire.updatedInput.answers, '__proto__')?.value, 'Object.prototype', 'survives serialization');
+  assert.equal(wire.updatedInput.questions[0].question, '__proto__');
+});
+
 test('mode switcher', () => {
   const { client, $ } = makeView();
   const chip = $('chat-mode');
@@ -298,6 +318,108 @@ test('undelivered message can be re-sent under the same id', () => {
   assert.equal(last.type, 'chat_send');
   assert.equal(last.clientMsgId, id);
   assert.equal($$('chat-msg-user').length, 1, 'no second bubble');
+});
+
+test('resend clicked twice while offline: one queue entry, one bubble, queue not stuck', () => {
+  const { view, client, $, $$ } = makeView();
+  const input = $('chat-input');
+  input.value = 'hello';
+  input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+  const id = client.sent.at(-1).clientMsgId;
+  client.onChatAck({ type: 'chat_ack', op: 'send', ref: id, ok: false, code: 'chat_not_running' });
+  flush();
+  view.setConnected(false);
+  client.open = false;
+  click($('chat-resend'));
+  flush();
+  const again = $('chat-resend');
+  assert.ok(!again || again.disabled, 'resend button disabled once queued');
+  if (again) click(again);
+  flush();
+  assert.deepEqual(view.queue.queued().map((it) => it.id), [id], 'queued once');
+  // Reconnect: an incremental sync, the queued resend goes out once.
+  client.open = true;
+  view.setConnected(true);
+  client.onChatSync({ type: 'chat_sync', epoch: 'e', reset: false, omitted: 0, historyCount: 0, backlog: 0 });
+  client.onChatState(state());
+  flush();
+  assert.equal(client.sent.filter((f) => f.type === 'chat_send' && f.clientMsgId === id).length, 2, 'original + one resend');
+  client.onChat(1, { type: 'user', message: { role: 'user', content: [{ type: 'text', text: 'hello' }] }, vr_client_msg_id: id }, false);
+  client.onChat(2, { type: 'result', subtype: 'success', is_error: false, result: 'hi' }, false);
+  client.onChatAck({ type: 'chat_ack', op: 'send', ref: id, ok: true });
+  client.onChatState(state());
+  flush();
+  assert.equal($$('chat-msg-user').length, 1, 'one bubble');
+  assert.equal(view.state().messages.find((m) => m.role === 'user').delivery, 'sent');
+  input.value = 'next message';
+  input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+  flush();
+  assert.equal(client.sent.at(-1).text, 'next message', 'queue not stuck');
+  assert.equal(view.queue.queued().length, 0);
+});
+
+test('reset sync past an overflow: the sent message is confirmed by a duplicate ack, not marked undelivered', () => {
+  for (const completed of [true, false]) {
+    const { view, client, $, $$ } = makeView();
+    const input = $('chat-input');
+    input.value = 'burst 1200';
+    input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    const id = client.sent.at(-1).clientMsgId;
+    // Dropped before the echo; the turn overflowed the ring while away.
+    view.setConnected(false);
+    view.setConnected(true);
+    client.onChatSync({ type: 'chat_sync', epoch: 'e', reset: true, omitted: 400, historyCount: 0, backlog: 1 });
+    client.onChat(900, { type: 'assistant', message: { id: 'msg_tail', content: [{ type: 'text', text: 'tail' }] } }, false);
+    client.onChatState(state({ status: completed ? 'idle' : 'running' }));
+    flush();
+    const bubble = $$('chat-msg-user')[0];
+    assert.notEqual(bubble.dataset.delivery, 'undelivered', 'not judged undelivered from an evicted echo');
+    assert.equal($('chat-resend'), null);
+    const again = client.sent.filter((f) => f.type === 'chat_send' && f.clientMsgId === id);
+    assert.equal(again.length, 2, 'asked the daemon again under the same id');
+    // Daemon: duplicate (already written); completed or still running.
+    client.onChatAck({ type: 'chat_ack', op: 'send', ref: id, ok: true, duplicate: true, completed });
+    flush();
+    assert.equal(view.state().messages.find((m) => m.role === 'user').delivery, 'sent');
+    assert.equal($$('chat-msg-user').length, 1);
+    input.value = 'echo next';
+    input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    flush();
+    if (completed) {
+      assert.equal(client.sent.at(-1).text, 'echo next', 'queue released');
+    } else {
+      assert.equal(view.queue.queued().length, 1, 'waits for the running turn');
+      client.onChat(901, { type: 'result', subtype: 'success', is_error: false }, false);
+      client.onChatState(state());
+      flush();
+      assert.equal(client.sent.at(-1).text, 'echo next', 'sent after its result');
+    }
+    assert.equal(view.queue.queued().length, 0);
+    assert.equal(view.queue.canSend(), false, 'next one in flight');
+  }
+});
+
+test('history in batches with frames between: only the newest 300 end up in the DOM', () => {
+  const { view, client, $$ } = makeView();
+  client.onChatSync({ type: 'chat_sync', epoch: 'e2', reset: true, omitted: 0, historyCount: 3000, backlog: 0 });
+  for (let batch = 0; batch < 15; batch++) {
+    for (let i = batch * 200; i < (batch + 1) * 200; i++) {
+      client.onChat(0, { type: 'assistant', message: { id: `hist-${i}`, content: [{ type: 'text', text: `History ${i}` }] } }, true);
+    }
+    flush();
+    assert.ok($$('chat-msg-assistant').length <= 300, `batch ${batch}: at most 300 in the DOM`);
+  }
+  client.onChatState(state());
+  flush();
+  const nodes = $$('chat-msg-assistant');
+  assert.equal(view.state().messages.length, 3000);
+  assert.equal(nodes.length, 300);
+  assert.equal(nodes[0].dataset.id, 'hist-2700');
+  assert.equal(nodes.at(-1).dataset.id, 'hist-2999');
+  // New live messages still follow at the bottom.
+  client.onChat(1, { type: 'assistant', message: { id: 'live-1', content: [{ type: 'text', text: 'live' }] } }, false);
+  flush();
+  assert.equal($$('chat-msg-assistant').at(-1).dataset.id, 'live-1');
 });
 
 test('ended banner, restart tracking and retry', () => {

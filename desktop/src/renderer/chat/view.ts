@@ -90,6 +90,9 @@ export class ChatView {
   private syncing = false;
   private syncBacklog = false;
   private firstSync = true;
+  // A reset sync is rebuilding the transcript (history comes in batches with
+  // frames between): keep the window on the newest messages until it ends.
+  private clampTail = false;
   private seenPrompts = new Set<string>();
   private hadPrompts = false;
   // Reload in flight (REST 202): the outcome arrives as chat_state (d10).
@@ -234,6 +237,7 @@ export class ChatView {
       // reset sync replays what was already there.
       this.syncBacklog = !sync.reset && sync.backlog > 0;
       this.epoch = sync.epoch;
+      if (sync.reset) this.clampTail = true;
       this.session.applySync(sync);
     };
     this.client.onChat = (seq, msg, history) => {
@@ -291,7 +295,12 @@ export class ChatView {
   }
 
   private onAck(ack: ChatAckFrame) {
-    if (ack.ok) return;
+    if (ack.ok) {
+      // Already written before (a resend, or a message whose echo a reset
+      // sync could not replay): no new echo comes, the ack settles it.
+      if (ack.op === 'send' && ack.ref && ack.duplicate) this.session.markDuplicate(ack.ref, ack.completed === true);
+      return;
+    }
     const why = ack.message || ack.code || '';
     switch (ack.op) {
       case 'send':
@@ -337,7 +346,7 @@ export class ChatView {
     const msg = this.session
       .getState()
       .messages.find((m): m is UserMessage => m.role === 'user' && m.clientMsgId === clientMsgId);
-    if (!msg) return;
+    if (!msg || this.queue.has(clientMsgId)) return;
     this.queue.enqueue(msg.parts.map((p) => (p.type === 'text' ? p.text : '')).join(''), clientMsgId);
     this.schedule();
   }
@@ -355,6 +364,13 @@ export class ChatView {
         break;
       case 'undelivered':
         this.queue.onUndelivered(ev.clientMsgId);
+        break;
+      case 'unconfirmed':
+        // Same id: the daemon answers a duplicate instead of writing it twice.
+        if (!this.client.sendChat(ev.text, ev.clientMsgId)) this.session.markUndelivered(ev.clientMsgId);
+        break;
+      case 'duplicate':
+        this.queue.onDuplicate(ev.clientMsgId, ev.completed);
         break;
       case 'reset':
         this.queue.resetPairing();
@@ -478,12 +494,18 @@ export class ChatView {
       this.renderedMessages = msgs;
       this.win = initialWindow(msgs.length);
       this.nodes.clear();
+    } else if (this.clampTail) {
+      // Still rebuilding (or just done): the newest messages only; scrolling
+      // up extends the window once the sync is over.
+      this.win = initialWindow(msgs.length);
     } else {
       this.win = follow(this.win, msgs.length, bottom);
     }
     const pendingTools = new Set(
       st.pending.map((p) => p.request.tool_use_id).filter((id): id is string => typeof id === 'string'),
     );
+
+    if (!this.syncing) this.clampTail = false;
 
     const els: HTMLElement[] = [];
     const keep = new Set<string>();
@@ -571,6 +593,8 @@ export class ChatView {
   }
 
   private signature(m: Message, pendingTools: Set<string>): string {
+    // A queued resend disables the bubble's resend button.
+    if (m.role === 'user') return m.clientMsgId && this.queue.has(m.clientMsgId) ? `${m.rev}:q` : String(m.rev);
     if (m.role !== 'assistant') return String(m.rev);
     const waiting = m.parts.filter((p) => p.type === 'tool_use' && pendingTools.has(p.id)).map((p) => (p as { id: string }).id);
     return `${m.rev}:${waiting.join(',')}`;
@@ -597,6 +621,8 @@ export class ChatView {
       const again = el('button', 'u-resend', t('chat.resend'));
       again.type = 'button';
       again.dataset.testid = 'chat-resend';
+      // Already queued to go out again: one resend per message.
+      again.disabled = this.queue.has(id);
       again.addEventListener('click', () => this.resend(id));
       box.appendChild(again);
     }

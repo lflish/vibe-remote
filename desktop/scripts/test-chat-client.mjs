@@ -17,6 +17,7 @@ import { strict as assert } from 'node:assert';
 import { mkdtempSync, rmSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
+import { indexDom, loadIndex } from './chat-test-util.mjs';
 
 const dir = mkdtempSync(join(tmpdir(), 'vr-chat-client-'));
 const bundle = join(dir, 'client.mjs');
@@ -365,6 +366,53 @@ test('liveness throttled on a chat intent', () => {
   assert.equal(client.state, 'reconnecting');
   client.disconnect();
 });
+
+// Renderer entry (index.ts): a create that fails before `ready` must not
+// leave its view behind under the "new session" key — the next new chat or
+// new terminal on that machine has to start a fresh attach, not reopen the
+// dead view.
+{
+  const page = await indexDom();
+  const app = await loadIndex();
+  globalThis.fetch = async () => ({ ok: true, json: async () => ({ list: [] }) });
+  const machine = { name: 'm', addr: '127.0.0.1', port: 1, token: 't' };
+  app.setMachines([machine]);
+  app.rebuildRests();
+  test('fatal create before ready: next new chat / terminal starts fresh', () => {
+    const before = sockets.length;
+    const first = app.openChatSession(machine, '', '/w/a');
+    const ws = sockets.at(-1);
+    ws.fireOpen();
+    assert.equal(lastAttach(ws).workdir, '/w/a');
+    ws.fireMessage({ type: 'error', code: 'create_failed', fatal: true, message: 'spawn failed' });
+    ws.fireClose();
+    assert.equal([...app.views.values()].includes(first), false, 'failed view dropped');
+    assert.equal(first.container.isConnected, false, 'failed view removed from the page');
+    assert.equal(app.activeKey, null, 'nothing current');
+
+    const again = app.openChatSession(machine, '', '/w/b');
+    assert.notEqual(again, first);
+    assert.equal(sockets.length, before + 2, 'new chat opened its own connection');
+    const ws2 = sockets.at(-1);
+    ws2.fireOpen();
+    assert.equal(lastAttach(ws2).workdir, '/w/b');
+    assert.equal(lastAttach(ws2).ui, 'chat');
+
+    const term = app.openSession(machine, '', '/w/c');
+    assert.notEqual(term, again, 'a new terminal is not the chat being created');
+    assert.equal(term.ui, 'terminal');
+    assert.equal(sockets.length, before + 3);
+    const ws3 = sockets.at(-1);
+    ws3.fireOpen();
+    assert.equal(lastAttach(ws3).workdir, '/w/c');
+    assert.equal(lastAttach(ws3).ui, undefined);
+    // Both creates are still open, each under its own key.
+    assert.ok([...app.views.values()].includes(again));
+    assert.ok([...app.views.values()].includes(term));
+    for (const v of [...app.views.values()]) v.client.disconnect();
+  });
+  page.dom.window.close();
+}
 
 rmSync(dir, { recursive: true, force: true });
 console.log(`chat client checks passed (${passed})`);

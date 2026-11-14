@@ -89,6 +89,11 @@ let statusMessageTimer: ReturnType<typeof setTimeout> | null = null;
 
 const machineKey = (m: MachineConfig) => `${m.addr}:${m.port}`;
 const viewKey = (m: MachineConfig, sid: string) => `${machineKey(m)}::${sid}`;
+// A view still being created has no session id. Each one gets a key of its
+// own (never a real id: those have no '#'), so a create that failed cannot be
+// mistaken for the next one; `ready` re-keys it to viewKey(machine, id).
+let creatingSeq = 0;
+const creatingKey = (m: MachineConfig) => `${machineKey(m)}::#new-${++creatingSeq}`;
 
 function rendererIcon(name: 'machine' | 'terminal' | 'chat' | 'branch' | 'chevron' | 'reload' | 'close'): SVGSVGElement {
   const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
@@ -671,6 +676,9 @@ async function startNewSession(machine: MachineConfig, initialMode?: SessionMode
 
 function showMachineOverview(machine: MachineConfig) {
   overviewMachineKey = machineKey(machine);
+  // Every view is hidden now, so none is the current session: their sidebar
+  // dots and "needs you" notifications work as for any background session.
+  activeKey = null;
   for (const view of views.values()) view.container.style.display = 'none';
   const mount = document.getElementById('machine-overview');
   if (mount) {
@@ -718,7 +726,7 @@ function openExisting(machine: MachineConfig, session: SessionInfo): AnyView {
 // openChatSession creates a ChatView (its own WS + transcript) and attaches
 // with ui:'chat'. sessionId '' means create a brand-new chat session.
 function openChatSession(machine: MachineConfig, sessionId: string, workdir?: string, flags?: string[], mode: SessionMode = 'normal'): AnyView {
-  const key = viewKey(machine, sessionId);
+  const key = sessionId ? viewKey(machine, sessionId) : creatingKey(machine);
   const existing = views.get(key);
   if (existing) {
     setActive(key);
@@ -777,6 +785,7 @@ function openChatSession(machine: MachineConfig, sessionId: string, workdir?: st
   };
   client.onError = (msg, fatal) => {
     console.error(`[${machine.name}]`, msg);
+    if (fatal && dropFailedCreate(view, msg)) return;
     if (fatal) {
       view.banner.style.display = 'none';
       view.setConnected(false);
@@ -795,7 +804,7 @@ function openChatSession(machine: MachineConfig, sessionId: string, workdir?: st
 // sessionId '' means create a brand-new session with the given workdir.
 // `opts.handoffFrom` creates the terminal session that takes over a chat session (R14).
 function openSession(machine: MachineConfig, sessionId: string, workdir?: string, flags?: string[], mode: SessionMode = 'normal', opts?: AttachOptions): AnyView {
-  const key = viewKey(machine, sessionId);
+  const key = sessionId ? viewKey(machine, sessionId) : creatingKey(machine);
   const existing = views.get(key);
   if (existing) {
     setActive(key);
@@ -909,6 +918,7 @@ function openSession(machine: MachineConfig, sessionId: string, workdir?: string
   };
   client.onError = (msg, fatal) => {
     console.error(`[${machine.name}]`, msg);
+    if (fatal && dropFailedCreate(view, msg)) return;
     // Show the error to the user instead of leaving a blank terminal.
     if (view.terminal) view.terminal.write(`\r\n\x1b[31m[${t('terminal.error', { msg })}]\x1b[0m\r\n`);
     if (fatal) {
@@ -940,6 +950,21 @@ function openSession(machine: MachineConfig, sessionId: string, workdir?: string
 
   setActive(view.key);
   return view;
+}
+
+// dropFailedCreate closes a view whose create failed for good before `ready`
+// (no session id yet, the client has stopped): there is no session to show,
+// so the view goes away, the machine overview takes its place if it was on
+// screen, and the error stays in the status bar. Returns false for a view
+// that already has a session.
+function dropFailedCreate(view: AnyView, msg: string): boolean {
+  if (view.sessionId) return false;
+  const wasActive = activeKey === view.key;
+  disposeView(view);
+  if (views.get(view.key) === view) views.delete(view.key);
+  if (wasActive) showMachineOverview(view.machine);
+  updateStatusBar(t('status.error', { msg }));
+  return true;
 }
 
 // adoptExisting handles a create whose `ready` names a session that is

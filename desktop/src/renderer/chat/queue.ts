@@ -82,10 +82,26 @@ export class SendQueue {
    */
   enqueue(text: string, id?: string): QueueItem | null {
     if (!text.trim()) return null;
+    if (id !== undefined) {
+      // One entry per id: a second resend of the same message is the same
+      // message, and the daemon would only answer it as a duplicate.
+      const queued = this.items.find((it) => it.id === id);
+      if (queued) return queued;
+      if (this.inFlight(id)) return null;
+    }
     const item = { id: id ?? this.newId(), text };
     this.items.push(item);
     this.pump();
     return item;
+  }
+
+  /** Whether this id is queued or sent and still waiting for its echo / result. */
+  has(id: string): boolean {
+    return this.items.some((it) => it.id === id) || this.inFlight(id);
+  }
+
+  private inFlight(id: string): boolean {
+    return id === this.lastOwn && !(this.lastOwnEchoed && this.lastOwnPaired);
   }
 
   /** Withdraws a queued message (R9.2). */
@@ -139,6 +155,27 @@ export class SendQueue {
     if (clientMsgId === this.lastOwn) {
       this.lastOwnEchoed = true;
       this.lastOwnPaired = true;
+    }
+    this.pump();
+  }
+
+  /**
+   * The daemon already had this message (chat_ack duplicate) and sends no new
+   * echo for it. Completed: its result is in the past, nothing to wait for.
+   * Not completed: it is the oldest message still waiting for a result (its
+   * echo was evicted before anything we saw), so the next result is its.
+   */
+  onDuplicate(clientMsgId: string, completed: boolean) {
+    const i = this.unpaired.indexOf(clientMsgId);
+    if (completed) {
+      if (i >= 0) this.unpaired.splice(i, 1);
+      if (clientMsgId === this.lastOwn) {
+        this.lastOwnEchoed = true;
+        this.lastOwnPaired = true;
+      }
+    } else {
+      if (i < 0) this.unpaired.unshift(clientMsgId);
+      if (clientMsgId === this.lastOwn) this.lastOwnEchoed = true;
     }
     this.pump();
   }
