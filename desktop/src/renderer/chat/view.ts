@@ -90,6 +90,9 @@ export class ChatView {
   private syncing = false;
   private syncBacklog = false;
   private firstSync = true;
+  // A reset sync is rebuilding the transcript (history comes in batches with
+  // frames between): keep the window on the newest messages until it ends.
+  private clampTail = false;
   private seenPrompts = new Set<string>();
   private hadPrompts = false;
   // Reload in flight (REST 202): the outcome arrives as chat_state (d10).
@@ -234,6 +237,7 @@ export class ChatView {
       // reset sync replays what was already there.
       this.syncBacklog = !sync.reset && sync.backlog > 0;
       this.epoch = sync.epoch;
+      if (sync.reset) this.clampTail = true;
       this.session.applySync(sync);
     };
     this.client.onChat = (seq, msg, history) => {
@@ -490,12 +494,18 @@ export class ChatView {
       this.renderedMessages = msgs;
       this.win = initialWindow(msgs.length);
       this.nodes.clear();
+    } else if (this.clampTail) {
+      // Still rebuilding (or just done): the newest messages only; scrolling
+      // up extends the window once the sync is over.
+      this.win = initialWindow(msgs.length);
     } else {
       this.win = follow(this.win, msgs.length, bottom);
     }
     const pendingTools = new Set(
       st.pending.map((p) => p.request.tool_use_id).filter((id): id is string => typeof id === 'string'),
     );
+
+    if (!this.syncing) this.clampTail = false;
 
     const els: HTMLElement[] = [];
     const keep = new Set<string>();

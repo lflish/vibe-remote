@@ -379,6 +379,29 @@ test('reset sync past an overflow: the sent message is confirmed by a duplicate 
   }
 });
 
+test('history in batches with frames between: only the newest 300 end up in the DOM', () => {
+  const { view, client, $$ } = makeView();
+  client.onChatSync({ type: 'chat_sync', epoch: 'e2', reset: true, omitted: 0, historyCount: 3000, backlog: 0 });
+  for (let batch = 0; batch < 15; batch++) {
+    for (let i = batch * 200; i < (batch + 1) * 200; i++) {
+      client.onChat(0, { type: 'assistant', message: { id: `hist-${i}`, content: [{ type: 'text', text: `History ${i}` }] } }, true);
+    }
+    flush();
+    assert.ok($$('chat-msg-assistant').length <= 300, `batch ${batch}: at most 300 in the DOM`);
+  }
+  client.onChatState(state());
+  flush();
+  const nodes = $$('chat-msg-assistant');
+  assert.equal(view.state().messages.length, 3000);
+  assert.equal(nodes.length, 300);
+  assert.equal(nodes[0].dataset.id, 'hist-2700');
+  assert.equal(nodes.at(-1).dataset.id, 'hist-2999');
+  // New live messages still follow at the bottom.
+  client.onChat(1, { type: 'assistant', message: { id: 'live-1', content: [{ type: 'text', text: 'live' }] } }, false);
+  flush();
+  assert.equal($$('chat-msg-assistant').at(-1).dataset.id, 'live-1');
+});
+
 test('ended banner, restart tracking and retry', () => {
   const { view, client, $ } = makeView();
   const calls = [];
