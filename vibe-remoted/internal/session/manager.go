@@ -71,7 +71,7 @@ type Manager struct {
 
 // NewManager creates a session manager.
 func NewManager(useTmux bool, claudeCmd string, loginShell bool, shell string) *Manager {
-	return &Manager{
+	m := &Manager{
 		sessions:         make(map[string]*Runner),
 		chats:            make(map[string]*chatEntry),
 		claudeOwners:     make(map[string]string),
@@ -85,6 +85,18 @@ func NewManager(useTmux bool, claudeCmd string, loginShell bool, shell string) *
 		shell:            shell,
 		liveTmuxSessions: liveTmuxSessions,
 	}
+	if useTmux {
+		scrubTmuxMainToken()
+	}
+	return m
+}
+
+// scrubTmuxMainToken removes the daemon's main token variable from the global
+// environment of a tmux server an older daemon may have started with it (a
+// server copies its first client's environment into every new pane). Best
+// effort: with no server running there is nothing to remove.
+func scrubTmuxMainToken() {
+	_ = tmuxCmd("set-environment", "-g", "-u", chat.MainTokenEnv).Run()
 }
 
 // SetEventEnv configures the events endpoint URL injected into new sessions'

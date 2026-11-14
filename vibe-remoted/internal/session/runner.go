@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/creack/pty"
+	"github.com/lflish/vibe-remote/vibe-remoted/internal/chat"
 	"github.com/lflish/vibe-remote/vibe-remoted/internal/protocol"
 )
 
@@ -45,8 +46,18 @@ func tmuxCmd(args ...string) *exec.Cmd {
 // daemons inherit no locale at all, so this is the default path in production.
 //
 // An inherited locale is left untouched — the user's own setting wins.
+//
+// The daemon's main token variable (chat.MainTokenEnv) is never passed on:
+// main unsets it at startup, and this filter keeps it out of every terminal
+// session, tmux server and chat process even if it is set again.
 func utf8Env(extra ...string) []string {
-	env := append(os.Environ(), extra...)
+	var env []string
+	for _, kv := range os.Environ() {
+		if !strings.HasPrefix(kv, chat.MainTokenEnv+"=") {
+			env = append(env, kv)
+		}
+	}
+	env = append(env, extra...)
 	if os.Getenv("LC_ALL") == "" && os.Getenv("LC_CTYPE") == "" && os.Getenv("LANG") == "" {
 		env = append(env, "LC_CTYPE=UTF-8")
 	}

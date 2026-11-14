@@ -99,13 +99,19 @@ func Probe(ctx context.Context, exe string, loginShell bool, shell string) Probe
 	return ProbeResult{}
 }
 
+// MainTokenEnv is the variable the daemon may read its main token from. No
+// process the daemon starts may inherit it (it grants full shell access);
+// main unsets it at startup and every child environment drops it as well.
+const MainTokenEnv = "VIBE_REMOTED_TOKEN"
+
 // withoutNestedGuard drops the variables claude sets for its own children; a
 // daemon started from a claude session would otherwise make claude refuse to
-// run (nested session protection).
+// run (nested session protection). It also drops MainTokenEnv.
 func withoutNestedGuard(env []string) []string {
 	out := env[:0:0]
 	for _, kv := range env {
-		if strings.HasPrefix(kv, "CLAUDECODE=") || strings.HasPrefix(kv, "CLAUDE_CODE_ENTRYPOINT=") {
+		if strings.HasPrefix(kv, "CLAUDECODE=") || strings.HasPrefix(kv, "CLAUDE_CODE_ENTRYPOINT=") ||
+			strings.HasPrefix(kv, MainTokenEnv+"=") {
 			continue
 		}
 		out = append(out, kv)
