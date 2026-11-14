@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/creack/pty"
+	"github.com/lflish/vibe-remote/vibe-remoted/internal/chat"
 	"github.com/lflish/vibe-remote/vibe-remoted/internal/protocol"
 )
 
@@ -45,8 +46,18 @@ func tmuxCmd(args ...string) *exec.Cmd {
 // daemons inherit no locale at all, so this is the default path in production.
 //
 // An inherited locale is left untouched — the user's own setting wins.
+//
+// The daemon's main token variable (chat.MainTokenEnv) is never passed on:
+// main unsets it at startup, and this filter keeps it out of every terminal
+// session, tmux server and chat process even if it is set again.
 func utf8Env(extra ...string) []string {
-	env := append(os.Environ(), extra...)
+	var env []string
+	for _, kv := range os.Environ() {
+		if !strings.HasPrefix(kv, chat.MainTokenEnv+"=") {
+			env = append(env, kv)
+		}
+	}
+	env = append(env, extra...)
 	if os.Getenv("LC_ALL") == "" && os.Getenv("LC_CTYPE") == "" && os.Getenv("LANG") == "" {
 		env = append(env, "LC_CTYPE=UTF-8")
 	}
@@ -188,6 +199,7 @@ type Runner struct {
 
 	useTmux    bool
 	claudeCmd  string
+	claudeArgv []string // when set, the command as argv (claudeCmd is its shell form)
 	loginShell bool
 	shell      string
 	eventsURL  string
@@ -206,14 +218,17 @@ type RunnerConfig struct {
 	Branch        string
 	UseTmux       bool
 	ClaudeCmd     string
-	LoginShell    bool
-	Shell         string
-	Cols          uint16
-	Rows          uint16
-	EventsURL     string
-	HookToken     string // injected as VIBE_REMOTE_TOKEN; see HookToken
-	ClaudeU       string // claude conversation the session holds (@vibe_remote_claude_u)
-	ExtraEnv      []string
+	// ClaudeArgv, when set, is the command as argv (a daemon-built handoff or
+	// continue command); ClaudeCmd is then ignored.
+	ClaudeArgv []string
+	LoginShell bool
+	Shell      string
+	Cols       uint16
+	Rows       uint16
+	EventsURL  string
+	HookToken  string // injected as VIBE_REMOTE_TOKEN; see HookToken
+	ClaudeU    string // claude conversation the session holds (@vibe_remote_claude_u)
+	ExtraEnv   []string
 }
 
 // NewRunner creates and starts a new session.
@@ -229,6 +244,7 @@ func NewRunner(cfg RunnerConfig) (*Runner, error) {
 		Created:       time.Now(),
 		useTmux:       cfg.UseTmux,
 		claudeCmd:     cfg.ClaudeCmd,
+		claudeArgv:    cfg.ClaudeArgv,
 		loginShell:    cfg.LoginShell,
 		shell:         cfg.Shell,
 		eventsURL:     cfg.EventsURL,
@@ -280,7 +296,20 @@ func (r *Runner) CurrentWorkdir() string {
 // loaded, matching what the user gets running claude by hand. `exec` replaces
 // the shell so no extra process lingers.
 func (r *Runner) launchCommand() []string {
+	if len(r.claudeArgv) > 0 {
+		return r.launchArgv(r.claudeArgv)
+	}
 	return r.launchCommandFor(r.claudeCmd)
+}
+
+// launchArgv is launchCommandFor for a command known as argv: exec'd as is
+// when no shell is involved (bare session without a login shell), quoted
+// word by word for a shell otherwise.
+func (r *Runner) launchArgv(argv []string) []string {
+	if !r.loginShell && !r.useTmux {
+		return argv
+	}
+	return r.launchCommandFor(chat.ShellJoin(argv))
 }
 
 func (r *Runner) launchCommandFor(command string) []string {
@@ -617,6 +646,22 @@ func (r *Runner) DetachEpoch(epoch uint64) bool {
 	reap(oldPTY, oldCmd)
 	r.stopped = true
 	return true
+}
+
+// bareProcessGone reports whether a session without tmux has lost its CLI:
+// its PTY was detached or killed (which ends the CLI in bare mode), or the
+// process exited and was reaped. Always false with tmux, where the CLI's
+// lifetime follows the tmux session instead.
+func (r *Runner) bareProcessGone() bool {
+	if r.useTmux {
+		return false
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.cmd == nil || r.cmd.Process == nil {
+		return true
+	}
+	return !pidAlive(r.cmd.Process.Pid)
 }
 
 // Kill terminates the session entirely (including the tmux session).

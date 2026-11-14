@@ -35,9 +35,82 @@ var sessionControlArgs = map[string]bool{
 	"--session-id": true, "--fork-session": true,
 }
 
+// valueOptions are claude's options that take a value. The word after one
+// (unless written --opt=value) is its value, never an option, even when it
+// looks like one: `--append-system-prompt -c` is a prompt of "-c", not
+// continue. variadic ones also take every following word up to the next one
+// starting with "-" (claude's option parser does the same).
+var valueOptions = map[string]struct{ variadic bool }{
+	"--append-system-prompt": {}, "--append-system-prompt-file": {},
+	"--system-prompt": {}, "--system-prompt-file": {},
+	"--model": {}, "--fallback-model": {}, "--permission-mode": {},
+	"--settings": {}, "--setting-sources": {}, "--agents": {}, "--agent": {},
+	"--max-turns": {}, "--max-budget-usd": {}, "--json-schema": {},
+	"--session-id": {}, "--resume": {}, "-r": {},
+	"--output-format": {}, "--input-format": {}, "--permission-prompt-tool": {},
+	"--add-dir": {variadic: true}, "--mcp-config": {variadic: true},
+	"--allowedTools": {variadic: true}, "--allowed-tools": {variadic: true},
+	"--disallowedTools": {variadic: true}, "--disallowed-tools": {variadic: true},
+	"--tools": {variadic: true}, "--betas": {variadic: true}, "--plugin-dir": {variadic: true},
+}
+
+// Kinds of argument words (classifyArgs).
+const (
+	argPositional = iota // a prompt word, or anything after "--"
+	argOption            // an option in option position (name, maybe =value)
+	argValue             // the value of the option before it
+)
+
+// classifyArgs tells, for each of claude's argument words, whether it is an
+// option, an option's value or a positional word. Only argOption words are
+// ever treated as flags.
+func classifyArgs(args []string) []int {
+	kinds := make([]int, len(args))
+	for i := 0; i < len(args); i++ {
+		w := args[i]
+		if w == "--" {
+			kinds[i] = argOption
+			for i++; i < len(args); i++ {
+				kinds[i] = argPositional
+			}
+			break
+		}
+		if len(w) < 2 || w[0] != '-' {
+			kinds[i] = argPositional
+			continue
+		}
+		kinds[i] = argOption
+		name, _, hasValue := optionName(w)
+		vo, takes := valueOptions[name]
+		if !takes || hasValue {
+			continue
+		}
+		if i+1 < len(args) {
+			i++
+			kinds[i] = argValue
+		}
+		for vo.variadic && i+1 < len(args) && !strings.HasPrefix(args[i+1], "-") {
+			i++
+			kinds[i] = argValue
+		}
+	}
+	return kinds
+}
+
+// optionName splits "--name=value"; a short option is its own name.
+func optionName(w string) (name, value string, hasValue bool) {
+	if strings.HasPrefix(w, "--") {
+		return strings.Cut(w, "=")
+	}
+	return w, "", false
+}
+
+func isContinue(name string) bool { return name == "-c" || name == "--continue" }
+
 // ParseClaudeCmd splits cmd by shell rules and checks it can run a chat
 // session. reason is empty on success, otherwise one of
 // protocol.ChatReasonShellSyntax, ChatReasonNotClaude, ChatReasonConflictingArgs.
+// Only words in option position are interpreted (classifyArgs).
 func ParseClaudeCmd(cmd string) (Parsed, string) {
 	words, ok := splitWords(cmd)
 	if !ok {
@@ -47,27 +120,26 @@ func ParseClaudeCmd(cmd string) (Parsed, string) {
 		return Parsed{}, protocol.ChatReasonNotClaude
 	}
 	p := Parsed{Exe: words[0]}
-	for i := 1; i < len(words); i++ {
-		w := words[i]
-		name, value, hasValue := strings.Cut(w, "=")
-		if !strings.HasPrefix(w, "--") {
-			name, value, hasValue = w, "", false
+	args := words[1:]
+	kinds := classifyArgs(args)
+	for i, w := range args {
+		if kinds[i] != argOption {
+			p.Args = append(p.Args, w)
+			continue
 		}
+		name, value, hasValue := optionName(w)
 		if sessionControlArgs[name] {
 			return Parsed{}, protocol.ChatReasonConflictingArgs
 		}
-		switch name {
-		case "-c", "--continue":
+		switch {
+		case isContinue(name):
 			p.Continue = true
 			continue
-		case "--dangerously-skip-permissions":
+		case name == "--dangerously-skip-permissions":
 			p.Bypass = true
-		case "--permission-mode":
-			if !hasValue && i+1 < len(words) {
-				p.Args = append(p.Args, w)
-				i++
-				w = words[i]
-				value = w
+		case name == "--permission-mode":
+			if !hasValue && i+1 < len(args) && kinds[i+1] == argValue {
+				value = args[i+1]
 			}
 			p.PermissionMode = value
 			if value == "bypassPermissions" {
@@ -90,11 +162,25 @@ var streamJSONArgs = []string{
 // daemon constants only. resume opens an existing transcript (--resume),
 // otherwise the conversation id is fixed up front (--session-id).
 func ChatArgv(p Parsed, claudeSessionID string, resume bool) []string {
+	opts, rest := splitAtDashDash(p.Args)
 	argv := make([]string, 0, 1+len(p.Args)+len(streamJSONArgs)+2)
 	argv = append(argv, p.Exe)
-	argv = append(argv, p.Args...)
+	argv = append(argv, opts...)
 	argv = append(argv, streamJSONArgs...)
-	return append(argv, sessionArg(claudeSessionID, resume)...)
+	argv = append(argv, sessionArg(claudeSessionID, resume)...)
+	return append(argv, rest...)
+}
+
+// splitAtDashDash splits args before an option-position "--" (the daemon's
+// own options must come before it, where they are still options).
+func splitAtDashDash(args []string) (opts, rest []string) {
+	kinds := classifyArgs(args)
+	for i, a := range args {
+		if a == "--" && kinds[i] == argOption {
+			return args[:i:i], args[i:]
+		}
+	}
+	return args, nil
 }
 
 func sessionArg(u string, resume bool) []string {
@@ -108,14 +194,26 @@ func sessionArg(u string, resume bool) []string {
 // interactively: the user's arguments minus -c, plus --resume u (or
 // --session-id u when no transcript exists yet), shell-quoted.
 func HandoffCommand(exe string, args []string, u string, resume bool) string {
+	return ShellJoin(HandoffArgv(exe, args, u, resume))
+}
+
+// HandoffArgv is HandoffCommand's argv. Only a -c/--continue in option
+// position is dropped; the same word as an option's value or a prompt word
+// stays.
+func HandoffArgv(exe string, args []string, u string, resume bool) []string {
+	opts, rest := splitAtDashDash(args)
 	argv := []string{exe}
-	for _, a := range args {
-		if a == "-c" || a == "--continue" {
-			continue
+	kinds := classifyArgs(opts)
+	for i, a := range opts {
+		if kinds[i] == argOption {
+			if name, _, _ := optionName(a); isContinue(name) {
+				continue
+			}
 		}
 		argv = append(argv, a)
 	}
-	return ShellJoin(append(argv, sessionArg(u, resume)...))
+	argv = append(argv, sessionArg(u, resume)...)
+	return append(argv, rest...)
 }
 
 var shellSafeWord = regexp.MustCompile(`^[A-Za-z0-9_@%+=:,./-]+$`)

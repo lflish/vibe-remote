@@ -200,3 +200,87 @@ func TestAssembledCommandRuns(t *testing.T) {
 		}
 	}
 }
+
+// Only words in option position are flags: an option's value that looks
+// like -c, a bypass flag or a session-control flag is just a value.
+func TestParseOptionValuesAreNotFlags(t *testing.T) {
+	for _, tc := range []struct {
+		cmd            string
+		args           []string
+		cont, bypass   bool
+		permissionMode string
+	}{
+		{cmd: "claude --append-system-prompt -c", args: []string{"--append-system-prompt", "-c"}},
+		{cmd: "claude --append-system-prompt --dangerously-skip-permissions",
+			args: []string{"--append-system-prompt", "--dangerously-skip-permissions"}},
+		{cmd: "claude --system-prompt --resume", args: []string{"--system-prompt", "--resume"}},
+		{cmd: "claude --model -p", args: []string{"--model", "-p"}},
+		{cmd: "claude --append-system-prompt=-c -c", args: []string{"--append-system-prompt=-c"}, cont: true},
+		{cmd: "claude --model=opus --permission-mode=bypassPermissions",
+			args: []string{"--model=opus", "--permission-mode=bypassPermissions"}, bypass: true, permissionMode: "bypassPermissions"},
+		{cmd: "claude --add-dir /a /b -c --dangerously-skip-permissions",
+			args: []string{"--add-dir", "/a", "/b", "--dangerously-skip-permissions"}, cont: true, bypass: true},
+		{cmd: "claude -- -c --dangerously-skip-permissions", args: []string{"--", "-c", "--dangerously-skip-permissions"}},
+		{cmd: "claude --permission-mode plan -c", args: []string{"--permission-mode", "plan"}, cont: true, permissionMode: "plan"},
+	} {
+		p, reason := ParseClaudeCmd(tc.cmd)
+		if reason != "" {
+			t.Errorf("%q: reason %q", tc.cmd, reason)
+			continue
+		}
+		if !reflect.DeepEqual(p.Args, tc.args) || p.Continue != tc.cont || p.Bypass != tc.bypass || p.PermissionMode != tc.permissionMode {
+			t.Errorf("%q: parsed %+v, want args %q continue=%v bypass=%v mode=%q",
+				tc.cmd, p, tc.args, tc.cont, tc.bypass, tc.permissionMode)
+		}
+	}
+}
+
+// A handoff keeps a -c that is an option's value; it only drops -c/--continue
+// in option position.
+func TestHandoffKeepsContinueLikeOptionValues(t *testing.T) {
+	u := "11111111-2222-4333-8444-555555555555"
+	for _, tc := range []struct{ args, want []string }{
+		{[]string{"--append-system-prompt", "-c"}, []string{"claude", "--append-system-prompt", "-c", "--session-id", u}},
+		{[]string{"--append-system-prompt=x", "-c"}, []string{"claude", "--append-system-prompt=x", "--session-id", u}},
+		{[]string{"--", "-c"}, []string{"claude", "--session-id", u, "--", "-c"}},
+	} {
+		if got := restoreArgv(t, HandoffCommand("claude", tc.args, u, false)); !reflect.DeepEqual(got, tc.want) {
+			t.Errorf("handoff %q = %q, want %q", tc.args, got, tc.want)
+		}
+	}
+}
+
+// End to end: the prompt value "-c" stays a value, so the chat process
+// still runs headless (the fake claude reports interactive mode otherwise).
+func TestChatArgvKeepsPromptValueContinue(t *testing.T) {
+	exe := filepath.Join(chattest.FakeClaude(t), "claude")
+	p, reason := ParseClaudeCmd(ShellJoin([]string{exe, "--append-system-prompt", "-c"}))
+	if reason != "" {
+		t.Fatal(reason)
+	}
+	argv := ChatArgv(p, "11111111-2222-4333-8444-555555555555", false)
+	cmd := exec.Command(argv[0], argv[1:]...)
+	env := chattest.NewEnv(t)
+	cmd.Env, cmd.Dir, cmd.Stdin = env.Environ(), t.TempDir(), bytes.NewBufferString("")
+	out, _ := cmd.CombinedOutput()
+	if p.Continue || strings.Contains(string(out), "interactive") {
+		t.Fatalf("prompt value -c taken as continue: continue=%v argv=%q out=%s", p.Continue, argv, out)
+	}
+}
+
+// Words after "--" are positional, so the daemon's own options go before it.
+func TestDaemonArgsGoBeforeDashDash(t *testing.T) {
+	u := "11111111-2222-4333-8444-555555555555"
+	p, reason := ParseClaudeCmd("claude --model opus -- -c")
+	if reason != "" {
+		t.Fatal(reason)
+	}
+	argv := ChatArgv(p, u, true)
+	want := append(append([]string{"claude", "--model", "opus"}, streamJSONArgs...), "--resume", u, "--", "-c")
+	if !reflect.DeepEqual(argv, want) {
+		t.Fatalf("chat argv = %q, want %q", argv, want)
+	}
+	if got, want := HandoffArgv(p.Exe, p.Args, u, false), []string{"claude", "--model", "opus", "--session-id", u, "--", "-c"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("handoff argv = %q, want %q", got, want)
+	}
+}

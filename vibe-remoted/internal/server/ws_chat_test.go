@@ -483,6 +483,15 @@ func TestWSChatCreateReady(t *testing.T) {
 	if a := acks(fs); len(a) != 1 || !a[0].OK || a[0].Op != protocol.AckOpSend || a[0].Ref != "m1" {
 		t.Fatalf("acks %+v", a)
 	}
+	// A replay of the same message is acked as a delivered duplicate.
+	sendChat(w, "m1", "echo hello")
+	fs = w.waitFor("duplicate ack", func(fs []wsFrame) bool { return len(acks(fs)) == 2 })
+	if a := acks(fs)[1]; !a.OK || !a.Duplicate || a.Completed == nil || !*a.Completed || a.Ref != "m1" {
+		t.Fatalf("duplicate ack %+v", a)
+	}
+	if results(fs) != 1 {
+		t.Fatalf("replay ran again: %d results", results(fs))
+	}
 	// The sessions list marks it as a chat session.
 	code, body := c.rest("GET", "/api/v1/sessions")
 	if code != 200 || !strings.Contains(fmt.Sprint(body), "ui:chat") {

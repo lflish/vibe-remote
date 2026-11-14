@@ -44,6 +44,7 @@ const (
 	stderrTailBytes = 8 << 10
 	stopResultWait  = 2 * time.Second
 	stopTermWait    = time.Second
+	stopKillWait    = time.Second
 )
 
 // Tuning overrides timing constants (tests); zero values use the defaults.
@@ -113,6 +114,10 @@ type Ack struct {
 	OK      bool
 	Code    string
 	Message string
+	// Duplicate (Send): the clientMsgId was already accepted; Completed: a
+	// result for it has been seen.
+	Duplicate bool
+	Completed bool
 }
 
 func ok() Ack                    { return Ack{OK: true} }
@@ -178,13 +183,16 @@ type Session struct {
 	claudeVersion  string
 	ended          *protocol.ChatEnded
 
-	recent    []string
-	recentSet map[string]bool
-	subs      map[*Subscription]struct{}
-	lastState []byte
-	nonJSON   int
-	reloading bool
-	exitCB    chan struct{} // closed when the last exit callback returned
+	// delivered records the last recentMsgIDs clientMsgIds Send accepted
+	// (value: a result for it was seen), in acceptance order. It is kept
+	// apart from the ring, so a replay is recognized after eviction too.
+	delivered      map[string]bool
+	deliveredOrder []string
+	subs           map[*Subscription]struct{}
+	lastState      []byte
+	nonJSON        int
+	reloading      bool
+	exitCB         chan struct{} // closed when the last exit callback returned
 }
 
 // proc is one running claude process (one epoch).
@@ -238,7 +246,7 @@ func newSession(spec Spec) *Session {
 		test:      spec.test,
 		stale:     spec.Tuning.StaleTurn,
 		ours:      map[string]string{},
-		recentSet: map[string]bool{},
+		delivered: map[string]bool{},
 		subs:      map[*Subscription]struct{}{},
 		cutoff:    -1,
 	}
@@ -767,6 +775,11 @@ func (s *Session) handleLine(p *proc, raw []byte) {
 			s.ignoreResults--
 			msg = markStale(line)
 		} else if len(s.unpaired) > 0 {
+			if id := s.unpaired[0]; id != "" {
+				if _, seen := s.delivered[id]; seen {
+					s.delivered[id] = true
+				}
+			}
 			s.unpaired = s.unpaired[1:]
 		}
 		s.interruptID = ""
@@ -1056,8 +1069,9 @@ func (s *Session) Send(clientMsgID, text string) Ack {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if clientMsgID != "" && s.recentSet[clientMsgID] {
-		return ok() // a replay of a message already written
+	if completed, seen := s.delivered[clientMsgID]; clientMsgID != "" && seen {
+		// A replay of a message already written: not written again.
+		return Ack{OK: true, Duplicate: true, Completed: completed}
 	}
 	p := s.proc
 	if p == nil {
@@ -1067,11 +1081,11 @@ func (s *Session) Send(clientMsgID, text string) Ack {
 		return nack(protocol.AckChatBusy)
 	}
 	if clientMsgID != "" {
-		s.recent = append(s.recent, clientMsgID)
-		s.recentSet[clientMsgID] = true
-		if len(s.recent) > recentMsgIDs {
-			delete(s.recentSet, s.recent[0])
-			s.recent = s.recent[1:]
+		s.delivered[clientMsgID] = false
+		s.deliveredOrder = append(s.deliveredOrder, clientMsgID)
+		if len(s.deliveredOrder) > recentMsgIDs {
+			delete(s.delivered, s.deliveredOrder[0])
+			s.deliveredOrder = s.deliveredOrder[1:]
 		}
 	}
 	s.appendRingLocked(userEcho(text, clientMsgID))
@@ -1079,6 +1093,20 @@ func (s *Session) Send(clientMsgID, text string) Ack {
 	s.lastActivity = time.Now()
 	s.broadcastStateLocked()
 	return ok()
+}
+
+// forgetMsgIDLocked drops id from the replay filter of Send.
+func (s *Session) forgetMsgIDLocked(id string) {
+	if _, seen := s.delivered[id]; id == "" || !seen {
+		return
+	}
+	delete(s.delivered, id)
+	for i, r := range s.deliveredOrder {
+		if r == id {
+			s.deliveredOrder = append(s.deliveredOrder[:i:i], s.deliveredOrder[i+1:]...)
+			break
+		}
+	}
 }
 
 // Respond answers an open permission request (chat_respond). The answer is
@@ -1108,10 +1136,21 @@ func (s *Session) Respond(requestID string, resp json.RawMessage, setMode string
 		return nack(protocol.AckChatNotRunning)
 	}
 	var req struct {
+		ToolName    string            `json:"tool_name"`
 		Input       json.RawMessage   `json:"input"`
 		Suggestions []json.RawMessage `json:"permission_suggestions"`
 	}
 	_ = json.Unmarshal(s.pending[i].request, &req)
+	if setMode != "" {
+		// setMode only comes with approving a plan, and never unlocks a
+		// session whose mode is fixed (as SetMode).
+		if s.spec.Lock {
+			return nack(protocol.AckModeLocked)
+		}
+		if req.ToolName != "ExitPlanMode" {
+			return nackMsg(protocol.AckInvalidMode, "setMode is only accepted when answering a plan")
+		}
+	}
 	if up := r["updatedPermissions"]; len(up) > 0 && string(up) != "null" {
 		var items []json.RawMessage
 		if json.Unmarshal(up, &items) != nil {
@@ -1218,9 +1257,10 @@ func (s *Session) WithOp(fn func(ops OpHandle)) {
 }
 
 // StopLocked stops the process and waits until it is gone (design 6.4):
-// interrupt → the turn's result (≤2 s) → SIGTERM to the process group → 1 s →
-// SIGKILL → Wait → the stdout reader finished → every written message without
-// a result gets dropped_on_stop → exit callback. Idempotent.
+// interrupt → the turn's result (≤2 s) → SIGTERM to the process group → 1 s
+// for claude to exit and its output to end → otherwise SIGKILL to the group →
+// Wait → the stdout reader finished (≤1 s more) → every written message
+// without a result gets dropped_on_stop → exit callback. Idempotent.
 func (o OpHandle) StopLocked(reason string) error { return o.stop(nil, reason) }
 
 // stop stops target (nil = whatever runs now).
@@ -1267,17 +1307,26 @@ func (o OpHandle) stop(target *proc, reason string) error {
 		deadline.Stop()
 	}
 	// Signal right away: closing stdin would let claude run every queued
-	// message first (probe V5, V14).
-	if !closed(p.waitDone) {
+	// message first (probe V5, V14). The deadline covers both claude's exit
+	// and the end of its output: a process left in claude's group that
+	// ignores SIGTERM keeps stdout open after claude itself is gone, so the
+	// group gets SIGKILL unless both happened in time.
+	if !closed(p.joined) {
 		signalGroup(p.pid, syscall.SIGTERM)
 		select {
-		case <-p.waitDone:
+		case <-p.joined:
 		case <-time.After(stopTermWait):
 			signalGroup(p.pid, syscall.SIGKILL)
-			<-p.waitDone
+			<-p.waitDone // claude itself is confirmed gone
+			select {
+			case <-p.joined:
+			case <-time.After(stopKillWait):
+				// Held open by a process outside claude's group; the epoch is
+				// settled without it (its lines are ignored from now on).
+				log.Printf("chat [%s]: claude's output is still held open after it exited; not waiting for it", s.spec.ID)
+			}
 		}
 	}
-	<-p.joined
 
 	s.mu.Lock()
 	run := s.settleLocked(p, reason, "")
@@ -1315,6 +1364,9 @@ func (s *Session) settleLocked(p *proc, reason, message string) func(wait bool) 
 	}
 	for _, id := range s.unpaired {
 		s.appendRingLocked(vrNotice(NoticeDroppedOnStop, "the session stopped before this message ran", id))
+		// It never ran: a resend with the same id is a new message, not a
+		// replay to swallow.
+		s.forgetMsgIDLocked(id)
 	}
 	for _, pe := range s.pending {
 		s.appendRingLocked(vrResolved(pe.id, outcomeExited))

@@ -45,9 +45,12 @@ func main() {
 	if addr := os.Getenv("VIBE_REMOTED_BIND_ADDR"); addr != "" {
 		cfg.BindAddr = addr
 	}
-	if token := os.Getenv("VIBE_REMOTED_TOKEN"); token != "" {
+	if token := os.Getenv(chat.MainTokenEnv); token != "" {
 		cfg.Token = token
 	}
+	// Nothing this daemon starts (terminal sessions, chat processes, the
+	// version probe) may inherit the main token; drop it before any spawn.
+	_ = os.Unsetenv(chat.MainTokenEnv)
 
 	if err := cfg.Validate(); err != nil {
 		log.Fatalf("config validation: %v", err)

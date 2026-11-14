@@ -83,7 +83,7 @@ docs/          协议与发布文档
 - 客户端断开**不停进程、不发 exit**；进程只因删除、重载、交接、daemon 退出或自己退出而结束。只有真退出才发 `exit` 帧 + `chat_state.ended`。
 - 断线补发：每个 epoch（每次起进程 +1）内所有出站消息带递增 `seq`，内存环形缓冲 1000 条 / 32 MiB（流式尾巴另存）。重连 attach 带 `epoch`+`since` 且仍在缓冲内 → 增量补发；否则 `reset` 同步：先发 claude 的 JSONL 历史（完整、分批 200 帧流式读，`h:true`），再发缓冲，最后一条 `chat_state` 是同步结束标志。待答的权限请求（`chat_state.pending`）不受缓冲淘汰影响。
 - 持久化：`<state_dir>/chat-sessions.json` 只记会话元数据（名字、workdir、拆好的参数、claude 会话 id、状态），**不存消息**；历史以 claude 自己的 JSONL（`$CLAUDE_CONFIG_DIR/projects` 或 `~/.claude/projects`）为准。daemon 重启后对话进程不存活：记录改为 `ended/daemon_restart`（孤儿进程先确认杀掉），「重新启动」= reload，用 `--resume <同一 id>` 接上（无 JSONL 时 `--session-id`）。
-- **同一 claude 会话 id 任何时刻最多一个进程**：`Manager.claudeOwners` 先 claim 后 spawn；重载/交接/删除共用 `Session.WithOp`（不可重入），停进程 = interrupt → 等本回合 result ≤2 s → SIGTERM 进程组 → 1 s → SIGKILL → `Wait` → join 读协程，确认旧进程退出后才起新进程。对话 `-c` 指向的 claude 会话已在别的对话会话里 → `ready.existing`；被终端会话持有 → fatal `claude_session_busy`。
+- **同一 claude 会话 id 任何时刻最多一个进程**：`Manager.claudeOwners` 先 claim 后 spawn；重载/交接/删除共用 `Session.WithOp`（不可重入），停进程 = interrupt → 等本回合 result ≤2 s → SIGTERM 进程组 → 1 s 内 claude 没退出或 stdout 没到 EOF（组里有忽略 SIGTERM 的后代占着）→ SIGKILL 进程组 → `Wait` → join 读协程（≤1 s），确认旧进程退出后才起新进程。对话 `-c` 指向的 claude 会话已在别的对话会话里 → `ready.existing`；被终端会话持有 → fatal `claude_session_busy`。
 - 交接（「新建终端会话接上」）：attach 带 `handoffFrom`，daemon 先停对话进程，再新建终端会话运行 `claude <原参数> --resume <id>`（命令只在服务端拼），原对话会话标 `ended/handed_off`。该终端会话持有这个 claude 会话 id（tmux 选项 `@vibe_remote_claude_u`，reconcile 跨重启恢复），被删除或 tmux 会话消失时释放。
 - **终端会话的 continue 改写**：daemon 自己以 continue 语义（`claude_cmd`/勾选 flag 带 `-c`/`--continue`）启动的终端会话，启动前把 `-c` 改写为 `--resume <该目录最近一次对话 id>`（没有记录时为 daemon 生成的 `--session-id <uuid>`）并原子占用，这样同一段对话不会被终端和对话两边同时打开；与运行中的对话会话冲突时新建返回 fatal `claude_session_busy`、重载返回 409。其余终端会话的命令原样不动。
 
@@ -146,7 +146,7 @@ shouldForceSelection(e) { return isMac ? e.altKey && macOptionClickForcesSelecti
 - vibe-remoted **绑私有网段地址**：`config.validateBindAddr` 放行 RFC1918 / loopback / link-local / IPv6 ULA / tailscale CGNAT 段（`isPrivateBindIP`，用 `net.IP.IsPrivate` + CGNAT 补丁），拒绝**公网 IP**（需 `allow_insecure_bind: true` 逃生舱）和**所有通配地址**（`0.0.0.0`/`::`，恒拒，逃生舱也不放行）。
 - **静态 token 是准入核心边界**：WS `auth` 帧 + REST `Authorization: Bearer`，均用 `crypto/subtle.ConstantTimeCompare` 常量时间校验（token 现在是主防线，防时序侧信道）。
 - workdir 白名单：`config.IsAllowedWorkdir` 用 `filepath.Rel` + `..` 前缀检查防路径越权；`/api/v1/fs` 和 attach 的 workdir 都受约束。
-- **工作区信任（对话模式）**：`claude -p` 不弹信任确认、会直接执行项目 `.claude/settings.json` 里的 hook。daemon 因此只在 claude 已信任的目录新建对话会话：读 `$CLAUDE_CONFIG_DIR/.claude.json`（否则 `~/.claude.json`）里 `projects[<目录本身>].hasTrustDialogAccepted`，只认 `true`；无记录、`false`、文件缺失或损坏一律拒绝（`chat_unsupported`/`workdir_untrusted`），提示先用终端界面在该目录打开一次 claude。worktree 模式查源仓库目录。只读这一个字段。
+- **工作区信任（对话模式）**：`claude -p` 不弹信任确认、会直接执行项目 `.claude/settings.json` 里的 hook。daemon 因此只在 claude 已信任的目录新建对话会话：读 `$CLAUDE_CONFIG_DIR/.claude.json`（否则 `~/.claude.json`）里 `projects[<目录本身>].hasTrustDialogAccepted`，只认 `true`；无记录、`false`、文件缺失或损坏一律拒绝（`chat_unsupported`/`workdir_untrusted`），提示先用终端界面在该目录打开一次 claude。worktree 模式查所选的源目录本身（不是仓库根，也不是新 worktree）。只读这一个字段。
 - 对话模式的启动命令只由服务端配置拼成（`claude_cmd` + 白名单 flag + 常量，参数逐个单引号转义）；客户端只传 flag id、会话 id、`handoffFrom`。「不再询问」只回传 claude 自己给出的规则建议（JSON 相等校验），daemon 不写任何 `.claude` 设置文件、不读 claude 凭据。对话进程同样只拿 hook token。
 - 传输为明文 `ws://`（无 `wss://`）：绑 tailscale IP 时由 WireGuard 加密，绑 LAN IP 时为明文——**仅在可信网络使用**。Origin 检查跳过（Electron 跨 origin）+ permissive CORS，均以 token + 私有网段不可达公网为前提。**Tailscale 仍是推荐方案**（自带加密+跨网），只是不再强制。
 

@@ -42,6 +42,9 @@ type chatEntry struct {
 // ErrUIMismatch: the session exists but is of the other kind (terminal vs chat).
 var ErrUIMismatch = errors.New("session is of a different ui kind")
 
+// ErrShuttingDown: the daemon is stopping and starts no new chat process.
+var ErrShuttingDown = errors.New("daemon is shutting down")
+
 // ErrClaudeSessionBusy matches every *ClaudeSessionBusyError.
 var ErrClaudeSessionBusy = errors.New("claude session busy")
 
@@ -67,13 +70,32 @@ func (e *ClaudeSessionBusyError) Is(target error) bool { return target == ErrCla
 // succeeds; an orphan's claim lapses once its process is gone.
 func (m *Manager) claimClaudeLocked(u, owner string) error {
 	if cur, held := m.claudeOwners[u]; held && cur != owner {
-		if o, ok := m.orphans[u]; !ok || cur != o.Owner() || !o.Gone() {
+		if !m.dropStaleClaimLocked(u, cur) {
 			return m.busyLocked(u, cur)
 		}
-		delete(m.orphans, u)
 	}
 	m.claudeOwners[u] = owner
 	return nil
+}
+
+// dropStaleClaimLocked releases u's claim by cur when the process behind it
+// is gone: an orphan that finally exited, or a terminal session without tmux
+// whose CLI ended with its PTY (nothing else would ever release it). It
+// reports whether the claim was dropped.
+func (m *Manager) dropStaleClaimLocked(u, cur string) bool {
+	if o, ok := m.orphans[u]; ok && cur == o.Owner() {
+		if !o.Gone() {
+			return false
+		}
+		delete(m.orphans, u)
+		delete(m.claudeOwners, u)
+		return true
+	}
+	if r := m.sessions[cur]; r != nil && r.bareProcessGone() {
+		m.releaseOwnerLocked(cur)
+		return true
+	}
+	return false
 }
 
 func (m *Manager) claimClaude(u, owner string) error {
@@ -178,6 +200,10 @@ func (m *Manager) chatAttachExisting(id string) (ChatAttachment, error) {
 // returns X (Existing), and one held by a terminal session fails with
 // ErrClaudeSessionBusy.
 func (m *Manager) CreateChat(opts ChatCreateOptions) (ChatAttachment, error) {
+	if !m.enterChatCreate() {
+		return ChatAttachment{}, ErrShuttingDown
+	}
+	defer m.chatCreates.Done()
 	id := opts.ID
 	if id == "" {
 		id = generateID()
@@ -255,6 +281,19 @@ func (m *Manager) CreateChat(opts ChatCreateOptions) (ChatAttachment, error) {
 			}
 		}
 	}
+	m.mu.RLock()
+	closing := m.closing
+	m.mu.RUnlock()
+	if closing {
+		// Shutdown began while this create was on its way: start nothing.
+		m.releaseClaude(u, id)
+		if mode == protocol.SessionModeWorktree {
+			if rollbackErr := RollbackWorktree(meta); rollbackErr != nil {
+				return ChatAttachment{}, fmt.Errorf("%v; rollback worktree: %w", ErrShuttingDown, rollbackErr)
+			}
+		}
+		return ChatAttachment{}, ErrShuttingDown
+	}
 	rec := chat.Record{
 		ID: id, Workdir: workdir, Mode: string(mode),
 		SourceWorkdir: meta.SourceWorkdir, SourceRepo: meta.SourceRepo, WorktreeRoot: meta.WorktreeRoot, Branch: meta.Branch,
@@ -279,6 +318,19 @@ func (m *Manager) CreateChat(opts ChatCreateOptions) (ChatAttachment, error) {
 	m.persistLocked()
 	m.mu.Unlock()
 	return ChatAttachment{Session: sess, ID: id}, nil
+}
+
+// enterChatCreate registers a CreateChat in flight; false once Shutdown has
+// begun. Shutdown waits for every registered create before it stops the
+// chat processes and writes the table a final time.
+func (m *Manager) enterChatCreate() bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.closing {
+		return false
+	}
+	m.chatCreates.Add(1)
+	return true
 }
 
 // chatEnv is a chat process's environment: the daemon's (UTF-8 locale
@@ -427,15 +479,10 @@ func (m *Manager) ReloadChat(id string) error {
 		return sessionNotFound(id)
 	}
 	u := e.rec.ClaudeSessionID
-	if owner, held := m.claudeOwners[u]; held && owner != id {
-		if o, ok := m.orphans[u]; ok && owner == o.Owner() && o.Gone() {
-			delete(m.orphans, u)
-			delete(m.claudeOwners, u)
-		} else {
-			err := m.busyLocked(u, owner)
-			m.mu.Unlock()
-			return err
-		}
+	if owner, held := m.claudeOwners[u]; held && owner != id && !m.dropStaleClaimLocked(u, owner) {
+		err := m.busyLocked(u, owner)
+		m.mu.Unlock()
+		return err
 	}
 	if !e.sess.BeginReload() {
 		m.mu.Unlock()
@@ -510,8 +557,27 @@ func (m *Manager) LoadChats(store *chat.Store) error {
 }
 
 // Shutdown stops every chat process (they cannot outlive the daemon, Q2=A)
-// within timeout and writes the table a final time.
+// within timeout and writes the table a final time. Chat creates still in
+// flight are waited for first; later ones fail with ErrShuttingDown.
 func (m *Manager) Shutdown(timeout time.Duration) {
+	deadline := time.Now().Add(timeout)
+	// New creates are refused from here on; one already in flight either
+	// sees closing before it starts claude, or registers its session before
+	// the snapshot below.
+	m.mu.Lock()
+	m.closing = true
+	m.mu.Unlock()
+	creates := make(chan struct{})
+	go func() {
+		m.chatCreates.Wait()
+		close(creates)
+	}()
+	select {
+	case <-creates:
+	case <-time.After(timeout):
+		log.Printf("chat: some session creates did not finish within %v", timeout)
+	}
+
 	m.mu.RLock()
 	entries := make([]*chatEntry, 0, len(m.chats))
 	for _, e := range m.chats {
@@ -533,7 +599,7 @@ func (m *Manager) Shutdown(timeout time.Duration) {
 	}()
 	select {
 	case <-done:
-	case <-time.After(timeout):
+	case <-time.After(time.Until(deadline)):
 		log.Printf("chat: some claude processes did not stop within %v", timeout)
 	}
 	m.persist.stop()
@@ -715,7 +781,7 @@ func (m *Manager) Handoff(chatID, newID string, cols, rows uint16) (*Runner, err
 		_, found := chat.FindTranscript(m.projectsDir(), u)
 		opts := CreateOptions{
 			Workdir: rec.Workdir, Mode: protocol.SessionMode(rec.Mode), Cols: cols, Rows: rows,
-			ClaudeCmdOverride: chat.HandoffCommand(rec.Exe, rec.Args, u, found), ClaudeU: u,
+			ClaudeArgv: chat.HandoffArgv(rec.Exe, rec.Args, u, found), ClaudeU: u,
 		}
 		worktree := protocol.SessionMode(rec.Mode) == protocol.SessionModeWorktree
 		if worktree {

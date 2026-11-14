@@ -46,7 +46,7 @@ invariants:
   - rule: 终端会话的 v2 帧除 proto 外逐字节不变
     check: cd vibe-remoted && go test -race ./internal/server -run TestTerminalFramesUnchangedV3
   - rule: 同一 claude 会话 id 任何时刻最多一个 claude 进程（claudeOwners 先 claim 后 spawn；continue 终端会话固定身份后 claim）
-    check: cd vibe-remoted && go test -race ./internal/chat -run TestSingleProcess && go test -race ./internal/session ./internal/server -run 'TestReloadWaitsForOldProcess|TestChatCreateReplaySameID|TestContinueReusesRunningSession|TestConcurrentContinueCreatesOneProcess|TestRestartRefusedWhenUResumedElsewhere|TestHandoffVsReloadOneWins|TestReloadVsDeleteSerialized|TestTerminalContinueBusyWhenChatOwns|TestTerminalContinueClaimsLatest|TestOrphanCleanup'
+    check: cd vibe-remoted && go test -race ./internal/chat -run 'TestSingleProcess|TestOrphanCleanup' && go test -race ./internal/session ./internal/server -run 'TestReloadWaitsForOldProcess|TestChatCreateReplaySameID|TestContinueReusesRunningSession|TestConcurrentContinueCreatesOneProcess|TestRestartRefusedWhenUResumedElsewhere|TestHandoffVsReloadOneWins|TestReloadVsDeleteSerialized|TestTerminalContinueBusyWhenChatOwns|TestTerminalContinueClaimsLatest'
   - rule: 客户端断开不停对话进程、不发 exit
     check: cd vibe-remoted && go test -race ./internal/server -run TestChatDisconnectKeepsProcess
   - rule: 待答请求只因回答/取消/中断/退出而消失，不被缓冲淘汰

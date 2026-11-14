@@ -62,6 +62,10 @@ type Manager struct {
 	chatCfg ChatConfig
 	store   *chat.Store
 	persist persister
+	// closing (guarded by mu) is set by Shutdown: no new chat process starts.
+	// chatCreates counts the CreateChat calls Shutdown waits for.
+	closing     bool
+	chatCreates sync.WaitGroup
 
 	// Seams for tests.
 	orphanCleanup    func([]chat.Record) ([]chat.Record, []chat.Orphan)
@@ -71,7 +75,7 @@ type Manager struct {
 
 // NewManager creates a session manager.
 func NewManager(useTmux bool, claudeCmd string, loginShell bool, shell string) *Manager {
-	return &Manager{
+	m := &Manager{
 		sessions:         make(map[string]*Runner),
 		chats:            make(map[string]*chatEntry),
 		claudeOwners:     make(map[string]string),
@@ -85,6 +89,18 @@ func NewManager(useTmux bool, claudeCmd string, loginShell bool, shell string) *
 		shell:            shell,
 		liveTmuxSessions: liveTmuxSessions,
 	}
+	if useTmux {
+		scrubTmuxMainToken()
+	}
+	return m
+}
+
+// scrubTmuxMainToken removes the daemon's main token variable from the global
+// environment of a tmux server an older daemon may have started with it (a
+// server copies its first client's environment into every new pane). Best
+// effort: with no server running there is nothing to remove.
+func scrubTmuxMainToken() {
+	_ = tmuxCmd("set-environment", "-g", "-u", chat.MainTokenEnv).Run()
 }
 
 // SetEventEnv configures the events endpoint URL injected into new sessions'
@@ -152,6 +168,9 @@ type CreateOptions struct {
 	Mode              protocol.SessionMode
 	Cols, Rows        uint16
 	ClaudeCmdOverride string
+	// ClaudeArgv, when set, is the command as argv (handoff); it takes
+	// precedence over ClaudeCmdOverride.
+	ClaudeArgv []string
 	// ValidateWorkdir, when set, re-checks the workdir a worktree session will
 	// actually run in. The caller validated the source directory, but the
 	// worktree is created next to the repo root — possibly outside the allowed
@@ -240,6 +259,10 @@ func (m *Manager) createTerminalLocked(id string, opts CreateOptions) (*Runner, 
 	if opts.ClaudeCmdOverride != "" {
 		claudeCmd = opts.ClaudeCmdOverride
 	}
+	claudeArgv := opts.ClaudeArgv
+	if len(claudeArgv) > 0 {
+		claudeCmd = chat.ShellJoin(claudeArgv)
+	}
 	ownWorktree := mode == protocol.SessionModeWorktree && opts.Worktree == nil
 	claudeU := opts.ClaudeU
 	claimedHere := false
@@ -260,7 +283,8 @@ func (m *Manager) createTerminalLocked(id string, opts CreateOptions) (*Runner, 
 				}
 				return nil, err
 			}
-			claudeCmd = chat.HandoffCommand(p.Exe, p.Args, u, found)
+			claudeArgv = chat.HandoffArgv(p.Exe, p.Args, u, found)
+			claudeCmd = chat.ShellJoin(claudeArgv)
 			claudeU, claimedHere = u, true
 		}
 	}
@@ -274,6 +298,7 @@ func (m *Manager) createTerminalLocked(id string, opts CreateOptions) (*Runner, 
 		Branch:        meta.Branch,
 		UseTmux:       m.useTmux,
 		ClaudeCmd:     claudeCmd,
+		ClaudeArgv:    claudeArgv,
 		LoginShell:    m.loginShell,
 		Shell:         m.shell,
 		Cols:          opts.Cols,
@@ -670,12 +695,16 @@ func (m *Manager) List() []protocol.SessionInfo {
 	// reconcile and the snapshot below hold it.
 	live, haveLive := m.syncFromTmux()
 
-	m.mu.RLock()
+	m.mu.Lock()
 	runners := make([]*Runner, 0, len(m.sessions))
-	for _, r := range m.sessions {
+	for id, r := range m.sessions {
 		runners = append(runners, r)
+		if r.bareProcessGone() {
+			// Without tmux the CLI is gone with its PTY; so is its claim.
+			m.releaseOwnerLocked(id)
+		}
 	}
-	m.mu.RUnlock()
+	m.mu.Unlock()
 
 	list := make([]protocol.SessionInfo, 0, len(runners))
 	for _, r := range runners {

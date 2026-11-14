@@ -100,6 +100,9 @@ func TestProtocolChatFramesJSON(t *testing.T) {
 	wantKeys(t, "chat_ack", ChatAckFrame{Type: TypeChatAck, Op: AckOpRespond, Ref: "r", OK: false, Code: AckRequestNotPending, Message: "m"},
 		"type", "op", "ref", "ok", "code", "message")
 	wantKeys(t, "chat_ack(ok)", ChatAckFrame{Type: TypeChatAck, Op: AckOpInterrupt, OK: true}, "type", "op", "ok")
+	completed := false
+	wantKeys(t, "chat_ack(duplicate)", ChatAckFrame{Type: TypeChatAck, Op: AckOpSend, Ref: "m", OK: true, Duplicate: true, Completed: &completed},
+		"type", "op", "ref", "ok", "duplicate", "completed")
 
 	wantKeys(t, "chat_send", ChatSendFrame{Type: TypeChatSend, ClientMsgID: "m1", Text: "hi"},
 		"type", "clientMsgId", "text")
