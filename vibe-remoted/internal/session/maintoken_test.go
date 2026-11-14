@@ -3,6 +3,7 @@ package session
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -64,8 +65,8 @@ func TestMainTokenEnvNotInheritedByBareTerminal(t *testing.T) {
 // global environment; a new Manager removes it from there.
 func TestMainTokenEnvNotInheritedByTmuxTerminal(t *testing.T) {
 	requireTmux(t)
-	keep := newTmuxKeeper(t)
-	defer keep()
+	t.Cleanup(waitTmuxServerSettled) // runs last, after the sessions are gone
+	t.Cleanup(newTmuxKeeper(t))
 	if out, err := tmuxCmd("set-environment", "-g", "VIBE_REMOTED_TOKEN", envMainToken).CombinedOutput(); err != nil {
 		t.Fatalf("seed tmux global env: %v: %s", err, out)
 	}
@@ -95,4 +96,18 @@ func newTmuxKeeper(t *testing.T) func() {
 		t.Fatal("tmux keeper session did not start")
 	}
 	return func() { _ = tmuxCmd("kill-session", "-t", name).Run() }
+}
+
+// waitTmuxServerSettled waits until a tmux server that just lost its last
+// session has fully exited, so the next test's new-session does not race its
+// shutdown ("server exited unexpectedly").
+func waitTmuxServerSettled() {
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		out, _ := tmuxCmd("list-sessions").CombinedOutput()
+		if !strings.Contains(string(out), "server exited unexpectedly") {
+			return
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
 }
