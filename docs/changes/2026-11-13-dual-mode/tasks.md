@@ -406,7 +406,7 @@
 - 依赖：T9
 
 ### T11 新建对话框「界面」一节、侧边栏状态点与通知
-- 状态：待办
+- 状态：完成
 - 文件：修改 `desktop/src/renderer/dirpicker.ts`（「界面」卡片，默认终端；对话卡片按 `chat/availability.ts` 置灰并写原因；对话模式下显示 `-c`/bypass 的说明文案，原型场景 4）、`desktop/src/renderer/index.ts`（`startNewSession` 按 ui 分支；REST 轮询比较 `activitySeq`/`epoch`/`state` 更新未打开会话的点；对话视图忽略 `notify` 帧的 idle/waiting；通知带 tag，处理 `notification-click`；通知结果为 `fallback` 时只亮黄点、依赖主进程 Dock 弹跳 + 角标，**不自动切换会话**，d12）、`desktop/src/main/index.ts` 与 `preload.ts`（`notify(title, body, tag?)`，点击时 `webContents.send('notification-click', tag)`）、`i18n.ts`、`styles.css`；新建 `desktop/src/renderer/chat/availability.ts`、`chat/activity.ts`；测试新建 `desktop/scripts/test-chat-availability.mjs`、`test-chat-activity.mjs`
 - 接口：
   - 提供：`chatAvailability(info?: MachineInfo, error?: unknown) → {enabled: boolean; reasonKey?: string; upgrade?: 'claude'|'daemon'}`；`nextDot(prev, event, {isActive, windowFocused}) → {dot, notify: boolean}`；`data-testid`：`picker-ui-terminal`、`picker-ui-chat`、`picker-ui-chat-reason`；侧边栏 `data-dot`
@@ -416,7 +416,7 @@
 - 依赖：T10、T6（info.chat 字段）
 
 ### T12 出错与结束状态、重载、交接、改名、删除、补发提示
-- 状态：待办
+- 状态：进行中
 - 文件：修改 `desktop/src/renderer/chat/view.ts`（结束横幅：重新启动 / 已升级重新检测 / 新建终端会话接上；回合错误卡片与重试；`chat-omitted`；`chat-resync-divider`；`existing` 提示）、`desktop/src/renderer/index.ts`（交接：回合进行中先 `confirm`，再 `openSession(machine,'',…, {ui:'terminal', handoffFrom})`；对话会话的重载按钮复用 `reloadSession`（对话会话收到 202 即显示「正在重启」，结果看 `chat_state`：`idle`+新 epoch = 成功，`restart_failed` = 失败并显示 message；不改 `rest.ts` 超时，d10）；改名/删除复用现有 REST；R2.6 ready.existing 时关闭重复视图并切换）、`i18n.ts`、`styles.css`
 - 接口：
   - 使用：T7 `attach(..., {handoffFrom})`、`rest.reloadSession/renameSession/deleteSession`、`rest.info({recheck:true})`（`rest.ts` 加可选参数）
@@ -461,6 +461,7 @@
 | T8 | 2026-11-14 09:30 | 0133791 | 5 个新脚本 60 个用例通过：test-chat-parser 15（含 fixture lines、string-content user messages）、test-chat-session 14、test-chat-permission 11、test-chat-diff 8、test-chat-queue 12；`npm run typecheck && npm test` 全绿 |
 | T9 | 2026-11-14 09:41 | 0670d58 | 新增 test-chat-markdown 6（jsdom 29.1.1 上的真实 DOMPurify，isSupported=true）、test-chat-render-guard、test-chat-window 3、test-chat-view 2（jsdom 上 ChatView 的 data-testid、发送、工具块与 diff）；test-terminal-selection 增加 markdown-it/dompurify/jsdom 锁版本检查；`npm ci && npm run typecheck && npm test && npm run build` 成功，app.asar 中无 jsdom；仓库根 `gui-smoke.mjs --no-build` 原有 20 项全部 PASS |
 | T10 | 2026-11-14 09:50 | d0c2b94 | test-chat-session 新增 prompt state transitions（共 15）；test-chat-view 新增 7 个 UI 用例（权限/计划/提问卡片、模式切换含 bypass 锁定、斜杠菜单与终端专用命令、排队撤回与中断退回、未送达重发；共 9）；`npm run typecheck && npm test && npm run build` 成功（18 个测试脚本），gui-smoke 原有用例全部 PASS；另用浏览器渲染核对了权限、计划、提问卡片与斜杠菜单的样式 |
+| T11 | 2026-11-14 10:28 | 878f4f1 | 新增 test-chat-availability 9 个用例（not_claude、proto 2 / 无 chat 字段 → 升级 vibe-remoted、claude_too_old → 升级 claude、其它原因、workdir untrusted（untrusted/unknown/缺省都置灰）、加载中/info 失败）、test-chat-activity 5 个用例（灰/绿/黄、REST activitySeq/epoch/state、fallback does not switch）；test-i18n-parity 223 个键通过；`npm run typecheck && npm test && npm run build` 成功（21 个测试脚本）；`make check` 全绿 |
 
 ## 后续
 
