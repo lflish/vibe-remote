@@ -41,6 +41,11 @@ type Config struct {
 	LoginShell *bool `json:"login_shell,omitempty"`
 	// Shell to use for login-shell launch (default: $SHELL, else /bin/bash).
 	Shell string `json:"shell,omitempty"`
+	// Directory for daemon state (the chat session table). Empty =
+	// "vibe-remoted-state" next to the config file; a relative path is taken
+	// relative to the config file. Created 0700 on start; if it cannot be
+	// written the chat UI is unavailable and terminals work as before.
+	StateDir string `json:"state_dir,omitempty"`
 	// Escape hatch: allow binding to a public (non-private) address. Off by
 	// default so a misconfig can't silently expose the daemon to the internet.
 	// Private-network addresses (RFC1918 / loopback / link-local / tailscale
@@ -102,6 +107,7 @@ func Load(path string) (*Config, error) {
 			// env vars, but say so: a typo'd -config path otherwise silently
 			// starts with defaults.
 			log.Printf("warning: config file %q not found; using defaults and env overrides", path)
+			cfg.resolveStateDir(path)
 			return cfg, nil
 		}
 		return nil, fmt.Errorf("read config: %w", err)
@@ -119,8 +125,23 @@ func Load(path string) (*Config, error) {
 	if dec.More() {
 		return nil, fmt.Errorf("parse config %s: unexpected data after the JSON object", path)
 	}
-
+	cfg.resolveStateDir(path)
 	return cfg, nil
+}
+
+// resolveStateDir applies the state_dir default and makes a relative path
+// relative to the config file.
+func (c *Config) resolveStateDir(configPath string) {
+	base := filepath.Dir(configPath)
+	if abs, err := filepath.Abs(base); err == nil {
+		base = abs
+	}
+	switch {
+	case c.StateDir == "":
+		c.StateDir = filepath.Join(base, "vibe-remoted-state")
+	case !filepath.IsAbs(c.StateDir):
+		c.StateDir = filepath.Join(base, c.StateDir)
+	}
 }
 
 // ListenAddr returns the host:port the daemon listens on. JoinHostPort

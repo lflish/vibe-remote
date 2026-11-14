@@ -8,8 +8,10 @@ import (
 	"log"
 	"os"
 	"os/exec"
+	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/creack/pty"
@@ -62,11 +64,15 @@ type tmuxSessionInfo struct {
 	sourceRepo    string
 	worktreeRoot  string
 	branch        string
+	// claudeU is @vibe_remote_claude_u: the claude conversation this terminal
+	// session holds (handed off from a chat session, or started with -c).
+	claudeU string
 }
 
 func parseTmuxSessionLine(line string) (tmuxSessionInfo, bool) {
-	parts := strings.SplitN(line, "\t", 8)
-	if len(parts) != 8 || !strings.HasPrefix(parts[0], "vibe-remote-") || strings.TrimPrefix(parts[0], "vibe-remote-") == "" {
+	// Eight columns is the format before @vibe_remote_claude_u was added.
+	parts := strings.SplitN(line, "\t", 9)
+	if (len(parts) != 8 && len(parts) != 9) || !strings.HasPrefix(parts[0], "vibe-remote-") || strings.TrimPrefix(parts[0], "vibe-remote-") == "" {
 		return tmuxSessionInfo{}, false
 	}
 	info := tmuxSessionInfo{}
@@ -91,6 +97,9 @@ func parseTmuxSessionLine(line string) (tmuxSessionInfo, bool) {
 	if len(parts) > 7 {
 		info.branch = parts[7]
 	}
+	if len(parts) > 8 {
+		info.claudeU = strings.TrimSpace(parts[8])
+	}
 	return info, true
 }
 
@@ -112,7 +121,7 @@ func isNoTmuxServer(stderr []byte) bool {
 }
 
 func liveTmuxSessions() (map[string]tmuxSessionInfo, bool) {
-	out, err := tmuxCmd("list-sessions", "-F", "#{session_name}\t#{pane_current_path}\t#{@vibe_remote_name}\t#{@vibe_remote_mode}\t#{@vibe_remote_source_workdir}\t#{@vibe_remote_source_repo}\t#{@vibe_remote_worktree_root}\t#{@vibe_remote_branch}").Output()
+	out, err := tmuxCmd("list-sessions", "-F", "#{session_name}\t#{pane_current_path}\t#{@vibe_remote_name}\t#{@vibe_remote_mode}\t#{@vibe_remote_source_workdir}\t#{@vibe_remote_source_repo}\t#{@vibe_remote_worktree_root}\t#{@vibe_remote_branch}\t#{@vibe_remote_claude_u}").Output()
 	if err != nil {
 		// tmux exits non-zero both when there genuinely are no sessions and when
 		// the query could not run at all, and only stderr tells them apart.
@@ -163,6 +172,9 @@ type Runner struct {
 	SourceRepo    string
 	WorktreeRoot  string
 	Branch        string
+	// claudeU (guarded by metaMu) is the claude conversation this session
+	// holds in the Manager's claudeOwners table; "" = none.
+	claudeU string
 
 	ptmx    *os.File // PTY master (guarded by mu)
 	cmd     *exec.Cmd
@@ -179,7 +191,8 @@ type Runner struct {
 	loginShell bool
 	shell      string
 	eventsURL  string
-	hookToken  string // per-session HookToken, never the main token
+	hookToken  string   // per-session HookToken, never the main token
+	extraEnv   []string // further KEY=VALUE for the CLI (ChatConfig.Env)
 }
 
 // RunnerConfig holds parameters for creating a new Runner.
@@ -199,6 +212,8 @@ type RunnerConfig struct {
 	Rows          uint16
 	EventsURL     string
 	HookToken     string // injected as VIBE_REMOTE_TOKEN; see HookToken
+	ClaudeU       string // claude conversation the session holds (@vibe_remote_claude_u)
+	ExtraEnv      []string
 }
 
 // NewRunner creates and starts a new session.
@@ -218,6 +233,8 @@ func NewRunner(cfg RunnerConfig) (*Runner, error) {
 		shell:         cfg.Shell,
 		eventsURL:     cfg.EventsURL,
 		hookToken:     cfg.HookToken,
+		claudeU:       cfg.ClaudeU,
+		extraEnv:      cfg.ExtraEnv,
 	}
 
 	if err := r.start(cfg.Cols, cfg.Rows); err != nil {
@@ -234,6 +251,19 @@ func (r *Runner) Metadata() protocol.SessionMetadata {
 		mode = protocol.SessionModeNormal
 	}
 	return protocol.SessionMetadata{Mode: mode, SourceWorkdir: r.SourceWorkdir, SourceRepo: r.SourceRepo, WorktreeRoot: r.WorktreeRoot, Branch: r.Branch}
+}
+
+// ClaudeU returns the claude conversation this session holds ("" = none).
+func (r *Runner) ClaudeU() string {
+	r.metaMu.Lock()
+	defer r.metaMu.Unlock()
+	return r.claudeU
+}
+
+func (r *Runner) setClaudeUMeta(u string) {
+	r.metaMu.Lock()
+	r.claudeU = u
+	r.metaMu.Unlock()
 }
 
 // CurrentWorkdir returns the session's working directory under metaMu, since a
@@ -322,6 +352,7 @@ func (r *Runner) start(cols, rows uint16) error {
 		"COLORTERM=truecolor",
 	)
 	cmd.Env = append(cmd.Env, r.vibeRemoteEnv()...)
+	cmd.Env = append(cmd.Env, r.extraEnv...)
 
 	// Start in PTY
 	ptmx, err := pty.StartWithSize(cmd, &pty.Winsize{
@@ -355,6 +386,7 @@ func (r *Runner) start(cols, rows uint16) error {
 			{"@vibe_remote_source_repo", meta.SourceRepo},
 			{"@vibe_remote_worktree_root", meta.WorktreeRoot},
 			{"@vibe_remote_branch", meta.Branch},
+			{"@vibe_remote_claude_u", r.ClaudeU()},
 		}
 		for _, option := range options {
 			if err := setTmuxOption(tmuxSessionName, option.key, option.value); err != nil {
@@ -782,10 +814,108 @@ func (r *Runner) vibeRemoteEnv() []string {
 // first inherits that first session's VIBE_REMOTE_SESSION_ID (and token), so
 // its hooks would report events against the wrong session.
 func (r *Runner) tmuxEnvArgs() []string {
-	env := r.vibeRemoteEnv()
+	env := append(r.vibeRemoteEnv(), r.extraEnv...)
 	args := make([]string, 0, 2*len(env))
 	for _, kv := range env {
 		args = append(args, "-e", kv)
 	}
 	return args
+}
+
+// setClaudeU records the claude conversation this session holds, in memory
+// and as the tmux option a restarted daemon recovers it from.
+func (r *Runner) setClaudeU(u string) error {
+	r.setClaudeUMeta(u)
+	if !r.useTmux {
+		return nil
+	}
+	return setTmuxOption(fmt.Sprintf("vibe-remote-%s", r.ID), "@vibe_remote_claude_u", u)
+}
+
+// Stop timings for a pane process (design 6.9 step 6, same as 6.6).
+const (
+	paneTermWait = 2 * time.Second
+	paneKillWait = time.Second
+)
+
+// pidAlive reports whether pid exists (kill(pid, 0) is not ESRCH).
+func pidAlive(pid int) bool {
+	if pid <= 0 {
+		return false
+	}
+	err := syscall.Kill(pid, 0)
+	return err == nil || !errors.Is(err, syscall.ESRCH)
+}
+
+func waitPidGone(pid int, d time.Duration) bool {
+	deadline := time.Now().Add(d)
+	for pidAlive(pid) {
+		if time.Now().After(deadline) {
+			return false
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	return true
+}
+
+func tmuxDisplay(target, format string) (string, error) {
+	out, err := tmuxCmd("display-message", "-p", "-t", target, format).Output()
+	return strings.TrimSpace(string(out)), err
+}
+
+// reloadStoppingFirst replaces the pane's process for a session that holds a
+// claude conversation: unlike Reload (respawn-pane -k, which starts the new
+// process while the old one is still exiting), the old process is stopped and
+// confirmed gone first, so the conversation never runs twice (R2). The pane
+// is kept through remain-on-exit; failBeforeStart is a test seam.
+func (r *Runner) reloadStoppingFirst(command string, failBeforeStart error) error {
+	if !r.useTmux {
+		return ErrReloadRequiresTmux
+	}
+	if strings.TrimSpace(command) == "" {
+		return fmt.Errorf("session reload command is empty")
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	name := fmt.Sprintf("vibe-remote-%s", r.ID)
+	target := name + ":0.0"
+	if out, err := tmuxCmd("set-option", "-w", "-t", target, "remain-on-exit", "on").CombinedOutput(); err != nil {
+		return fmt.Errorf("reload: keep pane: %w: %s", err, strings.TrimSpace(string(out)))
+	}
+	pidText, err := tmuxDisplay(target, "#{pane_pid}")
+	if err != nil {
+		return fmt.Errorf("reload: pane pid: %w", err)
+	}
+	if pid, _ := strconv.Atoi(pidText); pid > 0 {
+		// The pane process leads its own process group (tmux setsid()s it).
+		_ = syscall.Kill(-pid, syscall.SIGTERM)
+		if !waitPidGone(pid, paneTermWait) {
+			_ = syscall.Kill(-pid, syscall.SIGKILL)
+			if !waitPidGone(pid, paneKillWait) {
+				return fmt.Errorf("reload: process %d did not exit", pid)
+			}
+		}
+	}
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		if dead, _ := tmuxDisplay(target, "#{pane_dead}"); dead == "1" {
+			break
+		}
+		if time.Now().After(deadline) {
+			return fmt.Errorf("reload: pane did not report its process exit")
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	if failBeforeStart != nil {
+		return failBeforeStart
+	}
+	launch := r.launchCommandFor(command)
+	args := append([]string{"respawn-pane", "-t", target, "-c", r.CurrentWorkdir()}, r.tmuxEnvArgs()...)
+	args = append(append(args, "--"), launch...)
+	if out, err := tmuxCmd(args...).CombinedOutput(); err != nil {
+		return fmt.Errorf("reload tmux session: %w: %s", err, strings.TrimSpace(string(out)))
+	}
+	_ = tmuxCmd("set-option", "-w", "-t", target, "remain-on-exit", "off").Run()
+	return nil
 }

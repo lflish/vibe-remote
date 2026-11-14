@@ -13,5 +13,6 @@
   ],
   "login_shell": true,
   "shell": "",
+  "state_dir": "",
   "allow_insecure_bind": false
 }

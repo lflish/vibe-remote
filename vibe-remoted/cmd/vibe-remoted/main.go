@@ -11,7 +11,9 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
+	"github.com/lflish/vibe-remote/vibe-remoted/internal/chat"
 	"github.com/lflish/vibe-remote/vibe-remoted/internal/config"
 	"github.com/lflish/vibe-remote/vibe-remoted/internal/server"
 	"github.com/lflish/vibe-remote/vibe-remoted/internal/session"
@@ -67,14 +69,39 @@ func main() {
 	// a claude hook can report out-of-band events back to this daemon.
 	mgr.SetEventEnv("http://"+cfg.ListenAddr()+"/api/v1/events", cfg.Token)
 
+	// Chat sessions: their table lives in state_dir. Records of the previous
+	// daemon's still-running chats are ended (their processes stopped) here.
+	mgr.SetChatConfig(session.ChatConfig{ProjectsDir: chat.ProjectsDir()})
+	store, chatStateErr := chat.NewStore(cfg.StateDir)
+	if chatStateErr != nil {
+		log.Printf("warning: state_dir %s is not writable (%v); chat sessions are unavailable", cfg.StateDir, chatStateErr)
+	} else if err := mgr.LoadChats(store); err != nil {
+		log.Printf("warning: load chat sessions from %s: %v", store.Path(), err)
+	}
+	// Probe `claude --version` in the background now, so the first
+	// /api/v1/info can already tell whether chat is supported.
+	prober := server.NewProber(cfg)
+	if _, reason := chat.ParseClaudeCmd(cfg.ClaudeCmd); reason == "" {
+		prober.Start()
+	}
+
 	// Stop on SIGINT/SIGTERM with a graceful HTTP shutdown. tmux sessions are
 	// separate processes and keep running for the next daemon to pick up.
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
 	// Start server
-	srv := server.New(cfg, mgr, server.WithVersion(version))
-	if err := srv.ListenAndServe(ctx); err != nil {
+	srv := server.New(cfg, mgr, server.WithVersion(version), server.WithProber(prober),
+		server.WithChatStateError(chatStateErr))
+	err = srv.ListenAndServe(ctx)
+	// Chat processes cannot outlive the daemon (unlike tmux sessions); stop
+	// them and record daemon_restart either way.
+	mgr.Shutdown(chatShutdownTimeout)
+	if err != nil {
 		log.Fatalf("server: %v", err)
 	}
 }
+
+// chatShutdownTimeout bounds stopping every chat process at exit (each stop
+// takes at most ~4 s, all run in parallel; design 6.6).
+const chatShutdownTimeout = 6 * time.Second

@@ -5,9 +5,11 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"log"
 	"sync"
 	"time"
 
+	"github.com/lflish/vibe-remote/vibe-remoted/internal/chat"
 	"github.com/lflish/vibe-remote/vibe-remoted/internal/protocol"
 )
 
@@ -19,15 +21,24 @@ func sessionNotFound(id string) error {
 	return fmt.Errorf("session %q %w", id, ErrSessionNotFound)
 }
 
-// Manager tracks all sessions on this machine.
+// Manager tracks all sessions on this machine: terminal sessions (Runner, in
+// tmux) and chat sessions (chat.Session, a claude process the daemon owns).
 //
-// Lock order: Manager.mu → Runner.mu → Runner.metaMu. Manager.mu is never
-// acquired while holding a Runner lock, metaMu is a leaf, and no tmux command
-// runs under Manager.mu (a slow tmux would otherwise stall every handler).
+// Lock order, only ever downward (design 2): a creating placeholder (per id)
+// → chat.Session.opMu → Manager.mu → Runner.mu / chat.Session.mu →
+// Runner.metaMu / store. Manager.mu is never acquired while holding a Runner
+// or Session lock, metaMu is a leaf, and no tmux command or file IO runs under
+// Manager.mu (a slow tmux would otherwise stall every handler).
 type Manager struct {
 	mu       sync.RWMutex
 	sessions map[string]*Runner
-	subs     map[string][]chan protocol.NotifyFrame // sessionID → notify subscribers
+	chats    map[string]*chatEntry
+	// claudeOwners maps a claude conversation id (U) to the one session —
+	// chat or terminal, or "orphan:<pid>" — allowed to run a claude process on
+	// it. Every spawn claims first (R2, design 2).
+	claudeOwners map[string]string
+	orphans      map[string]chat.Orphan
+	subs         map[string][]chan protocol.NotifyFrame // sessionID → notify subscribers
 	// creating holds the client-chosen ids whose Create is still in flight;
 	// the channel closes when it finishes. A replayed attach for the same id
 	// waits on it instead of racing a second CreateWorktree / new-session.
@@ -47,12 +58,25 @@ type Manager struct {
 	// mainToken is held only to derive per-session hook tokens; it is never
 	// injected into a session's environment.
 	mainToken string
+
+	chatCfg ChatConfig
+	store   *chat.Store
+	persist persister
+
+	// Seams for tests.
+	orphanCleanup    func([]chat.Record) ([]chat.Record, []chat.Orphan)
+	testAfterResolve func(workdir string) // after a -c terminal resolved its conversation
+	testFailRespawn  error                // makes the next fixed-identity reload fail to start
 }
 
 // NewManager creates a session manager.
 func NewManager(useTmux bool, claudeCmd string, loginShell bool, shell string) *Manager {
 	return &Manager{
 		sessions:         make(map[string]*Runner),
+		chats:            make(map[string]*chatEntry),
+		claudeOwners:     make(map[string]string),
+		orphans:          make(map[string]chat.Orphan),
+		orphanCleanup:    chat.CleanupOrphans,
 		subs:             make(map[string][]chan protocol.NotifyFrame),
 		creating:         make(map[string]chan struct{}),
 		useTmux:          useTmux,
@@ -100,6 +124,8 @@ func (m *Manager) recoveredRunner(id string, info tmuxSessionInfo, now time.Time
 		shell:         m.shell,
 		eventsURL:     m.eventsURL,
 		hookToken:     m.hookTokenFor(id),
+		claudeU:       info.claudeU,
+		extraEnv:      m.chatCfg.Env,
 	}
 }
 
@@ -131,6 +157,12 @@ type CreateOptions struct {
 	// worktree is created next to the repo root — possibly outside the allowed
 	// roots — so the derived path needs the same check.
 	ValidateWorkdir func(string) (string, error)
+	// ClaudeU, when set, is a claude conversation the caller already claimed
+	// for this session (handoff); the command must already open it.
+	ClaudeU string
+	// Worktree, when set, is an existing worktree the session takes over
+	// (handoff) instead of creating one; Workdir is then used as is.
+	Worktree *WorktreeMetadata
 }
 
 // Create starts a new session and registers it. Worktree resources are created
@@ -162,6 +194,19 @@ func (m *Manager) Create(opts CreateOptions) (*Runner, error) {
 		}
 		defer done()
 	}
+	return m.createTerminalLocked(id, opts)
+}
+
+// createTerminalLocked starts terminal session id. The caller holds id's
+// creating placeholder (or generated id), so it must not call beginCreate
+// again — a handoff, which already holds the placeholder, would wait for
+// itself.
+//
+// A command that continues the latest conversation (-c) gets a fixed identity
+// first (design 6.9, c4): the conversation is resolved and claimed, and -c is
+// replaced by --resume U (or --session-id U for a new one), so the process
+// that runs is exactly the one the claim table knows about.
+func (m *Manager) createTerminalLocked(id string, opts CreateOptions) (*Runner, error) {
 	mode := opts.Mode
 	if mode == "" {
 		mode = protocol.SessionModeNormal
@@ -173,7 +218,9 @@ func (m *Manager) Create(opts CreateOptions) (*Runner, error) {
 	workdir := opts.Workdir
 	var meta WorktreeMetadata
 	var err error
-	if mode == protocol.SessionModeWorktree {
+	if opts.Worktree != nil {
+		meta = *opts.Worktree
+	} else if mode == protocol.SessionModeWorktree {
 		meta, workdir, err = CreateWorktree(opts.Workdir, id)
 		if err != nil {
 			return nil, err
@@ -193,6 +240,30 @@ func (m *Manager) Create(opts CreateOptions) (*Runner, error) {
 	if opts.ClaudeCmdOverride != "" {
 		claudeCmd = opts.ClaudeCmdOverride
 	}
+	ownWorktree := mode == protocol.SessionModeWorktree && opts.Worktree == nil
+	claudeU := opts.ClaudeU
+	claimedHere := false
+	if claudeU == "" {
+		if p, reason := chat.ParseClaudeCmd(claudeCmd); reason == "" && p.Continue {
+			u, found := chat.LatestSessionForWorkdir(m.projectsDir(), workdir)
+			if m.testAfterResolve != nil {
+				m.testAfterResolve(workdir)
+			}
+			if !found {
+				u = chat.NewUUID()
+			}
+			if err := m.claimClaude(u, id); err != nil {
+				if ownWorktree {
+					if rollbackErr := RollbackWorktree(meta); rollbackErr != nil {
+						return nil, fmt.Errorf("%v; rollback worktree: %w", err, rollbackErr)
+					}
+				}
+				return nil, err
+			}
+			claudeCmd = chat.HandoffCommand(p.Exe, p.Args, u, found)
+			claudeU, claimedHere = u, true
+		}
+	}
 	runner, err := NewRunner(RunnerConfig{
 		ID:            id,
 		Workdir:       workdir,
@@ -209,9 +280,14 @@ func (m *Manager) Create(opts CreateOptions) (*Runner, error) {
 		Rows:          opts.Rows,
 		EventsURL:     m.eventsURL,
 		HookToken:     m.hookTokenFor(id),
+		ClaudeU:       claudeU,
+		ExtraEnv:      m.chatCfg.Env,
 	})
 	if err != nil {
-		if mode == protocol.SessionModeWorktree {
+		if claimedHere {
+			m.releaseClaude(claudeU, id)
+		}
+		if ownWorktree {
 			if rollbackErr := RollbackWorktree(meta); rollbackErr != nil {
 				return nil, fmt.Errorf("%v; rollback worktree: %w", err, rollbackErr)
 			}
@@ -233,7 +309,7 @@ func (m *Manager) Create(opts CreateOptions) (*Runner, error) {
 func (m *Manager) beginCreate(id string) (done func(), exists bool) {
 	for {
 		m.mu.Lock()
-		if _, ok := m.sessions[id]; ok {
+		if _, ok := m.sessions[id]; ok || m.chats[id] != nil {
 			m.mu.Unlock()
 			return nil, true
 		}
@@ -273,7 +349,11 @@ func (m *Manager) Get(id string) (*Runner, bool) {
 func (m *Manager) lookupOrRecover(id string) (*Runner, error) {
 	m.mu.RLock()
 	runner, ok := m.sessions[id]
+	_, isChat := m.chats[id]
 	m.mu.RUnlock()
+	if isChat {
+		return nil, ErrUIMismatch
+	}
 	if ok {
 		return runner, nil
 	}
@@ -298,6 +378,7 @@ func (m *Manager) lookupOrRecover(id string) (*Runner, error) {
 	runner = m.recoveredRunner(id, info, time.Now())
 	m.sessions[id] = runner
 	m.gen++
+	m.reclaimLocked(id, info.claudeU)
 	return runner, nil
 }
 
@@ -342,13 +423,29 @@ func (m *Manager) syncFromTmux() (map[string]tmuxSessionInfo, bool) {
 	if m.gen != startGen {
 		return nil, false
 	}
-	reconcileTmuxSessions(m.sessions, live, time.Now(), m.recoveredRunner)
+	removed := reconcileTmuxSessions(m.sessions, live, time.Now(), m.recoveredRunner)
+	// A terminal session's claim follows its tmux session: gone → released,
+	// recovered after a daemon restart → claimed again (@vibe_remote_claude_u).
+	for _, id := range removed {
+		m.releaseOwnerLocked(id)
+	}
+	for id, info := range live {
+		if _, ok := m.sessions[id]; ok {
+			m.reclaimLocked(id, info.claudeU)
+		}
+	}
 	return live, true
 }
 
 // Delete kills and removes a session. Worktree cleanup happens after the
 // runner is stopped; dirty resources are intentionally preserved and surfaced.
 func (m *Manager) Delete(id string) error {
+	m.mu.RLock()
+	entry := m.chats[id]
+	m.mu.RUnlock()
+	if entry != nil {
+		return m.deleteChat(id, entry)
+	}
 	m.syncFromTmux()
 	m.mu.RLock()
 	runner, ok := m.sessions[id]
@@ -358,6 +455,9 @@ func (m *Manager) Delete(id string) error {
 	}
 
 	runner.Kill()
+	m.mu.Lock()
+	m.releaseOwnerLocked(id) // its claude process is gone with the tmux session
+	m.mu.Unlock()
 	if meta := runner.Metadata(); meta.Mode == protocol.SessionModeWorktree {
 		err := CleanupWorktree(WorktreeMetadata{
 			SourceWorkdir: meta.SourceWorkdir,
@@ -371,6 +471,7 @@ func (m *Manager) Delete(id string) error {
 	}
 	m.mu.Lock()
 	delete(m.sessions, id)
+	m.releaseOwnerLocked(id)
 	m.gen++
 	m.mu.Unlock()
 	return nil
@@ -379,6 +480,9 @@ func (m *Manager) Delete(id string) error {
 // Rename sets a user display name on a session (persisted as a tmux option).
 // An empty name clears the custom name, reverting to the default title rule.
 func (m *Manager) Rename(id, name string) error {
+	if m.renameChat(id, sanitizeSessionName(name)) {
+		return nil
+	}
 	m.mu.RLock()
 	runner, ok := m.sessions[id]
 	m.mu.RUnlock()
@@ -390,7 +494,16 @@ func (m *Manager) Rename(id, name string) error {
 
 // Reload replaces the CLI process inside an existing tmux session. The tmux
 // session itself remains alive, preserving its id, metadata and attached client.
+//
+// A session that holds a claude conversation (handed off from a chat session,
+// or started with -c) keeps a fixed identity across the reload (design 6.9
+// step 6): the conversation to resume is resolved and claimed, the old process
+// is stopped and confirmed gone, then the new one starts; the old claim is
+// held until then, and a failed start never releases it.
 func (m *Manager) Reload(id, command string) error {
+	if _, ok := m.ChatGet(id); ok {
+		return m.ReloadChat(id)
+	}
 	if !m.useTmux {
 		return ErrReloadRequiresTmux
 	}
@@ -401,7 +514,78 @@ func (m *Manager) Reload(id, command string) error {
 	if !ok {
 		return sessionNotFound(id)
 	}
-	return runner.Reload(command)
+	oldU := runner.ClaudeU()
+	cmd, newU, fixed := m.terminalReloadPlan(id, runner, command, oldU)
+	if !fixed {
+		return runner.Reload(command)
+	}
+	newClaim := false
+	if newU != oldU {
+		if err := m.claimClaude(newU, id); err != nil {
+			return err
+		}
+		newClaim = true
+	}
+	if err := runner.reloadStoppingFirst(cmd, m.testFailRespawn); err != nil {
+		if newClaim {
+			m.releaseClaude(newU, id)
+		}
+		return err
+	}
+	if newU != oldU {
+		if err := runner.setClaudeU(newU); err != nil {
+			log.Printf("session %s: persist @vibe_remote_claude_u: %v", id, err)
+		}
+		if oldU != "" {
+			m.releaseClaude(oldU, id)
+		}
+	}
+	return nil
+}
+
+// terminalReloadPlan decides a terminal reload's command and the claude
+// conversation it runs. fixed=false keeps the plain reload (no conversation
+// is involved).
+func (m *Manager) terminalReloadPlan(id string, runner *Runner, command, oldU string) (cmd, u string, fixed bool) {
+	pd := m.projectsDir()
+	m.mu.RLock()
+	var from *chat.Record
+	for _, e := range m.chats {
+		if e.rec.HandedOffTo == id {
+			r := e.rec
+			from = &r
+		}
+	}
+	m.mu.RUnlock()
+	if from != nil && oldU != "" {
+		// Handed off from a chat session: always that conversation.
+		_, found := chat.FindTranscript(pd, oldU)
+		return chat.HandoffCommand(from.Exe, from.Args, oldU, found), oldU, true
+	}
+	p, reason := chat.ParseClaudeCmd(command)
+	if reason != "" {
+		return command, "", false
+	}
+	if p.Continue {
+		u, found := chat.LatestSessionForWorkdir(pd, runner.CurrentWorkdir())
+		if m.testAfterResolve != nil {
+			m.testAfterResolve(runner.CurrentWorkdir())
+		}
+		if !found {
+			if oldU != "" {
+				u = oldU
+				_, found = chat.FindTranscript(pd, u)
+			} else {
+				u = chat.NewUUID()
+			}
+		}
+		return chat.HandoffCommand(p.Exe, p.Args, u, found), u, true
+	}
+	if oldU != "" {
+		_, found := chat.FindTranscript(pd, oldU)
+		return chat.HandoffCommand(p.Exe, p.Args, oldU, found), oldU, true
+	}
+	return command, "", false
 }
 
 func applyTmuxSessionMetadata(r *Runner, info tmuxSessionInfo) {
@@ -438,6 +622,9 @@ func applyTmuxSessionMetadata(r *Runner, info tmuxSessionInfo) {
 	if r.Branch == "" {
 		r.Branch = info.branch
 	}
+	if r.claudeU == "" {
+		r.claudeU = info.claudeU
+	}
 }
 
 func completeTmuxWorktreeMetadata(info tmuxSessionInfo) bool {
@@ -455,10 +642,12 @@ func completeRunnerWorktreeMetadata(r *Runner) bool {
 // snapshot. Keeping this seam separate makes reconciliation testable without
 // depending on a running tmux daemon. recover builds the entry for a session
 // that tmux has but the table doesn't.
-func reconcileTmuxSessions(sessions map[string]*Runner, live map[string]tmuxSessionInfo, now time.Time, recover func(id string, info tmuxSessionInfo, now time.Time) *Runner) {
+// It returns the ids it removed.
+func reconcileTmuxSessions(sessions map[string]*Runner, live map[string]tmuxSessionInfo, now time.Time, recover func(id string, info tmuxSessionInfo, now time.Time) *Runner) (removed []string) {
 	for id := range sessions {
 		if _, alive := live[id]; !alive {
 			delete(sessions, id)
+			removed = append(removed, id)
 		}
 	}
 	for id, info := range live {
@@ -468,6 +657,7 @@ func reconcileTmuxSessions(sessions map[string]*Runner, live map[string]tmuxSess
 		}
 		sessions[id] = recover(id, info, now)
 	}
+	return removed
 }
 
 // List returns info for all sessions.
@@ -507,7 +697,7 @@ func (m *Manager) List() []protocol.SessionInfo {
 			SessionMetadata: r.Metadata(),
 		})
 	}
-	return list
+	return append(list, m.listChats()...)
 }
 
 // Subscribe registers a subscriber for a session's out-of-band notify events.
