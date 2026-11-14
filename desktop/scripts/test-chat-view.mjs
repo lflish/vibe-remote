@@ -338,6 +338,47 @@ test('resend clicked twice while offline: one queue entry, one bubble, queue not
   assert.equal(view.queue.queued().length, 0);
 });
 
+test('reset sync past an overflow: the sent message is confirmed by a duplicate ack, not marked undelivered', () => {
+  for (const completed of [true, false]) {
+    const { view, client, $, $$ } = makeView();
+    const input = $('chat-input');
+    input.value = 'burst 1200';
+    input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    const id = client.sent.at(-1).clientMsgId;
+    // Dropped before the echo; the turn overflowed the ring while away.
+    view.setConnected(false);
+    view.setConnected(true);
+    client.onChatSync({ type: 'chat_sync', epoch: 'e', reset: true, omitted: 400, historyCount: 0, backlog: 1 });
+    client.onChat(900, { type: 'assistant', message: { id: 'msg_tail', content: [{ type: 'text', text: 'tail' }] } }, false);
+    client.onChatState(state({ status: completed ? 'idle' : 'running' }));
+    flush();
+    const bubble = $$('chat-msg-user')[0];
+    assert.notEqual(bubble.dataset.delivery, 'undelivered', 'not judged undelivered from an evicted echo');
+    assert.equal($('chat-resend'), null);
+    const again = client.sent.filter((f) => f.type === 'chat_send' && f.clientMsgId === id);
+    assert.equal(again.length, 2, 'asked the daemon again under the same id');
+    // Daemon: duplicate (already written); completed or still running.
+    client.onChatAck({ type: 'chat_ack', op: 'send', ref: id, ok: true, duplicate: true, completed });
+    flush();
+    assert.equal(view.state().messages.find((m) => m.role === 'user').delivery, 'sent');
+    assert.equal($$('chat-msg-user').length, 1);
+    input.value = 'echo next';
+    input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    flush();
+    if (completed) {
+      assert.equal(client.sent.at(-1).text, 'echo next', 'queue released');
+    } else {
+      assert.equal(view.queue.queued().length, 1, 'waits for the running turn');
+      client.onChat(901, { type: 'result', subtype: 'success', is_error: false }, false);
+      client.onChatState(state());
+      flush();
+      assert.equal(client.sent.at(-1).text, 'echo next', 'sent after its result');
+    }
+    assert.equal(view.queue.queued().length, 0);
+    assert.equal(view.queue.canSend(), false, 'next one in flight');
+  }
+});
+
 test('ended banner, restart tracking and retry', () => {
   const { view, client, $ } = makeView();
   const calls = [];

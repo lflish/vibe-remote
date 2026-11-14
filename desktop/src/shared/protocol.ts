@@ -250,6 +250,10 @@ export interface ChatAckFrame {
   // 'mode_locked' (open set)
   code?: string;
   message?: string;
+  /** send: this clientMsgId was already written; no new echo follows. */
+  duplicate?: boolean;
+  /** send + duplicate: that message's turn already has its result. */
+  completed?: boolean;
 }
 
 export interface ChatSendFrame {

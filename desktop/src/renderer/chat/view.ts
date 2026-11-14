@@ -291,7 +291,12 @@ export class ChatView {
   }
 
   private onAck(ack: ChatAckFrame) {
-    if (ack.ok) return;
+    if (ack.ok) {
+      // Already written before (a resend, or a message whose echo a reset
+      // sync could not replay): no new echo comes, the ack settles it.
+      if (ack.op === 'send' && ack.ref && ack.duplicate) this.session.markDuplicate(ack.ref, ack.completed === true);
+      return;
+    }
     const why = ack.message || ack.code || '';
     switch (ack.op) {
       case 'send':
@@ -355,6 +360,13 @@ export class ChatView {
         break;
       case 'undelivered':
         this.queue.onUndelivered(ev.clientMsgId);
+        break;
+      case 'unconfirmed':
+        // Same id: the daemon answers a duplicate instead of writing it twice.
+        if (!this.client.sendChat(ev.text, ev.clientMsgId)) this.session.markUndelivered(ev.clientMsgId);
+        break;
+      case 'duplicate':
+        this.queue.onDuplicate(ev.clientMsgId, ev.completed);
         break;
       case 'reset':
         this.queue.resetPairing();

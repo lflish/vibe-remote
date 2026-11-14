@@ -159,6 +159,27 @@ export class SendQueue {
     this.pump();
   }
 
+  /**
+   * The daemon already had this message (chat_ack duplicate) and sends no new
+   * echo for it. Completed: its result is in the past, nothing to wait for.
+   * Not completed: it is the oldest message still waiting for a result (its
+   * echo was evicted before anything we saw), so the next result is its.
+   */
+  onDuplicate(clientMsgId: string, completed: boolean) {
+    const i = this.unpaired.indexOf(clientMsgId);
+    if (completed) {
+      if (i >= 0) this.unpaired.splice(i, 1);
+      if (clientMsgId === this.lastOwn) {
+        this.lastOwnEchoed = true;
+        this.lastOwnPaired = true;
+      }
+    } else {
+      if (i < 0) this.unpaired.unshift(clientMsgId);
+      if (clientMsgId === this.lastOwn) this.lastOwnEchoed = true;
+    }
+    this.pump();
+  }
+
   /** Our message never reached the daemon (no echo after a resync): stop waiting for it. */
   onUndelivered(clientMsgId: string) {
     this.onStaleTurn(clientMsgId);

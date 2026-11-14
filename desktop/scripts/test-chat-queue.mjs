@@ -173,6 +173,30 @@ test('re-sending the same id twice queues it once', () => {
   assert.equal(q.canSend(), true, 'paired by its one echo and result');
 });
 
+test('duplicate ack: completed releases the queue, not completed waits for its result', () => {
+  const { q, sent } = makeQueue();
+  q.setStatus('idle');
+  const a = q.enqueue('burst');
+  q.enqueue('next');
+  assert.deepEqual(sent.map((s) => s.text), ['burst']);
+  // A reset sync lost its echo; re-sent under the same id, the daemon says
+  // "already have it, and its turn is done".
+  q.resetPairing();
+  q.onDuplicate(a.id, true);
+  assert.deepEqual(sent.map((s) => s.text), ['burst', 'next']);
+
+  const { q: q2, sent: sent2 } = makeQueue();
+  q2.setStatus('idle');
+  const b = q2.enqueue('long');
+  q2.enqueue('after');
+  q2.resetPairing();
+  q2.onEcho('other-desktop'); // a later message from someone else, still in the ring
+  q2.onDuplicate(b.id, false); // still running: ours is the oldest unpaired
+  assert.deepEqual(sent2.map((s) => s.text), ['long'], 'waits for its result');
+  q2.onResult(); // ours
+  assert.deepEqual(sent2.map((s) => s.text), ['long', 'after']);
+});
+
 test('socket down keeps the item queued', () => {
   const { q, sent, conn } = makeQueue({ connected: false });
   q.setStatus('idle');
