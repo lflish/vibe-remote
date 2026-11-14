@@ -241,7 +241,7 @@
 - 依赖：无
 
 ### T2 命令行解析、版本比较与假 claude
-- 状态：待办
+- 状态：完成
 - 文件：新建 `vibe-remoted/internal/chat/cmdline.go`、`cmdline_test.go`、`probe.go`、`probe_test.go`、`transcript.go`、`transcript_test.go`、`trust.go`、`trust_test.go`、`fakeclaude/main.go`、`chattest/chattest.go`、`testdata/probe-stream.jsonl`
 - 接口：
   - 提供：`ParseClaudeCmd(cmd string) (Parsed, reason string)`（`Parsed{Exe string; Args []string; Continue, Bypass bool; PermissionMode string}`，H7/H14，design 4.9 的 reason）；`ChatArgv(p Parsed, claudeSessionID string, resume bool) []string`；`ShellJoin(argv []string) string`；`HandoffCommand(exe string, args []string, u string, resume bool) string`（resume=false 时用 `--session-id u`）；`ParseVersion(s string) (v [3]int, ok bool)`、`VersionAtLeast(v, min)`、`const MinClaudeVersion = "2.1.210"`；`Prober`（后台探测、10 分钟缓存、`Recheck()`、`Get(ctx, wait time.Duration)`）
@@ -452,6 +452,7 @@
 | 任务 | 完成时间 | 提交 | 测试 |
 |------|----------|------|------|
 | T1 | 2026-11-14 08:55 | 475c20b（v2 黄金帧）、74cba84 | 新增 4 个 Go 测试通过（TestTerminalFramesUnchangedV3、TestInfoAndReadyProto3、TestProtocolChatFramesJSON、TestAttachFrameDecodesChatFields）；`go test -race ./...` 102 通过 0 失败；`make check` 全绿 |
+| T2 | 2026-11-14 09:11 | 4d6c06a | `internal/chat` 16 个顶层测试全部通过（含任务列出的 13 个 + TestProjectsDir、TestFakeClaudeBehaviours 18 个子用例），`go test -race -count=5 ./internal/chat/...` 稳定；`go vet ./...`、`make check` 全绿；decisions #21 |
 
 ## 后续
 
