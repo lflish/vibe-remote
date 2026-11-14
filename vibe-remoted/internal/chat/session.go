@@ -184,7 +184,8 @@ type Session struct {
 	ended          *protocol.ChatEnded
 
 	// delivered records the last recentMsgIDs clientMsgIds Send accepted
-	// (value: a result for it was seen), in acceptance order. It is kept
+	// (value: no further result will come for it — its result was seen, or
+	// the watchdog gave up on it), in acceptance order. It is kept
 	// apart from the ring, so a replay is recognized after eviction too.
 	delivered      map[string]bool
 	deliveredOrder []string
@@ -671,6 +672,9 @@ func (s *Session) watchdog(p *proc) {
 			id := s.unpaired[0]
 			s.unpaired = s.unpaired[1:]
 			s.ignoreResults++
+			// Its late result (if any) is marked stale, never paired: for
+			// a resend the message is finished (completed:true).
+			s.markCompletedLocked(id)
 			s.lastActivity = time.Now()
 			log.Printf("chat [%s]: no output for %v, giving up on a turn", s.spec.ID, s.stale)
 			s.appendRingLocked(vrNotice(NoticeStaleTurn, "no result arrived for this message", id))
@@ -775,11 +779,7 @@ func (s *Session) handleLine(p *proc, raw []byte) {
 			s.ignoreResults--
 			msg = markStale(line)
 		} else if len(s.unpaired) > 0 {
-			if id := s.unpaired[0]; id != "" {
-				if _, seen := s.delivered[id]; seen {
-					s.delivered[id] = true
-				}
-			}
+			s.markCompletedLocked(s.unpaired[0])
 			s.unpaired = s.unpaired[1:]
 		}
 		s.interruptID = ""
@@ -1093,6 +1093,13 @@ func (s *Session) Send(clientMsgID, text string) Ack {
 	s.lastActivity = time.Now()
 	s.broadcastStateLocked()
 	return ok()
+}
+
+// markCompletedLocked records that no further result will come for id.
+func (s *Session) markCompletedLocked(id string) {
+	if _, seen := s.delivered[id]; id != "" && seen {
+		s.delivered[id] = true
+	}
 }
 
 // forgetMsgIDLocked drops id from the replay filter of Send.

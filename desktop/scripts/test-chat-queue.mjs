@@ -197,6 +197,22 @@ test('duplicate ack: completed releases the queue, not completed waits for its r
   assert.deepEqual(sent2.map((s) => s.text), ['long', 'after']);
 });
 
+test('duplicate ack for a message the watchdog gave up on: completed:true unblocks the queue (C3)', () => {
+  const { q, sent } = makeQueue();
+  q.setStatus('idle');
+  const a = q.enqueue('swallow');
+  // Reconnect past an overflow: its echo and the stale_turn notice were
+  // evicted; the daemon is idle (the watchdog gave up on it).
+  q.resetPairing();
+  q.setStatus('idle');
+  // Resent under the same id: the daemon reports it finished, since no
+  // further result will come for it.
+  q.onDuplicate(a.id, true);
+  q.enqueue('echo next');
+  assert.deepEqual(sent.map((s) => s.text), ['swallow', 'echo next'], 'next message goes out');
+  assert.equal(q.queued().length, 0);
+});
+
 test('socket down keeps the item queued', () => {
   const { q, sent, conn } = makeQueue({ connected: false });
   q.setStatus('idle');

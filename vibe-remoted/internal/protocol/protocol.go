@@ -312,8 +312,9 @@ type ChatAckFrame struct {
 	Code    string `json:"code,omitempty"` // Ack* when !OK
 	Message string `json:"message,omitempty"`
 	// Duplicate (op send only): this clientMsgId was already accepted, so
-	// nothing was written again. Completed then tells whether a result for
-	// that message has been seen (false: still running, or never answered).
+	// nothing was written again. Completed then tells whether no further
+	// result will come for that message (its result was seen, or the turn
+	// watchdog gave up on it); false: still running.
 	Duplicate bool  `json:"duplicate,omitempty"`
 	Completed *bool `json:"completed,omitempty"`
 }

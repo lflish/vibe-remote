@@ -88,3 +88,25 @@ func TestResendDuplicateReportsCompleted(t *testing.T) {
 		t.Fatalf("resend of a message still running: %+v", ack)
 	}
 }
+
+// completed means "no further result will come for this id": a message the
+// watchdog gave up on (stale_turn) is acked completed on resend, before and
+// after its late result is consumed (C3).
+func TestResendAfterWatchdogReportsCompleted(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t, withSpec(func(s *Spec) { s.Tuning.StaleTurn = 200 * time.Millisecond })).start()
+	c := h.attach("", nil)
+	h.send("w", "swallow 900")
+	c.waitFor("stale_turn", func(fs []frame) bool { return len(notices(fs, NoticeStaleTurn)) == 1 })
+	if ack := h.s.Send("w", "swallow 900"); !ack.OK || !ack.Duplicate || !ack.Completed {
+		t.Fatalf("resend of an abandoned message: %+v", ack)
+	}
+	c.waitFor("late result", func(fs []frame) bool { return resultCount(fs) == 1 })
+	h.waitIdle()
+	if ack := h.s.Send("w", "swallow 900"); !ack.OK || !ack.Duplicate || !ack.Completed {
+		t.Fatalf("resend after the late stale result: %+v", ack)
+	}
+	if n := len(h.stdin.control("user", "")); n != 1 {
+		t.Fatalf("abandoned message written %d times", n)
+	}
+}

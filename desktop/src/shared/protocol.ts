@@ -252,7 +252,7 @@ export interface ChatAckFrame {
   message?: string;
   /** op 'send' only: this clientMsgId was already accepted; nothing was written again */
   duplicate?: boolean;
-  /** with duplicate: whether a result for that message has been seen */
+  /** with duplicate: true = no further result will come for it (seen, or abandoned by the watchdog); false = still running */
   completed?: boolean;
 }
 

@@ -316,7 +316,7 @@ v3 对话会话的条目另带（终端条目一律省略）：
 {"type":"chat_set_mode","mode":"plan"}
 ```
 
-- `chat_send`：`text` 去首尾空白后为空 → `empty`；超过 256 KiB 或 `clientMsgId` 超过 64 字符 → `too_large`；写队列满 → `chat_busy`；`clientMsgId` 在最近 256 个已接受的消息里 → ok + `duplicate:true` + `completed`（是否已见到它的 `result`），不重复写入（这份记录与缓冲区分开，缓冲淘汰后照样认得）；记了 `dropped_on_stop` 的消息不算已接受，同 id 重发会写入新进程；进程不在 → `chat_not_running`
+- `chat_send`：`text` 去首尾空白后为空 → `empty`；超过 256 KiB 或 `clientMsgId` 超过 64 字符 → `too_large`；写队列满 → `chat_busy`；`clientMsgId` 在最近 256 个已接受的消息里 → ok + `duplicate:true` + `completed`（是否不会再有它的 `result`），不重复写入（这份记录与缓冲区分开，缓冲淘汰后照样认得）；记了 `dropped_on_stop` 的消息不算已接受，同 id 重发会写入新进程；进程不在 → `chat_not_running`
 - `chat_respond`：`response` = `{behavior:"allow"|"deny", updatedInput?, updatedPermissions?, message?, interrupt?}`，不是这个形状 → `invalid_response`。请求不在待答表 → `request_not_pending`（已在别处处理）；`updatedPermissions` 每一项必须与该请求 `permission_suggestions` 中某一项相同，否则 `foreign_rule`；allow 缺 `updatedInput` 时 daemon 补上原 input；进程不在 → `chat_not_running`；写队列满 → `chat_busy`（待答保持不变）。`setMode` 只允许 `acceptEdits` / `default`，否则 → `invalid_mode`；只用于回答计划（`ExitPlanMode` 请求），回答其他请求时带 `setMode` → `invalid_mode`（`permissionLocked` 时为 `mode_locked`），这两种情况都不回答，待答保持不变。`setMode` 紧接在回复之后发给 claude（计划批准用）；`permissionLocked` 时回答计划所带的 `setMode` 被静默丢弃（不发 `set_permission_mode`，`ok:true`，模式不变），回答本身照常转给 claude
 - `chat_interrupt`：不在运行 → ok 不做事；否则向 claude 发一条 interrupt。待答请求由 claude 自己取消（记 `vr_resolved interrupted`），daemon 不替它回 deny；写队列满 → `chat_busy`
 - `chat_set_mode`：`mode` ∉ {`default`, `acceptEdits`, `plan`} → `invalid_mode`；`permissionLocked` → `mode_locked`；进程不在 → `chat_not_running`；写队列满 → `chat_busy`；成功后经 `chat_state` 广播新模式
@@ -331,7 +331,7 @@ v3 对话会话的条目另带（终端条目一律省略）：
 
 - `op`：`send` / `respond` / `interrupt` / `set_mode`
 - `ref`：回显 `clientMsgId`（send）、`requestId`（respond）或所请求的 `mode`（set_mode）；interrupt 不带
-- `duplicate` / `completed`（只用于 `op:"send"`）：`duplicate:true` 表示这个 `clientMsgId` 已被接受过、这次没有再写入；此时 `completed` 总是给出，`true` = 已见到这条消息的 `result`，`false` = 还没有（仍在执行，或被看门狗放弃）。新消息的 ack 不带这两个字段
+- `duplicate` / `completed`（只用于 `op:"send"`）：`duplicate:true` 表示这个 `clientMsgId` 已被接受过、这次没有再写入；此时 `completed` 总是给出，`true` = 这条消息不会再有 `result`（已见到它的 `result`，或已被看门狗放弃、记了 `stale_turn`——之后迟到的 `result` 带 `vr_stale`，不算它的），`false` = 仍在执行、它的 `result` 还会来。新消息的 ack 不带这两个字段
 - `code`（`ok:false` 时，开放集合）：`empty` / `too_large` / `chat_not_running` / `request_not_pending` / `foreign_rule` / `chat_busy` / `invalid_mode` / `invalid_response` / `mode_locked`
 
 ### 断线与订阅
