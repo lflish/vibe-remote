@@ -416,7 +416,7 @@
 - 依赖：T10、T6（info.chat 字段）
 
 ### T12 出错与结束状态、重载、交接、改名、删除、补发提示
-- 状态：进行中
+- 状态：完成
 - 文件：修改 `desktop/src/renderer/chat/view.ts`（结束横幅：重新启动 / 已升级重新检测 / 新建终端会话接上；回合错误卡片与重试；`chat-omitted`；`chat-resync-divider`；`existing` 提示）、`desktop/src/renderer/index.ts`（交接：回合进行中先 `confirm`，再 `openSession(machine,'',…, {ui:'terminal', handoffFrom})`；对话会话的重载按钮复用 `reloadSession`（对话会话收到 202 即显示「正在重启」，结果看 `chat_state`：`idle`+新 epoch = 成功，`restart_failed` = 失败并显示 message；不改 `rest.ts` 超时，d10）；改名/删除复用现有 REST；R2.6 ready.existing 时关闭重复视图并切换）、`i18n.ts`、`styles.css`
 - 接口：
   - 使用：T7 `attach(..., {handoffFrom})`、`rest.reloadSession/renameSession/deleteSession`、`rest.info({recheck:true})`（`rest.ts` 加可选参数）
@@ -427,7 +427,7 @@
 - 依赖：T11
 
 ### T13 验证脚本、文档与收尾
-- 状态：待办
+- 状态：进行中
 - 文件：新建 `.claude/skills/verify/scripts/ws-chat-smoke.mjs`（启动临时 daemon：`go build` daemon 与假 claude，配置 `claude_cmd` 指向假 claude 绝对路径、`state_dir` 与 `CLAUDE_CONFIG_DIR` 指向临时目录、`login_shell:false`，并在 `$CLAUDE_CONFIG_DIR/.claude.json` 里把临时工作目录标为已信任）；修改 `.claude/skills/verify/scripts/gui-smoke.mjs`（原有终端用例继续用现在的 `/bin/bash` daemon，断言不改；**另起第二个临时 daemon**：`claude_cmd` 指向假 claude、独立端口、独立 `state_dir` 与 `CLAUDE_CONFIG_DIR`、在第二个 daemon 自己的临时 `$CLAUDE_CONFIG_DIR/.claude.json`（不是真实的 `~/.claude.json`）里把临时工作目录标为已信任；临时 `machines.json` 登记两台机器；新增对话用例：在第二台机器上新建对话会话、发 `echo`、收到回复、`perm` 允许一次；清理时两个 daemon 都关闭）、`.claude/skills/verify/SKILL.md`（对话冒烟用法）、`.claude/skills/protocol-sync/SKILL.md`（对话帧加入核对清单）、`CLAUDE.md`（c1：两条数据通路、「客户端绝不解析」限定终端模式、对话模式只支持 claude、`state_dir`、对话会话持久化模型、协议版本 3）、`docs/protocol.md`（核对）、`CHANGELOG.md`、`.devflow.yml`（invariants 新增 design 7.1 的新规则——等 c2 确认，确认前不改此文件）
 - 接口：无新代码接口
 - 场景：R1.2、R2.1、R2.4、R2.5、R5.5、R12.2、R14.1、R16.4（协议冒烟）；R17.1、R18.2、R19.1
@@ -462,6 +462,7 @@
 | T9 | 2026-11-14 09:41 | 0670d58 | 新增 test-chat-markdown 6（jsdom 29.1.1 上的真实 DOMPurify，isSupported=true）、test-chat-render-guard、test-chat-window 3、test-chat-view 2（jsdom 上 ChatView 的 data-testid、发送、工具块与 diff）；test-terminal-selection 增加 markdown-it/dompurify/jsdom 锁版本检查；`npm ci && npm run typecheck && npm test && npm run build` 成功，app.asar 中无 jsdom；仓库根 `gui-smoke.mjs --no-build` 原有 20 项全部 PASS |
 | T10 | 2026-11-14 09:50 | d0c2b94 | test-chat-session 新增 prompt state transitions（共 15）；test-chat-view 新增 7 个 UI 用例（权限/计划/提问卡片、模式切换含 bypass 锁定、斜杠菜单与终端专用命令、排队撤回与中断退回、未送达重发；共 9）；`npm run typecheck && npm test && npm run build` 成功（18 个测试脚本），gui-smoke 原有用例全部 PASS；另用浏览器渲染核对了权限、计划、提问卡片与斜杠菜单的样式 |
 | T11 | 2026-11-14 10:28 | 878f4f1 | 新增 test-chat-availability 9 个用例（not_claude、proto 2 / 无 chat 字段 → 升级 vibe-remoted、claude_too_old → 升级 claude、其它原因、workdir untrusted（untrusted/unknown/缺省都置灰）、加载中/info 失败）、test-chat-activity 5 个用例（灰/绿/黄、REST activitySeq/epoch/state、fallback does not switch）；test-i18n-parity 223 个键通过；`npm run typecheck && npm test && npm run build` 成功（21 个测试脚本）；`make check` 全绿 |
+| T12 | 2026-11-14 10:35 | 7c5bbfb | test-chat-session 新增 reload success keeps history、ended states（共 17）；test-chat-view 新增 ended banner, restart tracking and retry（chat-ended/chat-restart/chat-recheck/chat-handoff/chat-open-terminal/chat-retry，重载 202 → restarting → stopped → 新 epoch 成功、restart_failed 显示 message；共 10）；i18n 244 个键；`npm run typecheck && npm test && npm run build` 成功；`make check` 全绿（第一次运行 TestTerminalFramesUnchangedV3 偶发「tmux session did not become ready」，未改 Go 代码，重跑通过）；decisions #33 |
 
 ## 后续
 
