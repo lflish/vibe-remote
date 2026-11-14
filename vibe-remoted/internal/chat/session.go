@@ -272,6 +272,70 @@ func Start(spec Spec) (*Session, error) {
 	return s, nil
 }
 
+// Load returns a session whose process is not running (a record read back
+// after a daemon restart). Its history is the whole transcript; RestartLocked
+// starts it again.
+func Load(spec Spec, ended *protocol.ChatEnded) *Session {
+	s := newSession(spec)
+	s.ended = ended
+	return s
+}
+
+// Reloading reports whether a reload was accepted and has not finished.
+func (s *Session) Reloading() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.reloading
+}
+
+// BeginReload marks a reload as accepted; false if one already is (the
+// second request is answered without starting a second restart).
+func (s *Session) BeginReload() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.reloading {
+		return false
+	}
+	s.reloading = true
+	return true
+}
+
+// EndReload clears the mark set by BeginReload.
+func (s *Session) EndReload() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.reloading = false
+}
+
+// SetHandedOff records that the conversation continues in terminal session
+// to (ended.reason handed_off) and tells every subscriber.
+func (s *Session) SetHandedOff(to string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.ended = &protocol.ChatEnded{Reason: protocol.EndReasonHandedOff, HandedOffTo: to}
+	s.broadcastStateLocked()
+}
+
+// BroadcastState sends the current chat_state to every subscriber, even if
+// it did not change.
+func (s *Session) BroadcastState() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.lastState = nil
+	s.broadcastStateLocked()
+}
+
+// Close drops every subscriber (the session was deleted); their relays close
+// the connection and a reconnect finds the session gone.
+func (s *Session) Close() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for sub := range s.subs {
+		delete(s.subs, sub)
+		close(sub.c)
+	}
+}
+
 // ID is the vibe-remote session id.
 func (s *Session) ID() string { return s.spec.ID }
 
@@ -1317,6 +1381,12 @@ func (o OpHandle) RestartLocked() error {
 	s.waitExitCallback()
 	if s.spec.Hooks.Claim != nil {
 		if err := s.spec.Hooks.Claim(s.spec.ClaudeSessionID); err != nil {
+			// Only possible once the session had ended and released it:
+			// another session now runs this conversation.
+			s.mu.Lock()
+			s.ended = &protocol.ChatEnded{Reason: protocol.EndReasonRestartFailed, Message: err.Error()}
+			s.broadcastStateLocked()
+			s.mu.Unlock()
 			return err
 		}
 	}

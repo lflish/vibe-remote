@@ -1204,9 +1204,11 @@ func main() {
 		os.Exit(1)
 	}
 
-	f.registerPid()
+	// The handler goes in before the pid file, so a SIGTERM never leaves a
+	// stale pid file behind.
 	sigs := make(chan os.Signal, 4)
 	signal.Notify(sigs, syscall.SIGTERM)
+	f.registerPid()
 	go func() {
 		for range sigs {
 			if f.stubborn {
