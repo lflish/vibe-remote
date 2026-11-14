@@ -1082,6 +1082,20 @@ func (s *Session) Send(clientMsgID, text string) Ack {
 	return ok()
 }
 
+// forgetMsgIDLocked drops id from the replay filter of Send.
+func (s *Session) forgetMsgIDLocked(id string) {
+	if id == "" || !s.recentSet[id] {
+		return
+	}
+	delete(s.recentSet, id)
+	for i, r := range s.recent {
+		if r == id {
+			s.recent = append(s.recent[:i:i], s.recent[i+1:]...)
+			break
+		}
+	}
+}
+
 // Respond answers an open permission request (chat_respond). The answer is
 // queued for stdin before the request leaves the pending table, so a full
 // queue never shows as answered while claude still waits (R5.6).
@@ -1326,6 +1340,9 @@ func (s *Session) settleLocked(p *proc, reason, message string) func(wait bool) 
 	}
 	for _, id := range s.unpaired {
 		s.appendRingLocked(vrNotice(NoticeDroppedOnStop, "the session stopped before this message ran", id))
+		// It never ran: a resend with the same id is a new message, not a
+		// replay to swallow.
+		s.forgetMsgIDLocked(id)
 	}
 	for _, pe := range s.pending {
 		s.appendRingLocked(vrResolved(pe.id, outcomeExited))
