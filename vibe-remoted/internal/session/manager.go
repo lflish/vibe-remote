@@ -62,6 +62,10 @@ type Manager struct {
 	chatCfg ChatConfig
 	store   *chat.Store
 	persist persister
+	// closing (guarded by mu) is set by Shutdown: no new chat process starts.
+	// chatCreates counts the CreateChat calls Shutdown waits for.
+	closing     bool
+	chatCreates sync.WaitGroup
 
 	// Seams for tests.
 	orphanCleanup    func([]chat.Record) ([]chat.Record, []chat.Orphan)
