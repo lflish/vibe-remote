@@ -1123,10 +1123,21 @@ func (s *Session) Respond(requestID string, resp json.RawMessage, setMode string
 		return nack(protocol.AckChatNotRunning)
 	}
 	var req struct {
+		ToolName    string            `json:"tool_name"`
 		Input       json.RawMessage   `json:"input"`
 		Suggestions []json.RawMessage `json:"permission_suggestions"`
 	}
 	_ = json.Unmarshal(s.pending[i].request, &req)
+	if setMode != "" {
+		// setMode only comes with approving a plan, and never unlocks a
+		// session whose mode is fixed (as SetMode).
+		if s.spec.Lock {
+			return nack(protocol.AckModeLocked)
+		}
+		if req.ToolName != "ExitPlanMode" {
+			return nackMsg(protocol.AckInvalidMode, "setMode is only accepted when answering a plan")
+		}
+	}
 	if up := r["updatedPermissions"]; len(up) > 0 && string(up) != "null" {
 		var items []json.RawMessage
 		if json.Unmarshal(up, &items) != nil {
