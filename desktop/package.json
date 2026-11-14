@@ -20,7 +20,7 @@
     "build": "tsc && vite build && electron-builder",
     "start": "electron dist/main/index.js",
     "typecheck": "tsc --noEmit",
-    "test": "npm run test:preserved-notice && npm run test:attach-replay && npm run test:terminal-layout && npm run test:terminal-clipboard && npm run test:terminal-selection && npm run test:client-reconnect && npm run test:client-liveness && npm run test:machine-store && npm run test:i18n-parity && npm run test:chat-client",
+    "test": "npm run test:preserved-notice && npm run test:attach-replay && npm run test:terminal-layout && npm run test:terminal-clipboard && npm run test:terminal-selection && npm run test:client-reconnect && npm run test:client-liveness && npm run test:machine-store && npm run test:i18n-parity && npm run test:chat-client && npm run test:chat-parser && npm run test:chat-session && npm run test:chat-permission && npm run test:chat-diff && npm run test:chat-queue",
     "test:preserved-notice": "node -e \"const fs=require('fs');const s=fs.readFileSync('src/renderer/index.ts','utf8');const f=s.slice(s.indexOf('async function closeSession'),s.indexOf('function renderEmptyState'));const preserved=f.indexOf(\\\"e.code === 'worktree_preserved'\\\");const refresh=f.indexOf('await refreshAllMachines()',preserved);const notice=f.indexOf(\\\"t('session.worktreePreserved'\\\",preserved);if(!(preserved>=0&&refresh>preserved&&notice>refresh))throw new Error('Worktree-preserved notice must be applied after awaited refresh');\"",
     "test:attach-replay": "node scripts/test-attach-replay.mjs",
     "test:terminal-layout": "node scripts/test-terminal-layout.mjs",
@@ -30,7 +30,12 @@
     "test:client-liveness": "node scripts/test-client-liveness.mjs",
     "test:machine-store": "node scripts/test-machine-store.mjs",
     "test:i18n-parity": "node scripts/test-i18n-parity.mjs",
-    "test:chat-client": "node scripts/test-chat-client.mjs"
+    "test:chat-client": "node scripts/test-chat-client.mjs",
+    "test:chat-parser": "node scripts/test-chat-parser.mjs",
+    "test:chat-session": "node scripts/test-chat-session.mjs",
+    "test:chat-permission": "node scripts/test-chat-permission.mjs",
+    "test:chat-diff": "node scripts/test-chat-diff.mjs",
+    "test:chat-queue": "node scripts/test-chat-queue.mjs"
   },
   "dependencies": {
     "@xterm/addon-fit": "0.12.0-beta.299",
