@@ -2,7 +2,7 @@
 // (R16.1–R16.4, d12). Events come from an open view's live frames or from the
 // 5 s REST poll (activitySeq / epoch / state) for sessions not open here.
 import { strict as assert } from 'node:assert';
-import { load, runner } from './chat-test-util.mjs';
+import { indexDom, load, loadIndex, runner } from './chat-test-util.mjs';
 
 const { nextDot } = await load('src/renderer/chat/activity.ts');
 const { test, run } = runner('test-chat-activity');
@@ -65,6 +65,35 @@ test('fallback does not switch', () => {
   assert.equal('open' in nextDot('waiting', { kind: 'notifyResult', result: 'shown' }, bg), false);
   // Only a click on a real notification opens the session.
   assert.deepEqual(nextDot('waiting', { kind: 'notificationClick' }, bg), { dot: 'none', notify: false, open: true });
+});
+
+test('machine overview shown: the hidden chat is not current, its prompt shows yellow and notifies (R16.3)', async () => {
+  const page = await indexDom();
+  const app = await loadIndex();
+  const machine = { name: 'dev', addr: '127.0.0.1', port: 1234, token: 't' };
+  const mk = '127.0.0.1:1234';
+  app.setMachines([machine]);
+  app.machineOnline.set(mk, true);
+  app.machineSessions.set(mk, [{ id: 's', title: 'conversation', workdir: '/w', created: '2026-11-14', mode: 'normal', ui: 'chat', state: 'running' }]);
+  const view = { key: `${mk}::s`, sessionId: 's', machine, container: document.createElement('div'), activity: 'none', ui: 'chat', client: { state: 'connected' }, show() {} };
+  document.getElementById('terminal-container').appendChild(view.container);
+  app.views.set(view.key, view);
+  app.setActive(view.key);
+  // While it is the session on screen, a prompt is no news.
+  app.applyViewActivity(view, { kind: 'prompt' }, { kind: 'permission', toolName: 'Bash' });
+  assert.equal(view.activity, 'none');
+  assert.equal(page.notifications.length, 0);
+  // The user goes to the machine overview: the chat is hidden, so not current.
+  app.showMachineOverview(machine);
+  assert.equal(view.container.style.display, 'none');
+  app.applyViewActivity(view, { kind: 'prompt' }, { kind: 'permission', toolName: 'Bash' });
+  app.renderSidebar();
+  await Promise.resolve();
+  assert.equal(view.activity, 'waiting', 'view dot');
+  assert.equal(document.querySelector('.session-item').dataset.dot, 'waiting', 'sidebar dot');
+  assert.equal(page.notifications.length, 1, 'notified');
+  assert.equal(page.notifications[0].tag, view.key);
+  page.dom.window.close();
 });
 
 await run();

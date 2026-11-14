@@ -671,6 +671,9 @@ async function startNewSession(machine: MachineConfig, initialMode?: SessionMode
 
 function showMachineOverview(machine: MachineConfig) {
   overviewMachineKey = machineKey(machine);
+  // Every view is hidden now, so none is the current session: their sidebar
+  // dots and "needs you" notifications work as for any background session.
+  activeKey = null;
   for (const view of views.values()) view.container.style.display = 'none';
   const mount = document.getElementById('machine-overview');
   if (mount) {
