@@ -44,6 +44,7 @@ const (
 	stderrTailBytes = 8 << 10
 	stopResultWait  = 2 * time.Second
 	stopTermWait    = time.Second
+	stopKillWait    = time.Second
 )
 
 // Tuning overrides timing constants (tests); zero values use the defaults.
@@ -1218,9 +1219,10 @@ func (s *Session) WithOp(fn func(ops OpHandle)) {
 }
 
 // StopLocked stops the process and waits until it is gone (design 6.4):
-// interrupt → the turn's result (≤2 s) → SIGTERM to the process group → 1 s →
-// SIGKILL → Wait → the stdout reader finished → every written message without
-// a result gets dropped_on_stop → exit callback. Idempotent.
+// interrupt → the turn's result (≤2 s) → SIGTERM to the process group → 1 s
+// for claude to exit and its output to end → otherwise SIGKILL to the group →
+// Wait → the stdout reader finished (≤1 s more) → every written message
+// without a result gets dropped_on_stop → exit callback. Idempotent.
 func (o OpHandle) StopLocked(reason string) error { return o.stop(nil, reason) }
 
 // stop stops target (nil = whatever runs now).
@@ -1267,17 +1269,26 @@ func (o OpHandle) stop(target *proc, reason string) error {
 		deadline.Stop()
 	}
 	// Signal right away: closing stdin would let claude run every queued
-	// message first (probe V5, V14).
-	if !closed(p.waitDone) {
+	// message first (probe V5, V14). The deadline covers both claude's exit
+	// and the end of its output: a process left in claude's group that
+	// ignores SIGTERM keeps stdout open after claude itself is gone, so the
+	// group gets SIGKILL unless both happened in time.
+	if !closed(p.joined) {
 		signalGroup(p.pid, syscall.SIGTERM)
 		select {
-		case <-p.waitDone:
+		case <-p.joined:
 		case <-time.After(stopTermWait):
 			signalGroup(p.pid, syscall.SIGKILL)
-			<-p.waitDone
+			<-p.waitDone // claude itself is confirmed gone
+			select {
+			case <-p.joined:
+			case <-time.After(stopKillWait):
+				// Held open by a process outside claude's group; the epoch is
+				// settled without it (its lines are ignored from now on).
+				log.Printf("chat [%s]: claude's output is still held open after it exited; not waiting for it", s.spec.ID)
+			}
 		}
 	}
-	<-p.joined
 
 	s.mu.Lock()
 	run := s.settleLocked(p, reason, "")
