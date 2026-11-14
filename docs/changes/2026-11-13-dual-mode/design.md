@@ -674,6 +674,7 @@ CI 与 verify 不依赖真 claude，全部对话测试跑这个程序（`go buil
   - 停进程结算：`Wait()` 后再 join stdout 读协程（读到 EOF 并处理完已读的行），然后在 `Session.mu` 下给仍未配到 result 的消息各发一条 `dropped_on_stop`；stdout 管道由 daemon 自持（不用 `StdoutPipe`），读协程绑定 epoch，不会写进新 epoch（6.4、9.2）。
 - 2026-11-14 开发中（T2，decisions #21）：假 claude 的 `swallow` 增加可选 `<ms>`，静默后补发迟到的 `result`（供看门狗迟到结果测试）；`perm` 不带 `suggest`/`mode` 时不附 `permission_suggestions`（9.2）。
 - 2026-11-14 开发中（T3，decisions #22–#25）：假 claude 增加 `multi`（两个并存的待答请求）；带 `--resume` 的启动最多等 3 s 以同步报告 V21 失败，`RestartLocked()` 沿用会话 Spec；新增 ack 码 `invalid_response`（9.2、4.7、4.11）。
+- 2026-11-14 开发中（T4，decisions #26）：记录增加 `exe`、`permissionMode`；`CleanupOrphans` 另返回仍存活的孤儿（5.1、6.6）。
 
 ## 11. 方案验证（机器关口 B）
 

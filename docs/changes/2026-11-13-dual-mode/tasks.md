@@ -302,7 +302,7 @@
 - 依赖：T2
 
 ### T4 JSONL 历史、会话表持久化、孤儿清理
-- 状态：进行中
+- 状态：完成
 - 文件：新建 `vibe-remoted/internal/chat/history.go`、`history_test.go`、`store.go`、`store_test.go`、`orphan.go`、`orphan_test.go`（Linux 读 `/proc/<pid>/cmdline`，darwin 用 `ps -o command= -p`）；参考 `69d8c70:vibe-remoted/internal/session/history.go`（`ReadHistory` 重写为原样行 + 截止点；目录定位已在 T2 的 `transcript.go`）
 - 接口：
   - 使用：T2 的 `ProjectsDir/FindTranscript/LatestSessionForWorkdir`
@@ -318,7 +318,7 @@
 - 依赖：T3
 
 ### T5 Manager 集成：新建、列表、改名、删除、重载、启动与退出
-- 状态：待办
+- 状态：进行中
 - 文件：修改 `vibe-remoted/internal/session/runner.go`（`liveTmuxSessions` 的 `-F` 格式与 `parseTmuxSessionLine` 多读一列 `@vibe_remote_claude_u`，`tmuxSessionInfo` 加 `claudeU`；现有 `tmux_helpers_test.go`、`hardening_test.go` 断言不改，只补新列的用例）、`vibe-remoted/internal/session/manager.go`（`chats` map、`Create` 按 `UI` 分支、`List` 合并、`Delete`/`Rename`/`Reload` 分派、`LoadChats`、`Shutdown`、`ChatGet`）、`vibe-remoted/internal/config/config.go`（`StateDir`、`Load` 默认值）、`vibe-remoted/cmd/vibe-remoted/main.go`（建 store、`LoadChats`、启动 `Prober`、退出时 `Shutdown`）、`vibe-remoted.example.json`（`state_dir` 示例注释用法见 CLAUDE.md）；测试新建 `vibe-remoted/internal/session/chat_manager_test.go`，`config_test.go` 补用例
 - 接口：
   - 使用：`chat.Start`、`(*chat.Session).WithOp` + `OpHandle.StopLocked/RestartLocked`、`chat.Store`、`CreateWorktree/RollbackWorktree/CleanupWorktree`（现有）
@@ -454,6 +454,7 @@
 | T1 | 2026-11-14 08:55 | 475c20b（v2 黄金帧）、74cba84 | 新增 4 个 Go 测试通过（TestTerminalFramesUnchangedV3、TestInfoAndReadyProto3、TestProtocolChatFramesJSON、TestAttachFrameDecodesChatFields）；`go test -race ./...` 102 通过 0 失败；`make check` 全绿 |
 | T2 | 2026-11-14 09:11 | 4d6c06a | `internal/chat` 16 个顶层测试全部通过（含任务列出的 13 个 + TestProjectsDir、TestFakeClaudeBehaviours 18 个子用例），`go test -race -count=5 ./internal/chat/...` 稳定；`go vet ./...`、`make check` 全绿；decisions #21 |
 | T3 | 2026-11-14 09:36 | 5f0c835 | `internal/chat` 新增 56 个顶层测试（session_test 35、control_test 21，含子用例共 72 个顶层 PASS），覆盖测试计划中标 T3 的全部用例与任务内补充用例；`go test -race -count=3 ./internal/chat/...` 稳定；`go test -race ./...` 全部通过（333 个 PASS 含子用例）；decisions #22–#25 |
+| T4 | 2026-11-14 09:41 | dac5164 | 新增 8 个顶层测试（TestHistoryFiltersSidechainAndMeta、TestHistoryFullStream（含按批流式读取断言）、TestSyncHistoryBeforeCutoff、TestStoreRoundTrip、TestStorePermissions、TestStoreCorruptQuarantined、TestStoreAtomicWrite、TestOrphanCleanup 5 个子用例）全部通过；`go test -race -count=2 ./internal/chat/...` 稳定；`go test -race ./...` 全部通过（346 个 PASS 含子用例）；decisions #26 |
 
 ## 后续
 
