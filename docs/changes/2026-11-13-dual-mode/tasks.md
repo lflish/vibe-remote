@@ -144,7 +144,7 @@
 |------|------|--------|------|------|
 | R18.2 | Go | TestProtocolChatFramesJSON | 新帧 JSON 键名与 design 4.x 一致，终端 ready 无 `ui` 键 | T1 |
 | R1.3 | Go | TestParseNotClaude | `/bin/bash`、`codex` → `not_claude`；带路径的 claude 通过 | T2 |
-| c3 | Go | TestWorkdirTrusted | TrustState 三态与「只看目录本身」（待 c3 确认） | T2 |
+| c3 | Go | TestWorkdirTrusted | TrustState 三态与「只看目录本身」（c3 已确认） | T2 |
 | 7.1 | Go | TestCommandFromConfigOnly | 对话 argv 只由配置与常量拼成 | T2 |
 | R1.4 | Go | TestParseVersion | 版本解析与最低版本比较 | T2 |
 | R1.4 | Go | TestProbeCachesAndRecheck | 版本探测缓存、recheck、找不到 claude | T2 |
@@ -247,7 +247,7 @@
   - 提供：`ParseClaudeCmd(cmd string) (Parsed, reason string)`（`Parsed{Exe string; Args []string; Continue, Bypass bool; PermissionMode string}`，H7/H14，design 4.9 的 reason）；`ChatArgv(p Parsed, claudeSessionID string, resume bool) []string`；`ShellJoin(argv []string) string`；`HandoffCommand(exe string, args []string, u string, resume bool) string`（resume=false 时用 `--session-id u`）；`ParseVersion(s string) (v [3]int, ok bool)`、`VersionAtLeast(v, min)`、`const MinClaudeVersion = "2.1.210"`；`Prober`（后台探测、10 分钟缓存、`Recheck()`、`Get(ctx, wait time.Duration)`）
   - 提供：`ExpandHome(word string) string`（开头 `~`、`~/` → daemon 用户 `$HOME`，在拼接与引号之前调用，登录 shell 与 argv 两条路径都用）
   - 提供（纯文件函数，供 T3 使用）：`ProjectsDir() string`、`FindTranscript(projectsDir, u string) (path string, ok bool)`、`LatestSessionForWorkdir(projectsDir, workdir string) (uuid string, ok bool)`（目录编码 `/`、`.` → `-`，找不到时按 `cwd` 回退）
-  - 提供（**待 c3 确认**）：`type TrustState string`（`trusted`/`untrusted`/`unknown`）；`WorkdirTrusted(workdir string) TrustState`：文件为 `$CLAUDE_CONFIG_DIR/.claude.json`（设置时）否则 `~/.claude.json`；只看规范化目录本身的 `projects[<目录>].hasTrustDialogAccepted`；无记录 → untrusted；文件缺失或无法解析 → unknown；只读该字段
+  - 提供（c3 已确认）：`type TrustState string`（`trusted`/`untrusted`/`unknown`）；`WorkdirTrusted(workdir string) TrustState`：文件为 `$CLAUDE_CONFIG_DIR/.claude.json`（设置时）否则 `~/.claude.json`；只看规范化目录本身的 `projects[<目录>].hasTrustDialogAccepted`；无记录 → untrusted；文件缺失或无法解析 → unknown；只读该字段
   - 提供（测试辅助）：`chattest.TrustDir(t, configDir, dir)`：在临时 `$CLAUDE_CONFIG_DIR/.claude.json` 里把临时工作目录标为已信任（chattest、ws-chat-smoke、gui-smoke 都用同样的文件格式）
   - 提供（测试辅助）：`chattest.FakeClaude(t) (dir string)`（`sync.Once` 里 `go build -o <tmp>/claude ./internal/chat/fakeclaude`）
   - 假 claude 行为：design 9.2 全部指令与环境变量
@@ -347,7 +347,7 @@
   - `TestWithOpSerializesHandoffDelete`：并发交接与删除 → 不死锁（5 s 内完成）；删除先到 → 交接 `session_not_found`；交接先到 → 删除 C 不碰交接出去的终端会话
   - `TestHandedOffTerminalReloadUsesResume`（见测试计划）
   - `TestReloadChatReturns202`：REST 202 立即返回（<500 ms，假 claude `slow` 中）；重载进行中再调一次 → 也是 202 且 pid 目录只出现一次新进程；订阅者依次收到 `ended.reason=stopped` → 新 epoch 的 reset 同步 → `idle`；重载成功后的 reset 同步含重载前的全部历史（`historyCount` 等于重载前 JSONL 的 user/assistant 行数），随后 `chat_send` 能收到新回复；假 claude 启动失败时收到 `ended.reason=restart_failed` 与 message
-  - `TestCreateChatUntrustedWorkdir`（待 c3 确认）：临时 `$CLAUDE_CONFIG_DIR/.claude.json` 未信任该目录、或文件不存在（unknown）→ 都是 `error{code:chat_unsupported, fatal:true}`，message 含 `workdir_untrusted`；worktree 模式检查源仓库；`/api/v1/fs` 返回 `chatTrust`
+  - `TestCreateChatUntrustedWorkdir`（c3 已确认）：临时 `$CLAUDE_CONFIG_DIR/.claude.json` 未信任该目录、或文件不存在（unknown）→ 都是 `error{code:chat_unsupported, fatal:true}`，message 含 `workdir_untrusted`；worktree 模式检查源仓库；`/api/v1/fs` 返回 `chatTrust`
   - `TestTerminalContinueBusyWhenChatOwns` 的 attach/REST 部分（c4 已确认，子项）：attach 收到 fatal `claude_session_busy`，终端 reload 返回 409
 - 完成定义：`cd vibe-remoted && go test -race ./...`；现有 `ws_test.go`、`contract_test.go`、`hardening_test.go` 不改断言通过
 - 依赖：T5
@@ -410,8 +410,8 @@
 - 文件：修改 `desktop/src/renderer/dirpicker.ts`（「界面」卡片，默认终端；对话卡片按 `chat/availability.ts` 置灰并写原因；对话模式下显示 `-c`/bypass 的说明文案，原型场景 4）、`desktop/src/renderer/index.ts`（`startNewSession` 按 ui 分支；REST 轮询比较 `activitySeq`/`epoch`/`state` 更新未打开会话的点；对话视图忽略 `notify` 帧的 idle/waiting；通知带 tag，处理 `notification-click`；通知结果为 `fallback` 时只亮黄点、依赖主进程 Dock 弹跳 + 角标，**不自动切换会话**，d12）、`desktop/src/main/index.ts` 与 `preload.ts`（`notify(title, body, tag?)`，点击时 `webContents.send('notification-click', tag)`）、`i18n.ts`、`styles.css`；新建 `desktop/src/renderer/chat/availability.ts`、`chat/activity.ts`；测试新建 `desktop/scripts/test-chat-availability.mjs`、`test-chat-activity.mjs`
 - 接口：
   - 提供：`chatAvailability(info?: MachineInfo, error?: unknown) → {enabled: boolean; reasonKey?: string; upgrade?: 'claude'|'daemon'}`；`nextDot(prev, event, {isActive, windowFocused}) → {dot, notify: boolean}`；`data-testid`：`picker-ui-terminal`、`picker-ui-chat`、`picker-ui-chat-reason`；侧边栏 `data-dot`
-- 场景：R1.1、R1.3、R1.4、R16.1–R16.4、R17.2；c3 的目录选择器提示（待 c3 确认；`fs.chatTrust` 不是 `trusted`（含 `unknown`）时对话卡片置灰，原因「先用终端界面在该目录打开一次 claude 以信任此目录」）
-- 测试：测试计划中标 T11 的全部用例；`test-chat-availability: workdir untrusted`（待 c3 确认；`chatTrust` 为 `untrusted` 或 `unknown` → 都置灰并给出信任提示 key，只有 `trusted` 可选）；`test-chat-activity: fallback does not switch`（通知结果 fallback 时 `nextDot` 只给黄点、不返回切换动作）；`test-i18n-parity` 自动覆盖新文案
+- 场景：R1.1、R1.3、R1.4、R16.1–R16.4、R17.2；c3 的目录选择器提示（c3 已确认；`fs.chatTrust` 不是 `trusted`（含 `unknown`）时对话卡片置灰，原因「先用终端界面在该目录打开一次 claude 以信任此目录」）
+- 测试：测试计划中标 T11 的全部用例；`test-chat-availability: workdir untrusted`（c3 已确认；`chatTrust` 为 `untrusted` 或 `unknown` → 都置灰并给出信任提示 key，只有 `trusted` 可选）；`test-chat-activity: fallback does not switch`（通知结果 fallback 时 `nextDot` 只给黄点、不返回切换动作）；`test-i18n-parity` 自动覆盖新文案
 - 完成定义：`cd desktop && npm run typecheck && npm test && npm run build`
 - 依赖：T10、T6（info.chat 字段）
 
