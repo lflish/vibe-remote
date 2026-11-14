@@ -318,7 +318,7 @@
 - 依赖：T3
 
 ### T5 Manager 集成：新建、列表、改名、删除、重载、启动与退出
-- 状态：进行中
+- 状态：完成
 - 文件：修改 `vibe-remoted/internal/session/runner.go`（`liveTmuxSessions` 的 `-F` 格式与 `parseTmuxSessionLine` 多读一列 `@vibe_remote_claude_u`，`tmuxSessionInfo` 加 `claudeU`；现有 `tmux_helpers_test.go`、`hardening_test.go` 断言不改，只补新列的用例）、`vibe-remoted/internal/session/manager.go`（`chats` map、`Create` 按 `UI` 分支、`List` 合并、`Delete`/`Rename`/`Reload` 分派、`LoadChats`、`Shutdown`、`ChatGet`）、`vibe-remoted/internal/config/config.go`（`StateDir`、`Load` 默认值）、`vibe-remoted/cmd/vibe-remoted/main.go`（建 store、`LoadChats`、启动 `Prober`、退出时 `Shutdown`）、`vibe-remoted.example.json`（`state_dir` 示例注释用法见 CLAUDE.md）；测试新建 `vibe-remoted/internal/session/chat_manager_test.go`，`config_test.go` 补用例
 - 接口：
   - 使用：`chat.Start`、`(*chat.Session).WithOp` + `OpHandle.StopLocked/RestartLocked`、`chat.Store`、`CreateWorktree/RollbackWorktree/CleanupWorktree`（现有）
@@ -335,7 +335,7 @@
 - 依赖：T4
 
 ### T6 WebSocket 对话通路与 REST
-- 状态：待办
+- 状态：进行中
 - 文件：修改 `vibe-remoted/internal/server/ws.go`（`wsAttach` 按 `ui`/`handoffFrom` 分派；新增 `wsChatRelay`；把现有 ping 循环抽成 `pingLoop` 供两条 relay 共用，终端行为不变）、`vibe-remoted/internal/server/server.go`（`handleInfo` 加 `chat`、`?recheck=1`；reload/rename/delete 对话分支与 409）；测试新建 `vibe-remoted/internal/server/ws_chat_test.go`，`contract_test.go`、`ws_test.go` 补用例
 - 接口：
   - 使用：`Manager.Create/ChatGet/Reload/Rename/Delete`、`chat.Session.Subscribe/Send/Respond/Interrupt/SetMode`
@@ -455,6 +455,7 @@
 | T2 | 2026-11-14 09:11 | 4d6c06a | `internal/chat` 16 个顶层测试全部通过（含任务列出的 13 个 + TestProjectsDir、TestFakeClaudeBehaviours 18 个子用例），`go test -race -count=5 ./internal/chat/...` 稳定；`go vet ./...`、`make check` 全绿；decisions #21 |
 | T3 | 2026-11-14 09:36 | 5f0c835 | `internal/chat` 新增 56 个顶层测试（session_test 35、control_test 21，含子用例共 72 个顶层 PASS），覆盖测试计划中标 T3 的全部用例与任务内补充用例；`go test -race -count=3 ./internal/chat/...` 稳定；`go test -race ./...` 全部通过（333 个 PASS 含子用例）；decisions #22–#25 |
 | T4 | 2026-11-14 09:41 | dac5164 | 新增 8 个顶层测试（TestHistoryFiltersSidechainAndMeta、TestHistoryFullStream（含按批流式读取断言）、TestSyncHistoryBeforeCutoff、TestStoreRoundTrip、TestStorePermissions、TestStoreCorruptQuarantined、TestStoreAtomicWrite、TestOrphanCleanup 5 个子用例）全部通过；`go test -race -count=2 ./internal/chat/...` 稳定；`go test -race ./...` 全部通过（346 个 PASS 含子用例）；decisions #26 |
+| T5 | 2026-11-14 10:00 | 95e0e72 | `internal/session` 新增 25 个测试（测试计划中标 T5 的全部用例，含 c4 的 TestTerminalContinueClaimsLatest 与 TestTerminalContinueBusyWhenChatOwns 的 Manager 部分，另加 TestOrphanOwnerBlocksReloadUntilGone、TestParseTmuxSessionLineReadsClaudeU），`internal/config` 新增 TestLoadDefaultsStateDir；现有 manager/idempotent/hardening/tmux_helpers 测试断言未改；`go test -race -count=3 ./internal/session/... ./internal/config/...` 稳定；`go test -race ./...` 全部通过（372 个 PASS 含子用例）；decisions #27–#29 |
 
 ## 后续
 

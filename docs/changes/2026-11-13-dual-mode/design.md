@@ -675,6 +675,7 @@ CI 与 verify 不依赖真 claude，全部对话测试跑这个程序（`go buil
 - 2026-11-14 开发中（T2，decisions #21）：假 claude 的 `swallow` 增加可选 `<ms>`，静默后补发迟到的 `result`（供看门狗迟到结果测试）；`perm` 不带 `suggest`/`mode` 时不附 `permission_suggestions`（9.2）。
 - 2026-11-14 开发中（T3，decisions #22–#25）：假 claude 增加 `multi`（两个并存的待答请求）；带 `--resume` 的启动最多等 3 s 以同步报告 V21 失败，`RestartLocked()` 沿用会话 Spec；新增 ack 码 `invalid_response`（9.2、4.7、4.11）。
 - 2026-11-14 开发中（T4，decisions #26）：记录增加 `exe`、`permissionMode`；`CleanupOrphans` 另返回仍存活的孤儿（5.1、6.6）。
+- 2026-11-14 开发中（T5，decisions #27–#29）：Manager 对话接口命名（`CreateChat`/`ReloadChat`/`Shutdown(timeout)`/`ChatConfig`）；worktree 下 `-c` 开新对话；持有 U 的终端重载找不到记录时沿用原 U（4.11、6.2、6.9）。
 
 ## 11. 方案验证（机器关口 B）
 
