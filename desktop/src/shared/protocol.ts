@@ -8,7 +8,7 @@
  *      ready.ui/claudeSessionId/existing/handoffFrom,
  *      sessions[].ui/state/activitySeq/epoch/endReason, info.chat (+?recheck=1),
  *      fs chatTrust, chat reload 202, errors ui_mismatch/chat_unsupported/
- *      claude_session_busy)
+ *      claude_session_busy (fatal), shutting_down (transient: retry))
  */
 export const PROTOCOL_VERSION = 3;
 

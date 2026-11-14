@@ -1416,3 +1416,16 @@ func decodeB64(s string) string {
 	}
 	return string(b)
 }
+
+// A chat create while the daemon is shutting down is a transient failure:
+// error shutting_down with fatal:false, so the client keeps its create (same
+// newSessionId) and retries against the restarted daemon (G3).
+func TestCreateChatDuringShutdownIsRetryable(t *testing.T) {
+	c := newChatServer(t)
+	c.mgr.Shutdown(time.Second)
+	w := c.connect()
+	f := expectAttachError(t, w, protocol.AttachFrame{UI: protocol.UIChat, NewSessionID: newSID("chat"), Workdir: c.dir("p")})
+	if f.Code != protocol.ErrCodeShuttingDown || f.Fatal {
+		t.Fatalf("error during shutdown: %+v", f)
+	}
+}

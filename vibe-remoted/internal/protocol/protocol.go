@@ -197,6 +197,7 @@ const (
 	ErrCodeUIMismatch        = "ui_mismatch"         // fatal: attach ui differs from the session's kind
 	ErrCodeChatUnsupported   = "chat_unsupported"    // fatal: chat cannot run here (message carries the ChatReason*)
 	ErrCodeClaudeSessionBusy = "claude_session_busy" // fatal: that claude conversation runs in another session
+	ErrCodeShuttingDown      = "shutting_down"       // transient: the daemon is stopping, retry (it restarts)
 )
 
 // NotifyFrame carries an out-of-band session event to the client (e.g. from a

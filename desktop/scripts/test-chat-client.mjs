@@ -342,6 +342,31 @@ test('chat_ack routed', () => {
   client.disconnect();
 });
 
+// G3: a create that hits a daemon in shutdown gets shutting_down (fatal:false)
+// and is replayed with the same newSessionId once the daemon is back.
+test('shutting_down before ready: create kept and replayed with the same id', () => {
+  const client = newClient();
+  const errors = [];
+  client.onError = (msg, fatal, code) => errors.push({ fatal, code });
+  client.connect();
+  let ws = sockets.at(-1);
+  ws.fireOpen();
+  client.attach('', 80, 24, '/w', undefined, 'normal', { ui: 'chat' });
+  const created = lastAttach(ws);
+  ws.fireMessage({ type: 'error', code: 'shutting_down', fatal: false, message: 'create session: daemon is shutting down' });
+  ws.fireClose();
+  assert.deepEqual(errors, [{ fatal: false, code: 'shutting_down' }]);
+  assert.equal(client.state, 'reconnecting', 'keeps reconnecting');
+  fireBackoff();
+  ws = sockets.at(-1);
+  ws.fireOpen();
+  const re = lastAttach(ws);
+  assert.equal(re.newSessionId, created.newSessionId, 'same create id');
+  assert.equal(re.ui, 'chat');
+  assert.equal(re.workdir, '/w');
+  client.disconnect();
+});
+
 // Same hidden-window case as test-client-liveness, on a chat intent: chat
 // connections get exactly the same watchdog and must not be dropped either.
 test('liveness throttled on a chat intent', () => {

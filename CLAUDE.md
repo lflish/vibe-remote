@@ -105,7 +105,7 @@ JSON 分帧 WebSocket，帧靠 `type` 区分，PTY 字节走 base64（`data` 帧
 
 **协议版本**：`protocol.Version`（Go）/ `PROTOCOL_VERSION`（TS）当前为 3（3 = 对话模式：`attach.ui/epoch/since/handoffFrom`、`chat*` 帧、`ready.ui`、`sessions[].ui/state/activitySeq/epoch/endReason`、`info.chat`；终端会话的帧除 `proto` 外与 v2 逐字节相同，`TestTerminalFramesUnchangedV3` 守着），`ready` 和 `/api/v1/info` 下发 `proto`（旧 daemon 不发 = 1）。帧/端点新增对端可能依赖的行为时 +1，并更新 protocol.md 的版本表。旧 daemon 会**静默忽略**新字段，所以客户端看到低版本要提示用户，而不是假设功能存在。
 
-**错误帧 `code` + `fatal`**：`fatal: true` = 原样重试不可能成功（`session_not_found`、`invalid_workdir`、`auth_failed`…），客户端清空待重放的 attach 并**停止重连**。只有真正的暂时故障（`attach_failed`）才不标 fatal。新增错误路径时务必选对——标错 fatal 会让可恢复的会话被放弃，漏标会让死会话无限重连。v3 新增的 `ui_mismatch`（会话类型与 attach 的 `ui` 不符，含旧桌面接入对话会话）、`chat_unsupported`、`claude_session_busy` 都是 fatal。对话帧的失败用只发给发起方的 `chat_ack{ok:false, code}`，**不用** `error` 帧（`error` 的语义是「随后断开」）；对话会话运行中的失败（进程退出、版本过旧、重启失败）走 `chat_state.ended`，连接保持、客户端不重连。
+**错误帧 `code` + `fatal`**：`fatal: true` = 原样重试不可能成功（`session_not_found`、`invalid_workdir`、`auth_failed`…），客户端清空待重放的 attach 并**停止重连**。只有真正的暂时故障（`attach_failed`）才不标 fatal。新增错误路径时务必选对——标错 fatal 会让可恢复的会话被放弃，漏标会让死会话无限重连。v3 新增的 `ui_mismatch`（会话类型与 attach 的 `ui` 不符，含旧桌面接入对话会话）、`chat_unsupported`、`claude_session_busy` 都是 fatal；`shutting_down`（daemon 正在退出时新建对话）不是，客户端带同一个 `newSessionId` 退避重连。对话帧的失败用只发给发起方的 `chat_ack{ok:false, code}`，**不用** `error` 帧（`error` 的语义是「随后断开」）；对话会话运行中的失败（进程退出、版本过旧、重启失败）走 `chat_state.ended`，连接保持、客户端不重连。
 
 **存活检测**：服务端 relay 阶段发 WebSocket 协议层 ping（30s/20s 超时），客户端看门狗在**连续 2 个 ping 都没换来任何入站帧**时判死重连。半开连接不会触发 onclose，别删这两层。客户端**不能**改成「N 秒无数据」的静默超时：窗口隐藏时 Chromium 把定时器节流到约 1 次/分钟，健康的后台会话会被反复断开（`test-client-liveness.mjs` 的 throttled 用例守着这点）。
 

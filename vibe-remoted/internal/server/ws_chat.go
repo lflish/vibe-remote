@@ -20,6 +20,18 @@ func fail(ctx context.Context, conn *websocket.Conn, code, msg string) *attachme
 	return nil
 }
 
+// failSession reports a Manager error: shutting_down is transient (the
+// client keeps its attach and retries against the restarted daemon), every
+// other code is fatal.
+func failSession(ctx context.Context, conn *websocket.Conn, err error, msg string) *attachment {
+	if errors.Is(err, session.ErrShuttingDown) {
+		sendError(ctx, conn, protocol.ErrCodeShuttingDown, false, msg+err.Error())
+		conn.Close(websocket.StatusGoingAway, protocol.ErrCodeShuttingDown)
+		return nil
+	}
+	return fail(ctx, conn, sessionErrorCode(err), msg+err.Error())
+}
+
 // sessionErrorCode maps a Manager error to its fatal attach error code.
 func sessionErrorCode(err error) string {
 	switch {
@@ -77,7 +89,7 @@ func (s *Server) wsCreateChat(ctx context.Context, conn *websocket.Conn, frame p
 		ValidateWorkdir: s.cfg.ResolveAllowedWorkdir,
 	})
 	if err != nil {
-		return fail(ctx, conn, sessionErrorCode(err), "create session: "+err.Error())
+		return failSession(ctx, conn, err, "create session: ")
 	}
 	return s.chatReady(ctx, conn, &attachment{id: att.ID, chat: att.Session}, att.Existing)
 }
@@ -92,7 +104,7 @@ func (s *Server) wsHandoff(ctx context.Context, conn *websocket.Conn, frame prot
 	}
 	runner, err := s.mgr.Handoff(frame.HandoffFrom, frame.NewSessionID, frame.Cols, frame.Rows)
 	if err != nil {
-		return fail(ctx, conn, sessionErrorCode(err), "handoff: "+err.Error())
+		return failSession(ctx, conn, err, "handoff: ")
 	}
 	return s.terminalReady(ctx, conn, runner, frame.HandoffFrom)
 }
