@@ -7,7 +7,7 @@
 import { strict as assert } from 'node:assert';
 import { load, runner } from './chat-test-util.mjs';
 
-const { ChatSession, filterSlashCommands } = await load('src/renderer/chat/index.ts');
+const { ChatSession, filterSlashCommands, endedView } = await load('src/renderer/chat/index.ts');
 const { test, run } = runner('test-chat-session');
 
 const state = (extra = {}) => ({
@@ -332,6 +332,55 @@ test('prompt state transitions', () => {
   feed(s, [{ type: 'vr_resolved', request_id: 'e', outcome: 'exited' }]);
   assert.equal(s.promptState('e'), 'exited');
   assert.equal(s.getState().pending.length, 0);
+});
+
+test('reload success keeps history', () => {
+  // Before the reload: a turn that is now in the JSONL.
+  const s = ready();
+  const turns = [];
+  s.onTurn = (ev) => turns.push(ev);
+  feed(s, [echo('m1', 'hello'), start('msg_1'), delta('hi'), assistant('msg_1', [text('hi there')]), stop(), result()]);
+  const before = s.getState().messages.map((m) => `${m.role}:${m.parts ? textOf(m) : m.kind}`);
+  // Reload: stopped, then the new epoch's reset sync replays the JSONL as history.
+  s.applyState(state({ status: 'ended', ended: { reason: 'stopped' } }));
+  assert.equal(s.getState().ended.reason, 'stopped');
+  s.applySync(sync({ epoch: 'e2', reset: true, historyCount: 2 }));
+  s.applyHistory({ type: 'user', message: { role: 'user', content: [{ type: 'text', text: 'hello' }] } });
+  s.applyHistory({ type: 'assistant', message: { id: 'msg_1', content: [text('hi there')] } });
+  s.applyState(state({ status: 'idle', ended: null }));
+  const after = s.getState().messages.map((m) => `${m.role}:${m.parts ? textOf(m) : m.kind}`);
+  assert.deepEqual(after, before, 'same transcript as before the reload');
+  assert.equal(s.getState().ended, null);
+  assert.equal(s.getState().status, 'idle');
+  // And the conversation continues.
+  turns.length = 0;
+  s.addLocalUser('m2', 'more');
+  feed(s, [echo('m2', 'more'), assistant('msg_2', [text('sure')]), result()]);
+  assert.deepEqual(turns.map((e) => e.kind), ['echo', 'result']);
+  assert.equal(userBubbles(s.getState()).at(-1).delivery, 'sent');
+  assert.equal(textOf(assistants(s.getState()).at(-1)), 'sure');
+});
+
+test('ended states', () => {
+  const actions = (ended) => endedView(ended).actions.slice().sort();
+  for (const reason of ['exited', 'daemon_restart', 'stopped']) {
+    assert.deepEqual(actions({ reason }), ['handoff', 'restart'], reason);
+  }
+  assert.deepEqual(actions({ reason: 'version_unsupported', claudeVersion: '1.0.0', minClaudeVersion: '2.1.210' }), ['handoff', 'recheck']);
+  const failed = endedView({ reason: 'restart_failed', message: 'No conversation found with session ID: x' });
+  assert.deepEqual(failed.actions.slice().sort(), ['handoff', 'restart']);
+  assert.equal(failed.detail, 'No conversation found with session ID: x');
+  assert.deepEqual(actions({ reason: 'handed_off', handedOffTo: 't1' }), ['openTerminal']);
+  // Every banner has a title key and passes the versions / exit code along.
+  const old = endedView({ reason: 'version_unsupported', claudeVersion: '1.0.0', minClaudeVersion: '2.1.210' });
+  assert.equal(old.params.version, '1.0.0');
+  assert.equal(old.params.min, '2.1.210');
+  const exited = endedView({ reason: 'exited', code: 1, stderrTail: 'boom' });
+  assert.equal(exited.params.code, 1);
+  assert.equal(exited.detail, 'boom');
+  for (const reason of ['exited', 'daemon_restart', 'stopped', 'version_unsupported', 'restart_failed', 'handed_off', 'brand_new']) {
+    assert.match(endedView({ reason }).titleKey, /^chat\.ended\./);
+  }
 });
 
 await run();

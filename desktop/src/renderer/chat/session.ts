@@ -10,7 +10,7 @@
 // reconnect appears once (R12.4); prompts come from chat_state.pending only;
 // no built-in slash list, checkpoints, rollback or cost.
 
-import type { ChatStateFrame, ChatStatus, ChatSyncFrame } from '../../shared/protocol';
+import type { ChatEnded, ChatStateFrame, ChatStatus, ChatSyncFrame } from '../../shared/protocol';
 import { parseChatMessage, type ChatEvent } from './parser';
 import { classifyPermissionKind } from './permission';
 import type {
@@ -560,4 +560,50 @@ export class ChatSession {
 
 function textOf(msg: UserMessage): string {
   return msg.parts.map((p) => (p.type === 'text' ? p.text : '')).join('');
+}
+
+/** What the "session ended" banner offers (R13.2, R13.4, R14.1, R15.3). */
+export type EndedAction = 'restart' | 'recheck' | 'handoff' | 'openTerminal';
+
+export interface EndedView {
+  /** i18n key of the banner title. */
+  titleKey: string;
+  params: Record<string, string | number>;
+  /** Extra text shown under the title (failure message, stderr tail). */
+  detail?: string;
+  actions: EndedAction[];
+}
+
+/**
+ * The banner for `chat_state.ended`: "restart" (reload with --resume, same
+ * conversation), "recheck" (claude upgraded? probe again, then restart),
+ * "handoff" (continue in a new terminal session) or, once handed off, open
+ * that terminal session.
+ */
+export function endedView(ended: ChatEnded): EndedView {
+  switch (ended.reason) {
+    case 'handed_off':
+      return { titleKey: 'chat.ended.handed_off', params: {}, actions: ['openTerminal'] };
+    case 'version_unsupported':
+      return {
+        titleKey: 'chat.ended.version_unsupported',
+        params: { version: ended.claudeVersion || '?', min: ended.minClaudeVersion || '?' },
+        actions: ['recheck', 'handoff'],
+      };
+    case 'restart_failed':
+      return { titleKey: 'chat.ended.restart_failed', params: {}, detail: ended.message, actions: ['restart', 'handoff'] };
+    case 'exited':
+      return {
+        titleKey: 'chat.ended.exited',
+        params: { code: ended.code ?? 0 },
+        detail: ended.stderrTail || ended.message,
+        actions: ['restart', 'handoff'],
+      };
+    case 'daemon_restart':
+      return { titleKey: 'chat.ended.daemon_restart', params: {}, actions: ['restart', 'handoff'] };
+    case 'stopped':
+      return { titleKey: 'chat.ended.stopped', params: {}, actions: ['restart', 'handoff'] };
+    default:
+      return { titleKey: 'chat.ended.other', params: { reason: String(ended.reason) }, detail: ended.message, actions: ['restart', 'handoff'] };
+  }
 }

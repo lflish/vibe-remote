@@ -3,8 +3,8 @@ import { FitAddon } from '@xterm/addon-fit';
 import '@xterm/xterm/css/xterm.css';
 import type { MachineConfig, SessionInfo, SessionMode } from '../shared/protocol';
 import { PROTOCOL_VERSION } from '../shared/protocol';
-import { VibeRemoteClient, ConnectionState } from './client';
-import { VibeRemoteRest, DeleteSessionError } from './rest';
+import { VibeRemoteClient, ConnectionState, type AttachOptions } from './client';
+import { VibeRemoteRest, DeleteSessionError, ReloadSessionError } from './rest';
 import { openDirPicker } from './dirpicker';
 import { openMachineManager } from './machines';
 import { t, toggleLocale, getLocale, onLocaleChange } from './i18n';
@@ -735,12 +735,19 @@ function openChatSession(machine: MachineConfig, sessionId: string, workdir?: st
   };
   view.onActivity = () => renderSidebar();
   view.onActivityEvent = (ev, prompt) => applyViewActivity(view, ev, prompt);
+  view.onHandoff = () => handoffChat(view);
+  view.onRestart = () => void reloadChat(machine, view.sessionId, sessionDisplayTitle(machine, view.sessionId));
+  view.onRecheck = () => void recheckChat(view);
+  view.onOpenTerminal = (id) => openTerminalById(machine, id);
   // Chat state comes from the structured stream (R16.4); hook notify frames
   // (idle / waiting) are for terminal sessions and are ignored here.
   client.onNotify = () => {};
 
-  client.onReady = (sid, readyWorkdir, proto) => {
+  client.onReady = (sid, readyWorkdir, proto, ready) => {
     view.banner.style.display = 'none';
+    // R2.6: the -c conversation is already running in session `sid`.
+    if (ready.existing) updateStatusBar(t('chat.existing', { name: sessionDisplayTitle(machine, sid) }));
+    if (view.sessionId !== sid && adoptExisting(view, sid)) return;
     if (view.sessionId !== sid) {
       views.delete(view.key);
       view.sessionId = sid;
@@ -786,7 +793,8 @@ function openChatSession(machine: MachineConfig, sessionId: string, workdir?: st
 
 // openSession creates a new SessionView (its own WS + xterm) and attaches.
 // sessionId '' means create a brand-new session with the given workdir.
-function openSession(machine: MachineConfig, sessionId: string, workdir?: string, flags?: string[], mode: SessionMode = 'normal'): AnyView {
+// `opts.handoffFrom` creates the terminal session that takes over a chat session (R14).
+function openSession(machine: MachineConfig, sessionId: string, workdir?: string, flags?: string[], mode: SessionMode = 'normal', opts?: AttachOptions): AnyView {
   const key = viewKey(machine, sessionId);
   const existing = views.get(key);
   if (existing) {
@@ -855,6 +863,9 @@ function openSession(machine: MachineConfig, sessionId: string, workdir?: string
 
   client.onReady = (sid: string, _workdir: string, proto: number) => {
     view.banner.style.display = 'none';
+    // A handoff can resolve to the terminal session that already took over
+    // (6.5 step 2); if that one is open here, keep it and drop this view.
+    if (view.sessionId !== sid && adoptExisting(view, sid)) return;
     // A new session gets its real id here; re-key the view and refresh sidebar.
     if (view.sessionId !== sid) {
       views.delete(view.key);
@@ -925,10 +936,96 @@ function openSession(machine: MachineConfig, sessionId: string, workdir?: string
 
   client.connect();
   const dims = dimensionsWhenVisible(container, () => fit.proposeDimensions());
-  client.attach(sessionId, dims?.cols || 80, dims?.rows || 24, workdir, flags, sessionId ? undefined : mode);
+  client.attach(sessionId, dims?.cols || 80, dims?.rows || 24, workdir, flags, sessionId ? undefined : mode, opts);
 
   setActive(view.key);
   return view;
+}
+
+// adoptExisting handles a create whose `ready` names a session that is
+// already open here (R2.6 existing, a handoff that joined its terminal
+// session): the open view wins, the new one is closed. Returns true if so.
+function adoptExisting(view: AnyView, sid: string): boolean {
+  const target = viewKey(view.machine, sid);
+  const other = views.get(target);
+  if (!other || other === view) return false;
+  const wasActive = activeKey === view.key;
+  disposeView(view);
+  views.delete(view.key);
+  if (wasActive) setActive(target);
+  return true;
+}
+
+// openTerminalById opens (or switches to) a terminal session by id.
+function openTerminalById(machine: MachineConfig, sessionId: string) {
+  const key = viewKey(machine, sessionId);
+  if (views.has(key)) setActive(key);
+  else openSession(machine, sessionId);
+}
+
+// handoffChat continues a chat session in a new terminal session running
+// `claude --resume` on the same conversation (R14). A turn in progress is
+// interrupted by the daemon, so ask first (R14.2).
+function handoffChat(view: ChatView) {
+  if (!view.sessionId) return;
+  const st = view.state();
+  if (st.ended?.reason === 'handed_off' && st.ended.handedOffTo) {
+    openTerminalById(view.machine, st.ended.handedOffTo);
+    return;
+  }
+  const busy = !st.ended && (st.status === 'running' || st.status === 'waiting');
+  if (busy && !window.confirm(t('chat.handoff.confirm'))) return;
+  openSession(view.machine, '', undefined, undefined, 'normal', { handoffFrom: view.sessionId });
+}
+
+// reloadChat restarts a chat session's claude process on the same
+// conversation (R15.3). The REST call returns 202 at once; the open view
+// learns the outcome from chat_state (d10), so rest.ts keeps its timeout.
+async function reloadChat(machine: MachineConfig, sessionId: string, name: string) {
+  const key = viewKey(machine, sessionId);
+  if (!sessionId || reloadingSessions.has(key)) return;
+  const open = views.get(key);
+  const chatView = open?.ui === 'chat' ? open : null;
+  reloadingSessions.add(key);
+  chatView?.beginRestart();
+  renderSidebar();
+  try {
+    await rests.get(machineKey(machine))!.reloadSession(sessionId);
+    updateStatusBar(t('chat.reload.started', { name }));
+  } catch (error) {
+    chatView?.cancelRestart();
+    updateStatusBar(reloadErrorText(machine, error));
+  } finally {
+    reloadingSessions.delete(key);
+    renderSidebar();
+    void refreshAllMachines();
+  }
+}
+
+function reloadErrorText(machine: MachineConfig, error: unknown): string {
+  if (error instanceof ReloadSessionError && error.message === 'claude_session_busy') {
+    const owner = error.owner ?? '';
+    const holder = machineSessions.get(machineKey(machine))?.find((s) => s.id === owner);
+    return t('chat.reload.busy', { owner: holder?.title || owner || '?' });
+  }
+  return t('chat.reload.failed', { msg: error instanceof Error ? error.message : String(error) });
+}
+
+// recheckChat: "upgraded, check again" after version_unsupported (R13.4). The
+// daemon probes claude again; if it is new enough now, restart the session.
+async function recheckChat(view: ChatView) {
+  const rest = rests.get(machineKey(view.machine));
+  if (!rest) return;
+  try {
+    const info = await rest.info({ recheck: true });
+    if (info.chat?.supported) {
+      await reloadChat(view.machine, view.sessionId, sessionDisplayTitle(view.machine, view.sessionId));
+    } else {
+      updateStatusBar(t('chat.recheck.stillOld', { version: info.chat?.claudeVersion || '?', min: info.chat?.minClaudeVersion || '?' }));
+    }
+  } catch (error) {
+    updateStatusBar(t('chat.recheck.failed', { msg: error instanceof Error ? error.message : String(error) }));
+  }
 }
 
 // sessionDisplayTitle is the name the sidebar shows for a session (custom
@@ -1103,6 +1200,12 @@ function renderSidebar() {
         e.stopPropagation();
         if (reloadingSessions.has(reloadKey)) return;
         const name = s.title || (s.workdir ? s.workdir.split('/').pop() : '') || s.id;
+        if (s.ui === 'chat') {
+          // Chat: 202 now, the outcome later through chat_state (d10).
+          if (!window.confirm(t('chat.reload.confirm', { name }))) return;
+          void reloadChat(machine, s.id, name);
+          return;
+        }
         if (!window.confirm(t('session.reloadConfirm', { name }))) return;
         reloadingSessions.add(reloadKey);
         reload.disabled = true;

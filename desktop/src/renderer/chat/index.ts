@@ -3,7 +3,7 @@
 // these directly.
 export * from './types';
 export { parseChatMessage, flattenResultContent, parseAssistantContent, type ChatEvent } from './parser';
-export { ChatSession, type TurnEvent } from './session';
+export { ChatSession, endedView, type TurnEvent, type EndedAction, type EndedView } from './session';
 export {
   classifyPermissionKind,
   parsePermissionQuestions,

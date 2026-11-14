@@ -14,7 +14,7 @@ import type { ActivityEvent } from './activity';
 import { buildAnswer, type AnswerChoice } from './permission';
 import { createPromptCard, type PromptCard } from './prompts';
 import { classifySlash, SendQueue } from './queue';
-import { ChatSession, type TurnEvent } from './session';
+import { ChatSession, endedView, type EndedAction, type TurnEvent } from './session';
 import { renderToolBlock } from './tools';
 import type { AssistantMessage, ChatState, Message, NoticeMessage, Part, Prompt, UserMessage } from './types';
 import { expandUp, follow, initialWindow, type Window as ListWindow } from './window';
@@ -65,6 +65,12 @@ export class ChatView {
    * new / cleared prompts. Not fired for history or a reset sync's replay.
    */
   onActivityEvent?: (ev: ActivityEvent, prompt?: Prompt) => void;
+  /** Ended banner: restart the claude process (reload, same conversation). */
+  onRestart?: () => void;
+  /** Ended banner (version too old): probe claude again, then restart. */
+  onRecheck?: () => void;
+  /** Ended banner (handed off): open the terminal session that took over. */
+  onOpenTerminal?: (sessionId: string) => void;
 
   private transcript: HTMLElement;
   private inner: HTMLElement;
@@ -86,6 +92,12 @@ export class ChatView {
   private firstSync = true;
   private seenPrompts = new Set<string>();
   private hadPrompts = false;
+  // Reload in flight (REST 202): the outcome arrives as chat_state (d10).
+  private epoch = '';
+  private restarting = false;
+  private restartFromEpoch = '';
+  private endedEl: HTMLElement;
+  private endedSig = '';
   private workdir = '';
   private renderMarkdown = createMarkdownRenderer(window, {
     copyLabel: t('chat.copy'),
@@ -133,7 +145,10 @@ export class ChatView {
         return handoff();
       },
     });
-    this.bottom.appendChild(this.composer.root);
+    this.endedEl = el('div', 'chat-ended');
+    this.endedEl.dataset.testid = 'chat-ended';
+    this.endedEl.hidden = true;
+    this.bottom.append(this.endedEl, this.composer.root);
     chat.append(this.transcript, this.bottom);
     this.container.append(chat, this.banner);
 
@@ -180,11 +195,25 @@ export class ChatView {
     const retry = this.banner.querySelector('.reconnect-banner-retry');
     if (retry) retry.textContent = t('banner.retry');
     this.nodes.clear();
+    this.endedSig = '';
     this.cardWrap?.remove();
     this.card = null;
     this.cardWrap = null;
     this.renderWelcome();
     this.updateComposer();
+    this.schedule();
+  }
+
+  /** A reload request is about to be sent; its result comes back as chat_state. */
+  beginRestart() {
+    this.restarting = true;
+    this.restartFromEpoch = this.epoch;
+    this.schedule();
+  }
+
+  /** The reload request was refused (REST error): nothing is restarting. */
+  cancelRestart() {
+    this.restarting = false;
     this.schedule();
   }
 
@@ -204,6 +233,7 @@ export class ChatView {
       // Missed messages caught up by an incremental sync are new activity; a
       // reset sync replays what was already there.
       this.syncBacklog = !sync.reset && sync.backlog > 0;
+      this.epoch = sync.epoch;
       this.session.applySync(sync);
     };
     this.client.onChat = (seq, msg, history) => {
@@ -219,11 +249,26 @@ export class ChatView {
       const closingSync = this.syncing;
       this.syncing = false;
       this.session.applyState(st);
+      this.trackRestart(st.ended);
       this.updateComposer();
       this.trackActivity(st.pending.map((p) => p.requestId), closingSync);
       this.onActivity?.();
     };
     this.client.onChatAck = (ack) => this.onAck(ack);
+  }
+
+  // Reload outcome (d10): success = running again under a new epoch;
+  // restart_failed (or a handoff that won the race) ends it. `stopped` is the
+  // reload's own first step.
+  private trackRestart(ended: ChatState['ended']) {
+    if (!this.restarting) return;
+    if (!ended && this.epoch !== this.restartFromEpoch) {
+      this.restarting = false;
+      this.onMessage?.(t('chat.reload.done'));
+    } else if (ended && ended.reason !== 'stopped') {
+      this.restarting = false;
+      if (ended.reason === 'restart_failed') this.onMessage?.(t('chat.reload.failed', { msg: ended.message || ended.reason }));
+    }
   }
 
   private trackActivity(pendingIds: string[], closingSync: boolean) {
@@ -338,6 +383,12 @@ export class ChatView {
     const taken = this.queue.enqueue(text) !== null;
     this.schedule();
     return taken;
+  }
+
+  // Retry after a turn error: the same text as a new message (R13.1).
+  private retry(text: string) {
+    this.queue.enqueue(text);
+    this.schedule();
   }
 
   private interrupt() {
@@ -463,8 +514,60 @@ export class ChatView {
     // The bottom area (prompt card or composer) changes the transcript height:
     // settle it before sticking to the bottom.
     this.updateComposer();
+    this.renderEnded(st);
     this.renderPrompt(st);
     if (stick && bottom) this.transcript.scrollTop = this.transcript.scrollHeight;
+  }
+
+  // "Session ended" banner above the (disabled) composer: why, and what can
+  // be done about it (R13.2, R13.4, R14.1, R15.3).
+  private renderEnded(st: ChatState) {
+    const ended = st.ended;
+    const view = this.restarting ? null : ended ? endedView(ended) : null;
+    const sig = this.restarting ? 'restarting' : view ? `${ended?.reason}|${JSON.stringify(view.params)}|${view.detail ?? ''}|${ended?.handedOffTo ?? ''}` : '';
+    if (sig === this.endedSig) return;
+    this.endedSig = sig;
+    this.endedEl.textContent = '';
+    this.endedEl.hidden = !sig;
+    delete this.endedEl.dataset.reason;
+    if (!sig) return;
+    if (this.restarting) {
+      this.endedEl.dataset.reason = 'restarting';
+      this.endedEl.appendChild(el('h4', undefined, t('chat.ended.restarting')));
+      return;
+    }
+    if (!view || !ended) return;
+    this.endedEl.dataset.reason = ended.reason;
+    this.endedEl.appendChild(el('h4', undefined, t(view.titleKey, view.params)));
+    if (view.detail) this.endedEl.appendChild(el('pre', 'chat-ended-detail', view.detail));
+    const actions = el('div', 'chat-ended-actions');
+    for (const action of view.actions) {
+      const b = this.endedButton(action, ended.handedOffTo);
+      if (b) actions.appendChild(b);
+    }
+    this.endedEl.appendChild(actions);
+  }
+
+  private endedButton(action: EndedAction, handedOffTo?: string): HTMLButtonElement | null {
+    const spec: Record<EndedAction, { testid: string; label: string; primary: boolean; run?: () => void }> = {
+      restart: { testid: 'chat-restart', label: t('chat.ended.restart'), primary: true, run: this.onRestart },
+      recheck: { testid: 'chat-recheck', label: t('chat.ended.recheck'), primary: true, run: this.onRecheck },
+      handoff: { testid: 'chat-handoff', label: t('chat.handoff'), primary: false, run: this.onHandoff },
+      openTerminal: {
+        testid: 'chat-open-terminal',
+        label: t('chat.ended.openTerminal'),
+        primary: true,
+        run: handedOffTo && this.onOpenTerminal ? () => this.onOpenTerminal?.(handedOffTo) : undefined,
+      },
+    };
+    const s = spec[action];
+    if (!s.run) return null;
+    const run = s.run;
+    const b = el('button', s.primary ? 'btn-primary' : 'btn-secondary', s.label);
+    b.type = 'button';
+    b.dataset.testid = s.testid;
+    b.addEventListener('click', () => run());
+    return b;
   }
 
   private signature(m: Message, pendingTools: Set<string>): string {
@@ -527,6 +630,14 @@ export class ChatView {
       const card = el('div', 'errc');
       card.dataset.testid = 'chat-turn-error';
       card.append(el('h4', undefined, t('chat.turnError')), el('pre', undefined, m.error));
+      if (m.retryText) {
+        const text = m.retryText;
+        const retry = el('button', 'btn-secondary', t('chat.retry'));
+        retry.type = 'button';
+        retry.dataset.testid = 'chat-retry';
+        retry.addEventListener('click', () => this.retry(text));
+        card.appendChild(retry);
+      }
       box.appendChild(card);
     }
     return box;

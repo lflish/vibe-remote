@@ -300,4 +300,73 @@ test('undelivered message can be re-sent under the same id', () => {
   assert.equal($$('chat-msg-user').length, 1, 'no second bubble');
 });
 
+test('ended banner, restart tracking and retry', () => {
+  const { view, client, $ } = makeView();
+  const calls = [];
+  view.onRestart = () => calls.push('restart');
+  view.onHandoff = () => calls.push('handoff');
+  view.onRecheck = () => calls.push('recheck');
+  view.onOpenTerminal = (id) => calls.push(`open:${id}`);
+  const msgs = [];
+  view.onMessage = (m) => msgs.push(m);
+  flush();
+  assert.equal($('chat-ended').hidden, true, 'no banner while running');
+
+  // Turn error → retry sends the same text as a new message (R13.1).
+  const input = $('chat-input');
+  input.value = 'please';
+  input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+  const first = client.sent.at(-1);
+  client.onChat(1, { type: 'user', message: { role: 'user', content: [{ type: 'text', text: 'please' }] }, vr_client_msg_id: first.clientMsgId }, false);
+  client.onChat(2, { type: 'result', subtype: 'success', is_error: true, result: 'API Error: 529 Overloaded' }, false);
+  flush();
+  click($('chat-retry'));
+  flush();
+  const again = client.sent.at(-1);
+  assert.equal(again.type, 'chat_send');
+  assert.equal(again.text, 'please');
+  assert.notEqual(again.clientMsgId, first.clientMsgId);
+
+  // Process exited → restart + handoff (R13.2).
+  client.onChatState(state({ status: 'ended', ended: { reason: 'exited', code: 1, stderrTail: 'boom' } }));
+  flush();
+  assert.equal($('chat-ended').hidden, false);
+  assert.equal($('chat-ended').dataset.reason, 'exited');
+  click($('chat-restart'));
+  click($('chat-handoff'));
+  assert.deepEqual(calls, ['restart', 'handoff']);
+  assert.equal($('chat-input').disabled, true, 'no input while ended');
+
+  // Reload: 202 → "restarting" → stopped → new epoch idle = done (d10).
+  view.beginRestart();
+  flush();
+  assert.equal($('chat-ended').dataset.reason, 'restarting');
+  client.onChatState(state({ status: 'ended', ended: { reason: 'stopped' } }));
+  flush();
+  assert.equal($('chat-ended').dataset.reason, 'restarting', 'stopped is the reload\'s own first step');
+  client.onChatSync({ type: 'chat_sync', epoch: 'e2', reset: true, omitted: 0, historyCount: 0, backlog: 0 });
+  client.onChatState(state());
+  flush();
+  assert.equal($('chat-ended').hidden, true);
+  assert.equal(msgs.at(-1), 'Chat session restarted');
+
+  // Restart failure shows the message (R15.3, d10).
+  view.beginRestart();
+  client.onChatState(state({ status: 'ended', ended: { reason: 'restart_failed', message: 'No conversation found' } }));
+  flush();
+  assert.equal($('chat-ended').dataset.reason, 'restart_failed');
+  assert.match($('chat-ended').textContent, /No conversation found/);
+
+  // Version too old → recheck; handed off → open the terminal session only.
+  client.onChatState(state({ status: 'ended', ended: { reason: 'version_unsupported', claudeVersion: '1.0.0', minClaudeVersion: '2.1.210' } }));
+  flush();
+  click($('chat-recheck'));
+  assert.equal($('chat-restart'), null);
+  client.onChatState(state({ status: 'ended', ended: { reason: 'handed_off', handedOffTo: 't-1' } }));
+  flush();
+  assert.equal($('chat-handoff'), null);
+  click($('chat-open-terminal'));
+  assert.deepEqual(calls.slice(2), ['recheck', 'open:t-1']);
+});
+
 await run();
