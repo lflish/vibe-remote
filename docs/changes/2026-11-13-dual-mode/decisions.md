@@ -47,3 +47,4 @@
 | c3 | dev-design | 用户回复 all：同意工作区信任准入（未信任/unknown 目录不允许新建对话会话） | 只有人能做 | 关口 B 汇总 | — | — | — | 用户同意，T2/T6/T11 子项解除阻塞 |
 | c4 | dev-design | 用户回复 all：同意终端 continue 参数改写为固定会话身份（--resume U / --session-id U） | 只有人能做 | 关口 B 汇总 | — | — | — | 用户同意，T5/T6 子项解除阻塞 |
 | c5 | dev-design | 用户回复 all：接受第 4 轮两处条文修正不再独立验证，关口 B 放行 | 只有人能做 | 关口 B 汇总 | — | — | — | 用户同意，进入 dev-build |
+| 21 | dev-build | 假 claude 的 `swallow` 加可选参数 `swallow <ms>`：静默 ms 毫秒后补发一个迟到的 `result`（不带参数时一直静默，直到被中断）；`perm <命令>` 不带 `suggest`/`mode` 时请求里没有 `permission_suggestions`（R5.2b 的无建议情形） | 机械型 | T3 的 TestLateResultAfterStaleTurn 要「看门狗之后假 claude 再补发 result」，9.2 没写触发方式 | 最接近 9.2 原意的最小扩展，不影响其它指令 | 用 stdin 控制帧触发补发 | 低：只影响测试夹具 | 已定（T2） |
