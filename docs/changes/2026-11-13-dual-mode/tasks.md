@@ -272,7 +272,7 @@
 - 依赖：T1
 
 ### T3 对话进程监护（chat.Session）
-- 状态：待办
+- 状态：完成
 - 文件：新建 `vibe-remoted/internal/chat/session.go`（含 `WithOp`/`OpHandle.StopLocked`/`OpHandle.RestartLocked`、`reloading` 标志）、`control.go`、`session_test.go`、`control_test.go`；参考移植 `69d8c70:vibe-remoted/internal/session/persistent.go` 的 `tailWriter`、`userMessageLine`、`permissionResponseLine`、`interruptLine`（丢弃其「中断即杀进程」和「每次 attach 起进程」逻辑）
 - 接口：
   - 使用：T2 的 `FindTranscript`（`RestartLocked` 选 `--resume`/`--session-id`）
@@ -302,7 +302,7 @@
 - 依赖：T2
 
 ### T4 JSONL 历史、会话表持久化、孤儿清理
-- 状态：待办
+- 状态：进行中
 - 文件：新建 `vibe-remoted/internal/chat/history.go`、`history_test.go`、`store.go`、`store_test.go`、`orphan.go`、`orphan_test.go`（Linux 读 `/proc/<pid>/cmdline`，darwin 用 `ps -o command= -p`）；参考 `69d8c70:vibe-remoted/internal/session/history.go`（`ReadHistory` 重写为原样行 + 截止点；目录定位已在 T2 的 `transcript.go`）
 - 接口：
   - 使用：T2 的 `ProjectsDir/FindTranscript/LatestSessionForWorkdir`
@@ -453,6 +453,7 @@
 |------|----------|------|------|
 | T1 | 2026-11-14 08:55 | 475c20b（v2 黄金帧）、74cba84 | 新增 4 个 Go 测试通过（TestTerminalFramesUnchangedV3、TestInfoAndReadyProto3、TestProtocolChatFramesJSON、TestAttachFrameDecodesChatFields）；`go test -race ./...` 102 通过 0 失败；`make check` 全绿 |
 | T2 | 2026-11-14 09:11 | 4d6c06a | `internal/chat` 16 个顶层测试全部通过（含任务列出的 13 个 + TestProjectsDir、TestFakeClaudeBehaviours 18 个子用例），`go test -race -count=5 ./internal/chat/...` 稳定；`go vet ./...`、`make check` 全绿；decisions #21 |
+| T3 | 2026-11-14 09:36 | 5f0c835 | `internal/chat` 新增 56 个顶层测试（session_test 35、control_test 21，含子用例共 72 个顶层 PASS），覆盖测试计划中标 T3 的全部用例与任务内补充用例；`go test -race -count=3 ./internal/chat/...` 稳定；`go test -race ./...` 全部通过（333 个 PASS 含子用例）；decisions #22–#25 |
 
 ## 后续
 
