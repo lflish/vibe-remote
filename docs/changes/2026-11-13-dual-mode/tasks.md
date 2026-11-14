@@ -370,7 +370,7 @@
 - 依赖：T1
 
 ### T8 对话状态核心（移植 7 月代码）与发送队列
-- 状态：待办
+- 状态：完成
 - 文件：新建 `desktop/src/renderer/chat/types.ts`、`parser.ts`、`session.ts`、`permission.ts`、`diff.ts`、`queue.ts`、`index.ts`（按 design 4.12 的移植表）；测试新建 `desktop/scripts/test-chat-parser.mjs`、`test-chat-session.mjs`、`test-chat-permission.mjs`、`test-chat-diff.mjs`、`test-chat-queue.mjs`（由 `69d8c70` 的 parser.test.ts 160 行、session.test.ts 241 行、permission.test.ts 110 行、diff.test.ts 50 行改写，删去 checkpoint/rollback/cost 相关用例）；`package.json` 接入 `npm test`；共享样本复用 T2 生成的 `vibe-remoted/internal/chat/testdata/probe-stream.jsonl`（测试脚本按相对路径 `../vibe-remoted/internal/chat/testdata/probe-stream.jsonl` 读取，不另存一份）
 - 接口：
   - 提供：`ChatSession{applySync(sync), applyChat(seq, msg), applyHistory(msg), applyState(state), markSubmitting(requestId), reset(); getState(): ChatState; onUpdate}`；`ChatState{messages, status, permissionMode, permissionLocked, pending, slashCommands, ended, omitted, resyncDividerAt?}`；`permission.ts` 的 `classifyPermissionKind`、`parsePermissionQuestions`、`describeSuggestion`、`buildAnswer`、`questionComplete`；`queue.ts` 的 `SendQueue{enqueue, remove, onEcho(clientMsgId), onResult(), onStaleTurn(clientMsgId), canSend(): boolean, takeBackAll(): string}`（发送条件 = 本端上一条已回显且按 FIFO 配到了 result，design 6.8）、`classifySlash(text, slashCommands) → 'send'|'terminalOnly'`
@@ -381,7 +381,7 @@
 - 依赖：T1、T2（fixture）
 
 ### T9 ChatView 基础：对话区、Markdown、工具块、输入框、外链
-- 状态：待办
+- 状态：进行中
 - 文件：新建 `desktop/src/renderer/chat/view.ts`（含虚拟列表，d13）、`window.ts`、`markdown.ts`、`tools.ts`、`composer.ts`；修改 `desktop/src/renderer/index.ts`（`views` 支持 `ChatView`、`openChatSession()`、`setActive` 分支、侧边栏对话图标与 `data-ui`）、`desktop/src/renderer/styles.css`、`desktop/src/renderer/i18n.ts`、`desktop/src/main/index.ts`（`open-external` IPC：只放行 `http:`/`https:`/`mailto:`）、`desktop/src/main/preload.ts`（`openExternal`）、`desktop/package.json`（`"markdown-it": "15.0.3"`、`"dompurify": "3.4.17"`，devDependency `"jsdom": "29.1.1"`，均为精确版本）；测试新建 `desktop/scripts/test-chat-markdown.mjs`、`test-chat-render-guard.mjs`、`test-chat-window.mjs`
 - 接口：
   - 使用：T7 的客户端、T8 的 `ChatSession`
@@ -454,6 +454,7 @@
 | T1 | 2026-11-14 08:55 | 475c20b（v2 黄金帧）、74cba84 | 新增 4 个 Go 测试通过（TestTerminalFramesUnchangedV3、TestInfoAndReadyProto3、TestProtocolChatFramesJSON、TestAttachFrameDecodesChatFields）；`go test -race ./...` 102 通过 0 失败；`make check` 全绿 |
 | T2 | 2026-11-14 09:11 | 4d6c06a | `internal/chat` 16 个顶层测试全部通过（含任务列出的 13 个 + TestProjectsDir、TestFakeClaudeBehaviours 18 个子用例），`go test -race -count=5 ./internal/chat/...` 稳定；`go vet ./...`、`make check` 全绿；decisions #21 |
 | T7 | 2026-11-14 09:18 | 0185ba6 | `test-chat-client.mjs` 7 个用例通过（含任务列出的 6 个 + 对话 intent 的 liveness throttled）；`npm run typecheck && npm test` 全绿（原有 8 个脚本 + 新脚本） |
+| T8 | 2026-11-14 09:30 | 0133791 | 5 个新脚本 60 个用例通过：test-chat-parser 15（含 fixture lines、string-content user messages）、test-chat-session 14、test-chat-permission 11、test-chat-diff 8、test-chat-queue 12；`npm run typecheck && npm test` 全绿 |
 
 ## 后续
 
