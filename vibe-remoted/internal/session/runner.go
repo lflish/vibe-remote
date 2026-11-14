@@ -648,6 +648,22 @@ func (r *Runner) DetachEpoch(epoch uint64) bool {
 	return true
 }
 
+// bareProcessGone reports whether a session without tmux has lost its CLI:
+// its PTY was detached or killed (which ends the CLI in bare mode), or the
+// process exited and was reaped. Always false with tmux, where the CLI's
+// lifetime follows the tmux session instead.
+func (r *Runner) bareProcessGone() bool {
+	if r.useTmux {
+		return false
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.cmd == nil || r.cmd.Process == nil {
+		return true
+	}
+	return !pidAlive(r.cmd.Process.Pid)
+}
+
 // Kill terminates the session entirely (including the tmux session).
 func (r *Runner) Kill() {
 	r.mu.Lock()

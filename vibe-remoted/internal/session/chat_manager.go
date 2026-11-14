@@ -70,13 +70,32 @@ func (e *ClaudeSessionBusyError) Is(target error) bool { return target == ErrCla
 // succeeds; an orphan's claim lapses once its process is gone.
 func (m *Manager) claimClaudeLocked(u, owner string) error {
 	if cur, held := m.claudeOwners[u]; held && cur != owner {
-		if o, ok := m.orphans[u]; !ok || cur != o.Owner() || !o.Gone() {
+		if !m.dropStaleClaimLocked(u, cur) {
 			return m.busyLocked(u, cur)
 		}
-		delete(m.orphans, u)
 	}
 	m.claudeOwners[u] = owner
 	return nil
+}
+
+// dropStaleClaimLocked releases u's claim by cur when the process behind it
+// is gone: an orphan that finally exited, or a terminal session without tmux
+// whose CLI ended with its PTY (nothing else would ever release it). It
+// reports whether the claim was dropped.
+func (m *Manager) dropStaleClaimLocked(u, cur string) bool {
+	if o, ok := m.orphans[u]; ok && cur == o.Owner() {
+		if !o.Gone() {
+			return false
+		}
+		delete(m.orphans, u)
+		delete(m.claudeOwners, u)
+		return true
+	}
+	if r := m.sessions[cur]; r != nil && r.bareProcessGone() {
+		m.releaseOwnerLocked(cur)
+		return true
+	}
+	return false
 }
 
 func (m *Manager) claimClaude(u, owner string) error {
@@ -460,15 +479,10 @@ func (m *Manager) ReloadChat(id string) error {
 		return sessionNotFound(id)
 	}
 	u := e.rec.ClaudeSessionID
-	if owner, held := m.claudeOwners[u]; held && owner != id {
-		if o, ok := m.orphans[u]; ok && owner == o.Owner() && o.Gone() {
-			delete(m.orphans, u)
-			delete(m.claudeOwners, u)
-		} else {
-			err := m.busyLocked(u, owner)
-			m.mu.Unlock()
-			return err
-		}
+	if owner, held := m.claudeOwners[u]; held && owner != id && !m.dropStaleClaimLocked(u, owner) {
+		err := m.busyLocked(u, owner)
+		m.mu.Unlock()
+		return err
 	}
 	if !e.sess.BeginReload() {
 		m.mu.Unlock()

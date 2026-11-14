@@ -695,12 +695,16 @@ func (m *Manager) List() []protocol.SessionInfo {
 	// reconcile and the snapshot below hold it.
 	live, haveLive := m.syncFromTmux()
 
-	m.mu.RLock()
+	m.mu.Lock()
 	runners := make([]*Runner, 0, len(m.sessions))
-	for _, r := range m.sessions {
+	for id, r := range m.sessions {
 		runners = append(runners, r)
+		if r.bareProcessGone() {
+			// Without tmux the CLI is gone with its PTY; so is its claim.
+			m.releaseOwnerLocked(id)
+		}
 	}
-	m.mu.RUnlock()
+	m.mu.Unlock()
 
 	list := make([]protocol.SessionInfo, 0, len(runners))
 	for _, r := range runners {
