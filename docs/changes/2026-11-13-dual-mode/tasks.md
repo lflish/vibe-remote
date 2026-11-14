@@ -353,7 +353,7 @@
 - 依赖：T5
 
 ### T7 客户端连接层支持对话帧
-- 状态：待办
+- 状态：完成
 - 文件：修改 `desktop/src/renderer/client.ts`；新建 `desktop/scripts/test-chat-client.mjs`；`desktop/package.json` 加 `test:chat-client` 并接进 `test`
 - 接口：
   - 提供：`attach(sessionId, cols, rows, workdir?, flags?, mode?, opts?: {ui?: 'terminal'|'chat'; handoffFrom?: string})`（`AttachIntent` 持久保存 `ui`，`handoffFrom` 只在创建意图里）；`chatPosition?: () => {epoch: string; seq: number} | null`（每次发 attach 时调用；只有收到当前 epoch 的同步结束 `chat_state` 后才返回非空）；回调 `onChatSync/onChat/onChatState/onChatAck`；`sendChat(text, clientMsgId)`、`respond(requestId, response, setMode?)`、`interrupt()`、`setMode(mode)`；`onReady` 增加第四参 `ready: ReadyFrame`
@@ -453,6 +453,7 @@
 |------|----------|------|------|
 | T1 | 2026-11-14 08:55 | 475c20b（v2 黄金帧）、74cba84 | 新增 4 个 Go 测试通过（TestTerminalFramesUnchangedV3、TestInfoAndReadyProto3、TestProtocolChatFramesJSON、TestAttachFrameDecodesChatFields）；`go test -race ./...` 102 通过 0 失败；`make check` 全绿 |
 | T2 | 2026-11-14 09:11 | 4d6c06a | `internal/chat` 16 个顶层测试全部通过（含任务列出的 13 个 + TestProjectsDir、TestFakeClaudeBehaviours 18 个子用例），`go test -race -count=5 ./internal/chat/...` 稳定；`go vet ./...`、`make check` 全绿；decisions #21 |
+| T7 | 2026-11-14 09:18 | 0185ba6 | `test-chat-client.mjs` 7 个用例通过（含任务列出的 6 个 + 对话 intent 的 liveness throttled）；`npm run typecheck && npm test` 全绿（原有 8 个脚本 + 新脚本） |
 
 ## 后续
 
