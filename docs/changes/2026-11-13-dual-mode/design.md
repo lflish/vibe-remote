@@ -678,6 +678,7 @@ CI 与 verify 不依赖真 claude，全部对话测试跑这个程序（`go buil
 - 2026-11-14 开发中（T5，decisions #27–#29）：Manager 对话接口命名（`CreateChat`/`ReloadChat`/`Shutdown(timeout)`/`ChatConfig`）；worktree 下 `-c` 开新对话；持有 U 的终端重载找不到记录时沿用原 U（4.11、6.2、6.9）。
 - 2026-11-14 开发中（T6，decisions #30–#32）：终端 relay 读错时核对 epoch（既有竞态修正）；交接先停为 stopped、成功后才标 handed_off；对话 relay 在同步后推 sessions 帧（4.2–4.10、6.5）。
 - 2026-11-14 开发中（T11/T12，decisions #33）：`chatAvailability` 增加目录信任参数；侧边栏点事件与通知 tag；结束横幅新增 `chat-recheck`、`chat-open-terminal` 两个 data-testid（4.12）。
+- 2026-11-14 开发中（T13，decisions #34–#35）：`chat_ack.ref` 对 set_mode 回显 mode；`vr_notice` 的 `stderr` 码保留不发送（stderr 尾巴在 `vr_exit`）（4.5、4.7）；冒烟脚本用独立 `TMUX_TMPDIR` 隔离 tmux。
 
 ## 11. 方案验证（机器关口 B）
 
