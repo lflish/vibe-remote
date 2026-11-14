@@ -279,7 +279,7 @@ v3 对话会话的条目另带（终端条目一律省略）：
 | `msg.type` | 字段 | 含义 |
 |------------|------|------|
 | `user`（回显） | `message:{role:"user",content:[{type:"text",text}]}`, `vr_client_msg_id` | daemon 写入 stdin 的用户消息，供所有连接的桌面显示（claude 不回显） |
-| `vr_resolved` | `request_id`, `outcome`: `allowed` / `denied` / `cancelled` / `interrupted` / `exited`, `message?` | 某个待答请求被解决 |
+| `vr_resolved` | `request_id`, `outcome`: `allowed` / `denied` / `cancelled` / `interrupted` / `exited` | 某个待答请求被解决 |
 | `vr_notice` | `code`: `line_dropped` / `stale_turn` / `set_mode_failed` / `dropped_on_stop`（开放集合；`stderr` 保留，当前不发送，stderr 尾巴在 `vr_exit` 里）, `text`, `clientMsgId?` | 超长行被丢弃（>16 MiB）、回合看门狗判定某条消息不会再有 `result`、计划批准后的模式切换未能入队、停进程时某条已写入的消息没有执行完 |
 | `vr_exit` | `code`, `reason`, `stderrTail` | 进程结束（带 stderr 最后 8 KiB） |
 
@@ -298,7 +298,7 @@ v3 对话会话的条目另带（终端条目一律省略）：
 |------|------|
 | `status` | `idle` / `running` / `waiting`（有待答请求）/ `ended` |
 | `permissionMode` | `default` / `acceptEdits` / `plan` / `bypassPermissions`，以 claude 报告为准 |
-| `permissionLocked` | 启动参数含 `--dangerously-skip-permissions` 或 `--permission-mode bypassPermissions`；此时 `chat_set_mode` 返回 `mode_locked`。AskUserQuestion / ExitPlanMode 仍会作为待答请求出现 |
+| `permissionLocked` | 启动参数含 `--dangerously-skip-permissions` 或 `--permission-mode bypassPermissions`；此时 `chat_set_mode` 与带 `setMode` 的 `chat_respond` 返回 `mode_locked`。AskUserQuestion / ExitPlanMode 仍会作为待答请求出现 |
 | `pending` | **权威**的待答请求列表 `[{requestId, seq, request}]`（`request` 为 claude 的 `can_use_tool` 请求原样），不受缓冲淘汰影响；客户端的提示只按它显示 |
 | `degraded` | 可选；缺少的 claude 能力（目前只有 `interrupt_receipt`），仅用于诊断 |
 | `slashCommands` | `[{name, description?, argumentHint?}]`；`initialize` 回复的命令列表优先，其次每回合 `system/init` 的 `slash_commands` |
@@ -316,10 +316,10 @@ v3 对话会话的条目另带（终端条目一律省略）：
 {"type":"chat_set_mode","mode":"plan"}
 ```
 
-- `chat_send`：`text` 去首尾空白后为空 → `empty`；超过 256 KiB 或 `clientMsgId` 超过 64 字符 → `too_large`；`clientMsgId` 在最近 256 个已接受的消息里 → ok + `duplicate:true` + `completed`（是否已见到它的 `result`），不重复写入（这份记录与缓冲区分开，缓冲淘汰后照样认得）；记了 `dropped_on_stop` 的消息不算已接受，同 id 重发会写入新进程；进程不在 → `chat_not_running`
-- `chat_respond`：`response` = `{behavior:"allow"|"deny", updatedInput?, updatedPermissions?, message?, interrupt?}`，不是这个形状 → `invalid_response`。请求不在待答表 → `request_not_pending`（已在别处处理）；`updatedPermissions` 每一项必须与该请求 `permission_suggestions` 中某一项相同，否则 `foreign_rule`；allow 缺 `updatedInput` 时 daemon 补上原 input；写队列满 → `chat_busy`（待答保持不变）。`setMode` 只允许 `acceptEdits` / `default`（其它 → `invalid_mode`），紧接在回复之后发给 claude（计划批准用）
+- `chat_send`：`text` 去首尾空白后为空 → `empty`；超过 256 KiB 或 `clientMsgId` 超过 64 字符 → `too_large`；写队列满 → `chat_busy`；`clientMsgId` 在最近 256 个已接受的消息里 → ok + `duplicate:true` + `completed`（是否已见到它的 `result`），不重复写入（这份记录与缓冲区分开，缓冲淘汰后照样认得）；记了 `dropped_on_stop` 的消息不算已接受，同 id 重发会写入新进程；进程不在 → `chat_not_running`
+- `chat_respond`：`response` = `{behavior:"allow"|"deny", updatedInput?, updatedPermissions?, message?, interrupt?}`，不是这个形状 → `invalid_response`。请求不在待答表 → `request_not_pending`（已在别处处理）；`updatedPermissions` 每一项必须与该请求 `permission_suggestions` 中某一项相同，否则 `foreign_rule`；allow 缺 `updatedInput` 时 daemon 补上原 input；进程不在 → `chat_not_running`；写队列满 → `chat_busy`（待答保持不变）。`setMode` 只用于回答计划（`ExitPlanMode` 请求）且只允许 `acceptEdits` / `default`，否则 → `invalid_mode`；`permissionLocked` 时带 `setMode` → `mode_locked`（这两种情况都不回答，待答保持不变）。`setMode` 紧接在回复之后发给 claude（计划批准用）
 - `chat_interrupt`：不在运行 → ok 不做事；否则向 claude 发一条 interrupt。待答请求由 claude 自己取消（记 `vr_resolved interrupted`），daemon 不替它回 deny；写队列满 → `chat_busy`
-- `chat_set_mode`：`mode` ∉ {`default`, `acceptEdits`, `plan`} → `invalid_mode`；`permissionLocked` → `mode_locked`；成功后经 `chat_state` 广播新模式
+- `chat_set_mode`：`mode` ∉ {`default`, `acceptEdits`, `plan`} → `invalid_mode`；`permissionLocked` → `mode_locked`；进程不在 → `chat_not_running`；写队列满 → `chat_busy`；成功后经 `chat_state` 广播新模式
 
 ### chat_ack (S→C)
 

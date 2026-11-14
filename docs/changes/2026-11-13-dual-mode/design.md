@@ -411,7 +411,7 @@ stateDiagram-v2
 
 1. 校验 workdir（同终端）、`mode`、`newSessionId`。
 2. `beginCreate(id)`：已存在 → 若是对话会话走接入；若是终端 → `ui_mismatch`。
-3. `ParseClaudeCmd(cfg.ResolveClaudeCmd(flags))`：不支持 → `chat_unsupported`。版本探测缓存显示过旧/找不到 → `chat_unsupported`。工作区信任（**待 c3 确认**）：`WorkdirTrusted(目录)` 不是 `trusted`（`untrusted` 或 `unknown`）→ `chat_unsupported`，`reason=workdir_untrusted`；worktree 模式检查的是**源仓库目录**（新 worktree 路径不会有信任记录，内容来自同一仓库）。
+3. `ParseClaudeCmd(cfg.ResolveClaudeCmd(flags))`：不支持 → `chat_unsupported`。版本探测缓存显示过旧/找不到 → `chat_unsupported`。工作区信任（**待 c3 确认**）：`WorkdirTrusted(目录)` 不是 `trusted`（`untrusted` 或 `unknown`）→ `chat_unsupported`，`reason=workdir_untrusted`；worktree 模式查**所选的源目录本身（不是仓库根，也不是新 worktree）**（新 worktree 路径不会有信任记录，内容来自同一仓库）。
 4. 定 U：`Continue` 时 `LatestSessionForWorkdir` 得到 U，找不到则当作新对话；新对话 U = daemon 生成的 UUID v4。然后 `claimClaude(U, id)`：U 已被对话会话 X 持有 → 若 X 还在创建中则等它的 `creating` 通道结束；X 存在 → 返回 X 的 `ready{existing:true}`（R2.6），X 创建失败 → 重新 claim；U 被终端会话持有 → `claude_session_busy`。两个不同 `newSessionId` 的 `-c` 并发新建因此只会起一个进程。
 5. worktree 模式：`CreateWorktree`，失败回滚（同终端）。
 6. 启动（`--resume` 的记录若在检查与启动之间被删，claude 1 s 内输出 stderr `No conversation found with session ID: …` 和一条 `result{error_during_execution, errors:[…]}` 后 exit 1，V21：新建按 `create_failed`、重载/重启按 `ended.reason=restart_failed` 处理，`message` 取 `errors[0]`）：`FindTranscript(U)` 找到 JSONL → `--resume U`（session_id 不变、续写同一 JSONL，探针 V4）；找不到（新对话，或曾经启动但从未写出 JSONL）→ `--session-id U`（init 之前就知道 JSONL 路径）。重载、重启、交接一律用同一规则，避免对不存在的记录 `--resume` 失败（V21）。命令 = `<exe> <args…> -p --input-format stream-json --output-format stream-json --verbose --include-partial-messages --permission-prompt-tool stdio`，各参数 shell 引号后放进 `<shell> -lic 'exec …'`（`login_shell:false` 时直接 argv 执行）。环境 = `utf8Env` + `VIBE_REMOTE_*`（hook token，同终端），并**去掉** `CLAUDECODE`、`CLAUDE_CODE_ENTRYPOINT`（daemon 若由 claude 会话启动会继承它们，触发嵌套保护，探针环境说明）。`Setpgid`，Linux 另设 `Pdeathsig=SIGKILL`。spawn 后在后台发一次 `initialize`（只为取 `commands`，探针 V1），不等回复即可接受用户消息。
@@ -491,7 +491,7 @@ stateDiagram-v2
 - **命令拼接只在服务端**：客户端只传 flag id、会话 id、`handoffFrom`；启动命令来自 `claude_cmd`+白名单 flag+服务端常量。拆词拒绝含 shell 语法的 `claude_cmd`；开头的 `~`、`~/` 先展开为 daemon 用户的 `$HOME`（单引号会阻止 shell 展开，登录 shell 与直接 argv 两条路径都要展开）；拼接时每个参数单引号转义。
 - **工作区信任（整条待 c3 确认）**：探针 V23 实测，`-p` 在从未信任的目录里**直接加载**项目 `.claude/settings.json`，SessionStart（启动即执行，无需任何输入）与 PreToolUse hook 都会运行，没有任何信任提示，也不写信任记录。所以 daemon 必须自己做信任检查。定义 `TrustState = trusted | untrusted | unknown`：
   - 文件：设置了 `$CLAUDE_CONFIG_DIR` 时用 `$CLAUDE_CONFIG_DIR/.claude.json`，否则 `~/.claude.json`（daemon 用户）。
-  - 查找：**只看规范化后的目录本身** `projects[<目录>].hasTrustDialogAccepted`（`true`→trusted；`false` 或无记录→untrusted）。V23 的父目录变体在 `-p` 下无法区分父目录信任是否被子目录继承（`-p` 根本不看信任），所以先取保守规则；V24（交互式 claude）若证实父目录信任会覆盖子目录，再放宽为逐级向上查找。worktree 模式查的是源目录（6.2 第 3 步）。
+  - 查找：**只看规范化后的目录本身** `projects[<目录>].hasTrustDialogAccepted`（`true`→trusted；`false` 或无记录→untrusted）。V23 的父目录变体在 `-p` 下无法区分父目录信任是否被子目录继承（`-p` 根本不看信任），所以先取保守规则；V24（交互式 claude）若证实父目录信任会覆盖子目录，再放宽为逐级向上查找。worktree 模式查所选的源目录本身（不是仓库根，也不是新 worktree）（6.2 第 3 步）。
   - 文件不存在或无法解析 → `unknown`。
   - **daemon 与目录选择器同一语义**：只有 `trusted` 允许新建对话；`untrusted` 与 `unknown` 一律按未信任处理（`reason=workdir_untrusted`），提示「先用终端界面在该目录打开一次 claude 以信任此目录」。
   - daemon 只读这一个字段，不读、不记录、不转发该文件里的其它内容（其中可能有账号信息）。

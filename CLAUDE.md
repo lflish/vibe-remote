@@ -146,7 +146,7 @@ shouldForceSelection(e) { return isMac ? e.altKey && macOptionClickForcesSelecti
 - vibe-remoted **绑私有网段地址**：`config.validateBindAddr` 放行 RFC1918 / loopback / link-local / IPv6 ULA / tailscale CGNAT 段（`isPrivateBindIP`，用 `net.IP.IsPrivate` + CGNAT 补丁），拒绝**公网 IP**（需 `allow_insecure_bind: true` 逃生舱）和**所有通配地址**（`0.0.0.0`/`::`，恒拒，逃生舱也不放行）。
 - **静态 token 是准入核心边界**：WS `auth` 帧 + REST `Authorization: Bearer`，均用 `crypto/subtle.ConstantTimeCompare` 常量时间校验（token 现在是主防线，防时序侧信道）。
 - workdir 白名单：`config.IsAllowedWorkdir` 用 `filepath.Rel` + `..` 前缀检查防路径越权；`/api/v1/fs` 和 attach 的 workdir 都受约束。
-- **工作区信任（对话模式）**：`claude -p` 不弹信任确认、会直接执行项目 `.claude/settings.json` 里的 hook。daemon 因此只在 claude 已信任的目录新建对话会话：读 `$CLAUDE_CONFIG_DIR/.claude.json`（否则 `~/.claude.json`）里 `projects[<目录本身>].hasTrustDialogAccepted`，只认 `true`；无记录、`false`、文件缺失或损坏一律拒绝（`chat_unsupported`/`workdir_untrusted`），提示先用终端界面在该目录打开一次 claude。worktree 模式查源仓库目录。只读这一个字段。
+- **工作区信任（对话模式）**：`claude -p` 不弹信任确认、会直接执行项目 `.claude/settings.json` 里的 hook。daemon 因此只在 claude 已信任的目录新建对话会话：读 `$CLAUDE_CONFIG_DIR/.claude.json`（否则 `~/.claude.json`）里 `projects[<目录本身>].hasTrustDialogAccepted`，只认 `true`；无记录、`false`、文件缺失或损坏一律拒绝（`chat_unsupported`/`workdir_untrusted`），提示先用终端界面在该目录打开一次 claude。worktree 模式查所选的源目录本身（不是仓库根，也不是新 worktree）。只读这一个字段。
 - 对话模式的启动命令只由服务端配置拼成（`claude_cmd` + 白名单 flag + 常量，参数逐个单引号转义）；客户端只传 flag id、会话 id、`handoffFrom`。「不再询问」只回传 claude 自己给出的规则建议（JSON 相等校验），daemon 不写任何 `.claude` 设置文件、不读 claude 凭据。对话进程同样只拿 hook token。
 - 传输为明文 `ws://`（无 `wss://`）：绑 tailscale IP 时由 WireGuard 加密，绑 LAN IP 时为明文——**仅在可信网络使用**。Origin 检查跳过（Electron 跨 origin）+ permissive CORS，均以 token + 私有网段不可达公网为前提。**Tailscale 仍是推荐方案**（自带加密+跨网），只是不再强制。
 
