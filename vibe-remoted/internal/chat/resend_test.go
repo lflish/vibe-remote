@@ -60,3 +60,31 @@ func TestDroppedMessageResendWithSameIDIsDelivered(t *testing.T) {
 		t.Fatalf("a replay of a delivered message was written again (%d writes)", n)
 	}
 }
+
+// A resent clientMsgId that was already accepted is acked as a duplicate,
+// with completed telling whether its result came back. The record outlives
+// the replay buffer.
+func TestResendDuplicateReportsCompleted(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t).start()
+	h.waitIdle()
+	if ack := h.s.Send("first", "echo one"); !ack.OK || ack.Duplicate {
+		t.Fatalf("first send: %+v", ack)
+	}
+	h.waitIdle()
+	// Push the original message and its result out of the ring.
+	for i := 0; i < RingMax+10; i++ {
+		h.s.injectLine([]byte(`{"type":"assistant","message":{"id":"filler","content":[]}}`))
+	}
+	if ack := h.s.Send("first", "echo one"); !ack.OK || !ack.Duplicate || !ack.Completed {
+		t.Fatalf("resend of a completed message: %+v", ack)
+	}
+	resume := holdWriter(t, h.s, 3)
+	defer resume()
+	if ack := h.s.Send("second", "echo two"); !ack.OK || ack.Duplicate {
+		t.Fatalf("second send: %+v", ack)
+	}
+	if ack := h.s.Send("second", "echo two"); !ack.OK || !ack.Duplicate || ack.Completed {
+		t.Fatalf("resend of a message still running: %+v", ack)
+	}
+}

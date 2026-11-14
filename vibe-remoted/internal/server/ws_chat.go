@@ -176,8 +176,13 @@ func (s *Server) wsChatRelay(ctx context.Context, conn *websocket.Conn, att *att
 	}()
 
 	ack := func(op, ref string, a chat.Ack) {
-		wsjson.Write(ctx, conn, protocol.ChatAckFrame{Type: protocol.TypeChatAck, Op: op, Ref: ref,
-			OK: a.OK, Code: a.Code, Message: a.Message})
+		f := protocol.ChatAckFrame{Type: protocol.TypeChatAck, Op: op, Ref: ref,
+			OK: a.OK, Code: a.Code, Message: a.Message}
+		if a.Duplicate {
+			completed := a.Completed
+			f.Duplicate, f.Completed = true, &completed
+		}
+		wsjson.Write(ctx, conn, f)
 	}
 	for {
 		_, data, err := conn.Read(ctx)
