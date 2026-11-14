@@ -247,6 +247,18 @@ export class ChatSession {
     return textOf(msg);
   }
 
+  /** The daemon refused a message we sent (chat_ack not ok): it was not delivered. */
+  markUndelivered(clientMsgId: string) {
+    this.localSending.delete(clientMsgId);
+    const msg = this.messages.find((m): m is UserMessage => m.role === 'user' && m.clientMsgId === clientMsgId);
+    if (msg) {
+      msg.delivery = 'undelivered';
+      msg.rev++;
+    }
+    this.onTurn?.({ kind: 'undelivered', clientMsgId });
+    this.emit();
+  }
+
   /** We answered this prompt; waiting for the daemon (design 6.7). */
   markSubmitting(requestId: string) {
     this.setPromptState(requestId, 'submitting');

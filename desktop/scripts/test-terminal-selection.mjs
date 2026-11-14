@@ -46,4 +46,11 @@ const pkg = JSON.parse(readFileSync('package.json', 'utf8'));
 const pinned = pkg.dependencies['@xterm/xterm'];
 assert.match(pinned, /^\d/, `@xterm/xterm must be pinned exactly (no ^ or ~), got "${pinned}"`);
 
+// Security-relevant chat rendering dependencies are pinned the same way, so a
+// sanitizer or markdown change never arrives silently (design 3).
+for (const [section, name] of [['dependencies', 'markdown-it'], ['dependencies', 'dompurify'], ['devDependencies', 'jsdom']]) {
+  const version = pkg[section]?.[name];
+  assert.match(version ?? '', /^\d/, `${name} must be pinned exactly in ${section} (no ^ or ~), got "${version}"`);
+}
+
 console.log('terminal selection regression checks passed');

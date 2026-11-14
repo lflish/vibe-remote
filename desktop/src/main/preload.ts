@@ -11,4 +11,5 @@ contextBridge.exposeInMainWorld('vibeRemote', {
     ipcRenderer.invoke('clipboard-write-text', text),
   notify: (title: string, body: string): Promise<'shown' | 'fallback'> =>
     ipcRenderer.invoke('notify', title, body),
+  openExternal: (url: string): Promise<boolean> => ipcRenderer.invoke('open-external', url),
 });

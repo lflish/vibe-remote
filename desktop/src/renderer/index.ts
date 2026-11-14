@@ -10,6 +10,7 @@ import { openMachineManager } from './machines';
 import { t, toggleLocale, getLocale, onLocaleChange } from './i18n';
 import { fitWhenVisible, dimensionsWhenVisible } from './terminal-layout';
 import { attachMacClipboardShortcuts } from './terminal-clipboard';
+import { ChatView } from './chat/view';
 
 // Declared by preload
 
@@ -18,6 +19,7 @@ import { attachMacClipboardShortcuts } from './terminal-clipboard';
 // just shows/hides their terminal containers. tmux keeps unfocused sessions
 // alive server-side regardless.
 interface SessionView {
+  ui: 'terminal';
   key: string; // `${machineAddr}::${sessionId}`
   machine: MachineConfig;
   sessionId: string; // '' until the server assigns one for a new session
@@ -31,12 +33,27 @@ interface SessionView {
   warnedProto: boolean; // already told the user this daemon is older than the client
 }
 
+// An open view is a terminal session (xterm) or a chat session (ChatView,
+// design 1.6). Both have key/machine/sessionId/client/container/activity.
+type AnyView = SessionView | ChatView;
+
+// disposeView closes a view locally (the remote session keeps running).
+function disposeView(v: AnyView) {
+  if (v.ui === 'chat') {
+    v.dispose();
+    return;
+  }
+  v.client.disconnect();
+  v.terminal.dispose();
+  v.container.remove();
+}
+
 // --- App state ---
 // Machine-keyed maps use `addr:port` (machineKey) rather than addr alone, so
 // two vibe-remoted instances on the same host but different ports don't collide.
 let machines: MachineConfig[] = [];
 const rests = new Map<string, VibeRemoteRest>(); // machineKey -> REST client
-const views = new Map<string, SessionView>(); // view key -> open session view
+const views = new Map<string, AnyView>(); // view key -> open session view
 const machineSessions = new Map<string, SessionInfo[]>(); // machineKey -> sessions (REST)
 const machineOnline = new Map<string, boolean>(); // machineKey -> reachable
 type MachineIssue = 'auth' | 'version' | 'unreachable';
@@ -66,7 +83,7 @@ let statusMessageTimer: ReturnType<typeof setTimeout> | null = null;
 const machineKey = (m: MachineConfig) => `${m.addr}:${m.port}`;
 const viewKey = (m: MachineConfig, sid: string) => `${machineKey(m)}::${sid}`;
 
-function rendererIcon(name: 'machine' | 'terminal' | 'branch' | 'chevron' | 'reload' | 'close'): SVGSVGElement {
+function rendererIcon(name: 'machine' | 'terminal' | 'chat' | 'branch' | 'chevron' | 'reload' | 'close'): SVGSVGElement {
   const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
   svg.setAttribute('viewBox', '0 0 20 20');
   svg.setAttribute('aria-hidden', 'true');
@@ -74,6 +91,7 @@ function rendererIcon(name: 'machine' | 'terminal' | 'branch' | 'chevron' | 'rel
   const paths = {
     machine: 'M4 3.5h12a1.5 1.5 0 0 1 1.5 1.5v10A1.5 1.5 0 0 1 16 16.5H4A1.5 1.5 0 0 1 2.5 15V5A1.5 1.5 0 0 1 4 3.5Zm-1.5 6h15M5.5 6.5h.01m2.49 0h.01m-2.51 6h.01m2.49 0h.01',
     terminal: 'M4.5 5.5 8 9l-3.5 3.5M10 13h5.5',
+    chat: 'M4 4.5h12A1.5 1.5 0 0 1 17.5 6v6.5A1.5 1.5 0 0 1 16 14h-6l-3.5 2.5V14H4a1.5 1.5 0 0 1-1.5-1.5V6A1.5 1.5 0 0 1 4 4.5Z',
     branch: 'M6 3.5v9.25A3.75 3.75 0 0 0 9.75 16.5H14M6 6.5h5A3 3 0 0 0 14 3.5v0M4 3.5h4m4 0h4m-4 13h4',
     chevron: 'm7 5 5 5-5 5',
     reload: 'M15.5 6.4A6.5 6.5 0 1 0 16.2 12M15.5 6.4V2.8m0 3.6h-3.6',
@@ -166,6 +184,10 @@ function wireLanguageToggle() {
     // usually hidden, so they'd otherwise keep their creation-time language
     // until the next disconnect.
     for (const view of views.values()) {
+      if (view.ui === 'chat') {
+        view.relabel();
+        continue;
+      }
       const text = view.banner.querySelector('.reconnect-banner-text');
       if (text) text.textContent = t('banner.reconnecting');
       const retry = view.banner.querySelector('.reconnect-banner-retry');
@@ -228,9 +250,7 @@ function wireManageMachinesButton() {
         for (const rk of removedKeys) {
           for (const [k, v] of [...views]) {
             if (machineKey(v.machine) === rk) {
-              v.client.disconnect();
-              v.terminal.dispose();
-              v.container.remove();
+              disposeView(v);
               views.delete(k);
               if (activeKey === k) { activeKey = null; activeRemoved = true; }
             }
@@ -269,7 +289,7 @@ function wireWindowResize() {
     t = setTimeout(() => {
       if (!activeKey) return;
       const view = views.get(activeKey);
-      if (view) view.fitAddon.fit(); // fit() triggers term.onResize → sendResize
+      if (view?.ui === 'terminal') view.fitAddon.fit(); // fit() triggers term.onResize → sendResize
     }, 80);
   });
 }
@@ -287,7 +307,7 @@ function wireTerminalResizeObserver() {
     if (!activeKey) return;
     const view = views.get(activeKey);
     // Only fit the visible terminal; hidden views (display:none) measure as 0.
-    if (view && view.container.style.display !== 'none') {
+    if (view?.ui === 'terminal' && view.container.style.display !== 'none') {
       fitWhenVisible(view.container, () => view.fitAddon.fit());
     }
   });
@@ -467,7 +487,7 @@ function renderMachineOverview(machine: MachineConfig) {
       identity.className = 'workspace-session-identity';
       const sessionIcon = document.createElement('span');
       sessionIcon.className = 'workspace-session-icon';
-      sessionIcon.appendChild(rendererIcon('terminal'));
+      sessionIcon.appendChild(rendererIcon(session.ui === 'chat' ? 'chat' : 'terminal'));
       const sessionCopy = document.createElement('span');
       sessionCopy.className = 'workspace-session-copy';
       sessionCopy.appendChild(sessionTitle);
@@ -482,7 +502,8 @@ function renderMachineOverview(machine: MachineConfig) {
       status.textContent = views.has(key) ? t('workspace.badge.running') : t('workspace.badge.remote');
       badges.append(mode, status);
       row.append(identity, badges);
-      row.addEventListener('click', () => openSession(machine, session.id));
+      row.dataset.ui = session.ui ?? 'terminal';
+      row.addEventListener('click', () => openExisting(machine, session));
       recentList.appendChild(row);
     }
   }
@@ -609,9 +630,79 @@ function makeTerminal(): { term: Terminal; fit: FitAddon } {
   return { term, fit };
 }
 
+// openExisting opens a listed session in the view its kind needs.
+function openExisting(machine: MachineConfig, session: SessionInfo): AnyView {
+  return session.ui === 'chat' ? openChatSession(machine, session.id, session.workdir) : openSession(machine, session.id);
+}
+
+// openChatSession creates a ChatView (its own WS + transcript) and attaches
+// with ui:'chat'. sessionId '' means create a brand-new chat session.
+function openChatSession(machine: MachineConfig, sessionId: string, workdir?: string, flags?: string[], mode: SessionMode = 'normal'): AnyView {
+  const key = viewKey(machine, sessionId);
+  const existing = views.get(key);
+  if (existing) {
+    setActive(key);
+    return existing;
+  }
+  const wrap = document.getElementById('terminal-container')!;
+  const client = new VibeRemoteClient(machine);
+  const view = new ChatView(machine, client, key, sessionId, workdir ?? '');
+  wrap.appendChild(view.container);
+  views.set(key, view);
+
+  view.onMessage = (text) => {
+    if (view.key === activeKey) updateStatusBar(text);
+  };
+  view.onActivity = () => renderSidebar();
+
+  client.onReady = (sid, readyWorkdir, proto) => {
+    view.banner.style.display = 'none';
+    if (view.sessionId !== sid) {
+      views.delete(view.key);
+      view.sessionId = sid;
+      view.key = viewKey(machine, sid);
+      views.set(view.key, view);
+      if (activeKey === key) activeKey = view.key;
+    }
+    view.setWorkdir(readyWorkdir);
+    refreshAllMachines();
+    updateStatusBar();
+    if (proto < PROTOCOL_VERSION && !view.warnedProto && view.key === activeKey) {
+      view.warnedProto = true;
+      updateStatusBar(t('terminal.oldDaemon', { proto, want: PROTOCOL_VERSION }));
+    }
+  };
+  client.onStateChange = (state, attempt) => {
+    if (state === ConnectionState.Reconnecting) view.banner.style.display = 'flex';
+    else if (state === ConnectionState.Connected) view.banner.style.display = 'none';
+    view.setConnected(state === ConnectionState.Connected);
+    if (view.key === activeKey) updateStatusBar(undefined, attempt);
+  };
+  client.onExit = (code) => {
+    // The chat session's own state (chat_state.ended) drives the transcript;
+    // the connection stays and reload can bring the process back.
+    updateStatusBar(t('status.sessionExited', { code }));
+    refreshAllMachines();
+  };
+  client.onError = (msg, fatal) => {
+    console.error(`[${machine.name}]`, msg);
+    if (fatal) {
+      view.banner.style.display = 'none';
+      view.setConnected(false);
+      refreshAllMachines();
+    }
+    if (view.key === activeKey) updateStatusBar(t('status.error', { msg }));
+  };
+
+  client.connect();
+  client.attach(sessionId, 80, 24, workdir, flags, sessionId ? undefined : mode, { ui: 'chat' });
+  setActive(view.key);
+  return view;
+}
+
 // openSession creates a new SessionView (its own WS + xterm) and attaches.
 // sessionId '' means create a brand-new session with the given workdir.
-function openSession(machine: MachineConfig, sessionId: string, workdir?: string, flags?: string[], mode: SessionMode = 'normal'): SessionView {
+function openSession(machine: MachineConfig, sessionId: string, workdir?: string, flags?: string[], mode: SessionMode = 'normal'): AnyView {
   const key = viewKey(machine, sessionId);
   const existing = views.get(key);
   if (existing) {
@@ -642,7 +733,7 @@ function openSession(machine: MachineConfig, sessionId: string, workdir?: string
   const banner = document.createElement('div');
   banner.className = 'reconnect-banner';
   banner.style.display = 'none';
-  const view: SessionView = { key, machine, sessionId, client, terminal: term, fitAddon: fit, container, banner, activity: 'none', suppressUntil: 0, warnedProto: false };
+  const view: SessionView = { ui: 'terminal', key, machine, sessionId, client, terminal: term, fitAddon: fit, container, banner, activity: 'none', suppressUntil: 0, warnedProto: false };
   views.set(key, view);
 
   // Classed so a locale switch can retranslate banners that already exist:
@@ -782,7 +873,9 @@ function setActive(key: string) {
     v.container.style.display = k === key ? 'block' : 'none';
   }
   const view = views.get(key);
-  if (view) {
+  if (view?.ui === 'chat') {
+    view.show();
+  } else if (view) {
     // Fit only after the host has a real box. The first startup can still be in
     // Electron's maximize/layout transition; fitWhenVisible retries once on
     // the next frame instead of locking xterm to the initial small dimensions.
@@ -855,17 +948,24 @@ function renderSidebar() {
       const key = viewKey(machine, s.id);
       const item = document.createElement('div');
       item.className = 'session-item' + (key === activeKey ? ' active' : '');
+      item.dataset.ui = s.ui ?? 'terminal';
 
       const label = document.createElement('button');
       label.type = 'button';
       label.className = 'session-label';
       const sessionIcon = document.createElement('span');
       sessionIcon.className = 'session-kind-icon';
-      sessionIcon.appendChild(rendererIcon('terminal'));
+      sessionIcon.appendChild(rendererIcon(s.ui === 'chat' ? 'chat' : 'terminal'));
       const sessionText = document.createElement('span');
       sessionText.className = 'session-label-text';
       sessionText.textContent = s.title || (s.workdir ? s.workdir.split('/').pop() : '') || s.id;
       label.append(sessionIcon, sessionText);
+      if (s.ui === 'chat') {
+        const badge = document.createElement('span');
+        badge.className = 'session-ui-badge';
+        badge.textContent = t('chat.badge');
+        label.appendChild(badge);
+      }
       label.title = s.workdir || s.id;
       // Click vs dblclick: dblclick=rename. A dblclick fires as click→click→
       // dblclick, so a naive click handler would open (and WS-connect) an
@@ -876,10 +976,10 @@ function renderSidebar() {
       let openTimer: number | undefined;
       label.addEventListener('click', () => {
         if (views.has(key)) {
-          openSession(machine, s.id); // already open: instant, no delay
+          openExisting(machine, s); // already open: instant, no delay
         } else {
           window.clearTimeout(openTimer);
-          openTimer = window.setTimeout(() => openSession(machine, s.id), 220);
+          openTimer = window.setTimeout(() => openExisting(machine, s), 220);
         }
       });
       label.addEventListener('dblclick', (e) => {
@@ -1103,9 +1203,7 @@ async function closeSession(machine: MachineConfig, sessionId: string) {
   reloadingSessions.delete(key);
   const view = views.get(key);
   if (view) {
-    view.client.disconnect();
-    view.terminal.dispose();
-    view.container.remove();
+    disposeView(view);
     views.delete(key);
     if (activeKey === key) {
       activeKey = null;
