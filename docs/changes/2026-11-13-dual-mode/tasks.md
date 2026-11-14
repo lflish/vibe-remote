@@ -225,7 +225,7 @@
 ## 任务
 
 ### T1 协议 v3 类型与文档
-- 状态：待办
+- 状态：完成
 - 文件：修改 `vibe-remoted/internal/protocol/protocol.go`、`desktop/src/shared/protocol.ts`、`desktop/src/renderer/rest.ts`（类型部分）、`docs/protocol.md`；测试新建 `vibe-remoted/internal/protocol/protocol_test.go`，`vibe-remoted/internal/server/contract_test.go` 补用例
 - 接口：
   - 提供（Go）：`Version = 3`；`TypeChat/TypeChatSync/TypeChatState/TypeChatAck/TypeChatSend/TypeChatRespond/TypeChatInterrupt/TypeChatSetMode`；`AttachFrame` 加 `UI`、`Epoch`、`Since`、`HandoffFrom`（均 `omitempty`）；`ReadyFrame` 加 `UI`、`ClaudeSessionID`、`Existing`、`HandoffFrom`；`SessionInfo` 加 `UI`、`State`、`ActivitySeq`、`Epoch`、`EndReason`；`ChatFrame{Seq uint64; H bool; Msg json.RawMessage}`、`ChatSyncFrame`、`ChatStateFrame`、`PendingRequest`、`ChatEnded`、`ChatAckFrame`、`ChatSendFrame`、`ChatRespondFrame`、`ChatSetModeFrame`；错误码 `ErrCodeUIMismatch`、`ErrCodeChatUnsupported`、`ErrCodeClaudeSessionBusy`；`UITerminal/UIChat` 常量
@@ -451,6 +451,7 @@
 
 | 任务 | 完成时间 | 提交 | 测试 |
 |------|----------|------|------|
+| T1 | 2026-11-14 08:55 | 475c20b（v2 黄金帧）、74cba84 | 新增 4 个 Go 测试通过（TestTerminalFramesUnchangedV3、TestInfoAndReadyProto3、TestProtocolChatFramesJSON、TestAttachFrameDecodesChatFields）；`go test -race ./...` 102 通过 0 失败；`make check` 全绿 |
 
 ## 后续
 
