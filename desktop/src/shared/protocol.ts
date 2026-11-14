@@ -4,8 +4,11 @@
  * Protocol revision this client speaks (protocol.Version in Go). Daemons that
  * predate the field report nothing, which reads as 1.
  *   2: attach.newSessionId, error.code/fatal, proto
- *   3: chat UI (attach.ui/epoch/since/handoffFrom, chat* frames, ready.ui,
- *      sessions[].ui/state/activitySeq/epoch/endReason, info.chat)
+ *   3: chat UI (attach.ui/epoch/since/handoffFrom, chat* frames,
+ *      ready.ui/claudeSessionId/existing/handoffFrom,
+ *      sessions[].ui/state/activitySeq/epoch/endReason, info.chat (+?recheck=1),
+ *      fs chatTrust, chat reload 202, errors ui_mismatch/chat_unsupported/
+ *      claude_session_busy)
  */
 export const PROTOCOL_VERSION = 3;
 
@@ -239,11 +242,12 @@ export type ChatAckOp = 'send' | 'respond' | 'interrupt' | 'set_mode';
 export interface ChatAckFrame {
   type: typeof FrameType.ChatAck;
   op: ChatAckOp;
-  /** clientMsgId or requestId */
+  /** clientMsgId (send), requestId (respond) or the requested mode (set_mode) */
   ref?: string;
   ok: boolean;
   // 'empty' | 'too_large' | 'chat_not_running' | 'request_not_pending' |
-  // 'foreign_rule' | 'chat_busy' | 'invalid_mode' | 'mode_locked' (open set)
+  // 'foreign_rule' | 'chat_busy' | 'invalid_mode' | 'invalid_response' |
+  // 'mode_locked' (open set)
   code?: string;
   message?: string;
 }

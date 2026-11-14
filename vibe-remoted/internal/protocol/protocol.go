@@ -11,8 +11,10 @@ import "encoding/json"
 //
 //	1: implicit — daemons that predate the field and report nothing
 //	2: attach.newSessionId (idempotent create), error.code/fatal, proto itself
-//	3: chat UI (attach.ui/epoch/since/handoffFrom, chat* frames, ready.ui,
-//	   sessions[].ui/state/activitySeq/epoch/endReason, /api/v1/info.chat,
+//	3: chat UI (attach.ui/epoch/since/handoffFrom, chat* frames,
+//	   ready.ui/claudeSessionId/existing/handoffFrom,
+//	   sessions[].ui/state/activitySeq/epoch/endReason, /api/v1/info.chat
+//	   (+?recheck=1), /api/v1/fs chatTrust, chat reload 202,
 //	   errors ui_mismatch/chat_unsupported/claude_session_busy)
 const Version = 3
 
@@ -305,7 +307,7 @@ type ChatEnded struct {
 type ChatAckFrame struct {
 	Type    string `json:"type"`
 	Op      string `json:"op"`            // AckOp*
-	Ref     string `json:"ref,omitempty"` // clientMsgId or requestId
+	Ref     string `json:"ref,omitempty"` // clientMsgId (send), requestId (respond) or the requested mode (set_mode)
 	OK      bool   `json:"ok"`
 	Code    string `json:"code,omitempty"` // Ack* when !OK
 	Message string `json:"message,omitempty"`

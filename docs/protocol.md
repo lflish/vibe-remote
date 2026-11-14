@@ -1,4 +1,4 @@
-# vibe-remote 通信协议 v1
+# vibe-remote 通信协议
 
 ## 概述
 
@@ -103,7 +103,7 @@ Client                              Server (vibe-remoted)
   "type": "ready",
   "sessionId": "1720000000000",
   "workdir": "/home/user/project-worktrees/1720000000000/subdir",
-  "proto": 2,
+  "proto": 3,
   "mode": "worktree",
   "sourceWorkdir": "/home/user/project/subdir",
   "sourceRepo": "/home/user/project",
@@ -226,7 +226,7 @@ v3 对话会话的条目另带（终端条目一律省略）：
 | `create_failed` | ✓ | 新建失败（如 worktree 模式选了非 Git 目录） |
 | `session_not_found` | ✓ | 要恢复的会话已不存在（被删除、tmux 被杀，或 daemon 未启用 tmux） |
 | `attach_failed` | | 会话存在但接入失败（PTY/tmux 暂时故障） |
-| `ui_mismatch` | ✓ | v3：接入的会话类型与 `attach.ui` 不符（含旧桌面接入对话会话） |
+| `ui_mismatch` | ✓ | v3：接入的会话类型与 `attach.ui` 不符（含旧桌面接入对话会话）；`attach.ui` 不是 `terminal` / `chat`；交接（`handoffFrom`）却带 `ui:"chat"` |
 | `chat_unsupported` | ✓ | v3：新建对话但不可用；`message` 含原因（取值同 `/api/v1/info` 的 `chat.reason`，另有 `workdir_untrusted`） |
 | `claude_session_busy` | ✓ | v3：要启动的 claude 会话正在另一个会话里运行（对话 `-c`、交接、重启，或终端会话带 continue 时被运行中的对话会话占用）；`message` 写明持有者会话名 |
 
@@ -280,7 +280,7 @@ v3 对话会话的条目另带（终端条目一律省略）：
 |------------|------|------|
 | `user`（回显） | `message:{role:"user",content:[{type:"text",text}]}`, `vr_client_msg_id` | daemon 写入 stdin 的用户消息，供所有连接的桌面显示（claude 不回显） |
 | `vr_resolved` | `request_id`, `outcome`: `allowed` / `denied` / `cancelled` / `interrupted` / `exited`, `message?` | 某个待答请求被解决 |
-| `vr_notice` | `code`: `line_dropped` / `stderr` / `stale_turn` / `set_mode_failed` / `dropped_on_stop`, `text`, `clientMsgId?` | 超长行被丢弃（>16 MiB）、回合看门狗判定某条消息不会再有 `result`、计划批准后的模式切换未能入队、停进程时某条已写入的消息没有执行完 |
+| `vr_notice` | `code`: `line_dropped` / `stale_turn` / `set_mode_failed` / `dropped_on_stop`（开放集合；`stderr` 保留，当前不发送，stderr 尾巴在 `vr_exit` 里）, `text`, `clientMsgId?` | 超长行被丢弃（>16 MiB）、回合看门狗判定某条消息不会再有 `result`、计划批准后的模式切换未能入队、停进程时某条已写入的消息没有执行完 |
 | `vr_exit` | `code`, `reason`, `stderrTail` | 进程结束（带 stderr 最后 8 KiB） |
 
 ### chat_state (S→C)
@@ -316,8 +316,8 @@ v3 对话会话的条目另带（终端条目一律省略）：
 {"type":"chat_set_mode","mode":"plan"}
 ```
 
-- `chat_send`：`text` 去首尾空白后为空 → `empty`；超过 256 KiB → `too_large`；`clientMsgId`（≤64 字符）在最近 256 个里出现过 → ok 且不重复写入；进程不在 → `chat_not_running`
-- `chat_respond`：`response` = `{behavior:"allow"|"deny", updatedInput?, updatedPermissions?, message?, interrupt?}`。请求不在待答表 → `request_not_pending`（已在别处处理）；`updatedPermissions` 每一项必须与该请求 `permission_suggestions` 中某一项相同，否则 `foreign_rule`；allow 缺 `updatedInput` 时 daemon 补上原 input；写队列满 → `chat_busy`（待答保持不变）。`setMode` 只允许 `acceptEdits` / `default`（其它 → `invalid_mode`），紧接在回复之后发给 claude（计划批准用）
+- `chat_send`：`text` 去首尾空白后为空 → `empty`；超过 256 KiB 或 `clientMsgId` 超过 64 字符 → `too_large`；`clientMsgId` 在最近 256 个里出现过 → ok 且不重复写入；进程不在 → `chat_not_running`
+- `chat_respond`：`response` = `{behavior:"allow"|"deny", updatedInput?, updatedPermissions?, message?, interrupt?}`，不是这个形状 → `invalid_response`。请求不在待答表 → `request_not_pending`（已在别处处理）；`updatedPermissions` 每一项必须与该请求 `permission_suggestions` 中某一项相同，否则 `foreign_rule`；allow 缺 `updatedInput` 时 daemon 补上原 input；写队列满 → `chat_busy`（待答保持不变）。`setMode` 只允许 `acceptEdits` / `default`（其它 → `invalid_mode`），紧接在回复之后发给 claude（计划批准用）
 - `chat_interrupt`：不在运行 → ok 不做事；否则向 claude 发一条 interrupt。待答请求由 claude 自己取消（记 `vr_resolved interrupted`），daemon 不替它回 deny；写队列满 → `chat_busy`
 - `chat_set_mode`：`mode` ∉ {`default`, `acceptEdits`, `plan`} → `invalid_mode`；`permissionLocked` → `mode_locked`；成功后经 `chat_state` 广播新模式
 
@@ -330,8 +330,8 @@ v3 对话会话的条目另带（终端条目一律省略）：
 ```
 
 - `op`：`send` / `respond` / `interrupt` / `set_mode`
-- `ref`：回显 `clientMsgId` 或 `requestId`
-- `code`（`ok:false` 时，开放集合）：`empty` / `too_large` / `chat_not_running` / `request_not_pending` / `foreign_rule` / `chat_busy` / `invalid_mode` / `mode_locked`
+- `ref`：回显 `clientMsgId`（send）、`requestId`（respond）或所请求的 `mode`（set_mode）；interrupt 不带
+- `code`（`ok:false` 时，开放集合）：`empty` / `too_large` / `chat_not_running` / `request_not_pending` / `foreign_rule` / `chat_busy` / `invalid_mode` / `invalid_response` / `mode_locked`
 
 ### 断线与订阅
 
@@ -348,9 +348,9 @@ v3 对话会话的条目另带（终端条目一律省略）：
 | GET | `/healthz` | 存活探针（无需鉴权） |
 | GET | `/api/v1/info` | 机器信息：`{version, proto, hostname, tmux_enabled, default_workdir, allowed_roots, claude_flags, chat}`。`version` 是 daemon 构建版本（`-ldflags "-X main.version=..."` 注入，未注入为 `"dev"`），与 `vibe-remoted --version` 输出一致；`proto` 是协议版本（v2 起）；`claude_flags` 只含 `id/label/default`，不下发 `arg`；`chat`（v3）见下文，`?recheck=1` 强制重新探测 claude 版本 |
 | GET | `/api/v1/sessions` | 会话列表（条目字段同 `sessions` 帧，含 v3 对话字段） |
-| DELETE | `/api/v1/sessions/{id}` | 关闭指定会话。对话会话：停进程、按 worktree 规则清理、删记录，claude 的 JSONL 对话记录保留 |
+| DELETE | `/api/v1/sessions/{id}` | 关闭指定会话，成功 204，不存在 404。对话会话：停进程、按 worktree 规则清理、删记录，claude 的 JSONL 对话记录保留。worktree 模式的会话在 worktree 有未提交改动时保留 worktree 与分支，返回 409 `{"error":"worktree_preserved","message","worktreeRoot","branch"}`（会话本身已关闭） |
 | POST | `/api/v1/sessions/{id}/rename` | 重命名会话，body `{"name":"..."}`，终端会话名字存 tmux 用户选项，对话会话存 daemon 的 `chat-sessions.json` |
-| POST | `/api/v1/sessions/{id}/reload` | 终端会话：在原 tmux 会话和工作目录中重启 CLI，并继续最近的对话，成功 204。对话会话（v3）：立即返回 **202**，在后台停进程后以同一 claude 会话重新启动，进度与结果经 `chat_state` 广播（重载中再调用也是 202）；该 claude 会话正被别的会话持有 → 409 `{"error":"claude_session_busy","owner":"<会话 id>"}`。持有 claude 会话的终端会话（交接创建或带 continue 启动）在其被别人持有时同样 409 |
+| POST | `/api/v1/sessions/{id}/reload` | 终端会话：在原 tmux 会话和工作目录中重启 CLI，并继续最近的对话，成功 204。对话会话（v3）：立即返回 **202**，在后台停进程后以同一 claude 会话重新启动，进度与结果经 `chat_state` 广播（重载中再调用也是 202）；该 claude 会话正被别的会话持有 → 409 `{"error":"claude_session_busy","owner":"<会话 id>","message":"…"}`；会话不存在 → 404。持有 claude 会话的终端会话（交接创建或带 continue 启动）在其被别人持有时同样 409；daemon 未启用 tmux 时终端会话 reload 返回 409 `{"error":"…"}` |
 | GET | `/api/v1/fs?path=<dir>` | 列目录（仅目录项），供远程目录选择器用。返回 `{path, parent, entries, chatTrust}`：`chatTrust`（v3）为该目录在 claude 里的信任状态 `trusted` / `untrusted` / `unknown`，只有 `trusted` 可新建对话会话；`parent` 是规范化后的上级目录，**仅在其本身也可列出时才返回**，已在 `allowed_roots` 顶层时为空串。客户端据此隐藏「上一级」，避免点出必然的 403（`allowed_roots` 配的是符号链接解析前的路径如 `/tmp`，而 `path` 是规范化后的 `/private/tmp`，客户端无法自行比较） |
 | POST | `/api/v1/events` | 带外事件上报，body `{sessionId,kind,message?}`，路由为该会话的 notify 帧。鉴权见下文，与其它端点不同 |
 

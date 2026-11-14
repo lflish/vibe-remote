@@ -4,6 +4,7 @@ context: |
   daemon：Go 1.26（vibe-remoted/），REST + WebSocket + PTY/tmux 会话生命周期。
   桌面端：Electron + 原生 TypeScript（无前端框架）+ xterm.js（desktop/）。
   终端模式是纯字节透传：客户端绝不解析 PTY 输出，tmux 是会话的唯一事实来源。
+  对话模式（只支持 claude）：daemon 持有 claude 的 stream-json 进程，客户端渲染结构化消息。
   协议三处必须手动保持一致：vibe-remoted/internal/protocol/protocol.go、
   desktop/src/shared/protocol.ts（含 rest.ts）、docs/protocol.md；改协议用 /protocol-sync 核对。
   新增错误路径要选对 error.fatal；PTY 生命周期改动要保持 go test -race 通过。
@@ -41,6 +42,25 @@ invariants:
     check: cd desktop && npm test
   - rule: 协议在 protocol.go / protocol.ts / docs/protocol.md 三处一致
     check: /protocol-sync skill
+  # 双模式会话（docs/changes/2026-11-13-dual-mode，design 7.1；c2 已确认）
+  - rule: 终端会话的 v2 帧除 proto 外逐字节不变
+    check: cd vibe-remoted && go test -race ./internal/server -run TestTerminalFramesUnchangedV3
+  - rule: 同一 claude 会话 id 任何时刻最多一个 claude 进程（claudeOwners 先 claim 后 spawn；continue 终端会话固定身份后 claim）
+    check: cd vibe-remoted && go test -race ./internal/chat -run TestSingleProcess && go test -race ./internal/session ./internal/server -run 'TestReloadWaitsForOldProcess|TestChatCreateReplaySameID|TestContinueReusesRunningSession|TestConcurrentContinueCreatesOneProcess|TestRestartRefusedWhenUResumedElsewhere|TestHandoffVsReloadOneWins|TestReloadVsDeleteSerialized|TestTerminalContinueBusyWhenChatOwns|TestTerminalContinueClaimsLatest|TestOrphanCleanup'
+  - rule: 客户端断开不停对话进程、不发 exit
+    check: cd vibe-remoted && go test -race ./internal/server -run TestChatDisconnectKeepsProcess
+  - rule: 待答请求只因回答/取消/中断/退出而消失，不被缓冲淘汰
+    check: cd vibe-remoted && go test -race ./internal/chat -run TestPendingSurvivesRingEviction
+  - rule: 「不再询问」规则只能来自 claude 的建议
+    check: cd vibe-remoted && go test -race ./internal/chat -run TestRespondRejectsForeignRule
+  - rule: 启动命令只由服务端配置拼成，客户端只传 id
+    check: cd vibe-remoted && go test ./internal/chat -run TestCommandFromConfigOnly && go test ./internal/server -run TestAttachIgnoresCommandFields
+  - rule: 模型输出不以原始 HTML 进入 DOM；chat/ 下只有 markdown.ts 写 innerHTML
+    check: cd desktop && npm run test:chat-markdown && npm run test:chat-render-guard
+  - rule: 主 token 不进 claude 环境（对话进程同样只有 hook token）
+    check: cd vibe-remoted && go test ./internal/session -run TestChatEnvHookTokenOnly
+  - rule: 不读取 claude 凭据
+    check: cd vibe-remoted && go test ./internal/chat -run TestNoCredentialAccess
 
 rules:
   requirements: []
