@@ -1,4 +1,4 @@
-import { app, BrowserWindow, clipboard, ipcMain, Notification, safeStorage, screen } from 'electron';
+import { app, BrowserWindow, clipboard, ipcMain, Notification, safeStorage, screen, shell } from 'electron';
 import * as path from 'path';
 import * as fs from 'fs';
 import { MachineStore } from './machine-store';
@@ -242,6 +242,25 @@ function notify(title: string, body: string): Promise<NotifyResult> {
 ipcMain.handle('notify', (_event, title: unknown, body: unknown) => {
   if (typeof title !== 'string' || typeof body !== 'string') throw new Error('notify: title and body must be strings');
   return notify(title.slice(0, 200), body.slice(0, 1000));
+});
+
+// Links in chat replies open in the system browser, never inside the app
+// window (R3.3). Only http(s) and mailto: anything else (file:, javascript:,
+// custom app schemes) is refused here, whatever the renderer sends.
+const EXTERNAL_PROTOCOLS = new Set(['http:', 'https:', 'mailto:']);
+function isAllowedExternalUrl(raw: unknown): raw is string {
+  if (typeof raw !== 'string' || raw.length > 4096) return false;
+  try {
+    return EXTERNAL_PROTOCOLS.has(new URL(raw).protocol);
+  } catch {
+    return false;
+  }
+}
+
+ipcMain.handle('open-external', async (_event, url: unknown) => {
+  if (!isAllowedExternalUrl(url)) return false;
+  await shell.openExternal(url);
+  return true;
 });
 
 // Electron 44 made the clipboard API asynchronous. Await it so a failed native

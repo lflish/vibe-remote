@@ -353,7 +353,7 @@
 - 依赖：T5
 
 ### T7 客户端连接层支持对话帧
-- 状态：待办
+- 状态：完成
 - 文件：修改 `desktop/src/renderer/client.ts`；新建 `desktop/scripts/test-chat-client.mjs`；`desktop/package.json` 加 `test:chat-client` 并接进 `test`
 - 接口：
   - 提供：`attach(sessionId, cols, rows, workdir?, flags?, mode?, opts?: {ui?: 'terminal'|'chat'; handoffFrom?: string})`（`AttachIntent` 持久保存 `ui`，`handoffFrom` 只在创建意图里）；`chatPosition?: () => {epoch: string; seq: number} | null`（每次发 attach 时调用；只有收到当前 epoch 的同步结束 `chat_state` 后才返回非空）；回调 `onChatSync/onChat/onChatState/onChatAck`；`sendChat(text, clientMsgId)`、`respond(requestId, response, setMode?)`、`interrupt()`、`setMode(mode)`；`onReady` 增加第四参 `ready: ReadyFrame`
@@ -370,7 +370,7 @@
 - 依赖：T1
 
 ### T8 对话状态核心（移植 7 月代码）与发送队列
-- 状态：待办
+- 状态：完成
 - 文件：新建 `desktop/src/renderer/chat/types.ts`、`parser.ts`、`session.ts`、`permission.ts`、`diff.ts`、`queue.ts`、`index.ts`（按 design 4.12 的移植表）；测试新建 `desktop/scripts/test-chat-parser.mjs`、`test-chat-session.mjs`、`test-chat-permission.mjs`、`test-chat-diff.mjs`、`test-chat-queue.mjs`（由 `69d8c70` 的 parser.test.ts 160 行、session.test.ts 241 行、permission.test.ts 110 行、diff.test.ts 50 行改写，删去 checkpoint/rollback/cost 相关用例）；`package.json` 接入 `npm test`；共享样本复用 T2 生成的 `vibe-remoted/internal/chat/testdata/probe-stream.jsonl`（测试脚本按相对路径 `../vibe-remoted/internal/chat/testdata/probe-stream.jsonl` 读取，不另存一份）
 - 接口：
   - 提供：`ChatSession{applySync(sync), applyChat(seq, msg), applyHistory(msg), applyState(state), markSubmitting(requestId), reset(); getState(): ChatState; onUpdate}`；`ChatState{messages, status, permissionMode, permissionLocked, pending, slashCommands, ended, omitted, resyncDividerAt?}`；`permission.ts` 的 `classifyPermissionKind`、`parsePermissionQuestions`、`describeSuggestion`、`buildAnswer`、`questionComplete`；`queue.ts` 的 `SendQueue{enqueue, remove, onEcho(clientMsgId), onResult(), onStaleTurn(clientMsgId), canSend(): boolean, takeBackAll(): string}`（发送条件 = 本端上一条已回显且按 FIFO 配到了 result，design 6.8）、`classifySlash(text, slashCommands) → 'send'|'terminalOnly'`
@@ -381,7 +381,7 @@
 - 依赖：T1、T2（fixture）
 
 ### T9 ChatView 基础：对话区、Markdown、工具块、输入框、外链
-- 状态：待办
+- 状态：完成
 - 文件：新建 `desktop/src/renderer/chat/view.ts`（含虚拟列表，d13）、`window.ts`、`markdown.ts`、`tools.ts`、`composer.ts`；修改 `desktop/src/renderer/index.ts`（`views` 支持 `ChatView`、`openChatSession()`、`setActive` 分支、侧边栏对话图标与 `data-ui`）、`desktop/src/renderer/styles.css`、`desktop/src/renderer/i18n.ts`、`desktop/src/main/index.ts`（`open-external` IPC：只放行 `http:`/`https:`/`mailto:`）、`desktop/src/main/preload.ts`（`openExternal`）、`desktop/package.json`（`"markdown-it": "15.0.3"`、`"dompurify": "3.4.17"`，devDependency `"jsdom": "29.1.1"`，均为精确版本）；测试新建 `desktop/scripts/test-chat-markdown.mjs`、`test-chat-render-guard.mjs`、`test-chat-window.mjs`
 - 接口：
   - 使用：T7 的客户端、T8 的 `ChatSession`
@@ -395,7 +395,7 @@
 - 依赖：T7、T8
 
 ### T10 权限、计划、提问、中断、排队、斜杠菜单、模式切换
-- 状态：待办
+- 状态：完成
 - 文件：新建 `desktop/src/renderer/chat/prompts.ts`；修改 `chat/composer.ts`、`chat/view.ts`、`i18n.ts`、`styles.css`
 - 接口：
   - 使用：`permission.ts` 的 `describeSuggestion/buildAnswer/questionComplete`、`queue.ts`、`client.respond/interrupt/setMode/sendChat`
@@ -457,6 +457,10 @@
 | T4 | 2026-11-14 09:41 | dac5164 | 新增 8 个顶层测试（TestHistoryFiltersSidechainAndMeta、TestHistoryFullStream（含按批流式读取断言）、TestSyncHistoryBeforeCutoff、TestStoreRoundTrip、TestStorePermissions、TestStoreCorruptQuarantined、TestStoreAtomicWrite、TestOrphanCleanup 5 个子用例）全部通过；`go test -race -count=2 ./internal/chat/...` 稳定；`go test -race ./...` 全部通过（346 个 PASS 含子用例）；decisions #26 |
 | T5 | 2026-11-14 10:00 | 95e0e72 | `internal/session` 新增 25 个测试（测试计划中标 T5 的全部用例，含 c4 的 TestTerminalContinueClaimsLatest 与 TestTerminalContinueBusyWhenChatOwns 的 Manager 部分，另加 TestOrphanOwnerBlocksReloadUntilGone、TestParseTmuxSessionLineReadsClaudeU），`internal/config` 新增 TestLoadDefaultsStateDir；现有 manager/idempotent/hardening/tmux_helpers 测试断言未改；`go test -race -count=3 ./internal/session/... ./internal/config/...` 稳定；`go test -race ./...` 全部通过（372 个 PASS 含子用例）；decisions #27–#29 |
 | T6 | 2026-11-14 10:13 | 99f91ef | `internal/server/ws_chat_test.go` 新增 26 个测试（测试计划中标 T6 的全部用例与任务内补充的 TestHandoffVsReloadOneWins（20 轮）、TestHandoffReplayNoSelfWait、TestWithOpSerializesHandoffDelete、TestHandedOffTerminalReloadUsesResume、TestReloadChatReturns202、TestCreateChatUntrustedWorkdir、TestTerminalContinueBusyWhenChatOwns 的 attach/REST 部分、TestAttachIgnoresCommandFields 等），TestTerminalFramesUnchangedV3 与现有 ws/contract/hardening 测试断言未改；`go test -race -count=3 ./internal/server/` 稳定；`go test -race ./...` 402 通过 0 失败；`make check-server` 通过；decisions #30–#32 |
+| T7 | 2026-11-14 09:18 | 0185ba6 | `test-chat-client.mjs` 7 个用例通过（含任务列出的 6 个 + 对话 intent 的 liveness throttled）；`npm run typecheck && npm test` 全绿（原有 8 个脚本 + 新脚本） |
+| T8 | 2026-11-14 09:30 | 0133791 | 5 个新脚本 60 个用例通过：test-chat-parser 15（含 fixture lines、string-content user messages）、test-chat-session 14、test-chat-permission 11、test-chat-diff 8、test-chat-queue 12；`npm run typecheck && npm test` 全绿 |
+| T9 | 2026-11-14 09:41 | 0670d58 | 新增 test-chat-markdown 6（jsdom 29.1.1 上的真实 DOMPurify，isSupported=true）、test-chat-render-guard、test-chat-window 3、test-chat-view 2（jsdom 上 ChatView 的 data-testid、发送、工具块与 diff）；test-terminal-selection 增加 markdown-it/dompurify/jsdom 锁版本检查；`npm ci && npm run typecheck && npm test && npm run build` 成功，app.asar 中无 jsdom；仓库根 `gui-smoke.mjs --no-build` 原有 20 项全部 PASS |
+| T10 | 2026-11-14 09:50 | d0c2b94 | test-chat-session 新增 prompt state transitions（共 15）；test-chat-view 新增 7 个 UI 用例（权限/计划/提问卡片、模式切换含 bypass 锁定、斜杠菜单与终端专用命令、排队撤回与中断退回、未送达重发；共 9）；`npm run typecheck && npm test && npm run build` 成功（18 个测试脚本），gui-smoke 原有用例全部 PASS；另用浏览器渲染核对了权限、计划、提问卡片与斜杠菜单的样式 |
 
 ## 后续
 
