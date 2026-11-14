@@ -2,7 +2,9 @@ package server
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"net/http"
 	"net/http/httptest"
 	"os"
 	"os/exec"
@@ -93,6 +95,41 @@ func TestReadyReportsProtocolVersion(t *testing.T) {
 	}
 	if ready.Proto != protocol.Version {
 		t.Fatalf("ready.proto = %d, want %d", ready.Proto, protocol.Version)
+	}
+}
+
+// R18.1: the daemon speaks protocol 3 on both /api/v1/info and a terminal
+// attach's ready frame.
+func TestInfoAndReadyProto3(t *testing.T) {
+	s, url := newWSTestServer(t)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/info", nil)
+	req.Header.Set("Authorization", "Bearer "+s.cfg.Token)
+	w := httptest.NewRecorder()
+	s.mux.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("info status = %d: %s", w.Code, w.Body.String())
+	}
+	var info struct {
+		Proto int `json:"proto"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &info); err != nil {
+		t.Fatal(err)
+	}
+	if info.Proto != 3 {
+		t.Fatalf("info.proto = %d, want 3", info.Proto)
+	}
+
+	conn, ctx := authed(t, s, url)
+	if err := wsjson.Write(ctx, conn, protocol.AttachFrame{Type: protocol.TypeAttach, Cols: 80, Rows: 24}); err != nil {
+		t.Fatal(err)
+	}
+	var ready protocol.ReadyFrame
+	if err := wsjson.Read(ctx, conn, &ready); err != nil || ready.Type != protocol.TypeReady {
+		t.Fatalf("expected ready, got %+v (err %v)", ready, err)
+	}
+	if ready.Proto != 3 {
+		t.Fatalf("ready.proto = %d, want 3", ready.Proto)
 	}
 }
 

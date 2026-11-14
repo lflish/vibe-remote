@@ -116,7 +116,28 @@ export interface MachineInfo {
   version?: string;
   /** Daemon protocol version (protocol.Version). Absent on daemons older than 2. */
   proto?: number;
+  /** Chat UI availability (v3). Absent on older daemons: treat as "upgrade vibe-remoted". */
+  chat?: ChatInfo;
 }
+
+export type ChatUnsupportedReason =
+  | 'not_claude'
+  | 'shell_syntax'
+  | 'conflicting_args'
+  | 'claude_not_found'
+  | 'claude_too_old'
+  | 'state_dir_unwritable'
+  | 'workdir_untrusted';
+
+export interface ChatInfo {
+  supported: boolean;
+  reason?: ChatUnsupportedReason | string;
+  /** Empty while the daemon has not determined the version yet. */
+  claudeVersion?: string;
+  minClaudeVersion: string;
+}
+
+export type ChatTrust = 'trusted' | 'untrusted' | 'unknown';
 
 export interface DirEntry {
   name: string;
@@ -133,4 +154,6 @@ export interface DirListing {
    * compare them reliably. Absent on older daemons — treat as "unknown".
    */
   parent?: string;
+  /** Whether claude trusts `path` (v3). Only 'trusted' allows a chat session. */
+  chatTrust?: ChatTrust;
 }

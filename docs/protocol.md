@@ -10,12 +10,13 @@ PTY 字节数据使用 base64 编码传输（`data` 帧）。
 
 ## 协议版本
 
-当前协议版本为 **2**。服务端在 `ready` 帧和 `/api/v1/info` 中以 `proto` 字段报告；早于此字段的 daemon 不返回 `proto`，客户端按 `1` 处理。
+当前协议版本为 **3**。服务端在 `ready` 帧和 `/api/v1/info` 中以 `proto` 字段报告；早于此字段的 daemon 不返回 `proto`，客户端按 `1` 处理。
 
 | 版本 | 变化 |
 |------|------|
 | 1 | 初始版本（隐式） |
 | 2 | `attach.newSessionId`（新建会话幂等）、`error.code` / `error.fatal`、`proto` 字段本身、服务端 WebSocket 心跳 |
+| 3 | 对话界面：`attach.ui` / `epoch` / `since` / `handoffFrom`，`chat` / `chat_sync` / `chat_state` / `chat_ack` / `chat_send` / `chat_respond` / `chat_interrupt` / `chat_set_mode` 帧，`ready.ui` / `claudeSessionId` / `existing` / `handoffFrom`，`sessions[].ui` / `state` / `activitySeq` / `epoch` / `endReason`，`/api/v1/info.chat`（含 `?recheck=1`），`/api/v1/fs` 的 `chatTrust`，对话会话 reload 返回 202，错误码 `ui_mismatch` / `chat_unsupported` / `claude_session_busy`。终端会话的 `ready` / `sessions` / `data` / `exit` / `error` 帧除 `proto` 值外与 v2 逐字节相同 |
 
 兼容规则：新增字段在接收端一律可选；未知帧类型、未知 `notify.kind`、未知 `error.code` 均忽略（未知 code 只按 `fatal` 处理）。客户端发现 `proto` 低于自身版本时应提示用户更新 daemon——旧 daemon 会接受请求但**静默忽略**不认识的字段。
 
@@ -85,6 +86,11 @@ Client                              Server (vibe-remoted)
 - `workdir`：仅新建时有效，指定 claude 工作目录。省略则用服务端默认值
 - `flags`：可选，仅新建会话有效。客户端勾选的 claude 启动 flag id 列表；服务端按 `claude_flags` 白名单查表，把对应参数拼到 `claude_cmd` 后（未知 id 忽略）
 - `mode`：可选，仅新建会话有效。`normal` 表示直接使用 `workdir`，`worktree` 表示服务端从所选目录所在 Git 仓库创建隔离 Worktree。省略或空值时按 `normal` 处理，以兼容旧客户端
+- `ui`（v3）：`"terminal"` 或 `"chat"`，省略 = `terminal`（旧客户端）。新建时决定会话类型；接入已有会话时必须与会话类型一致，否则返回 `ui_mismatch`。客户端在 `ready` 之后的自动重连与手动重试里继续带上 `ui:"chat"`
+- `epoch` / `since`（v3）：仅 `ui:"chat"` 接入已有会话。客户端上次**完整收到**的位置（某个 epoch 的同步结束标志 `chat_state` 之后才有资格报告），在每次发送 attach 的那一刻读取。两者都给出、`epoch` 等于当前 epoch、且 `since` ≥ 缓冲区最早 `seq`−1 时走增量补发，否则走整体重同步（`reset`）
+- `handoffFrom`（v3）：仅新建且 `ui:"terminal"`。要交接的对话会话 id：daemon 停掉该对话进程，再新建一个终端会话以 `--resume <claude 会话 id>`（无对话记录时 `--session-id`）接上。此时 `workdir`/`flags`/`mode` 被忽略，全部取自对话会话。只属于创建意图，`ready` 之后的重放只用 `sessionId`
+
+客户端可能夹带的其它字段（如 `command`、`args`）一律忽略：启动命令只由服务端配置拼成。
 
 幂等重放时，若会话已存在，第二次 attach 的 `workdir`/`flags`/`mode` 被忽略，以首次创建为准。
 
@@ -112,6 +118,15 @@ Client                              Server (vibe-remoted)
 - `sourceRepo`：原始 Git 仓库根目录
 - `worktreeRoot`：该会话创建的 Worktree 根目录
 - `branch`：该 Worktree 使用的分支
+
+v3 对话会话另带（终端会话一律省略，因此终端 `ready` 与 v2 逐字节相同）：
+
+- `ui`：`"chat"`
+- `claudeSessionId`：该会话对应的 claude 会话 UUID（JSONL 文件名）
+- `existing`：仅当新建请求被转为接入另一个已有会话时为 `true`（勾 `-c` 指向的 claude 会话已在会话 X 里运行，`sessionId` 返回 X）
+- `handoffFrom`：终端会话由交接创建时回显原对话会话 id
+
+对话会话的 `ready` 之后紧跟对话同步序列（见「对话界面」）。
 
 ### data (双向)
 
@@ -154,6 +169,18 @@ PTY 字节流，base64 编码。
   ]
 }
 ```
+
+v3 对话会话的条目另带（终端条目一律省略）：
+
+| 字段 | 说明 |
+|------|------|
+| `ui` | `"chat"` |
+| `state` | 同 `chat_state.status`：`idle` / `running` / `waiting` / `ended` |
+| `activitySeq` | 当前 epoch 的最大 `seq`；与 `epoch` 一起比较，变化 = 有新消息 |
+| `epoch` | 当前 epoch |
+| `endReason` | 已结束时的原因（同 `chat_state.ended.reason`） |
+
+`title` 规则与终端一致（自定义名 → workdir 末段 → id）。
 
 ### ping / pong (双向)
 
@@ -199,6 +226,11 @@ PTY 字节流，base64 编码。
 | `create_failed` | ✓ | 新建失败（如 worktree 模式选了非 Git 目录） |
 | `session_not_found` | ✓ | 要恢复的会话已不存在（被删除、tmux 被杀，或 daemon 未启用 tmux） |
 | `attach_failed` | | 会话存在但接入失败（PTY/tmux 暂时故障） |
+| `ui_mismatch` | ✓ | v3：接入的会话类型与 `attach.ui` 不符（含旧桌面接入对话会话） |
+| `chat_unsupported` | ✓ | v3：新建对话但不可用；`message` 含原因（取值同 `/api/v1/info` 的 `chat.reason`，另有 `workdir_untrusted`） |
+| `claude_session_busy` | ✓ | v3：要启动的 claude 会话正在另一个会话里运行（对话 `-c`、交接、重启，或终端会话带 continue 时被运行中的对话会话占用）；`message` 写明持有者会话名 |
+
+对话会话运行中的失败（版本过旧、进程崩溃、重启失败）不走 `error` 帧，而是 `chat_state.ended` + `vr_exit` 消息 + `exit` 帧，连接保持，客户端不重连。
 
 ### notify (S→C)
 
@@ -211,6 +243,102 @@ PTY 字节流，base64 编码。
 - `kind: "idle"`：claude 完成一次响应（Stop hook）
 - `kind: "waiting"`：claude 需要权限确认/等待输入（Notification hook）
 
+## 对话界面（v3）
+
+对话会话（`ui:"chat"`）由 daemon 以 `claude -p --input-format stream-json --output-format stream-json` 无头驱动，**只支持 claude**。daemon 只解析每行 stream-json 的信封字段，消息体原样放进 `chat` 帧；终端会话的纯字节透传不受影响。以下帧只出现在 `ready.ui == "chat"` 的连接上。
+
+### 同步序列（S→C）
+
+`ready` 之后、以及进程被重载/重启（epoch 变化）时，daemon 依次发：
+
+1. `chat_sync`
+
+   ```json
+   {"type":"chat_sync","epoch":"a1b2c3d4","reset":true,"omitted":0,"historyCount":3120,"backlog":57}
+   ```
+
+   - `epoch`：本进程的随机标识；进程重载/重启后变化
+   - `reset`：`true` = 客户端清空对话区按本次内容重建；`false` = 增量，保留已有内容
+   - `omitted`：本 epoch 内因缓冲（1000 条 / 32 MiB）淘汰的完整消息数（`reset` 时有意义）
+   - `historyCount`：随后发送的 JSONL 历史**完整**条数（不截断；`reset` 时才有）
+   - `backlog`：随后发送的缓冲消息条数（增量时即「已补回 N 条」）
+2. `historyCount` 条 `chat` 帧，`seq: 0`、`h: true`，从旧到新（每 200 帧一批流式发送）
+3. `backlog` 条 `chat` 帧（`seq > since` 的完整消息与当前回复的流式尾巴，按 `seq` 升序）
+4. 一条 `chat_state`（同步结束标志）。客户端只有收到当前 epoch 的这条之后，下次 attach 才可报告 `epoch`/`since`
+
+### chat (S→C)
+
+```json
+{"type":"chat","seq":1043,"msg":{ …claude stdout 的一行原样，或 daemon 合成的消息… }}
+```
+
+- `seq`：本 epoch 内单调递增，所有出站消息（含 `stream_event`）都占号；历史帧为 `0` 并带 `"h":true`。客户端丢弃 `seq ≤ 已见最大 seq` 的帧（历史帧除外）
+- `msg` 来自 claude 时原样转发：`system`（`init` 每回合重发，只当元信息更新；`status`、`api_retry`、`compact_boundary`、`hook_*` 及未知子类型）、`assistant`、`user`（tool_result；中断标记文本；`/compact` 产生的 content 为字符串的 user 消息）、`stream_event`、`result`、`control_request`（`can_use_tool`）、`control_cancel_request`。`keep_alive` 与 daemon 自己发出的控制请求的 `control_response` 不转发。看门狗之后迟到的 `result` 顶层加 `"vr_stale": true`
+- daemon 合成的消息：
+
+| `msg.type` | 字段 | 含义 |
+|------------|------|------|
+| `user`（回显） | `message:{role:"user",content:[{type:"text",text}]}`, `vr_client_msg_id` | daemon 写入 stdin 的用户消息，供所有连接的桌面显示（claude 不回显） |
+| `vr_resolved` | `request_id`, `outcome`: `allowed` / `denied` / `cancelled` / `interrupted` / `exited`, `message?` | 某个待答请求被解决 |
+| `vr_notice` | `code`: `line_dropped` / `stderr` / `stale_turn` / `set_mode_failed` / `dropped_on_stop`, `text`, `clientMsgId?` | 超长行被丢弃（>16 MiB）、回合看门狗判定某条消息不会再有 `result`、计划批准后的模式切换未能入队、停进程时某条已写入的消息没有执行完 |
+| `vr_exit` | `code`, `reason`, `stderrTail` | 进程结束（带 stderr 最后 8 KiB） |
+
+### chat_state (S→C)
+
+任何字段变化都向全部连接广播一次完整状态（不入缓冲），也是同步序列的结束标志。
+
+```json
+{"type":"chat_state","status":"waiting","permissionMode":"default","permissionLocked":false,
+ "pending":[{"requestId":"r-17","seq":1040,"request":{"subtype":"can_use_tool","tool_name":"Bash","input":{"command":"npm test"},"permission_suggestions":[],"tool_use_id":"toolu_…"}}],
+ "slashCommands":[{"name":"compact","description":"…"}],"claudeVersion":"2.1.210","claudeSessionId":"0b6c…",
+ "ended":null}
+```
+
+| 字段 | 说明 |
+|------|------|
+| `status` | `idle` / `running` / `waiting`（有待答请求）/ `ended` |
+| `permissionMode` | `default` / `acceptEdits` / `plan` / `bypassPermissions`，以 claude 报告为准 |
+| `permissionLocked` | 启动参数含 `--dangerously-skip-permissions` 或 `--permission-mode bypassPermissions`；此时 `chat_set_mode` 返回 `mode_locked`。AskUserQuestion / ExitPlanMode 仍会作为待答请求出现 |
+| `pending` | **权威**的待答请求列表 `[{requestId, seq, request}]`（`request` 为 claude 的 `can_use_tool` 请求原样），不受缓冲淘汰影响；客户端的提示只按它显示 |
+| `degraded` | 可选；缺少的 claude 能力（目前只有 `interrupt_receipt`），仅用于诊断 |
+| `slashCommands` | `[{name, description?, argumentHint?}]`；`initialize` 回复的命令列表优先，其次每回合 `system/init` 的 `slash_commands` |
+| `claudeVersion` / `claudeSessionId` | claude 版本与会话 UUID |
+| `ended` | `null` 或 `{reason, code?, message?, handedOffTo?, stderrTail?, claudeVersion?, minClaudeVersion?}`；`reason` ∈ `exited` / `daemon_restart` / `handed_off` / `version_unsupported` / `stopped` / `restart_failed`。重载进行中先广播 `stopped`，新进程起来后广播 `idle`、`ended:null` 与新 epoch 的 reset 同步；启动失败广播 `restart_failed` + `message` |
+
+### chat_send / chat_respond / chat_interrupt / chat_set_mode (C→S)
+
+只在 `ui:"chat"` 的 `ready` 之后有效。每条都会得到一个 `chat_ack`。
+
+```json
+{"type":"chat_send","clientMsgId":"m-17","text":"run the tests"}
+{"type":"chat_respond","requestId":"r-17","response":{"behavior":"allow","updatedInput":{…}},"setMode":"acceptEdits"}
+{"type":"chat_interrupt"}
+{"type":"chat_set_mode","mode":"plan"}
+```
+
+- `chat_send`：`text` 去首尾空白后为空 → `empty`；超过 256 KiB → `too_large`；`clientMsgId`（≤64 字符）在最近 256 个里出现过 → ok 且不重复写入；进程不在 → `chat_not_running`
+- `chat_respond`：`response` = `{behavior:"allow"|"deny", updatedInput?, updatedPermissions?, message?, interrupt?}`。请求不在待答表 → `request_not_pending`（已在别处处理）；`updatedPermissions` 每一项必须与该请求 `permission_suggestions` 中某一项相同，否则 `foreign_rule`；allow 缺 `updatedInput` 时 daemon 补上原 input；写队列满 → `chat_busy`（待答保持不变）。`setMode` 只允许 `acceptEdits` / `default`（其它 → `invalid_mode`），紧接在回复之后发给 claude（计划批准用）
+- `chat_interrupt`：不在运行 → ok 不做事；否则向 claude 发一条 interrupt。待答请求由 claude 自己取消（记 `vr_resolved interrupted`），daemon 不替它回 deny；写队列满 → `chat_busy`
+- `chat_set_mode`：`mode` ∉ {`default`, `acceptEdits`, `plan`} → `invalid_mode`；`permissionLocked` → `mode_locked`；成功后经 `chat_state` 广播新模式
+
+### chat_ack (S→C)
+
+只发给发起方。不用 `error` 帧（`error` 意味着随后断开）。
+
+```json
+{"type":"chat_ack","op":"respond","ref":"r-17","ok":false,"code":"request_not_pending"}
+```
+
+- `op`：`send` / `respond` / `interrupt` / `set_mode`
+- `ref`：回显 `clientMsgId` 或 `requestId`
+- `code`（`ok:false` 时，开放集合）：`empty` / `too_large` / `chat_not_running` / `request_not_pending` / `foreign_rule` / `chat_busy` / `invalid_mode` / `mode_locked`
+
+### 断线与订阅
+
+- WS 断开从不停止对话进程，也不发 `exit`；daemon 持续读取 claude 输出到缓冲区，重连带 `epoch`/`since` 补发
+- 某个连接的发送缓冲（1024 帧）写满时，daemon 以状态码 1013 断开它，客户端重连补齐，不静默丢帧
+- 多个连接可同时接入同一对话会话，看到相同的消息序列；同一待答请求先答先生效
+
 ## 辅助 REST API
 
 每台 vibe-remoted 各自暴露，鉴权方式：`Authorization: Bearer <token>`
@@ -218,15 +346,28 @@ PTY 字节流，base64 编码。
 | Method | Path | 说明 |
 |--------|------|------|
 | GET | `/healthz` | 存活探针（无需鉴权） |
-| GET | `/api/v1/info` | 机器信息：`{version, proto, hostname, tmux_enabled, default_workdir, allowed_roots, claude_flags}`。`version` 是 daemon 构建版本（`-ldflags "-X main.version=..."` 注入，未注入为 `"dev"`），与 `vibe-remoted --version` 输出一致；`proto` 是协议版本（v2 起）；`claude_flags` 只含 `id/label/default`，不下发 `arg` |
-| GET | `/api/v1/sessions` | 会话列表 |
-| DELETE | `/api/v1/sessions/{id}` | 关闭指定会话 |
-| POST | `/api/v1/sessions/{id}/rename` | 重命名会话，body `{"name":"..."}`，名字存 tmux 用户选项 |
-| POST | `/api/v1/sessions/{id}/reload` | 在原 tmux 会话和工作目录中重启 CLI，并继续最近的对话 |
-| GET | `/api/v1/fs?path=<dir>` | 列目录（仅目录项），供远程目录选择器用。返回 `{path, parent, entries}`：`parent` 是规范化后的上级目录，**仅在其本身也可列出时才返回**，已在 `allowed_roots` 顶层时为空串。客户端据此隐藏「上一级」，避免点出必然的 403（`allowed_roots` 配的是符号链接解析前的路径如 `/tmp`，而 `path` 是规范化后的 `/private/tmp`，客户端无法自行比较） |
+| GET | `/api/v1/info` | 机器信息：`{version, proto, hostname, tmux_enabled, default_workdir, allowed_roots, claude_flags, chat}`。`version` 是 daemon 构建版本（`-ldflags "-X main.version=..."` 注入，未注入为 `"dev"`），与 `vibe-remoted --version` 输出一致；`proto` 是协议版本（v2 起）；`claude_flags` 只含 `id/label/default`，不下发 `arg`；`chat`（v3）见下文，`?recheck=1` 强制重新探测 claude 版本 |
+| GET | `/api/v1/sessions` | 会话列表（条目字段同 `sessions` 帧，含 v3 对话字段） |
+| DELETE | `/api/v1/sessions/{id}` | 关闭指定会话。对话会话：停进程、按 worktree 规则清理、删记录，claude 的 JSONL 对话记录保留 |
+| POST | `/api/v1/sessions/{id}/rename` | 重命名会话，body `{"name":"..."}`，终端会话名字存 tmux 用户选项，对话会话存 daemon 的 `chat-sessions.json` |
+| POST | `/api/v1/sessions/{id}/reload` | 终端会话：在原 tmux 会话和工作目录中重启 CLI，并继续最近的对话，成功 204。对话会话（v3）：立即返回 **202**，在后台停进程后以同一 claude 会话重新启动，进度与结果经 `chat_state` 广播（重载中再调用也是 202）；该 claude 会话正被别的会话持有 → 409 `{"error":"claude_session_busy","owner":"<会话 id>"}`。持有 claude 会话的终端会话（交接创建或带 continue 启动）在其被别人持有时同样 409 |
+| GET | `/api/v1/fs?path=<dir>` | 列目录（仅目录项），供远程目录选择器用。返回 `{path, parent, entries, chatTrust}`：`chatTrust`（v3）为该目录在 claude 里的信任状态 `trusted` / `untrusted` / `unknown`，只有 `trusted` 可新建对话会话；`parent` 是规范化后的上级目录，**仅在其本身也可列出时才返回**，已在 `allowed_roots` 顶层时为空串。客户端据此隐藏「上一级」，避免点出必然的 403（`allowed_roots` 配的是符号链接解析前的路径如 `/tmp`，而 `path` 是规范化后的 `/private/tmp`，客户端无法自行比较） |
 | POST | `/api/v1/events` | 带外事件上报，body `{sessionId,kind,message?}`，路由为该会话的 notify 帧。鉴权见下文，与其它端点不同 |
 
 请求体（rename、events）上限 64 KiB，超出返回 413。rename：会话不存在返回 404，tmux 设置失败等其它错误返回 500。
+
+### `/api/v1/info` 的 `chat`（v3）
+
+```json
+{"chat":{"supported":false,"reason":"claude_too_old","claudeVersion":"1.0.51","minClaudeVersion":"2.1.210"}}
+```
+
+- `supported`：能否在这台机器上新建对话会话
+- `reason`（不支持时）：`not_claude`（`claude_cmd` 第一个词不是 claude）、`shell_syntax`（`claude_cmd` 含管道、`$()` 等 shell 语法）、`conflicting_args`（`claude_cmd` 自带 `-p`/`--print`/`--input-format`/`--output-format`/`--permission-prompt-tool`/`--resume`/`-r`/`--session-id`/`--fork-session`）、`claude_not_found`、`claude_too_old`、`state_dir_unwritable`
+- `claudeVersion`：探测到的 claude 版本；探测尚未完成时为空串（此时 `supported:true`，由启动后的 `system/init` 兜底）
+- `minClaudeVersion`：对话界面要求的最低 claude 版本
+
+旧 daemon 没有 `chat` 字段且 `proto < 3`：客户端提示升级 vibe-remoted。
 
 ### `/api/v1/events` 鉴权与限制
 
