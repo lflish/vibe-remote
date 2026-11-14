@@ -168,6 +168,9 @@ type CreateOptions struct {
 	Mode              protocol.SessionMode
 	Cols, Rows        uint16
 	ClaudeCmdOverride string
+	// ClaudeArgv, when set, is the command as argv (handoff); it takes
+	// precedence over ClaudeCmdOverride.
+	ClaudeArgv []string
 	// ValidateWorkdir, when set, re-checks the workdir a worktree session will
 	// actually run in. The caller validated the source directory, but the
 	// worktree is created next to the repo root — possibly outside the allowed
@@ -256,6 +259,10 @@ func (m *Manager) createTerminalLocked(id string, opts CreateOptions) (*Runner, 
 	if opts.ClaudeCmdOverride != "" {
 		claudeCmd = opts.ClaudeCmdOverride
 	}
+	claudeArgv := opts.ClaudeArgv
+	if len(claudeArgv) > 0 {
+		claudeCmd = chat.ShellJoin(claudeArgv)
+	}
 	ownWorktree := mode == protocol.SessionModeWorktree && opts.Worktree == nil
 	claudeU := opts.ClaudeU
 	claimedHere := false
@@ -276,7 +283,8 @@ func (m *Manager) createTerminalLocked(id string, opts CreateOptions) (*Runner, 
 				}
 				return nil, err
 			}
-			claudeCmd = chat.HandoffCommand(p.Exe, p.Args, u, found)
+			claudeArgv = chat.HandoffArgv(p.Exe, p.Args, u, found)
+			claudeCmd = chat.ShellJoin(claudeArgv)
 			claudeU, claimedHere = u, true
 		}
 	}
@@ -290,6 +298,7 @@ func (m *Manager) createTerminalLocked(id string, opts CreateOptions) (*Runner, 
 		Branch:        meta.Branch,
 		UseTmux:       m.useTmux,
 		ClaudeCmd:     claudeCmd,
+		ClaudeArgv:    claudeArgv,
 		LoginShell:    m.loginShell,
 		Shell:         m.shell,
 		Cols:          opts.Cols,

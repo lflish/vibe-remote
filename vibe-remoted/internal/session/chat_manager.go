@@ -767,7 +767,7 @@ func (m *Manager) Handoff(chatID, newID string, cols, rows uint16) (*Runner, err
 		_, found := chat.FindTranscript(m.projectsDir(), u)
 		opts := CreateOptions{
 			Workdir: rec.Workdir, Mode: protocol.SessionMode(rec.Mode), Cols: cols, Rows: rows,
-			ClaudeCmdOverride: chat.HandoffCommand(rec.Exe, rec.Args, u, found), ClaudeU: u,
+			ClaudeArgv: chat.HandoffArgv(rec.Exe, rec.Args, u, found), ClaudeU: u,
 		}
 		worktree := protocol.SessionMode(rec.Mode) == protocol.SessionModeWorktree
 		if worktree {

@@ -199,6 +199,7 @@ type Runner struct {
 
 	useTmux    bool
 	claudeCmd  string
+	claudeArgv []string // when set, the command as argv (claudeCmd is its shell form)
 	loginShell bool
 	shell      string
 	eventsURL  string
@@ -217,14 +218,17 @@ type RunnerConfig struct {
 	Branch        string
 	UseTmux       bool
 	ClaudeCmd     string
-	LoginShell    bool
-	Shell         string
-	Cols          uint16
-	Rows          uint16
-	EventsURL     string
-	HookToken     string // injected as VIBE_REMOTE_TOKEN; see HookToken
-	ClaudeU       string // claude conversation the session holds (@vibe_remote_claude_u)
-	ExtraEnv      []string
+	// ClaudeArgv, when set, is the command as argv (a daemon-built handoff or
+	// continue command); ClaudeCmd is then ignored.
+	ClaudeArgv []string
+	LoginShell bool
+	Shell      string
+	Cols       uint16
+	Rows       uint16
+	EventsURL  string
+	HookToken  string // injected as VIBE_REMOTE_TOKEN; see HookToken
+	ClaudeU    string // claude conversation the session holds (@vibe_remote_claude_u)
+	ExtraEnv   []string
 }
 
 // NewRunner creates and starts a new session.
@@ -240,6 +244,7 @@ func NewRunner(cfg RunnerConfig) (*Runner, error) {
 		Created:       time.Now(),
 		useTmux:       cfg.UseTmux,
 		claudeCmd:     cfg.ClaudeCmd,
+		claudeArgv:    cfg.ClaudeArgv,
 		loginShell:    cfg.LoginShell,
 		shell:         cfg.Shell,
 		eventsURL:     cfg.EventsURL,
@@ -291,7 +296,20 @@ func (r *Runner) CurrentWorkdir() string {
 // loaded, matching what the user gets running claude by hand. `exec` replaces
 // the shell so no extra process lingers.
 func (r *Runner) launchCommand() []string {
+	if len(r.claudeArgv) > 0 {
+		return r.launchArgv(r.claudeArgv)
+	}
 	return r.launchCommandFor(r.claudeCmd)
+}
+
+// launchArgv is launchCommandFor for a command known as argv: exec'd as is
+// when no shell is involved (bare session without a login shell), quoted
+// word by word for a shell otherwise.
+func (r *Runner) launchArgv(argv []string) []string {
+	if !r.loginShell && !r.useTmux {
+		return argv
+	}
+	return r.launchCommandFor(chat.ShellJoin(argv))
 }
 
 func (r *Runner) launchCommandFor(command string) []string {
