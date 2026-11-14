@@ -222,6 +222,16 @@ func TestParseOptionValuesAreNotFlags(t *testing.T) {
 			args: []string{"--add-dir", "/a", "/b", "--dangerously-skip-permissions"}, cont: true, bypass: true},
 		{cmd: "claude -- -c --dangerously-skip-permissions", args: []string{"--", "-c", "--dangerously-skip-permissions"}},
 		{cmd: "claude --permission-mode plan -c", args: []string{"--permission-mode", "plan"}, cont: true, permissionMode: "plan"},
+		// claude 2.1.210 options that take a value (G6).
+		{cmd: "claude -n -c", args: []string{"-n", "-c"}},
+		{cmd: "claude --name -c", args: []string{"--name", "-c"}},
+		{cmd: "claude --effort -c", args: []string{"--effort", "-c"}},
+		{cmd: "claude --debug-file --dangerously-skip-permissions", args: []string{"--debug-file", "--dangerously-skip-permissions"}},
+		{cmd: "claude --plugin-url -c", args: []string{"--plugin-url", "-c"}},
+		{cmd: "claude --remote-control-session-name-prefix -c", args: []string{"--remote-control-session-name-prefix", "-c"}},
+		{cmd: "claude --file a:x.txt b:y.txt -c", args: []string{"--file", "a:x.txt", "b:y.txt"}, cont: true},
+		// --plugin-dir takes one value per occurrence (repeatable, not variadic).
+		{cmd: "claude --plugin-dir /p hello -c", args: []string{"--plugin-dir", "/p", "hello"}, cont: true},
 	} {
 		p, reason := ParseClaudeCmd(tc.cmd)
 		if reason != "" {
@@ -282,5 +292,48 @@ func TestDaemonArgsGoBeforeDashDash(t *testing.T) {
 	}
 	if got, want := HandoffArgv(p.Exe, p.Args, u, false), []string{"claude", "--model", "opus", "--session-id", u, "--", "-c"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("handoff argv = %q, want %q", got, want)
+	}
+}
+
+// Every claude option that takes a value (`<…>` in `claude --help`) is in
+// valueOptions, variadic exactly when its value is `<…...>`. The help text is
+// a committed snapshot: regenerate it on a claude upgrade
+// (claude --help > testdata/claude-help-<version>.txt) to surface new options.
+func TestValueOptionsCoverClaudeHelp(t *testing.T) {
+	raw, err := os.ReadFile(filepath.Join("testdata", "claude-help-2.1.210.txt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	checked := 0
+	for _, line := range strings.Split(string(raw), "\n") {
+		// Option lines are indented by exactly two spaces; continuation
+		// lines of descriptions are indented much deeper.
+		if !strings.HasPrefix(line, "  -") {
+			continue
+		}
+		spec := strings.TrimSpace(line)
+		if i := strings.Index(spec, "  "); i >= 0 {
+			spec = spec[:i]
+		}
+		lt := strings.Index(spec, "<")
+		if lt < 0 {
+			continue // no value, or an optional [value]
+		}
+		variadic := strings.Contains(spec[lt:], "...>")
+		for _, name := range strings.Fields(spec[:lt]) {
+			name = strings.TrimSuffix(name, ",")
+			vo, ok := valueOptions[name]
+			if !ok {
+				t.Errorf("%s (%q) takes a value but is not in valueOptions", name, spec)
+				continue
+			}
+			if vo.variadic != variadic {
+				t.Errorf("%s: variadic=%v, claude --help says %q", name, vo.variadic, spec)
+			}
+			checked++
+		}
+	}
+	if checked < 25 {
+		t.Fatalf("only %d options checked: help snapshot not parsed", checked)
 	}
 }

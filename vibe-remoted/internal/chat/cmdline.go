@@ -39,19 +39,24 @@ var sessionControlArgs = map[string]bool{
 // (unless written --opt=value) is its value, never an option, even when it
 // looks like one: `--append-system-prompt -c` is a prompt of "-c", not
 // continue. variadic ones also take every following word up to the next one
-// starting with "-" (claude's option parser does the same).
+// starting with "-" (claude's option parser does the same). Repeatable
+// single-value options (--plugin-dir, --plugin-url) are not variadic.
+// TestValueOptionsCoverClaudeHelp checks this against a `claude --help`
+// snapshot (testdata/claude-help-2.1.210.txt); a few are hidden from --help.
 var valueOptions = map[string]struct{ variadic bool }{
 	"--append-system-prompt": {}, "--append-system-prompt-file": {},
 	"--system-prompt": {}, "--system-prompt-file": {},
-	"--model": {}, "--fallback-model": {}, "--permission-mode": {},
+	"--model": {}, "--fallback-model": {}, "--permission-mode": {}, "--effort": {},
 	"--settings": {}, "--setting-sources": {}, "--agents": {}, "--agent": {},
 	"--max-turns": {}, "--max-budget-usd": {}, "--json-schema": {},
-	"--session-id": {}, "--resume": {}, "-r": {},
+	"--session-id": {}, "--resume": {}, "-r": {}, "-n": {}, "--name": {},
 	"--output-format": {}, "--input-format": {}, "--permission-prompt-tool": {},
-	"--add-dir": {variadic: true}, "--mcp-config": {variadic: true},
+	"--debug-file": {}, "--plugin-dir": {}, "--plugin-url": {},
+	"--remote-control-session-name-prefix": {},
+	"--add-dir":                            {variadic: true}, "--mcp-config": {variadic: true},
 	"--allowedTools": {variadic: true}, "--allowed-tools": {variadic: true},
 	"--disallowedTools": {variadic: true}, "--disallowed-tools": {variadic: true},
-	"--tools": {variadic: true}, "--betas": {variadic: true}, "--plugin-dir": {variadic: true},
+	"--tools": {variadic: true}, "--betas": {variadic: true}, "--file": {variadic: true},
 }
 
 // Kinds of argument words (classifyArgs).
