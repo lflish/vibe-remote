@@ -214,11 +214,12 @@ export function buildAnswer(request: CanUseToolRequest, choice: AnswerChoice): A
       };
     case 'question': {
       // Multi-select joins labels with ", " and "other" is free text; claude
-      // takes any string (V10).
-      const answers: Record<string, string> = {};
-      choice.questions.forEach((q, i) => {
-        answers[q.question] = selectionValue(choice.selections[i]);
-      });
+      // takes any string (V10). Keys are question texts from the model:
+      // fromEntries defines them as own properties, so one named "__proto__"
+      // is an answer (and is serialized), not a prototype assignment.
+      const answers: Record<string, string> = Object.fromEntries(
+        choice.questions.map((q, i) => [q.question, selectionValue(choice.selections[i])]),
+      );
       return { response: { behavior: 'allow', updatedInput: { ...input, answers } } };
     }
   }

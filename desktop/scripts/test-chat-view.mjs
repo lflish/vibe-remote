@@ -202,6 +202,26 @@ test('question prompt', () => {
   assert.deepEqual(responds(client).at(-1).response.updatedInput.answers, { 'Tea or coffee?': 'Tea', 'Fruits?': 'Apple, Banana' });
 });
 
+test('question titled __proto__ keeps its answer', () => {
+  const { client, $ } = makeView();
+  const input = { questions: [{ question: '__proto__', options: [{ label: 'Object.prototype' }], multiSelect: false }] };
+  client.onChatState(state({ status: 'waiting', pending: [{ requestId: 'q-proto', seq: 1, request: { subtype: 'can_use_tool', tool_name: 'AskUserQuestion', input } }] }));
+  flush();
+  const radio = $('chat-question').querySelector('input[type=radio]');
+  radio.checked = true;
+  radio.dispatchEvent(new Event('change', { bubbles: true }));
+  const submit = $('chat-question-submit');
+  assert.equal(submit.disabled, false);
+  click(submit);
+  const response = responds(client).at(-1).response;
+  const answers = response.updatedInput.answers;
+  assert.ok(Object.prototype.hasOwnProperty.call(answers, '__proto__'), 'answer is an own key');
+  assert.equal(Object.getOwnPropertyDescriptor(answers, '__proto__').value, 'Object.prototype');
+  const wire = JSON.parse(JSON.stringify(response));
+  assert.equal(Object.getOwnPropertyDescriptor(wire.updatedInput.answers, '__proto__')?.value, 'Object.prototype', 'survives serialization');
+  assert.equal(wire.updatedInput.questions[0].question, '__proto__');
+});
+
 test('mode switcher', () => {
   const { client, $ } = makeView();
   const chip = $('chat-mode');
