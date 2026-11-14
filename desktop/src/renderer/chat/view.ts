@@ -203,6 +203,7 @@ export class ChatView {
     this.card = null;
     this.cardWrap = null;
     this.renderWelcome();
+    this.composer.relocalize();
     this.updateComposer();
     this.schedule();
   }

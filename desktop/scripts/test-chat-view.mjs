@@ -8,6 +8,9 @@
 // (chat-queue-item).
 import { strict as assert } from 'node:assert';
 import { JSDOM } from 'jsdom';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join, resolve } from 'node:path';
 import { load, runner } from './chat-test-util.mjs';
 
 const dom = new JSDOM('<!DOCTYPE html><body></body>', { pretendToBeVisual: true });
@@ -24,7 +27,12 @@ globalThis.localStorage = { getItem: (k) => store.get(k) ?? null, setItem: (k, v
 Object.defineProperty(globalThis, 'navigator', { value: { language: 'en-US' }, configurable: true });
 w.vibeRemote = { openExternal: async () => true, writeClipboardText: async () => true };
 
-const { ChatView } = await load('src/renderer/chat/view.ts', { platform: 'browser' });
+// One bundle for the view and i18n, so setLocale() reaches the view's strings.
+const entryDir = mkdtempSync(join(tmpdir(), 'vr-chat-view-entry-'));
+const entry = join(entryDir, 'entry.ts');
+writeFileSync(entry, `export { ChatView } from ${JSON.stringify(resolve('src/renderer/chat/view.ts'))};\nexport { setLocale } from ${JSON.stringify(resolve('src/renderer/i18n.ts'))};\n`);
+const { ChatView, setLocale } = await load(entry, { platform: 'browser' });
+rmSync(entryDir, { recursive: true, force: true });
 const { test, run } = runner('test-chat-view');
 
 class FakeClient {
@@ -293,6 +301,28 @@ test('slash menu and terminal-only commands', () => {
   assert.equal(client.sent.filter((f) => f.type === 'chat_send').length, 0, '/login is not sent');
   assert.ok($('chat-terminal-only'), 'terminal-only notice');
   assert.equal(input.value, '/login', 'input kept');
+});
+
+test('terminal-only notice: closed when the session ends, relabelled on a locale switch (X1)', () => {
+  const { view, client, $ } = makeView();
+  view.onHandoff = () => {};
+  const input = $('chat-input');
+  input.value = '/theme';
+  input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+  const notice = $('chat-terminal-only');
+  assert.equal(notice.hidden, false, 'notice shown');
+  assert.match(notice.textContent, /\/theme only works in the terminal/);
+  // Locale switch while it is shown: the notice follows (index.ts calls relabel()).
+  setLocale('zh');
+  view.relabel();
+  assert.equal(notice.hidden, false, 'still shown after relabel');
+  assert.match(notice.textContent, /\/theme 只能在终端界面使用/, 'notice relabelled');
+  setLocale('en');
+  view.relabel();
+  // The session ends (handed off): the notice and its button go away.
+  client.onChatState(state({ status: 'ended', ended: { reason: 'handed_off', handedOffTo: 't-1' } }));
+  flush();
+  assert.equal(notice.hidden, true, 'notice hidden once the session ended');
 });
 
 test('queue items, withdraw, interrupt returns them', () => {

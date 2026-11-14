@@ -70,6 +70,8 @@ export class Composer {
   private slashItems: SlashCommand[] = [];
   private slashIndex = 0;
   private queueKey = '';
+  /** Command named by the open terminal-only notice ('' = none). */
+  private terminalOnlyCmd = '';
 
   constructor(private handlers: ComposerHandlers) {
     this.root = el('div', 'cwrap');
@@ -83,7 +85,7 @@ export class Composer {
     this.input.addEventListener('input', () => {
       this.autosize();
       this.syncButtons();
-      this.notice.hidden = true;
+      this.hideTerminalOnly();
       this.refreshSlash();
     });
     this.input.addEventListener('keydown', (e) => this.onKey(e));
@@ -151,6 +153,14 @@ export class Composer {
 
   update(state: ComposerState) {
     this.state = state;
+    // Nothing can be sent or handed off from here once the session has ended.
+    if (state.ended) this.hideTerminalOnly();
+    this.relabel();
+  }
+
+  /** Locale switch: also re-renders the open terminal-only notice. */
+  relocalize() {
+    if (this.terminalOnlyCmd) this.renderTerminalOnly();
     this.relabel();
   }
 
@@ -182,6 +192,17 @@ export class Composer {
 
   /** "This command only works in the terminal" (R10.2); the input keeps the text. */
   showTerminalOnly(command: string) {
+    this.terminalOnlyCmd = command;
+    this.renderTerminalOnly();
+  }
+
+  private hideTerminalOnly() {
+    this.terminalOnlyCmd = '';
+    this.notice.hidden = true;
+  }
+
+  private renderTerminalOnly() {
+    const command = this.terminalOnlyCmd;
     this.notice.textContent = '';
     this.notice.appendChild(el('span', undefined, t('chat.slash.terminalOnly', { cmd: command })));
     if (this.handlers.onHandoff) {
