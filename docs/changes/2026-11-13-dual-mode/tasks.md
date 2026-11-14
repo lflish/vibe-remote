@@ -469,3 +469,5 @@
 
 - 「不再询问」的保存位置可切换（原型里的 ← → 切换 destination）：首版按 claude 建议原样使用（H17），切换留到后续。
 - 代码块语法高亮。
+
+- gui-smoke 既有用例「drag-select + ⌘C」偶发失败（review.md 备注），待 dev-test 定性。
