@@ -335,7 +335,7 @@
 - 依赖：T4
 
 ### T6 WebSocket 对话通路与 REST
-- 状态：进行中
+- 状态：完成
 - 文件：修改 `vibe-remoted/internal/server/ws.go`（`wsAttach` 按 `ui`/`handoffFrom` 分派；新增 `wsChatRelay`；把现有 ping 循环抽成 `pingLoop` 供两条 relay 共用，终端行为不变）、`vibe-remoted/internal/server/server.go`（`handleInfo` 加 `chat`、`?recheck=1`；reload/rename/delete 对话分支与 409）；测试新建 `vibe-remoted/internal/server/ws_chat_test.go`，`contract_test.go`、`ws_test.go` 补用例
 - 接口：
   - 使用：`Manager.Create/ChatGet/Reload/Rename/Delete`、`chat.Session.Subscribe/Send/Respond/Interrupt/SetMode`
@@ -456,6 +456,7 @@
 | T3 | 2026-11-14 09:36 | 5f0c835 | `internal/chat` 新增 56 个顶层测试（session_test 35、control_test 21，含子用例共 72 个顶层 PASS），覆盖测试计划中标 T3 的全部用例与任务内补充用例；`go test -race -count=3 ./internal/chat/...` 稳定；`go test -race ./...` 全部通过（333 个 PASS 含子用例）；decisions #22–#25 |
 | T4 | 2026-11-14 09:41 | dac5164 | 新增 8 个顶层测试（TestHistoryFiltersSidechainAndMeta、TestHistoryFullStream（含按批流式读取断言）、TestSyncHistoryBeforeCutoff、TestStoreRoundTrip、TestStorePermissions、TestStoreCorruptQuarantined、TestStoreAtomicWrite、TestOrphanCleanup 5 个子用例）全部通过；`go test -race -count=2 ./internal/chat/...` 稳定；`go test -race ./...` 全部通过（346 个 PASS 含子用例）；decisions #26 |
 | T5 | 2026-11-14 10:00 | 95e0e72 | `internal/session` 新增 25 个测试（测试计划中标 T5 的全部用例，含 c4 的 TestTerminalContinueClaimsLatest 与 TestTerminalContinueBusyWhenChatOwns 的 Manager 部分，另加 TestOrphanOwnerBlocksReloadUntilGone、TestParseTmuxSessionLineReadsClaudeU），`internal/config` 新增 TestLoadDefaultsStateDir；现有 manager/idempotent/hardening/tmux_helpers 测试断言未改；`go test -race -count=3 ./internal/session/... ./internal/config/...` 稳定；`go test -race ./...` 全部通过（372 个 PASS 含子用例）；decisions #27–#29 |
+| T6 | 2026-11-14 10:13 | 99f91ef | `internal/server/ws_chat_test.go` 新增 27 个测试（测试计划中标 T6 的全部用例与任务内补充的 TestHandoffVsReloadOneWins（20 轮）、TestHandoffReplayNoSelfWait、TestWithOpSerializesHandoffDelete、TestHandedOffTerminalReloadUsesResume、TestReloadChatReturns202、TestCreateChatUntrustedWorkdir、TestTerminalContinueBusyWhenChatOwns 的 attach/REST 部分、TestAttachIgnoresCommandFields 等），TestTerminalFramesUnchangedV3 与现有 ws/contract/hardening 测试断言未改；`go test -race -count=3 ./internal/server/` 稳定；`go test -race ./...` 402 通过 0 失败；`make check-server` 通过；decisions #30–#32 |
 
 ## 后续
 
