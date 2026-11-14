@@ -98,6 +98,8 @@ test('buildAnswer plan options', () => {
   const three = P.buildAnswer(plan, { kind: 'plan', option: 3, message: 'use a2' });
   assert.deepEqual(three, { response: { behavior: 'deny', message: 'use a2' } });
   assert.equal(three.setMode, undefined);
+  // Locked (bypass) session: approve without switching the mode.
+  assert.deepEqual(P.buildAnswer(plan, { kind: 'planApprove' }), { response: { behavior: 'allow', updatedInput: plan.input } });
 });
 
 test('buildAnswer question', () => {

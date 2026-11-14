@@ -352,6 +352,7 @@ type ChatSendFrame struct {
 // ChatRespondFrame answers a pending request. Response is
 // {behavior:"allow"|"deny", updatedInput?, updatedPermissions?, message?,
 // interrupt?}; SetMode ("acceptEdits"|"default") is queued right after it.
+// SetMode is only for ExitPlanMode; a locked session drops it silently there.
 type ChatRespondFrame struct {
 	Type      string          `json:"type"`
 	RequestID string          `json:"requestId"`

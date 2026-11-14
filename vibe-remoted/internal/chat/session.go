@@ -1143,12 +1143,17 @@ func (s *Session) Respond(requestID string, resp json.RawMessage, setMode string
 	_ = json.Unmarshal(s.pending[i].request, &req)
 	if setMode != "" {
 		// setMode only comes with approving a plan, and never unlocks a
-		// session whose mode is fixed (as SetMode).
-		if s.spec.Lock {
-			return nack(protocol.AckModeLocked)
-		}
+		// session whose mode is fixed (as SetMode). A locked session still
+		// answers its plan: the setMode is dropped silently and the answer
+		// goes to claude as is (R6).
 		if req.ToolName != "ExitPlanMode" {
+			if s.spec.Lock {
+				return nack(protocol.AckModeLocked)
+			}
 			return nackMsg(protocol.AckInvalidMode, "setMode is only accepted when answering a plan")
+		}
+		if s.spec.Lock {
+			setMode = ""
 		}
 	}
 	if up := r["updatedPermissions"]; len(up) > 0 && string(up) != "null" {

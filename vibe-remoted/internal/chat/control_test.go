@@ -508,15 +508,56 @@ func TestRespondRejectsBadInput(t *testing.T) {
 	}
 }
 
-// A locked (bypass) session's mode cannot be changed through chat_respond
-// either: the answer is refused with mode_locked and the request stays open.
+// A locked (bypass) session still approves plans: the desktop's plan card
+// may carry a setMode, which is dropped silently (ack ok, nothing sent to
+// claude, mode stays bypassPermissions) while the approval itself goes
+// through (R6, G7).
+func TestLockedSessionCanApprovePlan(t *testing.T) {
+	t.Parallel()
+	for _, mode := range []string{"acceptEdits", "default"} {
+		mode := mode
+		t.Run(mode, func(t *testing.T) {
+			t.Parallel()
+			h := newHarness(t, withArgs("--dangerously-skip-permissions"),
+				withSpec(func(s *Spec) { s.Lock = true; s.PermissionMode = "bypassPermissions" })).start()
+			c := h.attach("", nil)
+			h.send("1", "plan")
+			info := h.waitPending(1)
+			if name := h.toolName(info); name != "ExitPlanMode" {
+				t.Fatalf("setup: tool %s", name)
+			}
+			id, req := pendingRequest(t, info)
+			if ack := h.s.Respond(id, allow(req["input"]), mode); !ack.OK || ack.Code != "" {
+				t.Fatalf("approve plan with setMode=%s on a locked session: %+v", mode, ack)
+			}
+			if info := h.s.Snapshot(); len(info.Pending) != 0 {
+				t.Fatalf("plan still pending after approval: %d", len(info.Pending))
+			}
+			c.waitFor("result", func(fs []frame) bool { return resultCount(fs) == 1 })
+			if n := len(h.stdin.control("control_response", "")); n != 1 {
+				t.Fatalf("approval not forwarded to claude (%d responses)", n)
+			}
+			if n := len(h.stdin.control("control_request", "set_permission_mode")); n != 0 {
+				t.Fatalf("set_permission_mode reached a locked session's claude %d times", n)
+			}
+			if mode := h.s.Snapshot().PermissionMode; mode != "bypassPermissions" {
+				t.Fatalf("locked mode became %s", mode)
+			}
+		})
+	}
+}
+
+// Outside a plan, a setMode on a locked session is still refused with
+// mode_locked and the request stays open.
 func TestRespondSetModeRespectsLock(t *testing.T) {
 	t.Parallel()
 	h := newHarness(t, withArgs("--dangerously-skip-permissions"),
 		withSpec(func(s *Spec) { s.Lock = true; s.PermissionMode = "bypassPermissions" })).start()
-	c := h.attach("", nil)
-	h.send("1", "plan")
+	h.send("1", "ask")
 	info := h.waitPending(1)
+	if name := h.toolName(info); name == "ExitPlanMode" {
+		t.Fatalf("setup: tool %s", name)
+	}
 	id, req := pendingRequest(t, info)
 	if ack := h.s.Respond(id, allow(req["input"]), "default"); ack.OK || ack.Code != protocol.AckModeLocked {
 		t.Fatalf("respond with setMode on a locked session: %+v", ack)
@@ -524,13 +565,8 @@ func TestRespondSetModeRespectsLock(t *testing.T) {
 	if info := h.s.Snapshot(); len(info.Pending) != 1 || info.PermissionMode != "bypassPermissions" {
 		t.Fatalf("after refused respond: pending=%d mode=%s", len(info.Pending), info.PermissionMode)
 	}
-	h.respond(id, allow(req["input"]), "")
-	c.waitFor("result", func(fs []frame) bool { return resultCount(fs) == 1 })
 	if n := len(h.stdin.control("control_request", "set_permission_mode")); n != 0 {
 		t.Fatalf("set_permission_mode reached a locked session's claude %d times", n)
-	}
-	if mode := h.s.Snapshot().PermissionMode; mode != "bypassPermissions" {
-		t.Fatalf("locked mode became %s", mode)
 	}
 }
 

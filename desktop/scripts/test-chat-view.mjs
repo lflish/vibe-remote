@@ -174,6 +174,28 @@ test('plan prompt options', () => {
   assert.deepEqual(responds(client).at(-1).response, { behavior: 'deny', message: 'use a2' });
 });
 
+test('plan prompt in a locked (bypass) session: one approve option, no setMode', () => {
+  const { client, $ } = makeView();
+  const plan = { subtype: 'can_use_tool', tool_name: 'ExitPlanMode', input: { plan: '# Plan\n1. do it' }, requires_user_interaction: true };
+  client.onChatState(state({ status: 'waiting', permissionMode: 'bypassPermissions', permissionLocked: true, pending: [{ requestId: 'p1', seq: 1, request: plan }] }));
+  flush();
+  const card = $('chat-plan');
+  assert.ok(card, 'plan card shows in bypass');
+  assert.ok($('chat-plan-approve'), 'single approve option');
+  assert.equal($('chat-plan-opt-1'), null, 'no mode-switching option 1');
+  assert.equal($('chat-plan-opt-2'), null, 'no mode-switching option 2');
+  assert.ok($('chat-plan-opt-3'), 'keep planning stays');
+  click($('chat-plan-approve'));
+  const sent = responds(client).at(-1);
+  assert.deepEqual(sent.response, { behavior: 'allow', updatedInput: plan.input });
+  assert.equal(sent.setMode, undefined, 'no setMode for a locked session');
+  client.onChatAck({ type: 'chat_ack', op: 'respond', ref: 'p1', ok: false, code: 'chat_busy' });
+  flush();
+  card.querySelector('input').value = 'more';
+  click($('chat-plan-opt-3'));
+  assert.deepEqual(responds(client).at(-1).response, { behavior: 'deny', message: 'more' });
+});
+
 test('question prompt', () => {
   const { client, $ } = makeView();
   const input = { questions: [

@@ -173,6 +173,8 @@ export type AnswerChoice =
   // ExitPlanMode: 1 approve + auto-accept edits, 2 approve + ask before edits,
   // 3 keep planning (message = what to change).
   | { kind: 'plan'; option: 1 | 2 | 3; message?: string }
+  // ExitPlanMode in a locked (bypass) session: approve, mode unchanged.
+  | { kind: 'planApprove' }
   | { kind: 'question'; questions: Question[]; selections: QuestionSelection[] };
 
 export interface Answer {
@@ -212,6 +214,8 @@ export function buildAnswer(request: CanUseToolRequest, choice: AnswerChoice): A
         response: { behavior: 'allow', updatedInput: input },
         setMode: choice.option === 1 ? 'acceptEdits' : 'default',
       };
+    case 'planApprove':
+      return { response: { behavior: 'allow', updatedInput: input } };
     case 'question': {
       // Multi-select joins labels with ", " and "other" is free text; claude
       // takes any string (V10). Keys are question texts from the model:

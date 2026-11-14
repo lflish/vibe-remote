@@ -298,7 +298,7 @@ v3 对话会话的条目另带（终端条目一律省略）：
 |------|------|
 | `status` | `idle` / `running` / `waiting`（有待答请求）/ `ended` |
 | `permissionMode` | `default` / `acceptEdits` / `plan` / `bypassPermissions`，以 claude 报告为准 |
-| `permissionLocked` | 启动参数含 `--dangerously-skip-permissions` 或 `--permission-mode bypassPermissions`；此时 `chat_set_mode` 与带 `setMode` 的 `chat_respond` 返回 `mode_locked`。AskUserQuestion / ExitPlanMode 仍会作为待答请求出现 |
+| `permissionLocked` | 启动参数含 `--dangerously-skip-permissions` 或 `--permission-mode bypassPermissions`；此时 `chat_set_mode` 返回 `mode_locked`；回答非计划请求时带 `setMode` 也返回 `mode_locked`，回答计划（`ExitPlanMode`）时 `setMode` 被静默忽略、回答照常转给 claude。AskUserQuestion / ExitPlanMode 仍会作为待答请求出现（桌面端对锁定会话的计划卡片只给「批准」一个不切模式的选项 + 继续完善） |
 | `pending` | **权威**的待答请求列表 `[{requestId, seq, request}]`（`request` 为 claude 的 `can_use_tool` 请求原样），不受缓冲淘汰影响；客户端的提示只按它显示 |
 | `degraded` | 可选；缺少的 claude 能力（目前只有 `interrupt_receipt`），仅用于诊断 |
 | `slashCommands` | `[{name, description?, argumentHint?}]`；`initialize` 回复的命令列表优先，其次每回合 `system/init` 的 `slash_commands` |
@@ -317,7 +317,7 @@ v3 对话会话的条目另带（终端条目一律省略）：
 ```
 
 - `chat_send`：`text` 去首尾空白后为空 → `empty`；超过 256 KiB 或 `clientMsgId` 超过 64 字符 → `too_large`；写队列满 → `chat_busy`；`clientMsgId` 在最近 256 个已接受的消息里 → ok + `duplicate:true` + `completed`（是否已见到它的 `result`），不重复写入（这份记录与缓冲区分开，缓冲淘汰后照样认得）；记了 `dropped_on_stop` 的消息不算已接受，同 id 重发会写入新进程；进程不在 → `chat_not_running`
-- `chat_respond`：`response` = `{behavior:"allow"|"deny", updatedInput?, updatedPermissions?, message?, interrupt?}`，不是这个形状 → `invalid_response`。请求不在待答表 → `request_not_pending`（已在别处处理）；`updatedPermissions` 每一项必须与该请求 `permission_suggestions` 中某一项相同，否则 `foreign_rule`；allow 缺 `updatedInput` 时 daemon 补上原 input；进程不在 → `chat_not_running`；写队列满 → `chat_busy`（待答保持不变）。`setMode` 只用于回答计划（`ExitPlanMode` 请求）且只允许 `acceptEdits` / `default`，否则 → `invalid_mode`；`permissionLocked` 时带 `setMode` → `mode_locked`（这两种情况都不回答，待答保持不变）。`setMode` 紧接在回复之后发给 claude（计划批准用）
+- `chat_respond`：`response` = `{behavior:"allow"|"deny", updatedInput?, updatedPermissions?, message?, interrupt?}`，不是这个形状 → `invalid_response`。请求不在待答表 → `request_not_pending`（已在别处处理）；`updatedPermissions` 每一项必须与该请求 `permission_suggestions` 中某一项相同，否则 `foreign_rule`；allow 缺 `updatedInput` 时 daemon 补上原 input；进程不在 → `chat_not_running`；写队列满 → `chat_busy`（待答保持不变）。`setMode` 只允许 `acceptEdits` / `default`，否则 → `invalid_mode`；只用于回答计划（`ExitPlanMode` 请求），回答其他请求时带 `setMode` → `invalid_mode`（`permissionLocked` 时为 `mode_locked`），这两种情况都不回答，待答保持不变。`setMode` 紧接在回复之后发给 claude（计划批准用）；`permissionLocked` 时回答计划所带的 `setMode` 被静默丢弃（不发 `set_permission_mode`，`ok:true`，模式不变），回答本身照常转给 claude
 - `chat_interrupt`：不在运行 → ok 不做事；否则向 claude 发一条 interrupt。待答请求由 claude 自己取消（记 `vr_resolved interrupted`），daemon 不替它回 deny；写队列满 → `chat_busy`
 - `chat_set_mode`：`mode` ∉ {`default`, `acceptEdits`, `plan`} → `invalid_mode`；`permissionLocked` → `mode_locked`；进程不在 → `chat_not_running`；写队列满 → `chat_busy`；成功后经 `chat_state` 广播新模式
 

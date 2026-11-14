@@ -274,6 +274,7 @@ export interface ChatRespondFrame {
   type: typeof FrameType.ChatRespond;
   requestId: string;
   response: ChatResponse;
+  /** Only when answering ExitPlanMode; a permissionLocked session drops it silently. */
   setMode?: 'acceptEdits' | 'default';
 }
 

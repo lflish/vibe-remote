@@ -447,6 +447,7 @@ export class ChatView {
       this.card = createPromptCard(prompt, {
         cwd: this.workdir,
         renderMarkdown: (text) => this.renderMarkdown(text),
+        locked: st.permissionLocked,
         onAnswer: (p, choice) => this.answer(p, choice),
         onInterrupt: () => this.interrupt(),
       });
