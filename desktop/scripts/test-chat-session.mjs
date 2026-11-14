@@ -291,4 +291,47 @@ test('undelivered after resync', () => {
   assert.equal(userBubbles(s.getState())[0].delivery, 'undelivered');
 });
 
+test('prompt state transitions', () => {
+  const s = ready();
+  const bash = { subtype: 'can_use_tool', tool_name: 'Bash', input: { command: 'touch x' }, tool_use_id: 'tu1' };
+  const pend = (...ids) => ids.map((id) => ({ requestId: id, seq: 1, request: bash }));
+  feed(s, [{ type: 'control_request', request_id: 'a', request: bash }, { type: 'control_request', request_id: 'b', request: bash }, { type: 'control_request', request_id: 'c', request: bash }, { type: 'control_request', request_id: 'd', request: bash }]);
+  s.applyState(state({ status: 'waiting', pending: pend('a', 'b', 'c', 'd') }));
+  assert.deepEqual(s.getState().pending.map((p) => p.state), ['open', 'open', 'open', 'open']);
+
+  // a: answered here → resolved allowed.
+  s.markSubmitting('a');
+  assert.equal(s.promptState('a'), 'submitting');
+  feed(s, [{ type: 'vr_resolved', request_id: 'a', outcome: 'allowed' }]);
+  assert.equal(s.promptState('a'), 'allowed');
+  assert.ok(!s.getState().pending.some((p) => p.requestId === 'a'));
+
+  // b: claude cancelled it.
+  feed(s, [{ type: 'vr_resolved', request_id: 'b', outcome: 'cancelled' }]);
+  assert.equal(s.promptState('b'), 'cancelled');
+
+  // c: interrupted while waiting (R8.2).
+  feed(s, [{ type: 'vr_resolved', request_id: 'c', outcome: 'interrupted' }]);
+  assert.equal(s.promptState('c'), 'interrupted');
+  const notices = s.getState().messages.filter((m) => m.role === 'notice' && m.kind === 'prompt').map((m) => m.outcome);
+  assert.deepEqual(notices, ['cancelled', 'interrupted'], 'allowed shows in the tool block, not as a notice');
+
+  // d: we answered, but another desktop answered first (R5.7).
+  s.markSubmitting('d');
+  feed(s, [{ type: 'vr_resolved', request_id: 'd', outcome: 'denied' }]);
+  s.markHandledElsewhere('d');
+  assert.equal(s.promptState('d'), 'handledElsewhere');
+  assert.ok(s.getState().messages.some((m) => m.role === 'notice' && m.outcome === 'handledElsewhere'));
+
+  // chat_busy: the answer was not taken, the prompt is answerable again.
+  s.applyState(state({ status: 'waiting', pending: pend('e') }));
+  s.markSubmitting('e');
+  s.markOpen('e');
+  assert.equal(s.getState().pending[0].state, 'open');
+  // Process exit closes it as exited.
+  feed(s, [{ type: 'vr_resolved', request_id: 'e', outcome: 'exited' }]);
+  assert.equal(s.promptState('e'), 'exited');
+  assert.equal(s.getState().pending.length, 0);
+});
+
 await run();

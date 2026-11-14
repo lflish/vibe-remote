@@ -8,12 +8,14 @@
 import type { MachineConfig, ChatAckFrame } from '../../shared/protocol';
 import type { VibeRemoteClient } from '../client';
 import { t } from '../i18n';
-import { Composer } from './composer';
+import { Composer, type SettableMode } from './composer';
 import { createMarkdownRenderer } from './markdown';
-import { SendQueue } from './queue';
+import { buildAnswer, type AnswerChoice } from './permission';
+import { createPromptCard, type PromptCard } from './prompts';
+import { classifySlash, SendQueue } from './queue';
 import { ChatSession, type TurnEvent } from './session';
 import { renderToolBlock } from './tools';
-import type { AssistantMessage, ChatState, Message, NoticeMessage, Part, UserMessage } from './types';
+import type { AssistantMessage, ChatState, Message, NoticeMessage, Part, Prompt, UserMessage } from './types';
 import { expandUp, follow, initialWindow, type Window as ListWindow } from './window';
 
 export type Activity = 'none' | 'output' | 'idle' | 'waiting';
@@ -55,6 +57,8 @@ export class ChatView {
   onActivity?: () => void;
   /** Status bar message for the user (send refused, …). */
   onMessage?: (text: string) => void;
+  /** "Continue in a new terminal session" (handoff, wired by index.ts). */
+  onHandoff?: () => void;
 
   private transcript: HTMLElement;
   private inner: HTMLElement;
@@ -62,6 +66,8 @@ export class ChatView {
   private welcome: HTMLElement;
   private bottom: HTMLElement;
   private nodes = new Map<string, RenderedNode>();
+  private card: PromptCard | null = null;
+  private cardWrap: HTMLElement | null = null;
   private toolOpen = new Map<string, boolean>();
   private win: ListWindow = { start: 0, end: 0 };
   private renderedMessages: Message[] | null = null;
@@ -101,9 +107,19 @@ export class ChatView {
     this.banner.append(bannerText, retry);
 
     this.queue = new SendQueue((item) => this.sendNow(item.id, item.text), newClientMsgId);
+    const handoff = () => this.onHandoff;
     this.composer = new Composer({
       onSubmit: (text) => this.submit(text),
       onInterrupt: () => this.interrupt(),
+      onSetMode: (mode) => this.setMode(mode),
+      onRemoveQueued: (id) => {
+        this.queue.remove(id);
+        this.schedule();
+      },
+      // Read when the notice shows: the button appears only once index.ts wires a handoff.
+      get onHandoff() {
+        return handoff();
+      },
     });
     this.bottom.appendChild(this.composer.root);
     chat.append(this.transcript, this.bottom);
@@ -152,6 +168,9 @@ export class ChatView {
     const retry = this.banner.querySelector('.reconnect-banner-retry');
     if (retry) retry.textContent = t('banner.retry');
     this.nodes.clear();
+    this.cardWrap?.remove();
+    this.card = null;
+    this.cardWrap = null;
     this.renderWelcome();
     this.updateComposer();
     this.schedule();
@@ -159,6 +178,7 @@ export class ChatView {
 
   dispose() {
     if (this.frame) cancelAnimationFrame(this.frame);
+    this.composer.dispose();
     this.client.disconnect();
     this.container.remove();
   }
@@ -185,10 +205,54 @@ export class ChatView {
 
   private onAck(ack: ChatAckFrame) {
     if (ack.ok) return;
-    if (ack.op === 'send' && ack.ref && ack.code !== 'empty') {
-      this.session.markUndelivered(ack.ref);
-      this.onMessage?.(t('chat.sendFailed', { msg: ack.message || ack.code || '' }));
+    const why = ack.message || ack.code || '';
+    switch (ack.op) {
+      case 'send':
+        if (ack.ref && ack.code !== 'empty') {
+          this.session.markUndelivered(ack.ref);
+          this.onMessage?.(t('chat.sendFailed', { msg: why }));
+        }
+        break;
+      case 'respond':
+        if (!ack.ref) break;
+        if (ack.code === 'request_not_pending') {
+          // Someone answered first, or claude withdrew it (R5.7).
+          this.session.markHandledElsewhere(ack.ref);
+        } else {
+          // Not taken (queue full, rejected): answerable again.
+          this.session.markOpen(ack.ref);
+          this.onMessage?.(ack.code === 'chat_busy' ? t('chat.busy') : t('chat.respondFailed', { msg: why }));
+        }
+        break;
+      case 'interrupt':
+        this.onMessage?.(ack.code === 'chat_busy' ? t('chat.busy') : t('chat.interruptFailed', { msg: why }));
+        break;
+      case 'set_mode':
+        this.onMessage?.(ack.code === 'mode_locked' ? t('chat.mode.lockedReason') : t('chat.mode.failed', { msg: why }));
+        break;
     }
+  }
+
+  private answer(prompt: Prompt, choice: AnswerChoice) {
+    const { response, setMode } = buildAnswer(prompt.request, choice);
+    if (this.client.respond(prompt.requestId, response, setMode)) {
+      this.session.markSubmitting(prompt.requestId);
+    } else {
+      this.onMessage?.(t('chat.hint.disconnected'));
+    }
+  }
+
+  private setMode(mode: SettableMode) {
+    if (!this.client.setMode(mode)) this.onMessage?.(t('chat.hint.disconnected'));
+  }
+
+  private resend(clientMsgId: string) {
+    const msg = this.session
+      .getState()
+      .messages.find((m): m is UserMessage => m.role === 'user' && m.clientMsgId === clientMsgId);
+    if (!msg) return;
+    this.queue.enqueue(msg.parts.map((p) => (p.type === 'text' ? p.text : '')).join(''), clientMsgId);
+    this.schedule();
   }
 
   private onTurn(ev: TurnEvent) {
@@ -224,7 +288,14 @@ export class ChatView {
   }
 
   private submit(text: string): boolean {
-    return this.queue.enqueue(text) !== null;
+    // TUI-only commands are not sent; point at the terminal instead (R10.2).
+    if (classifySlash(text, this.session.getState().slashCommands) === 'terminalOnly') {
+      this.composer.showTerminalOnly(text.trim().split(/\s+/)[0]);
+      return false;
+    }
+    const taken = this.queue.enqueue(text) !== null;
+    this.schedule();
+    return taken;
   }
 
   private interrupt() {
@@ -237,7 +308,47 @@ export class ChatView {
   private updateComposer() {
     const st = this.session.getState();
     const where = [this.machine.name, this.workdir].filter(Boolean).join(' · ');
-    this.composer.update({ status: st.status, connected: this.connected, ended: !!st.ended, where });
+    this.composer.update({
+      status: st.status,
+      connected: this.connected,
+      ended: !!st.ended,
+      where,
+      mode: st.permissionMode,
+      locked: st.permissionLocked,
+    });
+    this.composer.setSlashCommands(st.slashCommands);
+    this.composer.setQueue(this.queue.queued());
+  }
+
+  // The first open prompt replaces the composer (prototype scenes 2/3); the
+  // card is kept while it is the same request so typed notes survive.
+  private renderPrompt(st: ChatState) {
+    const prompt = st.pending[0];
+    if (!prompt) {
+      if (this.card) {
+        this.cardWrap?.remove();
+        this.card = null;
+        this.cardWrap = null;
+      }
+      this.composer.root.hidden = false;
+      return;
+    }
+    if (!this.card || this.card.requestId !== prompt.requestId) {
+      this.cardWrap?.remove();
+      this.card = createPromptCard(prompt, {
+        cwd: this.workdir,
+        renderMarkdown: (text) => this.renderMarkdown(text),
+        onAnswer: (p, choice) => this.answer(p, choice),
+        onInterrupt: () => this.interrupt(),
+      });
+      this.cardWrap = el('div', 'cwrap prompt-wrap');
+      this.cardWrap.appendChild(this.card.el);
+      this.bottom.insertBefore(this.cardWrap, this.composer.root);
+      const card = this.card;
+      requestAnimationFrame(() => card.el.focus());
+    }
+    this.card.update(prompt.state, st.pending.length - 1);
+    this.composer.root.hidden = true;
   }
 
   // --- rendering ---
@@ -307,8 +418,11 @@ export class ChatView {
     if (!same) this.inner.replaceChildren(...els);
     this.welcome.hidden = msgs.length > 0 || !this.synced;
 
-    if (stick && bottom) this.transcript.scrollTop = this.transcript.scrollHeight;
+    // The bottom area (prompt card or composer) changes the transcript height:
+    // settle it before sticking to the bottom.
     this.updateComposer();
+    this.renderPrompt(st);
+    if (stick && bottom) this.transcript.scrollTop = this.transcript.scrollHeight;
   }
 
   private signature(m: Message, pendingTools: Set<string>): string {
@@ -331,6 +445,15 @@ export class ChatView {
     if (m.delivery === 'sending' || m.delivery === 'undelivered') {
       box.dataset.delivery = m.delivery;
       box.appendChild(el('span', `u-delivery ${m.delivery}`, t(`chat.delivery.${m.delivery}`)));
+    }
+    if (m.delivery === 'undelivered' && m.clientMsgId) {
+      // Same clientMsgId: the daemon drops it if it did arrive after all (6.8).
+      const id = m.clientMsgId;
+      const again = el('button', 'u-resend', t('chat.resend'));
+      again.type = 'button';
+      again.dataset.testid = 'chat-resend';
+      again.addEventListener('click', () => this.resend(id));
+      box.appendChild(again);
     }
     return box;
   }
