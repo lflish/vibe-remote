@@ -496,6 +496,22 @@ html, body {
 .modal-mode-description, .modal-mode-note { font-size: 11px; color: var(--text-muted); }
 .modal-mode-note { padding: 2px 0 6px; color: var(--text-secondary); }
 
+/* Interface cards (terminal / chat) in the new-session picker */
+.modal-ui-cards { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+.modal-ui-cards .modal-mode-card { margin-bottom: 6px; }
+.modal-ui-only {
+  margin-left: 6px; padding: 0 5px; border-radius: 4px;
+  background: var(--bg-hover); color: var(--text-muted);
+  font-size: 10.5px; font-weight: 500;
+}
+.modal-ui-card.unavailable,
+.modal-ui-card:disabled { opacity: .62; cursor: not-allowed; background: var(--bg-secondary); }
+.modal-ui-card:disabled:hover { background: var(--bg-secondary); }
+.modal-ui-reason { font-size: 10.5px; line-height: 1.4; color: var(--error); }
+.modal-ui-reason[hidden] { display: none; }
+.modal-ui-flag-note { padding-top: 4px; }
+.modal-ui-flag-note[hidden] { display: none; }
+
 ::-webkit-scrollbar {
   width: 6px;
 }

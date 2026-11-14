@@ -215,7 +215,10 @@ function attentionFallback(): NotifyResult {
   return 'fallback';
 }
 
-function notify(title: string, body: string): Promise<NotifyResult> {
+// `tag` names what the notification is about (the renderer passes the session
+// key); a click hands it back as `notification-click` so the renderer can open
+// that session (R16.3). The Dock fallback has nothing to click (d12).
+function notify(title: string, body: string, tag?: string): Promise<NotifyResult> {
   if (nativeNotificationsBroken || !Notification.isSupported()) return Promise.resolve(attentionFallback());
   return new Promise((resolve) => {
     const n = new Notification({ title, body });
@@ -234,14 +237,16 @@ function notify(title: string, body: string): Promise<NotifyResult> {
     n.on('click', () => {
       mainWindow?.show();
       mainWindow?.focus();
+      if (tag && mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('notification-click', tag);
     });
     n.show();
   });
 }
 
-ipcMain.handle('notify', (_event, title: unknown, body: unknown) => {
+ipcMain.handle('notify', (_event, title: unknown, body: unknown, tag: unknown) => {
   if (typeof title !== 'string' || typeof body !== 'string') throw new Error('notify: title and body must be strings');
-  return notify(title.slice(0, 200), body.slice(0, 1000));
+  if (tag !== undefined && typeof tag !== 'string') throw new Error('notify: tag must be a string');
+  return notify(title.slice(0, 200), body.slice(0, 1000), tag?.slice(0, 300));
 });
 
 // Links in chat replies open in the system browser, never inside the app

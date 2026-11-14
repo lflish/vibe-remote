@@ -11,6 +11,8 @@ import { t, toggleLocale, getLocale, onLocaleChange } from './i18n';
 import { fitWhenVisible, dimensionsWhenVisible } from './terminal-layout';
 import { attachMacClipboardShortcuts } from './terminal-clipboard';
 import { ChatView } from './chat/view';
+import { nextDot, type ActivityEvent, type Dot, type RestSnapshot } from './chat/activity';
+import type { Prompt } from './chat/types';
 
 // Declared by preload
 
@@ -28,7 +30,7 @@ interface SessionView {
   fitAddon: FitAddon;
   container: HTMLElement;
   banner: HTMLElement; // reconnect banner overlay, hidden by default
-  activity: 'none' | 'output' | 'idle' | 'waiting'; // sidebar dot state
+  activity: Dot; // sidebar dot state
   suppressUntil: number; // ms timestamp: ignore onData activity until then (attach repaint)
   warnedProto: boolean; // already told the user this daemon is older than the client
 }
@@ -75,6 +77,11 @@ let renamingActive = false;
 // refresh) — a fresh button would come back enabled and let the user fire a
 // second respawn-pane at the same pane while the first is still running.
 const reloadingSessions = new Set<string>();
+// Chat sessions not open here get their sidebar dot from the 5s REST poll
+// (activitySeq / epoch / state, R16.4). Keyed by viewKey; open views keep
+// their own `activity` from live frames instead.
+const sessionDots = new Map<string, Dot>();
+const restSnapshots = new Map<string, RestSnapshot>();
 // Every refresh captures a generation. A newer refresh or machine-list edit
 // invalidates older in-flight requests without serializing the 5s poll.
 let machineRefreshGeneration = 0;
@@ -149,6 +156,26 @@ async function init() {
   showMachineOverview(machines[0]);
   startPolling();
 }
+
+// A click on a chat notification opens that session (R16.3). The tag is the
+// session's view key. Wired once at load; unsigned builds never deliver
+// clicks (Dock fallback, d12), and nothing ever switches sessions on its own.
+window.vibeRemote?.onNotificationClick?.((tag) => {
+  const open = views.get(tag);
+  const r = nextDot(open?.activity ?? sessionDots.get(tag) ?? 'none', { kind: 'notificationClick' }, { isActive: tag === activeKey, windowFocused: true });
+  if (!r.open) return;
+  if (open) {
+    setActive(tag);
+    return;
+  }
+  for (const machine of machines) {
+    const session = machineSessions.get(machineKey(machine))?.find((s) => viewKey(machine, s.id) === tag);
+    if (session) {
+      openExisting(machine, session);
+      return;
+    }
+  }
+});
 
 // wireLanguageToggle wires the sidebar language button and re-renders all
 // dynamically-built UI when the locale switches. Static HTML labels are read
@@ -351,6 +378,7 @@ async function refreshAllMachines(force = false, targetMachineKey?: string) {
       const sessionsRequest = rest.listSessions()
         .then((sessions) => {
           if (!isCurrent(m)) return;
+          trackChatActivity(m, sessions);
           machineSessions.set(mk, sessions);
           machineOnline.set(mk, true);
           machineIssues.delete(mk);
@@ -369,6 +397,57 @@ async function refreshAllMachines(force = false, targetMachineKey?: string) {
       return [sessionsRequest];
     }),
   );
+}
+
+// trackChatActivity updates the dots of chat sessions that are not open here
+// from what the poll says about them, and notifies when one starts waiting.
+function trackChatActivity(machine: MachineConfig, sessions: SessionInfo[]) {
+  const mk = machineKey(machine);
+  const live = new Set<string>();
+  for (const s of sessions) {
+    if (s.ui !== 'chat') continue;
+    const key = viewKey(machine, s.id);
+    live.add(key);
+    const next: RestSnapshot = { state: s.state, activitySeq: s.activitySeq, epoch: s.epoch };
+    const prev = restSnapshots.get(key);
+    restSnapshots.set(key, next);
+    if (views.has(key)) continue; // an open view follows its live frames
+    const r = nextDot(sessionDots.get(key) ?? 'none', { kind: 'rest', prev, next }, { isActive: false, windowFocused: document.hasFocus() });
+    sessionDots.set(key, r.dot);
+    if (r.notify && notificationsEnabled()) {
+      const title = `${machine.name} · ${s.title || s.id}`;
+      notifyDesktop(title, t('session.waitingFallback'), key, (result) => {
+        const after = nextDot(sessionDots.get(key) ?? 'none', { kind: 'notifyResult', result }, { isActive: key === activeKey, windowFocused: document.hasFocus() });
+        sessionDots.set(key, after.dot);
+      });
+    }
+  }
+  for (const key of [...restSnapshots.keys()]) {
+    if (key.startsWith(`${mk}::`) && !live.has(key)) {
+      restSnapshots.delete(key);
+      sessionDots.delete(key);
+    }
+  }
+}
+
+// applyViewActivity moves an open chat view's dot on a live event and raises
+// the "needs you" notification (R16.1–R16.3).
+function applyViewActivity(view: ChatView, ev: ActivityEvent, prompt?: Prompt) {
+  const r = nextDot(view.activity, ev, { isActive: view.key === activeKey, windowFocused: document.hasFocus() });
+  if (r.dot !== view.activity) {
+    view.activity = r.dot;
+    renderSidebar();
+  }
+  if (r.notify && notificationsEnabled()) {
+    const body = prompt?.kind === 'plan'
+      ? t('chat.notify.plan')
+      : prompt?.kind === 'question'
+        ? t('chat.notify.question')
+        : prompt?.toolName ? t('chat.notify.tool', { tool: prompt.toolName }) : t('session.waitingFallback');
+    notifyDesktop(`${view.machine.name} · ${sessionDisplayTitle(view.machine, view.sessionId)}`, body, view.key, (result) => {
+      applyViewActivity(view, { kind: 'notifyResult', result });
+    });
+  }
 }
 
 function classifyMachineIssue(error: unknown): MachineIssue {
@@ -586,7 +665,8 @@ function isLoopbackAddress(address: string): boolean {
 async function startNewSession(machine: MachineConfig, initialMode?: SessionMode) {
   const picked = await openDirPicker(machine, initialMode);
   if (!picked) return;
-  openSession(machine, '', picked.workdir, picked.flags, picked.mode);
+  if (picked.ui === 'chat') openChatSession(machine, '', picked.workdir, picked.flags, picked.mode);
+  else openSession(machine, '', picked.workdir, picked.flags, picked.mode);
 }
 
 function showMachineOverview(machine: MachineConfig) {
@@ -654,6 +734,10 @@ function openChatSession(machine: MachineConfig, sessionId: string, workdir?: st
     if (view.key === activeKey) updateStatusBar(text);
   };
   view.onActivity = () => renderSidebar();
+  view.onActivityEvent = (ev, prompt) => applyViewActivity(view, ev, prompt);
+  // Chat state comes from the structured stream (R16.4); hook notify frames
+  // (idle / waiting) are for terminal sessions and are ignored here.
+  client.onNotify = () => {};
 
   client.onReady = (sid, readyWorkdir, proto) => {
     view.banner.style.display = 'none';
@@ -865,6 +949,7 @@ function setActive(key: string) {
   if (activeView && activeView.activity !== 'none') {
     activeView.activity = 'none';
   }
+  sessionDots.delete(key);
   if (activeView) {
     const activeMachineKey = machineKey(activeView.machine);
     if (collapsedMachines.delete(activeMachineKey)) persistCollapsedMachines();
@@ -992,11 +1077,13 @@ function renderSidebar() {
       dot.className = 'session-unread';
       dot.setAttribute('aria-hidden', 'true');
       const openView = views.get(key);
-      const act = openView?.activity ?? 'none';
+      const act = openView?.activity ?? sessionDots.get(key) ?? 'none';
       if (act === 'none' || key === activeKey) {
         dot.classList.add('hidden');
+        item.dataset.dot = 'none';
       } else {
         dot.classList.add(act); // 'output' | 'idle' | 'waiting'
+        item.dataset.dot = act;
       }
 
       const reload = document.createElement('button');
@@ -1255,9 +1342,14 @@ function notificationsEnabled(): boolean {
 // notifyDesktop goes through the main process rather than the web Notification
 // API, which fails silently in unsigned builds (see notify() in main/index.ts).
 // The outcome is logged so GUI tests can observe it without stubbing anything.
-function notifyDesktop(title: string, body: string) {
-  void window.vibeRemote.notify(title, body)
-    .then((result) => console.debug(`[notify] ${result}: ${title}`))
+// `tag` (chat sessions only) comes back on a click so the session can be
+// opened; `onResult` sees whether it was shown or fell back to the Dock (d12).
+function notifyDesktop(title: string, body: string, tag?: string, onResult?: (result: 'shown' | 'fallback') => void) {
+  void window.vibeRemote.notify(title, body, tag)
+    .then((result) => {
+      console.debug(`[notify] ${result}: ${title}`);
+      onResult?.(result);
+    })
     .catch((e) => console.warn('[notify] failed', e));
 }
 

@@ -10,6 +10,7 @@ import type { VibeRemoteClient } from '../client';
 import { t } from '../i18n';
 import { Composer, type SettableMode } from './composer';
 import { createMarkdownRenderer } from './markdown';
+import type { ActivityEvent } from './activity';
 import { buildAnswer, type AnswerChoice } from './permission';
 import { createPromptCard, type PromptCard } from './prompts';
 import { classifySlash, SendQueue } from './queue';
@@ -59,6 +60,11 @@ export class ChatView {
   onMessage?: (text: string) => void;
   /** "Continue in a new terminal session" (handoff, wired by index.ts). */
   onHandoff?: () => void;
+  /**
+   * Sidebar-dot events from live frames (R16): new messages, turn results,
+   * new / cleared prompts. Not fired for history or a reset sync's replay.
+   */
+  onActivityEvent?: (ev: ActivityEvent, prompt?: Prompt) => void;
 
   private transcript: HTMLElement;
   private inner: HTMLElement;
@@ -74,6 +80,12 @@ export class ChatView {
   private frame = 0;
   private connected = false;
   private synced = false;
+  // Activity bookkeeping (onActivityEvent).
+  private syncing = false;
+  private syncBacklog = false;
+  private firstSync = true;
+  private seenPrompts = new Set<string>();
+  private hadPrompts = false;
   private workdir = '';
   private renderMarkdown = createMarkdownRenderer(window, {
     copyLabel: t('chat.copy'),
@@ -188,19 +200,49 @@ export class ChatView {
   private wireClient() {
     this.client.onChatSync = (sync) => {
       this.synced = false;
+      this.syncing = true;
+      // Missed messages caught up by an incremental sync are new activity; a
+      // reset sync replays what was already there.
+      this.syncBacklog = !sync.reset && sync.backlog > 0;
       this.session.applySync(sync);
     };
     this.client.onChat = (seq, msg, history) => {
       if (history) this.session.applyHistory(msg);
       else this.session.applyChat(seq, msg);
+      if (!history && !this.syncing) {
+        const m = msg as { type?: unknown; vr_stale?: unknown };
+        this.onActivityEvent?.(m.type === 'result' && m.vr_stale !== true ? { kind: 'result' } : { kind: 'chat' });
+      }
     };
     this.client.onChatState = (st) => {
       this.synced = true;
+      const closingSync = this.syncing;
+      this.syncing = false;
       this.session.applyState(st);
       this.updateComposer();
+      this.trackActivity(st.pending.map((p) => p.requestId), closingSync);
       this.onActivity?.();
     };
     this.client.onChatAck = (ack) => this.onAck(ack);
+  }
+
+  private trackActivity(pendingIds: string[], closingSync: boolean) {
+    const fresh = pendingIds.filter((id) => !this.seenPrompts.has(id));
+    for (const id of fresh) this.seenPrompts.add(id);
+    const first = this.firstSync;
+    if (closingSync) this.firstSync = false;
+    // Prompts already open when this view first synced were there before the
+    // user opened it: they show as cards, not as a new notification.
+    if (!first) {
+      if (closingSync && this.syncBacklog) this.onActivityEvent?.({ kind: 'chat' });
+      if (fresh.length > 0) {
+        const prompt = this.session.getState().pending.find((p) => p.requestId === fresh[0]);
+        this.onActivityEvent?.({ kind: 'prompt' }, prompt);
+      } else if (this.hadPrompts && pendingIds.length === 0) {
+        this.onActivityEvent?.({ kind: 'promptsCleared' });
+      }
+    }
+    this.hadPrompts = pendingIds.length > 0;
   }
 
   private onAck(ack: ChatAckFrame) {
