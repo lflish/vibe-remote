@@ -381,7 +381,7 @@
 - 依赖：T1、T2（fixture）
 
 ### T9 ChatView 基础：对话区、Markdown、工具块、输入框、外链
-- 状态：进行中
+- 状态：完成
 - 文件：新建 `desktop/src/renderer/chat/view.ts`（含虚拟列表，d13）、`window.ts`、`markdown.ts`、`tools.ts`、`composer.ts`；修改 `desktop/src/renderer/index.ts`（`views` 支持 `ChatView`、`openChatSession()`、`setActive` 分支、侧边栏对话图标与 `data-ui`）、`desktop/src/renderer/styles.css`、`desktop/src/renderer/i18n.ts`、`desktop/src/main/index.ts`（`open-external` IPC：只放行 `http:`/`https:`/`mailto:`）、`desktop/src/main/preload.ts`（`openExternal`）、`desktop/package.json`（`"markdown-it": "15.0.3"`、`"dompurify": "3.4.17"`，devDependency `"jsdom": "29.1.1"`，均为精确版本）；测试新建 `desktop/scripts/test-chat-markdown.mjs`、`test-chat-render-guard.mjs`、`test-chat-window.mjs`
 - 接口：
   - 使用：T7 的客户端、T8 的 `ChatSession`
@@ -395,7 +395,7 @@
 - 依赖：T7、T8
 
 ### T10 权限、计划、提问、中断、排队、斜杠菜单、模式切换
-- 状态：待办
+- 状态：进行中
 - 文件：新建 `desktop/src/renderer/chat/prompts.ts`；修改 `chat/composer.ts`、`chat/view.ts`、`i18n.ts`、`styles.css`
 - 接口：
   - 使用：`permission.ts` 的 `describeSuggestion/buildAnswer/questionComplete`、`queue.ts`、`client.respond/interrupt/setMode/sendChat`
@@ -455,6 +455,7 @@
 | T2 | 2026-11-14 09:11 | 4d6c06a | `internal/chat` 16 个顶层测试全部通过（含任务列出的 13 个 + TestProjectsDir、TestFakeClaudeBehaviours 18 个子用例），`go test -race -count=5 ./internal/chat/...` 稳定；`go vet ./...`、`make check` 全绿；decisions #21 |
 | T7 | 2026-11-14 09:18 | 0185ba6 | `test-chat-client.mjs` 7 个用例通过（含任务列出的 6 个 + 对话 intent 的 liveness throttled）；`npm run typecheck && npm test` 全绿（原有 8 个脚本 + 新脚本） |
 | T8 | 2026-11-14 09:30 | 0133791 | 5 个新脚本 60 个用例通过：test-chat-parser 15（含 fixture lines、string-content user messages）、test-chat-session 14、test-chat-permission 11、test-chat-diff 8、test-chat-queue 12；`npm run typecheck && npm test` 全绿 |
+| T9 | 2026-11-14 09:41 | 0670d58 | 新增 test-chat-markdown 6（jsdom 29.1.1 上的真实 DOMPurify，isSupported=true）、test-chat-render-guard、test-chat-window 3、test-chat-view 2（jsdom 上 ChatView 的 data-testid、发送、工具块与 diff）；test-terminal-selection 增加 markdown-it/dompurify/jsdom 锁版本检查；`npm ci && npm run typecheck && npm test && npm run build` 成功，app.asar 中无 jsdom；仓库根 `gui-smoke.mjs --no-build` 原有 20 项全部 PASS |
 
 ## 后续
 
