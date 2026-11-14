@@ -471,3 +471,4 @@
 - 代码块语法高亮。
 
 - gui-smoke 既有用例「drag-select + ⌘C」偶发失败（review.md 备注），待 dev-test 定性。
+- gui-smoke 的终端 daemon 改用独立 `TMUX_TMPDIR`（现在共用开发者的 `tmux -L vibe-remote`，与并发的 Go 测试会串扰），拖选用例失败时打印复制到的原文（dev-test，decisions #38）。
