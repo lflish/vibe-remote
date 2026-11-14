@@ -1391,17 +1391,57 @@ func (s *Session) broadcastLocked(ev Event) {
 }
 
 // SyncPlan is the sync sequence a subscriber is sent first (design 4.4):
-// chat_sync, history (reset only), the buffered backlog, then chat_state.
+// chat_sync, the transcript history (reset only), the buffered backlog, then
+// chat_state as the end mark.
 type SyncPlan struct {
 	Sync    protocol.ChatSyncFrame
 	Backlog [][]byte
 	State   []byte
+
+	// History source of a reset sync: the transcript's first cutoff bytes
+	// (cutoff < 0 = all of it, 0 = none).
+	projectsDir, claudeSessionID string
+	cutoff                       int64
 }
 
-// WriteTo writes the sync sequence through write, in order.
+func historyFrame(line []byte) []byte {
+	b := make([]byte, 0, len(line)+40)
+	b = append(b, `{"type":"chat","seq":0,"h":true,"msg":`...)
+	b = append(b, line...)
+	return append(b, '}')
+}
+
+// WriteTo writes the sync sequence through write, in order. The transcript
+// is read here, outside every lock, HistoryBatch lines at a time; each batch
+// is written before the next is read.
 func (p *SyncPlan) WriteTo(write func([]byte) error) error {
-	if err := write(mustJSON(p.Sync)); err != nil {
+	path := ""
+	if p.Sync.Reset && p.cutoff != 0 {
+		path, _ = FindTranscript(p.projectsDir, p.claudeSessionID)
+	}
+	sync := p.Sync
+	if path != "" {
+		n, err := CountHistory(path, p.cutoff)
+		if err != nil {
+			log.Printf("chat: read history %s: %v", path, err)
+			path = ""
+		}
+		sync.HistoryCount = n
+	}
+	if err := write(mustJSON(sync)); err != nil {
 		return err
+	}
+	if path != "" {
+		if _, err := StreamHistory(path, p.cutoff, HistoryBatch, func(lines [][]byte) error {
+			for _, l := range lines {
+				if err := write(historyFrame(l)); err != nil {
+					return err
+				}
+			}
+			return nil
+		}); err != nil {
+			return err
+		}
 	}
 	for _, f := range p.Backlog {
 		if err := write(f); err != nil {
@@ -1452,6 +1492,9 @@ func (s *Session) planLocked(epoch string, since *uint64) *SyncPlan {
 	}
 	if !incremental {
 		plan.Sync.Omitted = s.omitted
+		plan.projectsDir = s.spec.ProjectsDir
+		plan.claudeSessionID = s.spec.ClaudeSessionID
+		plan.cutoff = s.cutoff
 	}
 	for _, e := range backlog {
 		plan.Backlog = append(plan.Backlog, e.frame)
