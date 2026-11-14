@@ -300,6 +300,44 @@ test('undelivered message can be re-sent under the same id', () => {
   assert.equal($$('chat-msg-user').length, 1, 'no second bubble');
 });
 
+test('resend clicked twice while offline: one queue entry, one bubble, queue not stuck', () => {
+  const { view, client, $, $$ } = makeView();
+  const input = $('chat-input');
+  input.value = 'hello';
+  input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+  const id = client.sent.at(-1).clientMsgId;
+  client.onChatAck({ type: 'chat_ack', op: 'send', ref: id, ok: false, code: 'chat_not_running' });
+  flush();
+  view.setConnected(false);
+  client.open = false;
+  click($('chat-resend'));
+  flush();
+  const again = $('chat-resend');
+  assert.ok(!again || again.disabled, 'resend button disabled once queued');
+  if (again) click(again);
+  flush();
+  assert.deepEqual(view.queue.queued().map((it) => it.id), [id], 'queued once');
+  // Reconnect: an incremental sync, the queued resend goes out once.
+  client.open = true;
+  view.setConnected(true);
+  client.onChatSync({ type: 'chat_sync', epoch: 'e', reset: false, omitted: 0, historyCount: 0, backlog: 0 });
+  client.onChatState(state());
+  flush();
+  assert.equal(client.sent.filter((f) => f.type === 'chat_send' && f.clientMsgId === id).length, 2, 'original + one resend');
+  client.onChat(1, { type: 'user', message: { role: 'user', content: [{ type: 'text', text: 'hello' }] }, vr_client_msg_id: id }, false);
+  client.onChat(2, { type: 'result', subtype: 'success', is_error: false, result: 'hi' }, false);
+  client.onChatAck({ type: 'chat_ack', op: 'send', ref: id, ok: true });
+  client.onChatState(state());
+  flush();
+  assert.equal($$('chat-msg-user').length, 1, 'one bubble');
+  assert.equal(view.state().messages.find((m) => m.role === 'user').delivery, 'sent');
+  input.value = 'next message';
+  input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+  flush();
+  assert.equal(client.sent.at(-1).text, 'next message', 'queue not stuck');
+  assert.equal(view.queue.queued().length, 0);
+});
+
 test('ended banner, restart tracking and retry', () => {
   const { view, client, $ } = makeView();
   const calls = [];

@@ -337,7 +337,7 @@ export class ChatView {
     const msg = this.session
       .getState()
       .messages.find((m): m is UserMessage => m.role === 'user' && m.clientMsgId === clientMsgId);
-    if (!msg) return;
+    if (!msg || this.queue.has(clientMsgId)) return;
     this.queue.enqueue(msg.parts.map((p) => (p.type === 'text' ? p.text : '')).join(''), clientMsgId);
     this.schedule();
   }
@@ -571,6 +571,8 @@ export class ChatView {
   }
 
   private signature(m: Message, pendingTools: Set<string>): string {
+    // A queued resend disables the bubble's resend button.
+    if (m.role === 'user') return m.clientMsgId && this.queue.has(m.clientMsgId) ? `${m.rev}:q` : String(m.rev);
     if (m.role !== 'assistant') return String(m.rev);
     const waiting = m.parts.filter((p) => p.type === 'tool_use' && pendingTools.has(p.id)).map((p) => (p as { id: string }).id);
     return `${m.rev}:${waiting.join(',')}`;
@@ -597,6 +599,8 @@ export class ChatView {
       const again = el('button', 'u-resend', t('chat.resend'));
       again.type = 'button';
       again.dataset.testid = 'chat-resend';
+      // Already queued to go out again: one resend per message.
+      again.disabled = this.queue.has(id);
       again.addEventListener('click', () => this.resend(id));
       box.appendChild(again);
     }

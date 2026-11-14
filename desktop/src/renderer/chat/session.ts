@@ -234,16 +234,19 @@ export class ChatSession {
     return msg;
   }
 
-  /** Re-sends an undelivered message under the same id. Returns its text, or null. */
+  /**
+   * Re-sends a message under the same id, reusing its bubble (one bubble per
+   * id). Returns its text, or null if there is no such message.
+   */
   resend(clientMsgId: string): string | null {
-    const msg = this.messages.find(
-      (m): m is UserMessage => m.role === 'user' && m.clientMsgId === clientMsgId && m.delivery === 'undelivered',
-    );
+    const msg = this.messages.find((m): m is UserMessage => m.role === 'user' && m.clientMsgId === clientMsgId);
     if (!msg) return null;
-    msg.delivery = 'sending';
-    msg.rev++;
-    this.localSending.set(clientMsgId, { msg, gen: this.syncGen });
-    this.emit();
+    if (msg.delivery !== 'sent') {
+      msg.delivery = 'sending';
+      msg.rev++;
+      this.localSending.set(clientMsgId, { msg, gen: this.syncGen });
+      this.emit();
+    }
     return textOf(msg);
   }
 

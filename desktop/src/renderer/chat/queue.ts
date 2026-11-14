@@ -82,10 +82,26 @@ export class SendQueue {
    */
   enqueue(text: string, id?: string): QueueItem | null {
     if (!text.trim()) return null;
+    if (id !== undefined) {
+      // One entry per id: a second resend of the same message is the same
+      // message, and the daemon would only answer it as a duplicate.
+      const queued = this.items.find((it) => it.id === id);
+      if (queued) return queued;
+      if (this.inFlight(id)) return null;
+    }
     const item = { id: id ?? this.newId(), text };
     this.items.push(item);
     this.pump();
     return item;
+  }
+
+  /** Whether this id is queued or sent and still waiting for its echo / result. */
+  has(id: string): boolean {
+    return this.items.some((it) => it.id === id) || this.inFlight(id);
+  }
+
+  private inFlight(id: string): boolean {
+    return id === this.lastOwn && !(this.lastOwnEchoed && this.lastOwnPaired);
   }
 
   /** Withdraws a queued message (R9.2). */

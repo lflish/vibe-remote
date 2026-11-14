@@ -151,6 +151,28 @@ test('undelivered message stops blocking', () => {
   assert.equal(again.id, a.id);
 });
 
+test('re-sending the same id twice queues it once', () => {
+  const { q, sent, conn } = makeQueue();
+  q.setStatus('idle');
+  const a = q.enqueue('lost');
+  q.onUndelivered(a.id);
+  conn.up = false;
+  const first = q.enqueue('lost', a.id);
+  const second = q.enqueue('lost', a.id);
+  assert.equal(first.id, a.id);
+  assert.equal(second?.id ?? a.id, a.id);
+  assert.deepEqual(q.queued().map((it) => it.id), [a.id], 'one queue entry per id');
+  conn.up = true;
+  q.pump();
+  assert.deepEqual(sent.map((s) => s.id), [a.id, a.id], 'sent again once');
+  // In flight (not yet echoed / paired): the same id is not queued again.
+  assert.equal(q.enqueue('lost', a.id), null);
+  assert.equal(q.queued().length, 0);
+  q.onEcho(a.id);
+  q.onResult();
+  assert.equal(q.canSend(), true, 'paired by its one echo and result');
+});
+
 test('socket down keeps the item queued', () => {
   const { q, sent, conn } = makeQueue({ connected: false });
   q.setStatus('idle');
