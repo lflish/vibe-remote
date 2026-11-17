@@ -1,0 +1,713 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-variant="m1">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>vibe-remote · 按项目和 worktree 组织会话：三个视觉方案</title>
+<style>
+/* ---------- outer page (neutral, deliberately unlike the app) ---------- */
+*{box-sizing:border-box}
+html{-webkit-text-size-adjust:100%}
+body{margin:0;background:#f6f8fb;color:#1e293b;font:15px/1.6 -apple-system,BlinkMacSystemFont,"PingFang SC","Helvetica Neue","Segoe UI",sans-serif;-webkit-font-smoothing:antialiased}
+.pg{max-width:1264px;margin:0 auto;padding:18px 24px 56px}
+.pg-note{margin:0 0 4px;font-size:13px;color:#55627a}
+.pg h1{margin:0 0 12px;font-size:22px;font-weight:650;letter-spacing:-.2px}
+.vbar{position:sticky;top:0;z-index:30;margin:0 -24px;padding:10px 24px;background:rgba(246,248,251,.95);border-bottom:1px solid #e2e8f0}
+.vbtns{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px}
+.vb{display:block;width:100%;text-align:left;font:inherit;color:inherit;border:1px solid #cbd5e1;border-radius:10px;background:#fff;padding:7px 12px 8px;cursor:pointer}
+.vb:hover{border-color:#94a3b8}
+.vb:focus-visible{outline:2px solid #2563eb;outline-offset:2px}
+.vb[aria-pressed=true]{border-color:#2563eb;box-shadow:0 0 0 1px #2563eb;background:#eff6ff}
+.vb b{font-size:14px;font-weight:650}
+.vb kbd{display:inline-block;min-width:18px;margin-right:6px;padding:0 4px;border:1px solid #cbd5e1;border-radius:4px;background:#f8fafc;font:600 11px/16px ui-monospace,Menlo,monospace;color:#475569;text-align:center;vertical-align:1px}
+.vb .rec{margin-left:6px;padding:1px 6px;border-radius:4px;background:#2563eb;color:#fff;font-size:11px;font-weight:600;vertical-align:1px}
+.vb span.d{display:block;margin-top:1px;font-size:12.5px;line-height:1.45;color:#55627a}
+.snav{display:flex;flex-wrap:wrap;gap:4px 16px;margin-top:8px;font-size:13px}
+.snav span{color:#55627a}
+.snav a{color:#2563eb;text-decoration:none}
+.snav a:hover{text-decoration:underline}
+.why{margin:12px 0 0;font-size:13.5px;color:#334155}
+.why b{color:#1e293b}
+.vdesc{display:none}
+.sc{margin-top:34px;scroll-margin-top:128px}
+.sc h2{margin:0 0 2px;font-size:17px;font-weight:650}
+.sc h2 i{font-style:normal;color:#2563eb;margin-right:6px}
+.sc .lead{margin:0 0 12px;font-size:13.5px;color:#55627a}
+.fn{margin:10px 0 0;font-size:12.5px;color:#55627a}
+.pg-foot{margin-top:40px;padding:14px 16px;border:1px solid #cbd5e1;border-radius:10px;background:#fff;font-size:14.5px}
+.pg-foot code{padding:1px 6px;border-radius:5px;background:#eff6ff;color:#1d4ed8;font:600 13px ui-monospace,Menlo,monospace}
+body.solo .sc{display:none}
+body.solo .sc.cur{display:block}
+.winwrap{overflow-x:auto;padding:2px 2px 36px;margin:0 -2px -18px}
+@media (max-width:760px){
+  .pg{padding:14px 14px 40px}
+  .vbar{margin:0 -14px;padding:8px 14px}
+  .vbtns{gap:6px}
+  .vb{padding:6px 8px;text-align:center}
+  .vb span.d,.vb .rec,.vb kbd,.vb .t{display:none}
+  .snav{display:none}
+  .vdesc{display:block;margin:10px 0 0;font-size:13px;color:#334155}
+  .sc{scroll-margin-top:64px}
+}
+
+/* ---------- app themes ---------- */
+.app{
+  --app:#EFEFF4;--sb:#EFEFF4;--surface:#FFFFFF;--sunk:#F6F6FA;--hover:#E5E4EE;
+  --text:#1C1B22;--text2:#565365;--text3:#6A6779;
+  --accent:#6B54D3;--accent-h:#5942BF;
+  --soft:#E3DEF7;--softer:#F3F0FC;--sel:#DDD7F5;
+  --border:#E4E3EB;--border2:#D2D0DC;
+  --ok:#1B7F52;--warn:#9A5A0A;--err:#BB382E;
+  --dot-new:#6F6C86;--dot-idle:#1A8F58;--dot-wait:#C2710A;--link:#6B54D3;
+  --add-bg:#E3F4EA;--add-fg:#155C3A;--del-bg:#FBE7E4;--del-fg:#972A22;
+  --term-bg:#FFFFFF;--term-fg:#1C1B22;--term-cur:#6B54D3;--term-sel:#D9D2F4;
+  --scrim:rgba(28,27,44,.24);
+  --r-card:14px;--r-item:9px;--r-ctl:10px;
+  --sh:0 1px 2px rgba(24,20,48,.04),0 10px 28px rgba(24,20,48,.07);
+  font:14px/1.5 -apple-system,BlinkMacSystemFont,"SF Pro Text","PingFang SC","Helvetica Neue",sans-serif;color:var(--text);-webkit-font-smoothing:antialiased;text-align:left
+}
+[data-variant=m2] .app{--app:#FFFFFF;--sb:#F4F4F8;--r-card:8px;--r-item:5px;--r-ctl:6px}
+[data-variant=m3] .app{
+  --app:#E9E4DA;--sb:#E9E4DA;--surface:#FFFEFB;--sunk:#F5F1EA;--hover:#DED8CC;
+  --text:#2B2A28;--text2:#5F5C56;--text3:#6A665E;
+  --accent:#AD5048;--accent-h:#93443D;
+  --soft:#F1E1DA;--softer:#F8EFEA;--sel:#FFFEFB;
+  --border:#E0D9CD;--border2:#CEC5B7;
+  --ok:#3F6E3D;--warn:#85561B;--err:#B42318;
+  --dot-new:#687786;--dot-idle:#3F7F3C;--dot-wait:#B8690F;--link:#93443D;
+  --add-bg:#E6F0E1;--add-fg:#2F5A2D;--del-bg:#F6E3DE;--del-fg:#8E3B33;
+  --term-bg:#FBFAF7;--term-fg:#2B2A28;--term-cur:#AD5048;--term-sel:#DED7CB;
+  --scrim:rgba(46,40,30,.28);
+  --sh:0 1px 2px rgba(60,50,38,.05),0 10px 28px rgba(60,50,38,.09)
+}
+.app *{box-sizing:border-box}
+:where(.app) button{font:inherit;color:inherit;background:none;border:0;padding:0;margin:0;cursor:pointer;text-align:inherit}
+.app code,.app pre,.app kbd,.mono{font-family:"SF Mono",ui-monospace,Menlo,Monaco,Consolas,monospace}
+.i{width:16px;height:16px;fill:none;stroke:currentColor;stroke-width:1.5;stroke-linecap:round;stroke-linejoin:round;flex-shrink:0}
+.sp{flex:1}
+
+/* window frame */
+.win{position:relative;display:flex;width:1200px;height:780px;border-radius:12px;overflow:hidden;background:var(--app);box-shadow:0 0 0 1px rgba(15,23,42,.16),0 8px 22px rgba(15,23,42,.1);zoom:var(--z,1)}
+.lights{position:absolute;left:18px;top:19px;display:flex;gap:8px;z-index:3}
+.lights i{width:12px;height:12px;border-radius:50%;background:#FF5F57;box-shadow:inset 0 0 0 .5px rgba(0,0,0,.2)}
+.lights i:nth-child(2){background:#FEBC2E}
+.lights i:nth-child(3){background:#28C840}
+
+/* ---------- sidebar: M1 form (also M3) ---------- */
+.sb{position:relative;display:flex;flex-direction:column;width:284px;flex-shrink:0;min-height:0;background:var(--sb)}
+[data-variant=m1] .sb::before{content:"";position:absolute;inset:0 0 auto 0;height:124px;background:linear-gradient(180deg,#C3B8EC 0%,rgba(195,184,236,.5) 42%,rgba(195,184,236,0) 100%);pointer-events:none}
+.sb-head{position:relative;display:flex;align-items:center;gap:6px;height:50px;padding:0 10px 0 84px;flex-shrink:0}
+.brand{display:flex;align-items:center;gap:8px;min-width:0;font-size:13.5px;font-weight:600;letter-spacing:-.1px}
+.bmark{display:none;width:26px;height:26px;border-radius:8px;align-items:center;justify-content:center;background:var(--accent);color:#FFF9F4}
+.hb{display:inline-flex;align-items:center;justify-content:center;width:26px;height:26px;border-radius:7px;color:var(--text2);font-size:11.5px;font-weight:600}
+.hb:hover,.ab:hover{background:var(--hover);color:var(--text)}
+.sb-list{position:relative;flex:1;min-height:0;overflow:hidden auto;padding:4px 10px 12px}
+.row{position:relative;display:flex;align-items:center;gap:6px;min-width:0;border-radius:var(--r-item)}
+.row[data-tog]{cursor:pointer}
+.nm{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.chev{width:12px;height:12px;color:var(--text3);transform:rotate(90deg);transition:transform .14s}
+.chev.ph{visibility:hidden}
+.grp.collapsed>.kids{display:none}
+.grp.collapsed>.row .chev{transform:none}
+
+.mach{margin-top:6px}
+.mach-row{height:28px;padding:0 6px 0 4px;font-size:12px;font-weight:600;color:var(--text2)}
+.mach-row .i:not(.chev){width:14px;height:14px}
+.mstate{font-size:11px;font-weight:400;color:var(--ok);flex-shrink:0}
+.mach.off .mach-row{color:var(--text3)}
+.mach.off .mstate{color:var(--text3)}
+.cnt{font-size:11px;font-weight:500;color:var(--text3);font-variant-numeric:tabular-nums;padding-right:4px}
+.degr{display:flex;gap:7px;margin:2px 4px 6px 22px;padding:7px 9px;border-radius:var(--r-item);background:color-mix(in srgb,var(--warn) 11%,var(--surface));font-size:11.5px;line-height:1.5;color:var(--text)}
+.degr .i{width:14px;height:14px;margin-top:1px;color:var(--warn)}
+
+.proj{margin-top:4px}
+.proj-row{height:32px;padding:0 4px;font-size:13px;font-weight:600}
+.ptag{display:inline-flex;align-items:center;justify-content:center;width:20px;height:20px;flex-shrink:0;border-radius:6px;font-size:9.5px;font-weight:700;letter-spacing:.02em;background:hsl(var(--h) 62% 90%);color:hsl(var(--h) 48% 32%)}
+[data-variant=m3] .ptag{background:color-mix(in srgb,var(--accent) 15%,var(--surface));color:var(--accent-h)}
+.pico{display:none;width:14px;height:14px;color:var(--text3)}
+.pbr{display:inline-flex;align-items:center;gap:3px;flex-shrink:0;font-size:11.5px;font-weight:400;color:var(--text3)}
+.pbr .i{width:12px;height:12px}
+.pst{flex-shrink:0;font-size:11px;font-weight:400;color:var(--warn)}
+.acts{display:none;align-items:center;gap:1px;flex-shrink:0}
+.row:hover>.acts,.acts.on{display:flex}
+.ab{display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;border-radius:6px;color:var(--text3)}
+.ab .i{width:14px;height:14px}
+.ab[disabled]{opacity:.38;cursor:not-allowed}
+.ab[disabled]:hover{background:none;color:var(--text3)}
+
+.wt-row{height:26px;padding:0 4px 0 30px;font-size:12px;font-weight:500;color:var(--text2)}
+.wt-row>.chev{display:none}
+.wt-row .bi{width:13px;height:13px;color:var(--text3)}
+.tagx{flex-shrink:0;padding:0 4px;border:1px solid var(--border2);border-radius:4px;font-size:10.5px;font-weight:400;line-height:15px;color:var(--text3)}
+.wt-empty{display:flex;align-items:center;gap:10px;height:28px;padding:0 8px 0 50px;font-size:12px;color:var(--text3)}
+.lnk{display:inline-flex;align-items:center;gap:3px;color:var(--link);font-weight:500;font-size:12px}
+.lnk .i{width:12px;height:12px}
+
+.sess{display:grid;grid-template-columns:14px minmax(0,1fr) auto;column-gap:8px;row-gap:0;align-items:center;margin:1px 0;padding:6px 10px 6px 30px;cursor:pointer}
+.sess:hover{background:color-mix(in srgb,var(--hover) 60%,transparent)}
+.sess .ki{grid-area:1/1;width:14px;height:14px;color:var(--text3)}
+.sess .nm{grid-area:1/2;font-size:13px;line-height:18px;color:var(--text)}
+.sess .tm{grid-area:1/3;font-size:11px;color:var(--text3);white-space:nowrap}
+.sess .mt{grid-area:2/2;font-size:11.5px;line-height:17px;color:var(--text3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.sess .mt.w{color:var(--warn)}
+.sess .dot{grid-area:2/3;justify-self:end}
+.sess.on{background:var(--sel)}
+.sess.on .nm{font-weight:600}
+.sess.on .ki{color:var(--accent)}
+[data-variant=m3] .sess.on{box-shadow:inset 2.5px 0 0 var(--accent),0 1px 2px rgba(60,50,38,.1)}
+.dot{width:8px;height:8px;border-radius:50%;flex-shrink:0}
+.dot.new{border:2px solid var(--dot-new)}
+.dot.idle{background:var(--dot-idle)}
+.dot.wait{background:var(--dot-wait);box-shadow:0 0 0 3px color-mix(in srgb,var(--dot-wait) 26%,transparent);margin-right:3px}
+
+/* M3 keeps the current brand lockup and machine rows */
+[data-variant=m3] .mach-row{height:34px;font-size:13px;font-weight:650;color:var(--text)}
+[data-variant=m3] .mach-row .i:not(.chev){width:22px;height:22px;padding:3px;border:1px solid var(--ok);border-radius:6px;background:color-mix(in srgb,var(--ok) 9%,var(--surface));color:var(--ok)}
+[data-variant=m3] .mach.off .mach-row .i:not(.chev){border-color:var(--border2);background:none;color:var(--text3)}
+[data-variant=m3] .mach.off .mach-row{color:var(--text2)}
+[data-variant=m3] .sb-head{height:auto;padding:46px 12px 6px 14px}
+[data-variant=m3] .bmark{display:inline-flex}
+[data-variant=m3] .brand{font-size:15.5px;font-weight:650;letter-spacing:-.3px}
+
+/* ---------- sidebar: M2 compact tree (same DOM) ---------- */
+[data-variant=m2] .sb{width:272px;border-right:1px solid var(--border2)}
+[data-variant=m2] .sb-head{height:48px;border-bottom:1px solid var(--border)}
+[data-variant=m2] .brand{font-size:12.5px;color:var(--text2)}
+[data-variant=m2] .sb-list{padding:6px 6px 10px}
+[data-variant=m2] .row{height:26px;margin:0;padding:0 6px 0 4px;gap:5px;font-size:12.5px;font-weight:400;color:var(--text)}
+[data-variant=m2] .row:hover{background:var(--hover)}
+[data-variant=m2] .kids{margin-left:9px;padding-left:5px;border-left:1px solid var(--border2)}
+[data-variant=m2] .mach,[data-variant=m2] .proj{margin-top:0}
+[data-variant=m2] .mach-row,[data-variant=m2] .proj-row{font-weight:600}
+[data-variant=m2] .mach.off .mach-row{color:var(--text3)}
+[data-variant=m2] .ptag{display:none}
+[data-variant=m2] .pico{display:block}
+[data-variant=m2] .wt-row>.chev{display:block}
+[data-variant=m2] .wt-row{color:var(--text)}
+[data-variant=m2] .tagx.home{display:none}
+[data-variant=m2] .wt-empty{height:26px;padding:0 6px 0 22px;font-size:12px}
+[data-variant=m2] .sess{display:flex;padding:0 8px 0 5px}
+[data-variant=m2] .sess .tm,[data-variant=m2] .sess .mt{display:none}
+[data-variant=m2] .sess .nm{font-size:12.5px;flex:1}
+[data-variant=m2] .sess .ki{width:13px;height:13px}
+[data-variant=m2] .sess.on,[data-variant=m2] .sess.on:hover{background:var(--sel)}
+[data-variant=m2] .dot{width:7px;height:7px}
+[data-variant=m2] .degr{margin:2px 2px 4px 14px}
+
+/* ---------- main area ---------- */
+.main{position:relative;display:flex;flex-direction:column;flex:1;min-width:0;margin:10px 10px 10px 0;background:var(--surface);border:1px solid var(--border);border-radius:var(--r-card);box-shadow:var(--sh);overflow:hidden}
+.body{display:flex;flex-direction:column;flex:1;min-height:0}
+/* M3 keeps today's chrome: title bar on the workbench, conversation in the card below it */
+[data-variant=m3] .main{margin:0;background:none;border:0;border-radius:0;box-shadow:none;overflow:visible}
+[data-variant=m3] .tb{height:48px;padding:0 22px 0 8px}
+[data-variant=m3] .body{margin:0 12px 12px 0;background:var(--surface);border:1px solid var(--border);border-radius:var(--r-card);box-shadow:var(--sh);overflow:hidden}
+[data-variant=m3] .conn{background:var(--surface);border-color:var(--border2)}
+.tb{display:flex;align-items:center;gap:12px;height:50px;padding:0 20px;flex-shrink:0}
+.crumb{display:flex;align-items:center;gap:8px;min-width:0;font-size:14px;color:var(--text2);white-space:nowrap}
+.crumb .sl{color:var(--border2)}
+.crumb .br{display:inline-flex;align-items:center;gap:4px}
+.crumb .br .i{width:13px;height:13px;color:var(--text3)}
+.crumb .cur{display:inline-flex;align-items:center;gap:6px;color:var(--text);font-weight:600}
+.crumb .cur .i{width:14px;height:14px;color:var(--text3)}
+.conn{display:inline-flex;align-items:center;gap:6px;margin-left:auto;padding:3px 10px;border:1px solid var(--border);border-radius:999px;font-size:12px;color:var(--text2);white-space:nowrap}
+.conn i{width:7px;height:7px;border-radius:50%;background:var(--dot-idle)}
+.tl{flex:1;min-height:0;overflow:hidden auto;scrollbar-width:none;padding:0 24px 8px}
+.tl::-webkit-scrollbar{display:none}
+.tl.clip{-webkit-mask-image:linear-gradient(transparent,#000 26px);mask-image:linear-gradient(transparent,#000 26px)}
+.col{max-width:748px;margin:0 auto}
+.u{display:flex;justify-content:flex-end;margin:14px 0 12px}
+.ub{max-width:80%;padding:9px 14px;border-radius:17px;background:var(--soft);font-size:14px;line-height:1.55}
+.md{font-size:14px;line-height:1.65}
+.md p{margin:0 0 8px}
+.md code{white-space:nowrap;padding:1px 5px;border:1px solid var(--border);border-radius:5px;background:var(--sunk);font-size:12.5px}
+.cb{position:relative;margin:6px 0 10px;border:1px solid var(--border);border-radius:10px;background:var(--sunk)}
+.cb pre{margin:0;padding:9px 84px 9px 14px;font-size:12.5px;line-height:1.5;white-space:pre;overflow:hidden}
+.cb pre code{padding:0;border:0;background:none}
+.cb-copy{position:absolute;right:7px;top:6px;display:inline-flex;align-items:center;gap:4px;padding:2px 7px;border-radius:6px;font-size:11.5px;color:var(--text2)}
+.cb-copy:hover{background:var(--hover)}
+.cb-copy .i{width:13px;height:13px}
+.tool{display:flex;align-items:center;gap:8px;height:30px;min-width:0;font-size:13px;color:var(--text2);cursor:pointer}
+.tool>.i{width:15px;height:15px;color:var(--text3)}
+.tool .tn{font-weight:600;color:var(--text)}
+.tool .t2{font-size:12px}
+.tool .t3{font-size:12px;color:var(--text3)}
+.tool .st{display:inline-flex;gap:6px;font-size:11.5px;font-weight:600}
+.tool .st .a{color:var(--ok)}
+.tool .st .d{color:var(--err)}
+.tool .tc{width:12px;height:12px;margin-left:auto;color:var(--text3)}
+.tool.open .tc{transform:rotate(90deg)}
+.diff{margin:2px 0 8px 23px;border:1px solid var(--border);border-radius:10px;overflow:hidden;background:var(--surface);font-size:12px;line-height:18px}
+.dln{display:grid;grid-template-columns:36px 16px minmax(0,1fr);white-space:pre}
+.dln .n{padding-right:8px;text-align:right;color:var(--text3)}
+.dln .s{text-align:center}
+.dln.add{background:var(--add-bg);color:var(--add-fg)}
+.dln.del{background:var(--del-bg);color:var(--del-fg)}
+.dln.add .n,.dln.del .n{color:inherit;opacity:.8}
+
+.dock{flex-shrink:0;padding:0 24px 9px}
+.perm{margin-bottom:9px;padding:11px 12px 12px;border:1px solid var(--border2);border-radius:var(--r-card);background:var(--surface);box-shadow:0 1px 2px rgba(24,20,48,.04),0 6px 18px rgba(24,20,48,.07)}
+.perm-h{display:flex;align-items:center;gap:8px;margin:0 2px 8px;font-size:13.5px;font-weight:600}
+.perm-h .i{color:var(--warn)}
+.perm-h small{margin-left:auto;font-size:11.5px;font-weight:400;color:var(--text3)}
+.perm-cmd{margin-bottom:8px;padding:6px 10px;border:1px solid var(--border);border-radius:8px;background:var(--sunk);font-size:12.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.opts{display:flex;flex-direction:column;gap:4px}
+.opt{display:flex;align-items:center;gap:8px;height:30px;min-width:0;padding:0 10px;border:1px solid var(--border);border-radius:8px;font-size:13px;white-space:nowrap}
+.opt:hover{border-color:var(--border2);background:var(--sunk)}
+.opt kbd{width:12px;font-size:11px;font-weight:600;color:var(--text3)}
+.opt code{font-size:12px}
+.opt.pri,.opt.pri:hover{border-color:var(--accent);background:var(--accent);color:#fff}
+.opt.pri kbd{color:rgba(255,255,255,.82)}
+.opt .rin{flex:1;margin-left:4px;padding-left:10px;border-left:1px solid var(--border);font-size:12.5px;color:var(--text3)}
+.comp{padding:10px 10px 9px 14px;border:1px solid var(--border2);border-radius:17px;background:var(--surface);box-shadow:0 1px 2px rgba(24,20,48,.04),0 4px 14px rgba(24,20,48,.05)}
+.comp-in{padding:1px 0 9px;font-size:14px;color:var(--text3)}
+.comp-bar{display:flex;align-items:center;gap:6px}
+.chip{display:inline-flex;align-items:center;gap:5px;height:26px;padding:0 10px;border:1px solid var(--border);border-radius:999px;font-size:12px;color:var(--text2);white-space:nowrap}
+.chip .i{width:13px;height:13px}
+.ib{display:inline-flex;align-items:center;justify-content:center;width:26px;height:26px;border-radius:8px;color:var(--text2);font:600 14px "SF Mono",ui-monospace,Menlo,monospace}
+.chip:hover,.ib:hover{background:var(--sunk)}
+.send{display:inline-flex;align-items:center;justify-content:center;width:32px;height:32px;margin-left:auto;border-radius:50%;background:var(--accent);color:#fff}
+.send:hover{background:var(--accent-h)}
+.hint{display:flex;justify-content:space-between;gap:12px;padding:6px 6px 0;font-size:11.5px;color:var(--text3);white-space:nowrap}
+.hint span:last-child{overflow:hidden;text-overflow:ellipsis}
+
+.term{flex:1;min-height:0;padding:10px 22px 0;background:var(--term-bg);color:var(--term-fg);overflow:hidden}
+.term pre{margin:0;font-size:13px;line-height:18px;white-space:pre}
+.term .dm{color:#8B8880}
+.term .gr{color:#4F8049}
+.term .rd{color:#B34A40}
+.term .bl{color:#4A72B0}
+.term .selx{background:var(--term-sel)}
+.term .cur{background:var(--term-cur);color:var(--term-bg)}
+.stb{display:flex;align-items:center;justify-content:space-between;gap:12px;height:32px;padding:0 22px;flex-shrink:0;font-size:11.5px;color:var(--text3);white-space:nowrap}
+
+/* M2 main: flush, dense */
+[data-variant=m2] .main{margin:0;border:0;border-radius:0;box-shadow:none}
+[data-variant=m2] .tb{height:48px;padding:0 16px;border-bottom:1px solid var(--border)}
+[data-variant=m2] .crumb{font-size:12.5px;gap:6px}
+[data-variant=m2] .crumb .ptag{display:none}
+[data-variant=m2] .conn{padding:0;border:0}
+[data-variant=m2] .tl{padding:0 16px 6px}
+[data-variant=m2] .col{max-width:none;margin:0}
+[data-variant=m2] .u{justify-content:flex-start;margin:10px 0 8px}
+[data-variant=m2] .ub{max-width:none;width:100%;padding:6px 12px;border-left:3px solid var(--accent);border-radius:0 6px 6px 0;background:var(--softer);font-size:13px}
+[data-variant=m2] .md{font-size:13px;line-height:1.55}
+[data-variant=m2] .md p{margin-bottom:6px}
+[data-variant=m2] .cb{margin:4px 0 8px;border-radius:6px}
+[data-variant=m2] .cb pre{padding:6px 84px 6px 10px;font-size:12px}
+[data-variant=m2] .cb-copy{top:3px}
+[data-variant=m2] .tool{height:26px;margin:3px 0;padding:0 8px;border:1px solid var(--border);border-radius:6px;font-size:12.5px}
+[data-variant=m2] .tool.open{margin-bottom:0;border-radius:6px 6px 0 0;background:var(--sunk)}
+[data-variant=m2] .diff{margin:0 0 6px;border-top:0;border-radius:0 0 6px 6px;font-size:11.5px;line-height:17px}
+[data-variant=m2] .dock{padding:8px 16px 6px;border-top:1px solid var(--border);background:var(--sb)}
+[data-variant=m2] .perm{margin-bottom:8px;padding:8px 10px 9px;box-shadow:none}
+[data-variant=m2] .perm-h{margin-bottom:6px;font-size:12.5px}
+[data-variant=m2] .perm-cmd{margin-bottom:6px;padding:4px 8px;border-radius:5px;font-size:12px}
+[data-variant=m2] .opts{flex-direction:row}
+[data-variant=m2] .opt{height:26px;padding:0 9px;border-radius:5px;font-size:12.5px}
+[data-variant=m2] .opt.rej{flex:1}
+[data-variant=m2] .comp{display:flex;align-items:center;gap:6px;padding:4px 5px 4px 12px;border-radius:8px;box-shadow:none}
+[data-variant=m2] .comp-in{flex:1;padding:0;font-size:13px}
+[data-variant=m2] .comp-bar{flex-shrink:0}
+[data-variant=m2] .chip{height:24px;border-radius:5px}
+[data-variant=m2] .send{width:28px;height:28px;margin-left:2px;border-radius:6px}
+[data-variant=m2] .hint{padding:4px 2px 0;font-size:11px}
+[data-variant=m2] .term{padding:8px 14px 0}
+[data-variant=m2] .stb{height:24px;padding:0 12px;border-top:1px solid var(--border);background:var(--sb);font-size:11px}
+
+/* ---------- dialogs ---------- */
+.board{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,400px),1fr));gap:26px 28px;align-items:start;padding:26px 28px 30px;border-radius:12px;background:linear-gradient(var(--scrim),var(--scrim)),var(--app);box-shadow:0 0 0 1px rgba(15,23,42,.12)}
+.cell{min-width:0}
+.cap{margin:0 0 9px;font-size:12.5px;font-weight:600;color:#1e293b}
+.cap small{font-weight:400;font-size:12px;color:#334155}
+.dlg{max-width:520px;border:1px solid var(--border);border-radius:18px;background:var(--surface);box-shadow:0 2px 6px rgba(20,18,40,.08),0 22px 54px rgba(20,18,40,.2);overflow:hidden}
+.dlg-h{padding:20px 24px 2px}
+.dlg-h h3{margin:0;font-size:17px;font-weight:600;letter-spacing:-.1px;line-height:1.35}
+.dlg-h p{margin:3px 0 0;font-size:12.5px;color:var(--text3);overflow-wrap:anywhere}
+.dlg-b{padding:10px 24px 4px;font-size:13px;line-height:1.6}
+.dlg-b>p{margin:0 0 8px}
+.lb{margin:12px 0 6px;font-size:12px;font-weight:500;color:var(--text2)}
+.inp{display:flex;align-items:center;gap:8px;height:38px;padding:0 12px;border:1px solid var(--border2);border-radius:var(--r-ctl);background:var(--surface);font-size:13px}
+.inp .i{width:14px;height:14px;color:var(--text3)}
+.inp.focus{border-color:var(--accent);box-shadow:0 0 0 3px color-mix(in srgb,var(--accent) 18%,transparent)}
+/* terracotta sits too close to the error red, so M3 focuses with a neutral ring */
+[data-variant=m3] .inp.focus{border-color:var(--text2);box-shadow:0 0 0 3px color-mix(in srgb,var(--text) 13%,transparent)}
+.inp.bad{border-color:var(--err);box-shadow:0 0 0 3px color-mix(in srgb,var(--err) 15%,transparent)}
+.caret{width:1.5px;height:17px;margin-left:-7px;background:var(--text)}
+.emsg{display:flex;align-items:center;gap:6px;margin-top:6px;font-size:12.5px;color:var(--err)}
+.emsg .i{width:14px;height:14px}
+.info{display:flex;gap:7px;margin-top:9px;font-size:12.5px;color:var(--text2)}
+.info .i{width:14px;height:14px;margin-top:3px;color:var(--text3)}
+.info code,.dlg-b p code,.kv code,.ro code,.warnb code{font-size:12px}
+.pathp{margin-top:8px;padding:7px 12px 8px;border-radius:var(--r-ctl);background:var(--sunk)}
+.pathp span{display:block;font-size:11.5px;color:var(--text3)}
+.pathp code{font-size:12px;overflow-wrap:anywhere}
+.cards{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.mc{display:block;padding:10px 12px;border:1px solid var(--border2);border-radius:12px;background:var(--surface)}
+.mc b{display:flex;align-items:center;gap:6px;font-size:13.5px;font-weight:600}
+.mc b .i{width:14px;height:14px;color:var(--text3)}
+.mc>span{display:block;margin-top:3px;font-size:12px;line-height:1.45;color:var(--text2)}
+.mc.sel{border-color:var(--accent);background:var(--softer);box-shadow:0 0 0 1px var(--accent)}
+.mc.sel b .i{color:var(--accent)}
+[data-variant=m3] .mc.sel{background:var(--surface);box-shadow:0 0 0 1.5px var(--accent)}
+.mc.dis{border-style:dashed;background:var(--sunk);cursor:not-allowed}
+.mc.dis b,.mc.dis>span{color:var(--text3)}
+.only{padding:0 5px;border:1px solid var(--border);border-radius:5px;background:var(--sunk);font-size:10.5px;font-weight:500;color:var(--text2)}
+.segd{display:none}
+.whyno{display:flex;gap:7px;margin-top:8px;font-size:12.5px;line-height:1.55;color:var(--warn)}
+.whyno .i{width:14px;height:14px;margin-top:3px}
+.ck{display:flex;align-items:center;gap:8px;padding:3px 0;font-size:13px}
+.box{display:inline-flex;align-items:center;justify-content:center;width:16px;height:16px;flex-shrink:0;border:1.5px solid var(--border2);border-radius:5px;background:var(--surface);color:#fff}
+.box .i{width:11px;height:11px;stroke-width:2.2;display:none}
+.box.on{border-color:var(--accent);background:var(--accent)}
+.box.on .i{display:block}
+.note{margin-top:6px;padding:8px 12px;border-radius:var(--r-ctl);background:var(--softer);font-size:12.5px;line-height:1.6;color:var(--text)}
+.dlg-f{display:flex;justify-content:flex-end;gap:10px;padding:14px 24px 20px}
+.btn{height:34px;padding:0 16px;border:1px solid var(--border2);border-radius:var(--r-ctl);background:var(--surface);font-size:13px;font-weight:500;white-space:nowrap}
+.app .btn.pri{border-color:var(--accent);background:var(--accent);color:#fff}
+.app .btn.dng{border-color:var(--err);background:var(--err);color:#fff}
+.app .btn.dngo{border-color:color-mix(in srgb,var(--err) 45%,var(--border2));color:var(--err)}
+.app .btn[disabled]{opacity:.42;cursor:not-allowed}
+.app .btn.neu{border-color:var(--text);background:var(--text);color:#fff}
+.btn.def{box-shadow:0 0 0 2px var(--surface),0 0 0 4px color-mix(in srgb,var(--text) 55%,transparent)}
+.dfl{margin-right:auto;align-self:center;font-size:11.5px;color:var(--text3)}
+.warnb{display:flex;gap:9px;padding:9px 12px;border-radius:var(--r-ctl);background:color-mix(in srgb,var(--err) 9%,var(--surface));font-size:13px;line-height:1.55}
+.warnb .i{margin-top:2px;color:var(--err)}
+.kv{display:grid;grid-template-columns:auto minmax(0,1fr);gap:3px 12px;margin:8px 0 2px;font-size:12.5px}
+.kv dt{color:var(--text3)}
+.kv dd{margin:0;overflow-wrap:anywhere}
+.ro{display:flex;gap:10px;margin-top:8px;padding:9px 12px;border:1px solid var(--border2);border-radius:12px}
+.ro b{display:block;font-size:13px;font-weight:600}
+.ro span{display:block;font-size:12px;color:var(--text2)}
+.rad{width:16px;height:16px;margin-top:2px;flex-shrink:0;border:1.5px solid var(--border2);border-radius:50%;background:var(--surface)}
+.ro.sel{border-color:var(--accent);background:var(--softer)}
+.ro.sel .rad{border:5px solid var(--accent)}
+[data-variant=m3] .ro.sel{background:var(--surface);box-shadow:0 0 0 .5px var(--accent)}
+
+/* M2 dialogs: tighter, segmented control instead of cards */
+[data-variant=m2] .dlg{max-width:460px;border-radius:10px}
+[data-variant=m2] .dlg-h{padding:14px 16px 0}
+[data-variant=m2] .dlg-h h3{font-size:14.5px}
+[data-variant=m2] .dlg-h p{font-size:12px}
+[data-variant=m2] .dlg-b{padding:6px 16px 2px;font-size:12.5px}
+[data-variant=m2] .lb{margin:10px 0 4px;font-size:11.5px}
+[data-variant=m2] .inp{height:30px;padding:0 9px;font-size:12.5px}
+[data-variant=m2] .pathp{padding:5px 9px 6px}
+[data-variant=m2] .cards{display:inline-grid;grid-template-columns:auto auto;gap:0;border:1px solid var(--border2);border-radius:6px;overflow:hidden}
+[data-variant=m2] .mc{padding:4px 14px;border:0;border-radius:0;box-shadow:none}
+[data-variant=m2] .mc+.mc{border-left:1px solid var(--border2)}
+[data-variant=m2] .mc b{font-size:12.5px}
+[data-variant=m2] .mc>span{display:none}
+[data-variant=m2] .mc.sel{background:var(--accent);color:#fff}
+[data-variant=m2] .mc.sel b .i{color:#fff}
+[data-variant=m2] .mc.sel .only{border-color:transparent;background:rgba(255,255,255,.22);color:#fff}
+[data-variant=m2] .mc.dis{border-style:solid}
+[data-variant=m2] .segd{display:block;margin-top:5px;font-size:12px;color:var(--text2)}
+[data-variant=m2] .ck{padding:2px 0;font-size:12.5px}
+[data-variant=m2] .box{width:14px;height:14px;border-radius:3px}
+[data-variant=m2] .note{padding:6px 9px;font-size:12px}
+[data-variant=m2] .dlg-f{padding:10px 16px 14px;gap:8px}
+[data-variant=m2] .btn{height:28px;padding:0 12px;font-size:12.5px}
+[data-variant=m2] .ro{margin-top:6px;padding:6px 9px;border-radius:6px}
+[data-variant=m2] .ro b{font-size:12.5px}
+[data-variant=m2] .warnb{padding:7px 9px;font-size:12.5px}
+
+/* scene 6 fragment */
+.s6{display:flex;flex-wrap:wrap;gap:20px 36px;align-items:flex-start}
+.frag{width:auto;height:auto;display:inline-flex;vertical-align:top;zoom:1}
+.frag .sb-list{padding-bottom:16px}
+.tip{position:absolute;right:22px;top:29px;z-index:4;padding:5px 9px;border-radius:7px;background:var(--text);color:#fff;font-size:11.5px;font-weight:400;line-height:1.4;white-space:nowrap;box-shadow:0 4px 12px rgba(0,0,0,.18)}
+.proj-row:has(.tip){margin-bottom:32px}
+.tip::before{content:"";position:absolute;right:13px;top:-4px;width:8px;height:8px;background:inherit;transform:rotate(45deg)}
+.expl{flex:1;min-width:260px;max-width:560px;padding:6px 0;font-size:14px;line-height:1.7;color:#1e293b}
+.expl ul{margin:0;padding-left:20px}
+.expl li{margin:0 0 8px}
+.expl code{padding:1px 5px;border-radius:4px;background:#e2e8f0;font:12.5px ui-monospace,Menlo,monospace}
+@media (max-width:760px){.board{padding:16px 14px 20px}}
+</style>
+</head>
+<body>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <defs>
+    <symbol id="i-chev" viewBox="0 0 20 20"><path d="M7.5 5l5 5-5 5"/></symbol>
+    <symbol id="i-chat" viewBox="0 0 20 20"><path d="M3.5 5h13v8.5h-7L6 16.5v-3H3.5z"/></symbol>
+    <symbol id="i-term" viewBox="0 0 20 20"><path d="M4.5 6l4 4-4 4M10.5 14h5"/></symbol>
+    <symbol id="i-branch" viewBox="0 0 20 20"><circle cx="6" cy="4.8" r="2"/><circle cx="6" cy="15.2" r="2"/><circle cx="14" cy="7" r="2"/><path d="M6 6.8v6.4M14 9c0 3.6-8 1.4-8 4.2"/></symbol>
+    <symbol id="i-branchplus" viewBox="0 0 20 20"><circle cx="5" cy="4.5" r="1.8"/><circle cx="5" cy="15.5" r="1.8"/><circle cx="11.5" cy="5.5" r="1.8"/><path d="M5 6.3v7.4M11.5 7.3c0 3-6.5 1.4-6.5 4.4M15 11.5v6M12 14.5h6"/></symbol>
+    <symbol id="i-plus" viewBox="0 0 20 20"><path d="M10 4.5v11M4.5 10h11"/></symbol>
+    <symbol id="i-more" viewBox="0 0 20 20"><g fill="currentColor" stroke="none"><circle cx="5" cy="10" r="1.3"/><circle cx="10" cy="10" r="1.3"/><circle cx="15" cy="10" r="1.3"/></g></symbol>
+    <symbol id="i-gear" viewBox="0 0 20 20"><circle cx="10" cy="10" r="2.6"/><path d="M10 2.8v2M10 15.2v2M2.8 10h2M15.2 10h2M4.9 4.9l1.4 1.4M13.7 13.7l1.4 1.4M4.9 15.1l1.4-1.4M13.7 6.3l1.4-1.4"/></symbol>
+    <symbol id="i-copy" viewBox="0 0 20 20"><rect x="7" y="7" width="9" height="9" rx="2"/><path d="M13 7V5.5A1.5 1.5 0 0 0 11.5 4h-6A1.5 1.5 0 0 0 4 5.5v6A1.5 1.5 0 0 0 5.5 13H7"/></symbol>
+    <symbol id="i-up" viewBox="0 0 20 20"><path d="M10 15.5v-11M5.5 9L10 4.5 14.5 9"/></symbol>
+    <symbol id="i-file" viewBox="0 0 20 20"><path d="M5.5 3.5h6L15 7v9.5H5.5zM11.5 3.5V7H15"/></symbol>
+    <symbol id="i-pen" viewBox="0 0 20 20"><path d="M12.5 4.5l3 3L8 15l-3.6.6.6-3.6z"/></symbol>
+    <symbol id="i-warn" viewBox="0 0 20 20"><path d="M10 3.5l7 12.5H3zM10 8.5v3.5M10 14.2v.3"/></symbol>
+    <symbol id="i-info" viewBox="0 0 20 20"><circle cx="10" cy="10" r="7"/><path d="M10 9.2v4.3M10 6.5v.3"/></symbol>
+    <symbol id="i-shield" viewBox="0 0 20 20"><path d="M10 3l5.5 2v4.5c0 3.4-2.3 5.9-5.5 7.5-3.2-1.6-5.5-4.1-5.5-7.5V5z"/></symbol>
+    <symbol id="i-host" viewBox="0 0 20 20"><rect x="3" y="4.5" width="14" height="9" rx="1.5"/><path d="M7 16.5h6M10 13.5v3"/></symbol>
+    <symbol id="i-folder" viewBox="0 0 20 20"><path d="M3 6.5A1.5 1.5 0 0 1 4.5 5h3.3l1.7 2h6A1.5 1.5 0 0 1 17 8.5v6a1.5 1.5 0 0 1-1.5 1.5h-11A1.5 1.5 0 0 1 3 14.5z"/></symbol>
+    <symbol id="i-check" viewBox="0 0 20 20"><path d="M4.5 10.5l3.5 3.5 7.5-8"/></symbol>
+    <symbol id="i-logo" viewBox="0 0 20 20"><path d="m5 6.25 3.5 3.75L5 13.75M10.5 13.75H15"/></symbol>
+  </defs>
+</svg>
+
+<div class="pg">
+  <p class="pg-note">效果示意，非最终实现 · 按项目和 worktree 组织会话，并更换视觉风格</p>
+  <h1>三个视觉方案，同一套内容</h1>
+
+  <div class="vbar">
+    <div class="vbtns" role="group" aria-label="视觉方案">
+      <button class="vb" data-v="m1" aria-pressed="true"><b><kbd>1</kbd>M1<span class="t"> 贴近参考图</span></b><span class="rec">推荐</span><span class="d">冷白 + 淡紫；主区域是浮起的圆角卡片，会话两行显示，留白多</span></button>
+      <button class="vb" data-v="m2" aria-pressed="false"><b><kbd>2</kbd>M2<span class="t"> 参考图配色 + 紧凑树</span></b><span class="d">同样的配色；侧边栏是单行的树，一屏看到的会话最多，消息区更密</span></button>
+      <button class="vb" data-v="m3" aria-pressed="false"><b><kbd>3</kbd>M3<span class="t"> 保留暖色、只换形态</span></b><span class="d">沿用现在的米色 + 赤陶色；换成浮起卡片、两行会话、气泡和卡片输入框</span></button>
+    </div>
+    <nav class="snav" aria-label="画面"><span>画面</span>
+      <a href="#s1" data-s="1">1 对话会话</a><a href="#s2" data-s="2">2 终端会话</a><a href="#s3" data-s="3">3 新建 worktree</a><a href="#s4" data-s="4">4 在 worktree 里新建会话</a><a href="#s5" data-s="5">5 删除确认</a><a href="#s6" data-s="6">6 连着旧版 daemon</a>
+    </nav>
+  </div>
+  <p class="vdesc" id="vdesc"></p>
+  <p class="why"><b>推荐 M1：</b>最接近你给的参考图；项目、worktree、会话三层靠标题样式区分，不靠层层缩进，层次最清楚。同时开的会话很多、想一屏看全，选 M2；不想丢掉现在的暖色，选 M3。按数字键 1 / 2 / 3 可以在同一个画面上来回切换。</p>
+
+  <section class="sc" id="s1">
+    <h2><i>1</i>对话会话（主画面）</h2>
+    <p class="lead">侧边栏：机器 → 项目 → worktree → 会话。只有一个 worktree 的项目不显示 worktree 层；折叠的项目把「等你处理」的点显示在项目行上。点项目行可以折叠。状态点：空心灰 = 有新消息，实心绿 = 回合结束，带光圈的黄 = 等你处理。</p>
+    <div class="winwrap"><div class="app win" id="w1"></div></div>
+    <p class="fn">实际界面里，权限卡片出现时会替换输入框（现有行为不变）；这里为了一张图看全，把两者都画了出来。当前打开的会话不显示状态点（现有行为）。</p>
+  </section>
+
+  <section class="sc" id="s2">
+    <h2><i>2</i>终端会话</h2>
+    <p class="lead">只换外壳：侧边栏、标题、状态栏，以及终端的底色、前景色、光标和选区颜色跟随方案。终端里的文字、框线和颜色是远程输出的原样，三个方案下完全相同。</p>
+    <div class="winwrap"><div class="app win" id="w2"></div></div>
+  </section>
+
+  <section class="sc" id="s3">
+    <h2><i>3</i>新建 worktree</h2>
+    <p class="lead">从 devflow 的 main 发起。名字就是新分支名，基于发起处当前的提交。</p>
+    <div class="app board" id="b3"></div>
+  </section>
+
+  <section class="sc" id="s4">
+    <h2><i>4</i>在已有 worktree 里新建会话</h2>
+    <p class="lead">目录固定为这个 worktree，所以只选界面和启动选项，没有目录列表和会话模式。</p>
+    <div class="app board" id="b4"></div>
+  </section>
+
+  <section class="sc" id="s5">
+    <h2><i>5</i>删除 worktree 和删除会话</h2>
+    <p class="lead">删除 worktree 按会不会丢东西分三种确认；删除会话不再顺带删除 worktree 和分支。</p>
+    <div class="app board" id="b5"></div>
+  </section>
+
+  <section class="sc" id="s6">
+    <h2><i>6</i>连着旧版 daemon 的机器</h2>
+    <p class="lead">新桌面端连上还没升级的 vibe-remoted：照常工作，只是少了需要新接口的入口。</p>
+    <div class="s6" id="b6"></div>
+  </section>
+
+  <div class="pg-foot">选好后在终端回复 <code>M1</code>，或 <code>M2 + M1 的气泡</code> 这样组合。</div>
+</div>
+
+<script>
+(function(){
+'use strict';
+var ic=function(n,c){return '<svg class="i'+(c?' '+c:'')+'" aria-hidden="true"><use href="#i-'+n+'"/></svg>'};
+var esc=function(s){return s.replace(/&/g,'&amp;').replace(/</g,'&lt;')};
+
+/* ---------- sidebar (one DOM for all variants) ---------- */
+var ST={idle:'回合结束',wait:'等你处理','new':'有新消息'};
+var MACHINES=[
+  {name:'this-mac',n:8,projects:[
+    {name:'devflow',tag:'DE',hue:222,keep:1,wts:[
+      {br:'main',main:1,s:[
+        {id:'s1',ui:'chat',name:'重排 skill 目录',t:'刚刚'},
+        {id:'s2',ui:'chat',name:'devflow 2',t:'12 分钟前',st:'idle'}]},
+      {br:'fix-login',s:[{id:'s3',ui:'term',name:'登录修复',t:'3 分钟前',st:'wait'}]},
+      {br:'change/general-skills',ext:1,s:[]}]},
+    {name:'new-api',tag:'NA',hue:158,br:'main',s:[
+      {id:'s4',ui:'term',name:'new-api',t:'1 小时前',st:'new'},
+      {id:'s5',ui:'term',name:'new-api 2',t:'昨天'}]},
+    {name:'notes',tag:'NO',hue:28,nogit:1,s:[{id:'s6',ui:'chat',name:'周报整理',t:'2 天前'}]},
+    {name:'vibeview',tag:'VV',hue:332,br:'main',collapsed:1,agg:'wait',s:[
+      {id:'s7',ui:'chat',name:'配额页',t:'5 分钟前',st:'wait'},{id:'s8',ui:'term',name:'vibeview',t:'昨天'}]}
+  ]},
+  {name:'dev',off:1,projects:[]}
+];
+var OLD=[
+  {name:'gpu-box',n:3,deg:1,projects:[
+    {name:'devflow',tag:'DE',hue:222,keep:1,wts:[
+      {br:'main',main:1,s:[{id:'o1',ui:'chat',name:'重排 skill 目录',t:'刚刚',st:'idle'}]},
+      {br:'vibe/1794824025040-12b763ac',s:[{id:'o2',ui:'term',name:'接口限流',t:'20 分钟前'}]}]},
+    {name:'new-api',tag:'NA',hue:158,br:'main',s:[{id:'o3',ui:'term',name:'new-api',t:'昨天'}]}
+  ]}
+];
+function sess(s,o){
+  var on=o.active===s.id, st=on?null:(o.st&&(s.id in o.st)?o.st[s.id]:s.st);
+  return '<div class="row sess'+(on?' on':'')+'">'+ic(s.ui==='chat'?'chat':'term','ki')+'<span class="nm">'+s.name+'</span><span class="tm">'+s.t+'</span><span class="mt'+(st==='wait'?' w':'')+'">'+(s.ui==='chat'?'对话':'终端')+(st?' · '+ST[st]:'')+'</span>'+(st?'<span class="dot '+st+'" title="'+ST[st]+'"></span>':'')+'</div>';
+}
+function wt(w,o){
+  var empty=!w.s.length;
+  return '<div class="grp wt"><div class="row wt-row"'+(empty?'':' data-tog')+'>'+ic('chev','chev'+(empty?' ph':''))+ic('branch','bi')+'<span class="nm" title="'+w.br+'">'+w.br+'</span>'+
+    (w.main?'<span class="tagx home">主目录</span>':'')+(w.ext?'<span class="tagx ext" title="不是由 vibe-remote 创建">外部</span>':'')+'<span class="sp"></span>'+
+    '<span class="acts"><button class="ab" title="新建会话">'+ic('plus')+'</button><button class="ab" title="更多">'+ic('more')+'</button></span></div><div class="kids">'+
+    (empty?'<div class="wt-empty">没有会话<button class="lnk">'+ic('plus')+'新建会话</button></div>':w.s.map(function(s){return sess(s,o)}).join(''))+'</div></div>';
+}
+function proj(p,o,deg){
+  var newWt='<button class="ab" title="'+(deg?'新建 worktree：需要升级这台机器的 vibe-remoted':'新建 worktree')+'"'+(deg?' disabled':'')+'>'+ic('branchplus')+'</button>';
+  var acts=(p.wts?'':'<button class="ab" title="新建会话">'+ic('plus')+'</button>')+(p.nogit?'':newWt)+'<button class="ab" title="更多">'+ic('more')+'</button>';
+  return '<div class="grp proj'+(p.collapsed?' collapsed':'')+'"><div class="row proj-row" data-tog>'+ic('chev','chev')+'<span class="ptag" style="--h:'+p.hue+'">'+p.tag+'</span>'+ic('folder','pico')+'<span class="nm">'+p.name+'</span>'+
+    (p.br?'<span class="pbr">'+ic('branch')+p.br+'</span>':'')+'<span class="sp"></span><span class="acts'+(p.keep?' on':'')+'">'+acts+'</span>'+
+    (p.collapsed&&p.agg?'<span class="dot '+p.agg+'" title="里面有会话'+ST[p.agg]+'"></span>':'')+(deg&&p.keep?'<span class="tip">新建 worktree 需要升级 vibe-remoted</span>':'')+'</div><div class="kids">'+
+    (p.wts?p.wts.map(function(w){return wt(w,o)}).join(''):p.s.map(function(s){return sess(s,o)}).join(''))+'</div></div>';
+}
+function sidebar(list,o){
+  return '<div class="lights"><i></i><i></i><i></i></div><aside class="sb"><div class="sb-head"><div class="brand"><span class="bmark">'+ic('logo')+'</span>vibe-remote</div><span class="sp"></span><button class="hb" title="切换语言">EN</button><button class="hb" title="管理机器">'+ic('gear')+'</button></div><div class="sb-list">'+
+    list.map(function(m){
+      return '<div class="grp mach'+(m.off?' off collapsed':'')+'"><div class="row mach-row" data-tog>'+ic('chev','chev')+ic('host')+'<span class="nm">'+m.name+'</span><span class="mstate">'+(m.off?'离线':'已连接')+'</span><span class="sp"></span>'+(m.off?'':'<span class="cnt" title="会话数">'+m.n+'</span>')+'</div>'+
+        (m.deg?'<div class="degr">'+ic('warn')+'<span>vibe-remoted 版本较旧（协议 3）：不能新建或删除 worktree，没有会话的 worktree 不会列出。升级 vibe-remoted 后可用。</span></div>':'')+
+        '<div class="kids">'+m.projects.map(function(p){return proj(p,o,m.deg)}).join('')+'</div></div>';
+    }).join('')+'</div></aside>';
+}
+function crumb(tag,hue,p,br,name,ui){
+  return '<header class="tb"><div class="crumb"><span class="ptag" style="--h:'+hue+'">'+tag+'</span><span>'+p+'</span><span class="sl">/</span><span class="br">'+ic('branch')+br+'</span><span class="sl">/</span><span class="cur">'+ic(ui)+name+'</span></div><div class="conn"><i></i>已连接</div></header><div class="body">';
+}
+
+/* ---------- scene 1: chat ---------- */
+var DIFF=[[' ',19,'# 通用 skill'],['-',20,'for dir in skills/dview-upload skills/find-skills skills/check; do'],['-',21,'  name=$(basename "$dir")'],['+',20,'for dir in skills/general/*/; do'],['+',21,'  name=$(basename "${dir%/}")'],[' ',22,'  cp -R "$dir" "$TARGET/$name"']];
+var chat=crumb('DE',222,'devflow','main','重排 skill 目录','chat')+
+'<div class="tl"><div class="col">'+
+  '<div class="u"><div class="ub">先看一下 skills/ 现在是怎么分的</div></div>'+
+  '<div class="tool">'+ic('term')+'<span class="tn">Bash</span><span class="t3">列出 skills/ 下的目录</span>'+ic('chev','tc')+'</div>'+
+  '<div class="tool">'+ic('file')+'<span class="tn">Read</span><span class="t2 mono">README.md</span>'+ic('chev','tc')+'</div>'+
+  '<div class="md"><p>现在 8 个 skill 平铺在 <code>skills/</code> 下：5 个是 <code>dev-*</code> 流程 skill，3 个是通用的（<code>dview-upload</code>、<code>find-skills</code>、<code>check</code>）。<code>install.sh</code> 按名字逐个复制，没有分组。</p></div>'+
+  '<div class="u"><div class="ub">把通用的 skill 挪到 skills/general/，install.sh 里的路径跟着改，dev-* 那几个别动。</div></div>'+
+  '<div class="md"><p>我把 3 个通用的移到 <code>skills/general/</code>，<code>install.sh</code> 改成遍历这个目录。移动用 <code>git mv</code>，保留历史：</p>'+
+  '<div class="cb"><pre><code>git mv skills/dview-upload skills/find-skills skills/check skills/general/</code></pre><button class="cb-copy">'+ic('copy')+'复制</button></div></div>'+
+  '<div class="tool">'+ic('file')+'<span class="tn">Read</span><span class="t2 mono">install.sh</span><span class="t3">第 1–64 行</span>'+ic('chev','tc')+'</div>'+
+  '<div class="tool">'+ic('term')+'<span class="tn">Bash</span><span class="t3">查找 install.sh 里引用 skills/ 的地方</span>'+ic('chev','tc')+'</div>'+
+  '<div class="tool open">'+ic('pen')+'<span class="tn">Edit</span><span class="t2 mono">install.sh</span><span class="st mono"><span class="a">+2</span><span class="d">−2</span></span>'+ic('chev','tc')+'</div>'+
+  '<div class="diff mono">'+DIFF.map(function(d){return '<div class="dln'+(d[0]==='+'?' add':d[0]==='-'?' del':'')+'"><span class="n">'+d[1]+'</span><span class="s">'+(d[0]==='-'?'−':d[0])+'</span><span>'+esc(d[2])+'</span></div>'}).join('')+'</div>'+
+'</div></div>'+
+'<div class="dock"><div class="col">'+
+  '<div class="perm"><div class="perm-h">'+ic('warn')+'允许运行这条 Bash 命令？<small>Esc 中断</small></div>'+
+    '<div class="perm-cmd mono">git mv skills/dview-upload skills/find-skills skills/check skills/general/</div>'+
+    '<div class="opts"><button class="opt pri"><kbd>1</kbd>是</button><button class="opt"><kbd>2</kbd>是，并且对本项目里的 <code>Bash(git mv:*)</code> 不再询问</button><div class="opt rej"><kbd>3</kbd>否<span class="rin">告诉 Claude 换个做法</span></div></div></div>'+
+  '<div class="comp"><div class="comp-in">给 Claude 发消息，/ 查看命令</div><div class="comp-bar"><button class="chip" title="权限模式：编辑前询问（Shift+Tab 切换）">'+ic('shield')+'编辑前询问</button><button class="ib" title="斜杠命令">/</button><button class="send" title="发送（Enter）">'+ic('up')+'</button></div></div>'+
+  '<div class="hint"><span>Enter 发送 · Shift+Enter 换行</span><span>devflow · /Users/mac/github/devflow</span></div>'+
+'</div></div>';
+
+/* ---------- scene 2: terminal ---------- */
+var RULE='<span class="dm">'+Array(97).join('─')+'</span>\n';
+var T='<span class="dm">&gt; 跑一下 auth 的测试，看现在是什么状态</span>\n\n'+
+'<span class="gr">⏺</span> <b>Bash</b>(go test ./auth/...)\n  <span class="dm">⎿</span>  <span class="rd">--- FAIL: TestLoginSetsCookie (0.01s)</span>\n'+
+'         session_test.go:48: no "sid" cookie in response\n     FAIL    devflow/auth    0.398s\n\n'+
+'<span class="dm">&gt; 登录后跳回首页，但 session cookie 没写上，查一下</span>\n\n'+
+'<span class="gr">⏺</span> 我先看 auth/session.go 里写 cookie 的地方。\n\n'+
+'<span class="gr">⏺</span> <b>Read</b>(auth/session.go)\n  <span class="dm">⎿</span>  Read 142 lines\n\n'+
+'<span class="gr">⏺</span> 本地是 http，Secure 写死成 true，浏览器直接丢弃了这个 cookie。\n\n'+
+'<span class="gr">⏺</span> <b>Update</b>(auth/session.go)\n  <span class="dm">⎿</span>  Updated <span class="selx">auth/session.go</span> with 2 additions and 1 removal\n'+
+'       <span class="dm">61</span>      http.SetCookie(w, &amp;http.Cookie{\n'+
+'       <span class="dm">62</span>          Name:     "sid",\n'+
+'       <span class="dm">63</span> <span class="rd">-        Secure:   true,</span>\n'+
+'       <span class="dm">63</span> <span class="gr">+        Secure:   r.TLS != nil,</span>\n'+
+'       <span class="dm">64</span> <span class="gr">+        SameSite: http.SameSiteLaxMode,</span>\n'+
+'       <span class="dm">65</span>      })\n\n'+
+'<span class="gr">⏺</span> <b>Bash</b>(go test ./auth/...)\n  <span class="dm">⎿</span>  ok      devflow/auth    0.412s\n\n'+
+'<span class="gr">⏺</span> 改好了：本地 http 下不再带 Secure，cookie 能写上；线上 https 行为不变。\n\n'+
+RULE+'&gt; <span class="cur">&nbsp;</span>\n'+RULE+
+'<span class="dm">  ? for shortcuts</span>                                                    <span class="bl">⏵⏵ accept edits on</span> <span class="dm">(shift+tab to cycle)</span>';
+var term=crumb('DE',222,'devflow','fix-login','登录修复','term')+'<div class="term"><pre>'+T+'</pre></div><footer class="stb"><span>this-mac · /Users/mac/github/devflow-worktrees/fix-login</span><span>终端 · tmux 保活</span></footer>';
+
+/* ---------- dialogs ---------- */
+function uiCards(sel,dis){
+  var t='<button class="mc'+(sel==='term'?' sel':'')+'"><b>'+ic('term')+'终端</b><span>原样运行任意命令行工具（claude、codex…）</span></button>';
+  var c='<button class="mc'+(sel==='chat'?' sel':'')+(dis?' dis':'')+'"'+(dis?' aria-disabled="true"':'')+'><b>'+ic('chat')+'对话<span class="only">仅 claude</span></b><span>消息、工具块、diff、权限确认</span></button>';
+  return '<div class="lb">界面</div><div class="cards">'+t+c+'</div><div class="segd">'+(sel==='chat'?'消息、工具块、diff、权限确认':'原样运行任意命令行工具（claude、codex…）')+'</div>'+(dis?'<div class="whyno">'+ic('info')+'<span>'+dis+'</span></div>':'');
+}
+function flags(c){return '<div class="lb">启动选项</div><label class="ck"><i class="box'+(c?' on':'')+'">'+ic('check')+'</i>续上次会话 (-c)</label><label class="ck"><i class="box">'+ic('check')+'</i>跳过权限确认</label>'}
+function newWt(bad){
+  return '<div class="dlg"><div class="dlg-h"><h3>在 devflow 新建 worktree</h3><p>this-mac · 从 main 发起</p></div><div class="dlg-b">'+
+  '<div class="lb" style="margin-top:4px">名字（就是新分支名）</div><div class="inp mono '+(bad?'bad':'focus')+'">'+ic('branch')+'fix-login<span class="caret"></span></div>'+
+  (bad?'<div class="emsg">'+ic('warn')+'分支 fix-login 已存在</div>':'')+
+  '<div class="info">'+ic('info')+'<span>基于 <code>main @ a1b2c3d</code>，不包含未提交的改动</span></div>'+
+  '<div class="pathp"><span>将创建目录</span><code>/Users/mac/github/devflow-worktrees/fix-login</code></div>'+
+  uiCards('chat')+flags(0)+
+  '</div><div class="dlg-f"><button class="btn">取消</button><button class="btn pri"'+(bad?' disabled':'')+'>创建并打开</button></div></div>';
+}
+function newSess(o){
+  return '<div class="dlg"><div class="dlg-h"><h3>在 '+o.br+' 新建会话</h3><p>'+o.sub+'</p></div><div class="dlg-b">'+uiCards(o.sel,o.dis)+flags(o.c)+
+  (o.note?'<div class="note">这个 worktree 已有会话正在用最近那段对话：对话界面会切到已有的那个会话，终端界面无法启动。不勾选即可开一段新对话。</div>':'')+
+  '</div><div class="dlg-f"><button class="btn">取消</button><button class="btn pri">新建会话</button></div></div>';
+}
+function cell(cap,sub,h){return '<div class="cell"><p class="cap">'+cap+(sub?' <small>'+sub+'</small>':'')+'</p>'+h+'</div>'}
+var b3=cell('填好名字','R3.1 / R3.6',newWt(0))+cell('出错：名字已被占用','R3.4，改名后才能再点',newWt(1));
+var b4=cell('勾了「续上次会话」，而这里已有会话','R4.1 / R6.1',newSess({br:'fix-login',sub:'devflow · /Users/mac/github/devflow-worktrees/fix-login',sel:'chat',c:1,note:1}))+
+  cell('「对话」不可用：项目主目录还没被 claude 信任','R4.4',newSess({br:'feat/quota',sub:'vibeview · /Users/mac/github/vibeview-worktrees/feat-quota',sel:'term',c:0,dis:'先用终端界面在项目主目录 /Users/mac/github/vibeview 打开一次 claude，信任这个项目后才能用对话界面。'}));
+var KV='<dl class="kv"><dt>目录</dt><dd><code>/Users/mac/github/devflow-worktrees/fix-login</code></dd><dt>分支</dt><dd><code>fix-login</code></dd></dl>';
+var b5=
+cell('(a) 干净，提交都已合并','R5.2','<div class="dlg"><div class="dlg-h"><h3>删除 worktree fix-login？</h3></div><div class="dlg-b"><p>工作区是干净的，分支上的提交都已包含在其他分支里。目录和分支都会删除。</p>'+KV+'</div><div class="dlg-f"><button class="btn">取消</button><button class="btn dng">删除</button></div></div>')+
+cell('(b) 有 3 个未提交或未跟踪的文件','R5.3，默认按钮是取消','<div class="dlg"><div class="dlg-h"><h3>fix-login 里有还没提交的文件</h3></div><div class="dlg-b"><div class="warnb">'+ic('warn')+'<span>有 <b>3 个文件</b>未提交或未跟踪。删除 worktree 会丢弃它们，无法恢复。</span></div>'+KV+'</div><div class="dlg-f"><span class="dfl">回车 = 取消</span><button class="btn dngo">仍然删除</button><button class="btn neu def">取消</button></div></div>')+
+cell('(c) 有 2 个未合并的提交','R5.5','<div class="dlg"><div class="dlg-h"><h3>fix-login 有 2 个未合并的提交</h3></div><div class="dlg-b"><p>这 2 个提交不在其他任何本地分支或远程分支上。</p>'+
+  '<div class="ro sel"><i class="rad"></i><div><b>只删目录、保留分支</b><span>提交还在分支 <code>fix-login</code> 上，以后可以再检出</span></div></div>'+
+  '<div class="ro"><i class="rad"></i><div><b>目录和分支都删</b><span>这 2 个提交将不再属于任何分支</span></div></div>'+
+  '</div><div class="dlg-f"><button class="btn">取消</button><button class="btn dng">删除</button></div></div>')+
+cell('删除会话','R5.1，不再顺带删 worktree','<div class="dlg"><div class="dlg-h"><h3>删除会话「登录修复」？</h3></div><div class="dlg-b"><p>会话会结束。worktree <code>fix-login</code> 的目录和分支都会保留，之后可以在侧边栏继续使用，或者单独删除。</p></div><div class="dlg-f"><button class="btn">取消</button><button class="btn dng">删除会话</button></div></div>');
+var b6='<div class="app"><div class="win frag">'+sidebar(OLD,{active:null})+'</div></div>'+
+'<div class="expl"><ul><li>已有会话仍然按项目和 worktree 分组（用会话自带的仓库和分支信息）。旧版建的 worktree 分支名是 <code>vibe/&lt;会话 id&gt;</code>，原样显示。</li><li>项目行上的「新建 worktree」按钮置灰，鼠标移上去提示要升级这台机器的 vibe-remoted（图里画出了提示）。worktree 菜单里的「删除 worktree」同样置灰。</li><li>没有会话的 worktree 不会列出（旧版没有这个接口）。</li><li>新建会话、打开、重命名、删除会话都照常。</li></ul></div>';
+
+document.getElementById('w1').innerHTML=sidebar(MACHINES,{active:'s1'})+'<section class="main">'+chat+'</div></section>';
+document.getElementById('w2').innerHTML=sidebar(MACHINES,{active:'s3',st:{s1:'wait'}})+'<section class="main">'+term+'</div></section>';
+document.getElementById('b3').innerHTML=b3;
+document.getElementById('b4').innerHTML=b4;
+document.getElementById('b5').innerHTML=b5;
+document.getElementById('b6').innerHTML=b6;
+
+/* ---------- behaviour ---------- */
+var root=document.documentElement,btns=[].slice.call(document.querySelectorAll('.vb'));
+var DESC={m1:'M1 贴近参考图（推荐）：冷白 + 淡紫；主区域是浮起的圆角卡片，会话两行显示，留白多',m2:'M2 参考图配色 + 紧凑树：同样的配色；侧边栏是单行的树，一屏看到的会话最多，消息区更密',m3:'M3 保留暖色、只换形态：沿用现在的米色 + 赤陶色；换成浮起卡片、两行会话、气泡和卡片输入框'};
+function setV(v,keepHash){
+  if(!DESC[v])return;
+  root.setAttribute('data-variant',v);
+  btns.forEach(function(b){b.setAttribute('aria-pressed',String(b.dataset.v===v))});
+  document.getElementById('vdesc').textContent=DESC[v];
+  pin();
+  if(!keepHash){try{history.replaceState(null,'','#'+v)}catch(e){}}
+}
+/* the transcript sits scrolled to the bottom, like the real view; it stays scrollable */
+function pin(){[].forEach.call(document.querySelectorAll('.tl'),function(t){t.scrollTop=t.scrollHeight;t.classList.toggle('clip',t.scrollTop>0)})}
+document.addEventListener('scroll',function(e){var t=e.target;if(t&&t.classList&&t.classList.contains('tl'))t.classList.toggle('clip',t.scrollTop>0)},true);
+btns.forEach(function(b){b.addEventListener('click',function(){setV(b.dataset.v)})});
+document.addEventListener('keydown',function(e){
+  if(e.metaKey||e.ctrlKey||e.altKey)return;
+  var t=e.target;if(t&&/^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName))return;
+  if(e.key==='1'||e.key==='2'||e.key==='3')setV('m'+e.key);
+});
+document.addEventListener('click',function(e){
+  var a=e.target.closest&&e.target.closest('.snav a');
+  if(a){e.preventDefault();var s=document.getElementById('s'+a.dataset.s);if(s)s.scrollIntoView({behavior:'smooth',block:'start'});return}
+  if(e.target.closest&&e.target.closest('.ab,.lnk'))return;
+  var r=e.target.closest&&e.target.closest('[data-tog]');
+  if(r)r.parentNode.classList.toggle('collapsed');
+});
+function fit(){
+  [].forEach.call(document.querySelectorAll('.winwrap'),function(w){
+    var z=Math.max(.62,Math.min(1,(w.clientWidth-4)/1200));
+    w.firstElementChild.style.setProperty('--z',z.toFixed(3));
+  });
+}
+window.addEventListener('resize',function(){fit();pin()});fit();
+/* #m2 = variant · #m2-s3 = variant + jump to scene 3 · #m2-s3-solo = only that scene */
+function fromHash(){
+  var m=/^#?(m[123])(?:-s([1-6]))?(-solo)?$/.exec(location.hash||'');
+  if(!m)return;
+  setV(m[1],true);
+  document.body.classList.toggle('solo',!!m[3]);
+  [].forEach.call(document.querySelectorAll('.sc'),function(s){s.classList.toggle('cur',s.id==='s'+m[2])});
+  pin();
+  if(m[2]&&!m[3]){var s=document.getElementById('s'+m[2]);if(s)s.scrollIntoView()}
+}
+window.addEventListener('hashchange',fromHash);
+setV('m1',true);fromHash();
+})();
+</script>
+</body>
+</html>
