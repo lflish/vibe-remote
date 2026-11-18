@@ -2,7 +2,7 @@
 
 对应需求：spec.md（R1–R9，H1–H26）　更新：2026-11-18
 
-文中的决定编号（6–24、d5–d27、c1–c4）见 decisions.md；实验输出在 `evidence/`。任务编号（T1–T20，其中 T6 拆成 T6a 和 T6b）见 tasks.md。2026-11-18 按工程评审（3 个严重、12 个一般）修订，依据见第 9 节 V10–V17。
+文中的决定编号（6–27、d5–d27、c1–c4）见 decisions.md；实验输出在 `evidence/`。任务编号（T1–T20，其中 T6 拆成 T6a 和 T6b）见 tasks.md。2026-11-18 按工程评审（3 个严重、12 个一般）修订，依据见第 9 节 V10–V17。
 
 ## 1. 方案
 
@@ -208,7 +208,7 @@ HTTP 错误：403 `workdir` 不在 `allowed_roots` 内（响应体同 `/api/v1/f
 | `branch` / `detached` | 同 4.2 |
 | `dirtyFiles` | 未提交或未跟踪的文件数，不含被忽略的（H10） |
 | `unmergedCommits` | 有分支：该分支上不被任何其他本地分支或远程跟踪分支包含的提交数（H9）。detached：`HEAD` 上不被任何本地分支或远程跟踪分支包含的提交数（R5.11） |
-| `sessions` | 归属这个 worktree 的会话 id（含已结束的对话会话） |
+| `sessions` | 归属这个 worktree 的会话 id（含已结束的对话会话），以及还没有归属、工作目录在它下面的会话 |
 
 `status` 不带「是否锁定」「有没有子模块」：这两种情况在删除时由 daemon 在结束会话之前拦下（6.2 第 6 步），错误显示在同一个确认框里。按 c4（等用户决定）之前的 spec，`status` 也不返回被忽略文件的数量。
 
@@ -334,7 +334,7 @@ func (m *Manager) RemoveWorktree(req protocol.WorktreeRemoveRequest, allow Allow
 
 `CreateOptions`、`ChatCreateOptions` 各加 `WorktreeName string`；`CreateOptions` 另加 `Home *Home`（交接时照抄对话会话的归属，非空就不再推导）；`RunnerConfig` 加 `Project, Home string` 和 `Created time.Time`（零值取当前时间），读取用 `func (r *Runner) Home() (project, home string)`；`chat.Record` 加 `Project, Home`（5.1）。`CreateOptions.ValidateWorkdir`、`ChatCreateOptions.ValidateWorkdir` 的名字和签名不变，server 改为传 `cfg.ResolveAllowedNewPath`，`Manager` 把它包成 `WorktreeSpec.AllowPath`。读 worktree 列表和预检用的 git 调用走 `gitAtTimeout(dir, args...)`，超时取包级变量 `gitTimeout`（5 秒，测试里可以调小）。`config.Config` 加 `ResolveAllowedNewPath(path string) (string, error)`：对还不存在的路径，把最深的已存在祖先解析成规范路径后拼回剩余部分，再做与 `ResolveAllowedWorkdir` 相同的包含判断（R3.10 要在创建之前判断）。
 
-`Manager` 另有两张受 `Manager.mu` 保护的表，用来让「删除 worktree」和「在其中新建会话」互斥（6.2）：`startingDirs map[string]int`（正在创建、还没登记的会话的工作目录）和 `removingRoots map[string]struct{}`（正在删除的 worktree 根）。创建会话的两条路径（终端、对话；交接出来的终端会话也走终端这一条）在工作目录确定之后、启动进程之前调 `beginStart(workdir) (done func(), err error)`：工作目录等于某个 `removingRoots` 或在它下面 → `ErrWorktreeBusy`（attach 收到 fatal 的 `create_failed`，`message` 写明这个 worktree 正在被删除）；否则计数加一。Worktree 模式在放开项目锁之前对新 worktree 里的工作目录调它（6.1 第 10 步）。`done` 在会话登记进会话表之后、或创建失败时调用，所以删除方任何时刻看这个会话，要么在 `startingDirs` 里，要么在会话表里。这两张表只在 `Manager.mu` 内读写，不引入新的锁。
+`Manager` 另有两张受 `Manager.mu` 保护的表，用来让「删除 worktree」和「在其中新建会话」互斥（6.2）：`startingDirs map[string]int`（正在创建、还没登记的会话的工作目录）和 `removingRoots map[string]struct{}`（正在删除的 worktree 根）。创建会话的两条路径（终端、对话；交接出来的终端会话也走终端这一条）在工作目录确定之后、启动进程之前调 `beginStart(workdir) (done func(), err error)`：工作目录等于某个 `removingRoots` 或在它下面 → `ErrWorktreeBusy`（attach 收到 fatal 的 `create_failed`，`message` 写明这个 worktree 正在被删除）；否则计数加一。Worktree 模式在放开项目锁之前对新 worktree 里的工作目录调它（6.1 第 10 步）。`beginStart` 成功之后（已放开 `Manager.mu`）再 `os.Stat` 一次工作目录：不存在（刚好在这之前被删完）→ 调 `done` 并返回 `create_failed`。`done` 在会话登记进会话表之后、或创建失败时调用，所以删除方任何时刻看这个会话，要么在 `startingDirs` 里，要么在会话表里。这两张表只在 `Manager.mu` 内读写，不引入新的锁（#22）。
 
 `protocol.go` 新增类型 `ProjectsResponse`、`Project`、`ProjectWorktree`、`WorktreePlan`、`WorktreeBase`、`WorktreeStatus`、`WorktreeRemoveRequest`、`WorktreeRemoveResult`，字段名即 4.2–4.6 的 JSON 名；可缺省的字段用 `omitempty`，数组字段输出 `[]` 而不是 `null`。
 
@@ -469,24 +469,24 @@ function terminalTheme(): ITheme     // 底色、前景、光标、选区读 CSS
 
 做法的要点（V10、V14）：目录和分支都用「不存在才创建」的操作去占，占到了才算本次建的，失败时只撤销占到的东西；分支始终写成完整引用名，参数里不出现短分支名，也不用 `git branch`、`-b`。
 
-锁外先做第 1 步（要靠它知道取哪把锁），其余在锁内。任何一步失败都返回对应错误并停止：
+锁外先做第 1 步（要靠它知道取哪把锁），其余在锁内。下面的 git 命令都在发起处所在的 worktree 根（`Home.Path`，记作 W）里执行：它一定是个可用的工作目录，分支和 worktree 的登记又是整个仓库共用的。任何一步失败都返回对应错误并停止：
 
 1. `ResolveHome(Source)`：返回错误或不是 git → `create_failed`。有名字而 `Single` 为真 → `create_failed`，`message` 写明这个仓库是子模块或使用了独立的 git 目录、不支持命名 worktree（`ErrUnsupportedRepo`）。
 2. 有名字：`ValidateWorktreeName` → `invalid_worktree_name`；分支 = 名字，目录 = `<dirname(项目)>/<basename(项目)>-worktrees/<WorktreeDirName(名字)>`。没有名字：分支 `vibe/<会话id>`，目录 `<dirname(Home.Path)>/<basename(Home.Path)>-worktrees/<会话id>`（现有算法）。
 3. `AllowPath(目录)` → `worktree_path_not_allowed`（此前是建好再检查再回滚；现在对两条路径都先检查）。
-4. `git -C <Repo> show-ref --verify --quiet refs/heads/<分支>` 退出码 0 → `worktree_branch_exists`。
+4. `git -C W show-ref --verify --quiet refs/heads/<分支>` 退出码 0 → `worktree_branch_exists`。
 5. `os.Lstat(目录)` 存在 → `worktree_path_exists`。第 4、5 步只是为了按固定的先后给出错误（与 4.4 的预检一致）；真正保证不覆盖别人东西的是第 7、8 步。
-6. 取发起处的提交：`git -C <Home.Path> rev-parse --verify HEAD^{commit}`，记作 OID；失败（例如仓库还没有提交）→ `create_failed`。
+6. 取发起处的提交：`git -C W rev-parse --verify HEAD^{commit}`，记作 OID；失败（例如仓库还没有提交）→ `create_failed`。
 7. 占目录：容器目录不存在就 `os.MkdirAll`（记下「容器是本次建的」），然后 `os.Mkdir(目录)`。返回「已存在」→ `worktree_path_exists`；其他错误 → `create_failed`。
-8. 占分支：`git -C <Repo> update-ref refs/heads/<分支> <OID> ""`（旧值为空 = 只在不存在时创建）。失败 → 删掉第 7 步建的空目录；再用第 4 步的命令查一次，分支存在 → `worktree_branch_exists`（别人刚建的，原样不动），不存在 → `create_failed` 和 git 的错误输出（例如已有分支 `a` 时建 `a/b`）。
-9. `git -C <Repo> worktree add --detach <目录> <OID>`，然后 `git -C <目录> symbolic-ref HEAD refs/heads/<分支>`。结果与 `worktree add -b` 相同：该 worktree 检出在新分支上、工作区干净（V14）。任一条失败 → 撤销（见下），返回 `create_failed` 和 git 的错误输出（R3.8）。
+8. 占分支：`git -C W update-ref refs/heads/<分支> <OID> ""`（旧值为空 = 只在不存在时创建）。失败 → 删掉第 7 步建的空目录；再用第 4 步的命令查一次，分支存在 → `worktree_branch_exists`（别人刚建的，原样不动），不存在 → `create_failed` 和 git 的错误输出（例如已有分支 `a` 时建 `a/b`）。
+9. `git -C W worktree add --detach <目录> <OID>`，然后 `git -C <目录> symbolic-ref HEAD refs/heads/<分支>`。结果与 `worktree add -b` 相同：该 worktree 检出在新分支上、工作区干净（V14）。任一条失败 → 撤销（见下），返回 `create_failed` 和 git 的错误输出（R3.8）。
 10. 成功：`ProjectStore.AddWorktree`；源目录是子目录时在新 worktree 里建出对应子目录（现有行为，失败同样撤销）；放开项目锁之前调 `beginStart(新工作目录)`，把它登记为「正在创建会话」（6.2 第 4 步靠它拒绝这时进来的删除）。
 
 撤销（`CreatedWorktree.Undo`）只清本次占到的东西，每一步靠状态判断、不看 git 的报错文字：
 
-- 目录在 `ListWorktrees(Repo)` 里 → `git worktree remove --force <目录>`（目录已被删、只剩登记时这条命令也能注销它，V14）。
+- 目录在 `ListWorktrees(W)` 里 → `git -C W worktree remove --force <目录>`（目录已被删、只剩登记时这条命令也能注销它，V14）。
 - `os.RemoveAll(目录)`。这个目录是第 7 步用 `os.Mkdir` 建出来的，建之前不存在。
-- 分支：`git update-ref -d refs/heads/<分支> <OID>`，只在它仍指向 OID 时删除。分支已经不在（`show-ref` 退出码 1）视为已撤销；指向别的提交（有人在这期间提交过）则保留，并把这一点写进返回的错误。
+- 分支：`git -C W update-ref -d refs/heads/<分支> <OID>`，只在它仍指向 OID 时删除。分支已经不在（`show-ref` 退出码 1）视为已撤销；指向别的提交（有人在这期间提交过）则保留，并把这一点写进返回的错误。
 - 容器目录是本次建的且为空 → 删掉。
 - 调用方（`Manager`）删掉第 10 步写的创建记录。
 
@@ -502,17 +502,17 @@ function terminalTheme(): ITheme     // 底色、前景、光标、选区读 CSS
 
 1. `allow(path)`：报错，或返回的规范路径与 `path` 不逐字相等 → 404 `worktree_not_found`，不对这个路径运行 git（`WorktreeStatus` 同样）。通过后 `ResolveHome(path)`：报错 → 500 `git_failed`；不是 git，或 `path` 不等于 `Home.Path`（是子目录）→ 404；`Single` 为真 → 400 `worktree_is_main`（这种仓库只有这一个 worktree，按主目录对待）。
 2. 取项目锁，`ListWorktrees(Home.Repo)`：`path` 必须与列表里某个不是 `prunable` 的项完全相等 → 否则 404 `worktree_not_found`；是第一项（主目录）→ 400 `worktree_is_main`。
-3. 重查状态 S（同 4.5）。
+3. 重查状态 S（同 4.5）。S 的 `sessions` 是归属等于 `path` 的会话，加上还没有归属（创建时 git 失败，5.1）而工作目录等于 `path` 或在它下面的会话：后一种同样会因为目录被删而失去脚下的目录。
 4. 挡住正在这个 worktree 里创建的会话（它们还没登记，第 3 步看不到）：在 `Manager.mu` 内查 `startingDirs`，有工作目录等于 `path` 或在它下面的 → 409 `worktree_changed` + S，不做任何改动；没有 → 在同一个临界区里把 `path` 记进 `removingRoots`，此后在它下面新建会话会被拒绝（`ErrWorktreeBusy`），直到本次删除返回时移除这个标记。记好之后再读一次归属这个 worktree 的会话，作为 S 的 `sessions`（标记之前已经登记的会话都在里面）。
 5. 与请求比对，任一不符 → 409 `worktree_changed` + S，不做任何改动：`S.head != head`；S 的会话不全在请求的 `sessions` 里；`S.dirtyFiles > 0` 且 `discardFiles` 不为真；设「要删分支」= `deleteBranch && S.managed && 有分支`，「要删分支且 `S.unmergedCommits > 0`」或「detached 且 `S.unmergedCommits > 0`」而 `dropCommits` 不为真。
 6. 现在就能确定 git 会拒绝、或删了会丢东西的情况，直接返回 500 `worktree_remove_failed`，不动任何会话（d26，V13）：
    - 列表里这一项标了 `locked` → `message` 写明已被 `git worktree lock` 锁定（带上原因），要先 `git worktree unlock`。
    - `HasSubmoduleCheckouts(path)` 为真（这个 worktree 里初始化过子模块）→ `message` 写明原因并给出手动命令 `git worktree remove --force <path>`。不带 `--force` 时 git 一定拒绝；带上虽然能删，但子模块的 git 目录就放在这个 worktree 的管理目录里，其中只在本地的提交会跟着消失，而确认框上的数字不包含它们，所以这种 worktree 不由 vibe-remote 删除。
 7. 逐个结束并删除 S 的会话（等同 `DELETE /sessions/{id}`）。
-8. `git -C <Repo> worktree remove <path>`，仅当 `discardFiles` 为真时加 `--force`。失败时不看 git 的报错文字，而是重读列表、重查状态 S2 来分类：
+8. `git -C <Home.Repo> worktree remove <path>`，仅当 `discardFiles` 为真时加 `--force`。失败时不看 git 的报错文字，而是重读列表、重查状态 S2 来分类：
    - 这一项还在列表里，并且 `S2.head != head`，或 `S2.dirtyFiles > 0` 而 `discardFiles` 不为真（第 3 步之后才出现的文件或提交）→ 409 `worktree_changed` + S2。
    - 其他 → 500 `worktree_remove_failed`，`message` 是 git 的错误输出（R5.9）。这一项已经不在列表里时（git 先注销了它，删目录删到一半失败，V13），`message` 另外写明目录还剩一部分和它的路径；分支不删，创建记录留给下一次 `Projects()` 清掉。
-9. 「要删分支」时：重读列表，仍有别的 worktree 检出着这个分支 → 不删，`branchError` 写明是哪个路径；否则 `git -C <Repo> update-ref -d refs/heads/<分支> <head>`，只在分支仍指向用户确认过的那个提交时删除（分支名取自 daemon 自己读到的列表，写成完整引用名，V10）。成功后 `git config --remove-section branch.<分支>` 清掉可能留下的跟踪配置（没有这一节时它的退出码非 0，忽略）。失败不回滚目录，在结果里带 `branchError`。
+9. 「要删分支」时：重读列表，仍有别的 worktree 检出着这个分支 → 不删，`branchError` 写明是哪个路径；否则 `git -C <Home.Repo> update-ref -d refs/heads/<分支> <head>`，只在分支仍指向用户确认过的那个提交时删除（分支名取自 daemon 自己读到的列表，写成完整引用名，V10）。成功后 `git config --remove-section branch.<分支>` 清掉可能留下的跟踪配置（没有这一节时它的退出码非 0，忽略）。失败不回滚目录，在结果里带 `branchError`。
 10. `ProjectStore.RemoveWorktree(path)`；`path` 的上一级正好是这个项目的容器目录（`<主目录名>-worktrees`）且已为空时删掉它，别的目录不动。
 
 处理函数不把删除和请求的生命周期绑在一起：桌面端超时或断开后，daemon 照样把这次删除做完（做到一半停下更糟）。
@@ -573,7 +573,7 @@ function terminalTheme(): ITheme     // 底色、前景、光标、选区读 CSS
 
 - 新接口都要 Bearer token，常量时间比较（现有 `checkToken`）。
 - 客户端传来的字符串怎么用：
-  - `worktreeName`：先过 4.1 的规则（以 `-` 开头、含 `@{` 的在任何 git 调用之前就被拒绝）。之后它在 git 的参数里只以两种形式出现：`check-ref-format --branch <名字>`（只读的校验），和完整引用名 `refs/heads/<名字>`（`show-ref`、`update-ref`、`symbolic-ref`、`rev-list`）。完整引用名不会被 git 展开成别的分支，也不会被当成选项（V10）。daemon 不调用 `git branch`，不用 `worktree add -b` / `-B`。参数都经 `exec.Command` 逐个传递，不经过 shell（V3：`$(touch${IFS}PWNED)` 原样成为分支名）。
+  - `worktreeName`：先过 4.1 的规则（以 `-` 开头、含 `@{` 的在任何 git 调用之前就被拒绝）。之后它在 git 的参数里只以这几种形式出现：`check-ref-format --branch <名字>`（只读的校验）；完整引用名 `refs/heads/<名字>`（`show-ref`、`update-ref`、`symbolic-ref`、`rev-list`）；`rev-list` 的排除模式 `--exclude=<名字>`；删分支后清配置用的节名 `branch.<名字>`。后三种都带着固定的前缀，不会被 git 展开成别的分支，也不会被当成选项（V10）。daemon 不调用 `git branch`，不用 `worktree add -b` / `-B`。参数都经 `exec.Command` 逐个传递，不经过 shell（V3：`$(touch${IFS}PWNED)` 原样成为分支名）。
   - `path`（status / remove）：先过 `allow`（解析符号链接，4.9），再和 daemon 自己读到的 worktree 路径做相等比较；之后传给 git 的是 daemon 读到的那个字符串。要删的分支同样取自 daemon 读到的列表，并且也只写成 `refs/heads/<分支>`：git 输出的分支名一样可能以 `-` 开头或与 tag 同名。
   - `workdir`：过 `ResolveAllowedWorkdir`。新 worktree 的目标目录过 `ResolveAllowedNewPath`。
   - 项目 `id`：只和项目清单里的键做相等比较。
