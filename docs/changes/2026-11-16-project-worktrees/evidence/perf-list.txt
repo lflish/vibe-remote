@@ -1,0 +1,8 @@
+fixture: 20 repos, 5 worktrees each (100 worktrees), 200 tracked files per worktree
+A  worktree list, 20 repos, sequential                     min  443.0 ms  median  477.4 ms  max  521.4 ms  (n=15)
+B  worktree list, 20 repos, 4 at a time                    min  135.5 ms  median  150.4 ms  max  169.3 ms  (n=15)
+C  worktree list, 20 repos, 8 at a time                    min  104.8 ms  median  116.4 ms  max  132.3 ms  (n=15)
+D  status, 100 worktrees, sequential (NOT in the list)     min 2465.0 ms  median 2645.6 ms  max 5620.9 ms  (n=15)
+E  status, 100 worktrees, 8 at a time (NOT in the list)    min  508.3 ms  median  536.2 ms  max  561.8 ms  (n=15)
+F  rev-list unmerged, 100 worktrees, sequential (NOT in list) min 2133.3 ms  median 2239.1 ms  max 2535.5 ms  (n=15)
+G  one delete-status check (status + rev-list), 1 worktree min   40.1 ms  median   48.6 ms  max   54.4 ms  (n=15)

@@ -11,3 +11,7 @@
 | 2026-11-18 10:03 | dev-requirements | 用户回复 | 888 分钟 | 关口 A：M1，其余按默认 |
 | 2026-11-18 10:08 | dev-requirements | 阶段结束 | | 关口 A 通过 |
 | 2026-11-18 10:08 | dev-design | 阶段开始 | | |
+| 2026-11-18 10:36 | dev-design | 原型实验 | 5 | git 行为探针：worktree 列表、未合并与干净判定、创建失败的残留、删除、伪造 `.git`（evidence/git-probe.txt、git-probe-2.txt） |
+| 2026-11-18 10:41 | dev-design | 原型实验 | 1 | 性能：20 仓库 × 5 worktree 的 git 调用耗时，7 组对比（evidence/perf-list.txt） |
+| 2026-11-18 10:52 | dev-design | 原型实验 | 3 | 临时 daemon + 调试实例：协议 3 对新端点返回 404、会话列表基线耗时、快捷键拦截与菜单加速键（evidence/shortcut-probe.txt） |
+| 2026-11-18 10:58 | dev-design | 原型实验 | 1 | M1 配色对比度（evidence/contrast-m1.txt） |

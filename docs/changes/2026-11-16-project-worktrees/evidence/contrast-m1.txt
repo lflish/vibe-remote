@@ -1,0 +1,39 @@
+ok   17.08:1 (need 4.5)  正文  #1C1B22 on #FFFFFF
+ok   14.91:1 (need 4.5)  正文/侧边栏  #1C1B22 on #EFEFF4
+ok   12.29:1 (need 4.5)  正文/选中行  #1C1B22 on #DDD7F5
+ok   13.06:1 (need 4.5)  正文/用户气泡  #1C1B22 on #E3DEF7
+ok   15.85:1 (need 4.5)  正文/下沉面  #1C1B22 on #F6F6FA
+ok   15.20:1 (need 4.5)  正文/提示块  #1C1B22 on #F3F0FC
+ok   9.26:1 (need 4.5)  正文/侧边栏顶部渐变最深处  #1C1B22 on #C3B8EC
+ok   14.71:1 (need 4.5)  正文/警告底  #1C1B22 on #f4ede4
+ok   14.93:1 (need 4.5)  正文/危险底  #1C1B22 on #f9edec
+ok   7.44:1 (need 3)  次要文字 text2  #565365 on #FFFFFF
+ok   6.50:1 (need 3)  次要文字 text2/侧边栏  #565365 on #EFEFF4
+ok   4.04:1 (need 3)  次要文字 text2/顶部渐变  #565365 on #C3B8EC
+ok   5.48:1 (need 3)  次要文字 text3  #6A6779 on #FFFFFF
+ok   4.79:1 (need 3)  次要文字 text3/侧边栏  #6A6779 on #EFEFF4
+ok   3.95:1 (need 3)  次要文字 text3/选中行  #6A6779 on #DDD7F5
+ok   5.09:1 (need 3)  次要文字 text3/下沉面  #6A6779 on #F6F6FA
+ok   5.48:1 (need 4.5)  主按钮文字  #FFFFFF on #6B54D3
+ok   7.10:1 (need 4.5)  主按钮文字 hover  #FFFFFF on #5942BF
+ok   5.65:1 (need 4.5)  危险按钮文字  #FFFFFF on #BB382E
+ok   17.08:1 (need 4.5)  中性按钮文字  #FFFFFF on #1C1B22
+ok   5.65:1 (need 4.5)  描边危险按钮文字  #BB382E on #FFFFFF
+ok   5.48:1 (need 4.5)  链接  #6B54D3 on #FFFFFF
+ok   4.78:1 (need 4.5)  链接/侧边栏  #6B54D3 on #EFEFF4
+ok   5.47:1 (need 4.5)  警告文字  #9A5A0A on #FFFFFF
+ok   4.77:1 (need 4.5)  警告文字/侧边栏  #9A5A0A on #EFEFF4
+ok   4.36:1 (need 3)  成功文字/侧边栏(11px 状态)  #1B7F52 on #EFEFF4
+ok   7.01:1 (need 4.5)  diff +  #155C3A on #E3F4EA
+ok   6.61:1 (need 4.5)  diff -  #972A22 on #FBE7E4
+ok   17.08:1 (need 4.5)  终端前景  #1C1B22 on #FFFFFF
+ok   11.78:1 (need 4.5)  终端选区上的前景  #1C1B22 on #D9D2F4
+ok   5.48:1 (need 3)  终端光标块  #6B54D3 on #FFFFFF
+ok   4.40:1 (need 3)  点 新消息/侧边栏  #6F6C86 on #EFEFF4
+ok   3.58:1 (need 3)  点 回合结束/侧边栏  #1A8F58 on #EFEFF4
+ok   3.24:1 (need 3)  点 等你处理/侧边栏  #C2710A on #EFEFF4
+ok   3.63:1 (need 3)  点 新消息/选中行  #6F6C86 on #DDD7F5
+LOW  2.96:1 (need 3)  点 回合结束/选中行  #1A8F58 on #DDD7F5
+LOW  2.67:1 (need 3)  点 等你处理/选中行  #C2710A on #DDD7F5
+pairwise dots: new/idle 1.23, new/wait 1.36, idle/wait 1.11
+2 pair(s) below the threshold
