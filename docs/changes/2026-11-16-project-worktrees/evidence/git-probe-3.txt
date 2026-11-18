@@ -1,0 +1,772 @@
+# 补充探针 3（2026-11-18，工程评审 eng-review-1 之后）
+# 环境：macOS（Darwin 25.6），git 2.50.1 (Apple Git-155)，tmux 3.6a。
+# 每一段都在 mktemp -d 的临时仓库里跑，跑完即删；GIT_CONFIG_GLOBAL / GIT_CONFIG_SYSTEM 指向 /dev/null。
+# <tmp> 是临时目录。A = 评审第 1 条，B = 第 4、7、15 条，C、D、E = 定方案时补的，F = tmux，G = 会话 id 的历史形态。
+
+######## A　分支名 @{-1}、名字校验、update-ref、先占后建
+## A1 @{-1}：上一个检出的分支是 prev（上面有 1 个只在 prev 上的提交）
+
+$ git check-ref-format --branch @\{-1\} 
+prev
+[exit 0]
+
+$ git check-ref-format --branch @\{-2\} 
+main
+[exit 0]
+
+$ git worktree add -b @\{-1\} <tmp>/wt-at HEAD 
+Preparing worktree (new branch '@{-1}')
+fatal: a branch named 'prev' already exists
+[exit 255]
+
+$ git branch --list 
+* main
+  prev
+[exit 0]
+
+$ git branch -D @\{-1\} 
+Deleted branch prev (was 3c6be22).
+[exit 0]
+
+$ git branch --list 
+* main
+[exit 0]
+# ↑ 被删的是 prev（强删，不看是否合并）。恢复它继续后面的实验：
+
+## A2 新的校验：本地四条规则 + 不含 @{ + check-ref-format --branch 退出码为 0 且输出与输入逐字相等
+name=[@{-1}]  check-ref-format --branch: exit=0 out=[prev]  => 判定 local:at_brace
+name=[@{-2}]  check-ref-format --branch: exit=0 out=[main]  => 判定 local:at_brace
+name=[@{u}]  check-ref-format --branch: exit=128 out=[fatal: no upstream configured for branch 'main']  => 判定 local:at_brace
+name=[@]  check-ref-format --branch: exit=0 out=[@]  => 判定 OK
+name=[HEAD]  check-ref-format --branch: exit=128 out=[fatal: 'HEAD' is not a valid branch name]  => 判定 git:exit=128
+name=[-x]  check-ref-format --branch: exit=128 out=[fatal: '-x' is not a valid branch name]  => 判定 local:leading_dash
+name=[-]  check-ref-format --branch: exit=128 out=[fatal: '-' is not a valid branch name]  => 判定 local:leading_dash
+name=[a..b]  check-ref-format --branch: exit=128 out=[fatal: 'a..b' is not a valid branch name]  => 判定 local:dotdot
+name=[a b]  check-ref-format --branch: exit=128 out=[fatal: 'a b' is not a valid branch name]  => 判定 local:whitespace
+name=[a@{b]  check-ref-format --branch: exit=128 out=[fatal: 'a@{b' is not a valid branch name]  => 判定 local:at_brace
+name=[change/foo]  check-ref-format --branch: exit=0 out=[change/foo]  => 判定 OK
+name=[fix-login]  check-ref-format --branch: exit=0 out=[fix-login]  => 判定 OK
+name=[refs/heads/x]  check-ref-format --branch: exit=0 out=[refs/heads/x]  => 判定 OK
+name=[x.lock]  check-ref-format --branch: exit=128 out=[fatal: 'x.lock' is not a valid branch name]  => 判定 git:exit=128
+# 去掉「不含 @{」这条本地规则、只靠「输出与输入相等」时：
+name=[@{-1}] exit=0 out=[prev] equal=no
+name=[@{-2}] exit=0 out=[main] equal=no
+name=[@{u}] exit=128 out=[] equal=no
+
+## A3 git update-ref -d refs/heads/<名字>
+
+$ git update-ref -d refs/heads/victim b41ed0361c79624db4ae0bcd151318a979693ac9 
+[exit 0]
+
+$ git show-ref --verify refs/heads/victim 
+fatal: 'refs/heads/victim' - not a valid ref
+[exit 128]
+
+$ git update-ref -d refs/heads/never-existed 
+[exit 0]
+
+$ git update-ref -d refs/heads/never-existed b41ed0361c79624db4ae0bcd151318a979693ac9 
+error: cannot lock ref 'refs/heads/never-existed': unable to resolve reference 'refs/heads/never-existed'
+[exit 1]
+
+$ git update-ref -d refs/heads/moved b41ed0361c79624db4ae0bcd151318a979693ac9 
+error: cannot lock ref 'refs/heads/moved': is at 3c6be2256439812c7ca2be8279727eb140083e2d but expected b41ed0361c79624db4ae0bcd151318a979693ac9
+[exit 1]
+# ↑ 旧值不符（moved 指向 prev 的提交，不是 b41ed0361c79624db4ae0bcd151318a979693ac9 的前 7 位 b41ed03）
+
+$ git show-ref --verify refs/heads/moved 
+3c6be2256439812c7ca2be8279727eb140083e2d refs/heads/moved
+[exit 0]
+
+$ git update-ref -d refs/heads/@\{-1\} 
+[exit 0]
+
+$ git branch --list 
+* main
+  moved
+  prev
+[exit 0]
+
+$ git branch -D -x 
+error: unknown switch `x'
+usage: git branch [<options>] [-r | -a] [--merged] [--no-merged]
+
+$ git update-ref -d refs/heads/-x b41ed0361c79624db4ae0bcd151318a979693ac9 
+[exit 0]
+
+$ git show-ref --verify refs/heads/-x 
+fatal: 'refs/heads/-x' - not a valid ref
+[exit 128]
+# 被另一个 worktree 检出着的分支：
+
+$ git branch -D held 
+error: cannot delete branch 'held' used by worktree at '<tmp>/wt-held'
+[exit 1]
+
+$ git update-ref -d refs/heads/held b41ed0361c79624db4ae0bcd151318a979693ac9 
+[exit 0]
+
+$ git -C <tmp>/wt-held status --short --branch 
+## No commits yet on held
+A  a
+[exit 0]
+
+## A4 只创建（旧值全 0）= 原子占位
+
+$ git update-ref refs/heads/fresh b41ed0361c79624db4ae0bcd151318a979693ac9 0000000000000000000000000000000000000000 
+[exit 0]
+
+$ git update-ref refs/heads/fresh b41ed0361c79624db4ae0bcd151318a979693ac9 0000000000000000000000000000000000000000 
+fatal: update_ref failed for ref 'refs/heads/fresh': cannot lock ref 'refs/heads/fresh': reference already exists
+[exit 128]
+
+$ git update-ref refs/heads/prev b41ed0361c79624db4ae0bcd151318a979693ac9 0000000000000000000000000000000000000000 
+fatal: update_ref failed for ref 'refs/heads/prev': cannot lock ref 'refs/heads/prev': reference already exists
+[exit 128]
+
+$ git rev-parse --short prev 
+3c6be22
+[exit 0]
+
+## A5 新流程：os.Mkdir 占目录 → update-ref 占分支 → git worktree add <目录> <分支>
+
+$ git worktree add <tmp>/repo-worktrees/fresh fresh 
+Preparing worktree (checking out 'fresh')
+HEAD is now at b41ed03 init
+[exit 0]
+
+$ git -C <tmp>/repo-worktrees/fresh symbolic-ref HEAD 
+refs/heads/fresh
+[exit 0]
+
+$ git worktree list --porcelain 
+worktree <tmp>/repo
+HEAD b41ed0361c79624db4ae0bcd151318a979693ac9
+branch refs/heads/main
+
+worktree <tmp>/repo-worktrees/fresh
+HEAD b41ed0361c79624db4ae0bcd151318a979693ac9
+branch refs/heads/fresh
+
+[exit 0]
+# 名字是 @（git 接受）：
+
+$ git worktree add <tmp>/repo-worktrees/at @ 
+Preparing worktree (checking out '@')
+HEAD is now at b41ed03 init
+[exit 0]
+
+$ git -C <tmp>/repo-worktrees/at symbolic-ref HEAD 
+refs/heads/@
+[exit 0]
+# 同名的 tag 存在时，短名先解析成 tag 还是分支：
+
+$ git worktree add <tmp>/repo-worktrees/fix-login fix-login 
+warning: refname 'fix-login' is ambiguous.
+warning: refname 'fix-login' is ambiguous.
+Preparing worktree (checking out 'fix-login')
+warning: refname 'fix-login' is ambiguous.
+HEAD is now at b41ed03 init
+[exit 0]
+
+$ git -C <tmp>/repo-worktrees/fix-login symbolic-ref HEAD 
+refs/heads/fix-login
+[exit 0]
+
+$ git -C <tmp>/repo-worktrees/fix-login rev-parse --short HEAD 
+b41ed03
+[exit 0]
+# （main=b41ed03，tag fix-login 指向 prev=3c6be22）
+
+$ git rev-list --count fix-login --not --exclude=fix-login --branches --remotes 
+warning: refname 'fix-login' is ambiguous.
+0
+[exit 0]
+
+$ git rev-list --count refs/heads/fix-login --not --exclude=fix-login --branches --remotes 
+0
+[exit 0]
+# ↑ 短名被解析成 tag，数出来的是 tag 的提交；完整引用名才是分支
+
+## A6 新流程里 git worktree add 失败时留下什么（.git/worktrees 不可写）
+
+$ git worktree add <tmp>/repo-worktrees/willfail willfail 
+Preparing worktree (checking out 'willfail')
+fatal: could not create directory of '.git/worktrees/willfail': Permission denied
+[exit 128]
+
+$ ls -A <tmp>/repo-worktrees/willfail 
+[exit 0]
+
+$ git show-ref --verify refs/heads/willfail 
+b41ed0361c79624db4ae0bcd151318a979693ac9 refs/heads/willfail
+[exit 0]
+
+$ sh -c git\ worktree\ list\ --porcelain\ \|\ grep\ -c\ willfail 
+0
+[exit 1]
+# 撤销自己占到的：rmdir 目录（只删空目录）+ update-ref -d 带旧值
+
+$ rmdir <tmp>/repo-worktrees/willfail 
+[exit 0]
+
+$ git update-ref -d refs/heads/willfail b41ed0361c79624db4ae0bcd151318a979693ac9 
+[exit 0]
+
+$ git show-ref --verify refs/heads/willfail 
+fatal: 'refs/heads/willfail' - not a valid ref
+[exit 128]
+# 目标目录先被别人建了（os.Mkdir 返回 EEXIST，不调 git）：
+
+$ mkdir <tmp>/repo-worktrees/taken 
+mkdir: <tmp>/repo-worktrees/taken: File exists
+[exit 1]
+
+######## B　子模块 / separate-git-dir、locale、worktree lock、含子模块的 worktree
+## B1 子模块（第 4 条）
+
+$ git -C <tmp>/super/sub worktree list --porcelain 
+worktree <tmp>/super/.git/modules/sub
+HEAD 788b135cf1377c994c861daa5f46ed538ab851eb
+branch refs/heads/main
+
+[exit 0]
+
+$ git -C <tmp>/super/sub rev-parse --show-toplevel 
+<tmp>/super/sub
+[exit 0]
+
+$ git -C <tmp>/super/sub rev-parse --git-common-dir 
+<tmp>/super/.git/modules/sub
+[exit 0]
+
+$ ls -A <tmp>/super/sub 
+.git
+a
+[exit 0]
+# 第一项的路径下有没有 .git：
+
+$ ls -d <tmp>/super/.git/modules/sub/.git 
+ls: <tmp>/super/.git/modules/sub/.git: No such file or directory
+[exit 1]
+# 在子模块里再建一个链接 worktree，从它里面看：
+
+$ git -C <tmp>/super/sub worktree add -q -b feat <tmp>/sub-feat HEAD 
+[exit 0]
+
+$ git -C <tmp>/sub-feat worktree list --porcelain 
+worktree <tmp>/super/.git/modules/sub
+HEAD 788b135cf1377c994c861daa5f46ed538ab851eb
+branch refs/heads/main
+
+worktree <tmp>/sub-feat
+HEAD 788b135cf1377c994c861daa5f46ed538ab851eb
+branch refs/heads/feat
+
+[exit 0]
+
+$ git -C <tmp>/sub-feat rev-parse --show-toplevel 
+<tmp>/sub-feat
+[exit 0]
+
+## B2 git init --separate-git-dir（第 4 条）
+
+$ cat <tmp>/sep/.git 
+gitdir: <tmp>/sep-gitdir
+[exit 0]
+
+$ git -C <tmp>/sep worktree list --porcelain 
+worktree <tmp>/sep-gitdir
+HEAD 747347a236713b018ebd855aab4a7087eead282f
+branch refs/heads/main
+
+[exit 0]
+
+$ git -C <tmp>/sep rev-parse --show-toplevel 
+<tmp>/sep
+[exit 0]
+
+$ git -C <tmp>/sep worktree add -q -b feat <tmp>/sep-feat HEAD 
+[exit 0]
+
+$ git -C <tmp>/sep-feat worktree list --porcelain 
+worktree <tmp>/sep-gitdir
+HEAD 747347a236713b018ebd855aab4a7087eead282f
+branch refs/heads/main
+
+worktree <tmp>/sep-feat
+HEAD 747347a236713b018ebd855aab4a7087eead282f
+branch refs/heads/feat
+
+[exit 0]
+
+$ git -C <tmp>/sep-feat rev-parse --show-toplevel 
+<tmp>/sep-feat
+[exit 0]
+# 对照：普通仓库的子目录
+
+$ git -C <tmp>/plain/src worktree list --porcelain 
+worktree <tmp>/plain
+HEAD 747347a236713b018ebd855aab4a7087eead282f
+branch refs/heads/main
+
+[exit 0]
+
+$ git -C <tmp>/plain/src rev-parse --show-toplevel 
+<tmp>/plain
+[exit 0]
+
+$ ls -d <tmp>/plain/.git 
+<tmp>/plain/.git
+[exit 0]
+# 对照：裸仓库
+
+$ git -C <tmp>/bare.git worktree list --porcelain 
+worktree <tmp>/bare.git
+bare
+
+[exit 0]
+
+$ git -C <tmp>/bare.git rev-parse --show-toplevel 
+fatal: this operation must be run in a work tree
+[exit 128]
+
+## B3 locale（第 7 条）
+
+$ sh -c echo\ \"LANG=\$\{LANG:-\}\ LC_ALL=\$\{LC_ALL:-\}\"\;\ git\ --version\;\ git\ --exec-path 
+LANG=zh_CN.UTF-8 LC_ALL=
+git version 2.50.1 (Apple Git-155)
+/Library/Developer/CommandLineTools/usr/libexec/git-core
+[exit 0]
+
+$ sh -c ls\ \"\$\(dirname\ \"\$\(git\ --exec-path\)\"\)/../share/locale\"\ 2\>\&1\ \|\ head\ -3\;\ ls\ /Library/Developer/CommandLineTools/usr/share/locale\ 2\>\&1\ \|\ head\ -3\;\ ls\ /Library/Developer/CommandLineTools/usr/share/git-core\ 2\>\&1\ \|\ head\ -5 
+ls: /Library/Developer/CommandLineTools/usr/libexec/../share/locale: No such file or directory
+ls: /Library/Developer/CommandLineTools/usr/share/locale: No such file or directory
+git-completion.bash
+git-completion.tcsh
+git-completion.zsh
+git-prompt.sh
+gitattributes
+[exit 0]
+
+$ env LC_ALL=zh_CN.UTF-8 LANGUAGE=zh_CN git -C <tmp>/nonrepo-xyz status 
+fatal: cannot change to '<tmp>/nonrepo-xyz': No such file or directory
+[exit 128]
+
+$ env LC_ALL=zh_CN.UTF-8 LANGUAGE=zh_CN git -C <tmp>/nonrepo worktree list --porcelain 
+fatal: not a git repository (or any of the parent directories): .git
+[exit 128]
+
+$ env LC_ALL=C git -C <tmp>/nonrepo worktree list --porcelain 
+fatal: not a git repository (or any of the parent directories): .git
+[exit 128]
+
+$ env LC_ALL=zh_CN.UTF-8 LANGUAGE=zh_CN git -C <tmp>/plain branch -D nope 
+error: branch 'nope' not found
+[exit 1]
+# 继承来的 GIT_DIR 会让 -C 失效：
+
+$ env GIT_DIR=<tmp>/plain/.git git -C <tmp>/nonrepo rev-parse --git-dir 
+<tmp>/plain/.git
+[exit 0]
+
+$ env -u GIT_DIR git -C <tmp>/nonrepo rev-parse --git-dir 
+fatal: not a git repository (or any of the parent directories): .git
+[exit 128]
+
+## B4 git worktree lock（第 15 条）
+
+$ git -C <tmp>/plain worktree lock <tmp>/wt-lk 
+[exit 0]
+
+$ git -C <tmp>/plain worktree lock --reason on\ usb\ disk <tmp>/wt-lk2 
+[exit 0]
+
+$ git -C <tmp>/plain worktree list --porcelain 
+worktree <tmp>/plain
+HEAD 747347a236713b018ebd855aab4a7087eead282f
+branch refs/heads/main
+
+worktree <tmp>/wt-lk
+HEAD 747347a236713b018ebd855aab4a7087eead282f
+branch refs/heads/lk
+locked
+
+worktree <tmp>/wt-lk2
+HEAD 747347a236713b018ebd855aab4a7087eead282f
+branch refs/heads/lk2
+locked on usb disk
+
+[exit 0]
+
+$ git -C <tmp>/plain worktree remove <tmp>/wt-lk 
+fatal: cannot remove a locked working tree;
+use 'remove -f -f' to override or unlock first
+[exit 128]
+
+$ git -C <tmp>/plain worktree remove --force <tmp>/wt-lk 
+fatal: cannot remove a locked working tree;
+use 'remove -f -f' to override or unlock first
+[exit 128]
+
+$ ls -d <tmp>/wt-lk 
+<tmp>/wt-lk
+[exit 0]
+
+$ git -C <tmp>/plain worktree remove --force --force <tmp>/wt-lk 
+[exit 0]
+
+$ ls -d <tmp>/wt-lk 
+ls: <tmp>/wt-lk: No such file or directory
+[exit 1]
+
+## B5 含子模块的 worktree 的删除（第 15 条后半）
+# 子模块没有初始化（只有 gitlink）：
+
+$ git -C <tmp>/super worktree remove <tmp>/wt-sub 
+[exit 0]
+
+$ ls -d <tmp>/wt-sub 
+ls: <tmp>/wt-sub: No such file or directory
+[exit 1]
+# 子模块已初始化：
+
+$ git -C <tmp>/wt-sub2 status --porcelain 
+[exit 0]
+
+$ git -C <tmp>/super worktree remove <tmp>/wt-sub2 
+fatal: working trees containing submodules cannot be moved or removed
+[exit 128]
+
+$ ls -d <tmp>/wt-sub2 
+<tmp>/wt-sub2
+[exit 0]
+
+$ sh -c git\ -C\ \'<tmp>/wt-sub2\'\ ls-files\ --stage\ \|\ grep\ -c\ \'\^160000\' 
+1
+[exit 0]
+
+$ ls <tmp>/wt-sub2/.gitmodules 
+<tmp>/wt-sub2/.gitmodules
+[exit 0]
+
+$ git -C <tmp>/super worktree remove --force <tmp>/wt-sub2 
+[exit 0]
+
+$ ls -d <tmp>/wt-sub2 
+ls: <tmp>/wt-sub2: No such file or directory
+[exit 1]
+
+## B6 校验通过之后删到一半失败（R5.9 的另一类失败）
+
+$ git -C <tmp>/plain worktree remove <tmp>/cont/half 
+error: failed to delete '<tmp>/cont/half': Permission denied
+[exit 255]
+
+$ sh -c git\ -C\ \'<tmp>/plain\'\ worktree\ list\ --porcelain\ \|\ grep\ -c\ \'cont/half\' 
+0
+[exit 1]
+
+$ sh -c find\ \'<tmp>/cont/half\'\ \|\ sed\ \'s#<tmp>#\<tmp\>#\'\ \|\ head 
+<tmp>/cont/half
+<tmp>/cont/half/d
+<tmp>/cont/half/d/f
+[exit 0]
+
+$ git -C <tmp>/plain show-ref --verify refs/heads/half 
+2ca98aaa35b718bdc60a37591d4c8ccd3609abc9 refs/heads/half
+[exit 0]
+
+## B7 其它：update-ref 的旧值写法；名字 refs/heads/x；rev-list 用短名遇到同名 tag
+
+$ git -C <tmp>/plain update-ref refs/heads/e1 747347a236713b018ebd855aab4a7087eead282f '' 
+[exit 0]
+
+$ git -C <tmp>/plain update-ref refs/heads/e1 747347a236713b018ebd855aab4a7087eead282f '' 
+fatal: update_ref failed for ref 'refs/heads/e1': cannot lock ref 'refs/heads/e1': reference already exists
+[exit 128]
+
+$ git -C <tmp>/plain show-ref --verify refs/heads/e1 
+747347a236713b018ebd855aab4a7087eead282f refs/heads/e1
+[exit 0]
+
+$ git -C <tmp>/plain worktree add <tmp>/cont/rx refs/heads/x 
+warning: refname 'refs/heads/x' is ambiguous.
+warning: refname 'refs/heads/x' is ambiguous.
+Preparing worktree (checking out 'refs/heads/x')
+warning: refname 'refs/heads/x' is ambiguous.
+HEAD is now at 747347a init
+[exit 0]
+
+$ git -C <tmp>/cont/rx symbolic-ref HEAD 
+refs/heads/refs/heads/x
+[exit 0]
+# 分支 topic 有 2 个独有提交；另有一个同名 tag 指向 main：
+
+$ git -C <tmp>/plain rev-list --count topic --not --exclude=topic --branches --remotes 
+warning: refname 'topic' is ambiguous.
+0
+[exit 0]
+
+$ git -C <tmp>/plain rev-list --count refs/heads/topic --not --exclude=topic --branches --remotes 
+2
+[exit 0]
+
+######## C　参数里完全不出现短分支名的建法；引用的目录/文件冲突；分支配置；从 git 目录执行 remove
+## C1 建法 B：update-ref 占分支 → worktree add --detach <目录> <提交> → symbolic-ref HEAD refs/heads/<名字>（参数里没有短分支名）
+
+$ git update-ref refs/heads/lit 4d140f965ba11c4e09a0951cd74a77eefd54beba '' 
+[exit 0]
+
+$ git worktree add --detach <tmp>/repo-worktrees/lit 4d140f965ba11c4e09a0951cd74a77eefd54beba 
+Preparing worktree (detached HEAD 4d140f9)
+HEAD is now at 4d140f9 init
+[exit 0]
+
+$ git -C <tmp>/repo-worktrees/lit symbolic-ref HEAD refs/heads/lit 
+[exit 0]
+
+$ git worktree list --porcelain 
+worktree <tmp>/repo
+HEAD 4d140f965ba11c4e09a0951cd74a77eefd54beba
+branch refs/heads/main
+
+worktree <tmp>/repo-worktrees/lit
+HEAD 4d140f965ba11c4e09a0951cd74a77eefd54beba
+branch refs/heads/lit
+
+[exit 0]
+
+$ git -C <tmp>/repo-worktrees/lit status --porcelain --branch 
+## lit
+[exit 0]
+
+$ git branch -d lit 
+error: cannot delete branch 'lit' used by worktree at '<tmp>/repo-worktrees/lit'
+[exit 1]
+# 在里面提交一次，分支跟着走：
+
+$ git rev-list --count refs/heads/lit --not --exclude=lit --branches --remotes 
+1
+[exit 0]
+
+## C3 目录/文件冲突：已有分支 a，再建 a/b
+
+$ git check-ref-format --branch a/b 
+a/b
+[exit 0]
+
+$ git update-ref refs/heads/a/b 4d140f965ba11c4e09a0951cd74a77eefd54beba '' 
+fatal: update_ref failed for ref 'refs/heads/a/b': cannot lock ref 'refs/heads/a/b': 'refs/heads/a' exists; cannot create 'refs/heads/a/b'
+[exit 128]
+
+$ git show-ref --verify --quiet refs/heads/a/b 
+[exit 1]
+
+$ git show-ref --verify --quiet refs/heads/a 
+[exit 0]
+
+## C4 update-ref -d 不清分支配置；git config --remove-section 的退出码
+
+$ git update-ref -d refs/heads/tracked 4d140f965ba11c4e09a0951cd74a77eefd54beba 
+[exit 0]
+
+$ git config --get-regexp \^branch\\.tracked\\. 
+branch.tracked.remote origin
+branch.tracked.merge refs/heads/tracked
+[exit 0]
+
+$ git config --remove-section branch.tracked 
+[exit 0]
+
+$ git config --remove-section branch.tracked 
+fatal: no such section: branch.tracked
+[exit 128]
+
+$ git config --remove-section branch.change/foo 
+fatal: no such section: branch.change/foo
+[exit 128]
+
+## C5 从 git 目录里执行 worktree remove（子模块 / separate-git-dir 的第一项就是 git 目录）
+
+$ git -C <tmp>/sep-gitdir worktree remove <tmp>/sep-feat 
+[exit 0]
+
+$ ls -d <tmp>/sep-feat 
+ls: <tmp>/sep-feat: No such file or directory
+[exit 1]
+
+######## D　链接 worktree 里已初始化的子模块；LC_ALL=C 下的非 ASCII 名字
+## D1 链接 worktree 里初始化子模块之后，它的 git 目录下出现 modules/
+
+$ git -C <tmp>/w1 rev-parse --absolute-git-dir
+<tmp>/super/.git/worktrees/w1
+[exit 0]
+
+$ ls <tmp>/super/.git/worktrees/w1
+commondir
+gitdir
+HEAD
+index
+logs
+ORIG_HEAD
+refs
+[exit 0]
+
+$ ls <tmp>/super/.git/worktrees/w1
+commondir
+gitdir
+HEAD
+index
+logs
+modules
+ORIG_HEAD
+refs
+[exit 0]
+
+$ ls <tmp>/super/.git/worktrees/w1/modules
+sub
+[exit 0]
+# 没有初始化子模块的 w2：
+
+$ ls -d <tmp>/super/.git/worktrees/w2/modules
+ls: <tmp>/super/.git/worktrees/w2/modules: No such file or directory
+[exit 1]
+
+$ git -C <tmp>/super worktree remove <tmp>/w1
+fatal: working trees containing submodules cannot be moved or removed
+[exit 128]
+
+$ git -C <tmp>/super worktree remove <tmp>/w2
+[exit 0]
+# 子模块里有只在本地的提交时，带 --force 的删除照样成功，子模块的 git 目录随之消失：
+
+$ git -C <tmp>/w1 status --porcelain
+ M sub
+[exit 0]
+
+$ git -C <tmp>/super worktree remove --force <tmp>/w1
+[exit 0]
+
+$ ls -d <tmp>/super/.git/worktrees/w1
+ls: <tmp>/super/.git/worktrees/w1: No such file or directory
+[exit 1]
+
+## D2 LC_ALL=C 下的非 ASCII 分支名和路径
+
+$ env LC_ALL=C git -C <tmp>/plain check-ref-format --branch 功能/登录
+功能/登录
+[exit 0]
+
+$ env LC_ALL=C git -C <tmp>/plain update-ref refs/heads/功能/登录 b30bdffa7865dcf59e6ebecb0de4eabdd91f0247 
+[exit 0]
+
+$ env LC_ALL=C git -C <tmp>/plain worktree add --detach <tmp>/plain-worktrees/功能-登录 b30bdffa7865dcf59e6ebecb0de4eabdd91f0247
+Preparing worktree (detached HEAD b30bdff)
+HEAD is now at b30bdff init
+[exit 0]
+
+$ env LC_ALL=C git -C <tmp>/plain-worktrees/功能-登录 symbolic-ref HEAD refs/heads/功能/登录
+[exit 0]
+
+$ env LC_ALL=C git -C <tmp>/plain worktree list --porcelain
+worktree <tmp>/plain
+HEAD b30bdffa7865dcf59e6ebecb0de4eabdd91f0247
+branch refs/heads/main
+
+worktree <tmp>/plain-worktrees/功能-登录
+HEAD b30bdffa7865dcf59e6ebecb0de4eabdd91f0247
+branch refs/heads/功能/登录
+
+[exit 0]
+
+$ env LC_ALL=C git -c core.fsmonitor=false -C <tmp>/plain-worktrees/功能-登录 status --porcelain --untracked-files=all
+?? "\346\226\260\346\226\207\344\273\266"
+[exit 0]
+
+######## E　撤销创建时不靠 prune、不靠匹配文字
+## E1 目录已经被删掉的 worktree：git worktree remove 仍能注销它
+
+$ sh -c git worktree list --porcelain | grep -A3 wt-gone
+worktree <tmp>/wt-gone
+HEAD 1d18ebb8d021d05423600c8b4b6e4d996ab2f84b
+branch refs/heads/gone
+prunable gitdir file points to non-existent location
+[exit 0]
+
+$ git worktree remove --force <tmp>/wt-gone
+[exit 0]
+
+$ sh -c git worktree list --porcelain | grep -c wt-gone
+0
+[exit 1]
+# 已注销的路径再 remove 一次：
+
+$ git worktree remove --force <tmp>/wt-gone
+fatal: '<tmp>/wt-gone' is not a working tree
+[exit 128]
+
+## E2 同一路径上留着 prunable 记录时再建
+
+$ git worktree add --detach <tmp>/wt-gone2 1d18ebb8d021d05423600c8b4b6e4d996ab2f84b
+Preparing worktree (detached HEAD 1d18ebb)
+fatal: '<tmp>/wt-gone2' is a missing but already registered worktree;
+use 'add -f' to override, or 'prune' or 'remove' to clear
+[exit 128]
+
+## E3 git worktree add --detach 中途失败（post-checkout 之前：让检出失败）后，预先建好的目录里剩什么
+
+$ env GIT_INDEX_FILE=/nonexistent-dir/index git worktree add --detach <tmp>/wt-mid 1d18ebb8d021d05423600c8b4b6e4d996ab2f84b
+Preparing worktree (detached HEAD 1d18ebb)
+fatal: Unable to create '/nonexistent-dir/index.lock': No such file or directory
+[exit 128]
+
+$ ls -A <tmp>/wt-mid
+ls: <tmp>/wt-mid: No such file or directory
+[exit 1]
+
+$ sh -c git worktree list --porcelain | grep -c wt-mid
+0
+[exit 1]
+
+## E4 show-ref --verify --quiet 的退出码（判断分支在不在，不看文字）
+
+$ git show-ref --verify --quiet refs/heads/main
+[exit 0]
+
+$ git show-ref --verify --quiet refs/heads/nope
+[exit 1]
+
+$ git rev-parse --verify --quiet refs/heads/main^{commit}
+1d18ebb8d021d05423600c8b4b6e4d996ab2f84b
+[exit 0]
+
+######## F　tmux：创建时间能不能跟着会话走（私有 socket `tmux -L vrprobe3` + 私有 TMUX_TMPDIR，跑完 kill-server）
+
+$ tmux -L vrprobe3 new-session -d -s vibe-remote-p1 'sleep 30'
+$ tmux -L vrprobe3 set-option -t vibe-remote-p1 @vibe_remote_created '2026-11-18T14:03:07.123456789Z'
+$ tmux -L vrprobe3 new-session -d -s vibe-remote-p2 'sleep 30'
+$ tmux -L vrprobe3 list-sessions -F '#{session_name}|#{@vibe_remote_created}|#{session_created}'
+vibe-remote-p1|2026-11-18T14:03:07.123456789Z|1794988721
+vibe-remote-p2||1794988721
+$ date +%s
+1794988721
+$ tmux -L vrprobe3 respawn-pane -k -t vibe-remote-p1 'sleep 30'; sleep 1.2      # 相当于「重载」
+$ tmux -L vrprobe3 list-sessions -F '#{session_name}|#{@vibe_remote_created}|#{session_created}' | head -1
+vibe-remote-p1|2026-11-18T14:03:07.123456789Z|1794988721
+# 用户选项原样读回；没写过的是空串；tmux 自带的 #{session_created}（unix 秒）在 respawn-pane 之后不变。
+
+######## G　会话 id 历史上的生成形态（git log，决定 design 5.3 第 2 条认领哪些目录名）
+
+$ git show 76f02ea --format='%h %ad %s' --date=short --stat | head -1      # worktree 功能的第一个提交
+76f02ea 2026-08-05 feat(server): manage isolated git worktrees
+$ git show 76f02ea:vibe-remoted/internal/session/manager.go | awk '/^func generateID/,/^}/' | grep Sprintf
+		return fmt.Sprintf("%d", time.Now().UnixNano())                                             # crypto/rand 不可用时的退路：19 位数字
+	return fmt.Sprintf("%d-%s", time.Now().UnixNano()/1e6, hex.EncodeToString(b[:]))            # <13 位毫秒>-<8 位小写十六进制>
+# 从 76f02ea 到 HEAD 改过 manager.go 的 16 个提交里，generateID 的这两行一直没变。
+# 更早的 e75ba11（2026-07-17）是纯毫秒数 `%d`，那时还没有 worktree 功能，不会留下 vibe/<id> 分支。
+$ git log --format='%h %ad %s' --date=short -S'newSessionId' -- desktop/src/renderer/client.ts
+f968885 2026-10-27 fix(desktop): replay creates by id, stop on fatal errors, detect dead links
+$ grep -n 'return `' desktop/src/renderer/client.ts | head -1
+54:  return `${Date.now()}-${hex}`;                                                                # 桌面端：同样是 <13 位毫秒>-<8 位小写十六进制>
+# daemon 接受任何满足 ValidSessionID（^[A-Za-z0-9_-]+$，≤64）的客户端 id，但仓库里唯一的客户端只发上面这一种。

@@ -15,3 +15,6 @@
 | 2026-11-18 10:41 | dev-design | 原型实验 | 1 | 性能：20 仓库 × 5 worktree 的 git 调用耗时，7 组对比（evidence/perf-list.txt） |
 | 2026-11-18 10:52 | dev-design | 原型实验 | 3 | 临时 daemon + 调试实例：协议 3 对新端点返回 404、会话列表基线耗时、快捷键拦截与菜单加速键（evidence/shortcut-probe.txt） |
 | 2026-11-18 10:58 | dev-design | 原型实验 | 1 | M1 配色对比度（evidence/contrast-m1.txt） |
+| 2026-11-18 16:18 | dev-design | 原型实验 | 5 | 工程评审后的 git 探针：`@{-1}` 与名字校验、`update-ref` 先占后建、子模块与 separate-git-dir、locale 与 `GIT_DIR`、锁定和含子模块的 worktree 的删除（evidence/git-probe-3.txt A–E） |
+| 2026-11-18 16:18 | dev-design | 原型实验 | 1 | tmux 用户选项存创建时间（私有 socket；evidence/git-probe-3.txt F） |
+| 2026-11-18 16:18 | dev-design | 原型实验 | 1 | 项目行标签 0–359 色相的对比度（evidence/contrast-tag.txt） |
