@@ -113,3 +113,53 @@
 | R4.5 | 浏览器 | R4.5 同一 worktree 再开一个 | `fix-login` 下出现第二个会话，两个都能输入 | dev-test |
 | R4.6 | Go 单元 | `TestChatTrust/worktree_itself_trusted` | 只有 worktree 路径本身被信任、主目录没有 → `trusted` | T10 |
 | R4.6 | 浏览器 | R4.6 worktree 本身已被信任 | 「对话」可选 | dev-test |
+| R5.1 | Go 单元 | `TestDeleteSessionKeepsWorktreeAndBranch` | `fix-login` 下 1 个会话、分支上 2 个未合并提交 → `Delete` 返回 nil；目录在，分支在，`git rev-list --count main..fix-login` 是 2；`Projects()` 里该行 `sessions` 为 `[]` | T12 |
+| R5.1 | desktop 单元 | `test-worktree-dialogs.mjs › delete_session_keeps_worktree_note` | `delete-session-note` 的文字是「worktree fix-login 的目录和分支都会保留…」；初始焦点在 `dialog-cancel`；点 `dialog-confirm` 才返回 true | T12 |
+| R5.1 | 浏览器 | R5.1 删除 worktree 里的会话 | 确认框写明 worktree 和分支会保留；确认后会话消失，`fix-login` 行仍在并标明没有会话，磁盘上目录、分支、2 个提交都在 | dev-test |
+| R5.2 | Go 单元 | `TestRemoveCleanMergedWorktree` | `managed`、干净、提交已被 `main` 包含，请求带 `deleteBranch:true` → 目录和分支都不存在，结果 `removed:true, branchDeleted:true`，`ProjectStore` 里的记录已删 | T13 |
+| R5.2 | Go 集成 | `TestWorktreeStatusEndpoint`、`TestWorktreeRemoveEndpoint/clean` | status：`dirtyFiles:0, unmergedCommits:0, managed:true`，`head` 是 40 位；remove：200，响应体 `{"removed":true,"branchDeleted":true,"endedSessions":[]}` | T13 |
+| R5.2 | desktop 单元 | `test-worktree-dialogs.mjs › delete_wt_clean` | `delete-wt-dialog` 的 `data-variant` 是 `clean`；确认后请求里 `deleteBranch:true`，没有 `discardFiles` 和 `dropCommits`，`head` 和 `sessions` 原样带回 | T14 |
+| R5.2 | 浏览器 | R5.2 删除干净且已合并的 worktree | 确认后该行消失，磁盘上目录和分支都没有了 | dev-test |
+| R5.3 | Go 单元 | `TestDirtyFiles`、`TestRemoveDirtyNeedsConsent` | 改 1 个、暂存 1 个、未跟踪 1 个 → `dirtyFiles` 是 3；不带 `discardFiles` → `WorktreeChangedError`，目录、分支、3 个文件都在；带上 → 目录被删 | T13 |
+| R5.3 | desktop 单元 | `test-worktree-dialogs.mjs › delete_wt_files` | `data-variant` 是 `files`；`delete-wt-files` 含「3」；初始焦点在 `dialog-cancel`；确认按钮是 `delete-wt-force`（「仍然删除」）；取消 → 返回 null、没有发出删除请求；点「仍然删除」→ 请求里 `discardFiles:true` | T14 |
+| R5.3 | 浏览器 | R5.3 有未提交或未跟踪的文件 | 确认框写明 3 个文件会被丢弃，回车 = 取消且什么都不变；点「仍然删除」后目录被删 | dev-test |
+| R5.4 | Go 单元 | `TestDirtyFiles/ignored_only`、`TestRemoveIgnoredOnlyIsClean` | 只有被忽略的 `node_modules/` → `dirtyFiles` 是 0；不带 `discardFiles` 就能删掉目录 | T13 |
+| R5.4 | 浏览器 | R5.4 只有被 git 忽略的文件 | 确认框是「干净」的那一种，没有丢弃文件的警告 | dev-test |
+| R5.5 | Go 单元 | `TestUnmergedCommits` | 分支上 2 个独有提交 → 2；被另一个本地分支包含后 → 0；被远程跟踪引用包含后 → 0 | T1 |
+| R5.5 | Go 单元 | `TestRemoveUnmergedNeedsConsent` | `unmergedCommits` 是 2：不带 `deleteBranch` → 目录被删、分支和 2 个提交都在、`branchDeleted:false`；`deleteBranch:true` 而没有 `dropCommits` → `WorktreeChangedError`，什么都没动；两个都带 → 分支被删 | T13 |
+| R5.5 | desktop 单元 | `test-worktree-dialogs.mjs › delete_wt_commits` | `data-variant` 是 `commits`；`delete-wt-commits` 含「2」；`delete-wt-keep-branch` 预选，回车发出的请求没有 `deleteBranch`；改选 `delete-wt-delete-branch` 后请求是 `deleteBranch:true, dropCommits:true` | T14 |
+| R5.5 | 浏览器 | R5.5 有未合并的提交 | 确认框写明 2 个未合并提交，默认选「只删目录、保留分支」；确认后目录消失、分支仍在 | dev-test |
+| R5.6 | Go 单元 | `TestRemoveEndsSessionsFirst` | `fix-login` 下 2 个运行中的会话：请求的 `sessions` 含这 2 个 id → `endedSessions` 是这 2 个，会话表里没有它们，目录被删；请求里少一个 id → `WorktreeChangedError`，返回的状态里 `sessions` 有 2 个，没有会话被结束 | T13 |
+| R5.6 | desktop 单元 | `test-worktree-dialogs.mjs › delete_wt_sessions_line`、`test-sidebar.mjs › remove_result_closes_views` | `delete-wt-sessions` 的文字是「会先结束这 2 个会话。」；请求的 `sessions` 与 status 的相同；删除成功后 `endedSessions` 里的会话视图被关闭 | T14 |
+| R5.6 | 浏览器 | R5.6 worktree 下还有会话 | 确认框写明会先结束这 2 个会话；确认后两个会话都结束，worktree 按 R5.2 处理 | dev-test |
+| R5.7 | Go 单元 | `TestRemoveMainRefused` | `path` 是主目录 → `ErrWorktreeIsMain`（HTTP 400 `worktree_is_main`），主目录原样 | T13 |
+| R5.7 | desktop 单元 | `test-sidebar.mjs › main_worktree_has_no_menu` | 带 `worktree-tag-main` 的那一行没有 `worktree-menu` 按钮 | T6 |
+| R5.7 | 浏览器 | R5.7 主目录不能删 | 主目录这一行的操作里没有「删除 worktree」 | dev-test |
+| R5.8 | Go 单元 | `TestManagedRequiresPathAndBranch`、`TestManagedLegacyVibeBranch` | 记录的路径相同但当前分支不同 → 不是 `managed`；`<仓库>-worktrees/<会话id>` 加分支 `vibe/<会话id>` → 是；`<仓库>-worktrees/foo` 加分支 `vibe/foo`（`foo` 不满足 `ValidSessionID`）→ 不是 | T3 |
+| R5.8 | Go 单元 | `TestRemoveExternalNeverDeletesBranch` | 外部 worktree `change/general-skills`，请求带 `deleteBranch:true, dropCommits:true` → 目录被删，分支 `change/general-skills` 仍在，`branchDeleted:false`；它有 3 个未提交文件时同样要 `discardFiles` | T13 |
+| R5.8 | desktop 单元 | `test-worktree-dialogs.mjs › delete_wt_external` | `data-variant` 是 `external`；`delete-wt-external` 的文字含「不是由 vibe-remote 创建」和分支名；没有两个单选；请求里没有 `deleteBranch` | T14 |
+| R5.8 | 浏览器 | R5.8 不是 vibe-remote 创建的 worktree | 确认框标明不是由 vibe-remote 创建；确认后目录消失，`git branch --list change/general-skills` 仍有一行 | dev-test |
+| R5.9 | Go 单元 | `TestRemoveGitFailureKeepsState` | 先 `git worktree lock` 让 `git worktree remove` 失败 → HTTP 500 `worktree_remove_failed`，`message` 含 git 的输出；目录、分支、`ProjectStore` 记录都在 | T13 |
+| R5.9 | desktop 单元 | `test-worktree-dialogs.mjs › delete_flow_500_reopens_with_error` | `removeWorktree` 抛 500 → 同一个确认框再次打开，`delete-wt-error` 显示「删除失败：<git 的输出>」；`deleteWorktreeFlow` 在用户取消后返回 null | T14 |
+| R5.9 | 浏览器 | R5.9 删除失败 | 把 worktree 锁住后删除 → 对话框内显示 git 的错误信息，worktree 行和磁盘状态不变 | dev-test |
+| R5.10 | Go 集成 | `TestDeleteCleanWorktreeWithUnmergedCommitsReturns409`（过渡，T12 时删除） | T1 的过渡行为：工作区干净、分支有 2 个未合并提交 → 409 `worktree_preserved`，目录、分支、提交都在 | T1 |
+| R5.10 | Go 集成 | `TestDeleteSessionNeverReturnsPreserved` | 只发 `DELETE /api/v1/sessions/{id}`（旧桌面端的做法）：干净加 2 个未合并提交、有未提交文件各一例 → 都是 204，目录和分支都在 | T12 |
+| R5.10 | 协议冒烟 | R5.10 旧版桌面端删会话不丢提交 | 用 `change/dual-mode` 基线的 `ws-smoke.mjs` 的删除步骤连新 daemon：删除成功，worktree 目录和分支都保留 | dev-test |
+| R5.11 | Go 单元 | `TestUnmergedCommits/detached` | `branch` 传空：detached 的 `HEAD` 上 2 个不属于任何分支的提交 → 2 | T1 |
+| R5.11 | Go 单元 | `TestRemoveDetachedNeedsConsent` | status：`detached:true, unmergedCommits:2`；不带 `dropCommits` → `WorktreeChangedError`；带上 → 目录被删。没有这样的提交且干净 → 不带任何同意项就能删 | T13 |
+| R5.11 | desktop 单元 | `test-worktree-dialogs.mjs › delete_wt_detached`、`delete_wt_detached_clean` | 有提交：`data-variant` 是 `detached`，文字是「这 2 个提交删除后不再属于任何分支，无法恢复。」，初始焦点在 `dialog-cancel`，`delete-wt-force` 发出 `dropCommits:true`；没有提交：`data-variant` 是 `clean`，文字是 `wt.delete.cleanDetached`，请求没有同意项 | T14 |
+| R5.11 | 浏览器 | R5.11 worktree 不在任何分支上 | 确认框写明这 2 个提交删除后不再属于任何分支，回车 = 取消；点「仍然删除」才删除 | dev-test |
+| R6.1 | desktop 单元 | `test-session-form.mjs › continue_note_shown`、`test-worktree-dialogs.mjs › continue_note_counts` | 已有会话数是 1 且勾选 id 为 `continue` 的选项 → `continue-note` 出现，文字是 `wt.session.continueNote`，`dialog-confirm` 不是 `disabled`；取消勾选后消失。`openWorktreeSessionDialog` 传该 worktree 的会话数；目录选择器普通模式传 `workdir` 等于当前所列目录的会话数；Worktree 模式和新建 worktree 对话框传 0 | T15 |
+| R6.1 | 浏览器 | R6.1 目录里已有会话在用最近那段对话 | `main` 已有一个对话会话，在同一 worktree 新建并勾选 `-c` → 显示说明，确认按钮可点 | dev-test |
+| R6.2 | desktop 单元 | `test-session-form.mjs › continue_note_hidden_without_sessions` | 已有会话数是 0 且勾选 `continue` → DOM 里没有 `continue-note` | T15 |
+| R6.2 | 浏览器 | R6.2 目录里没有会话 | 没有会话的 worktree 上勾选 `-c` → 不显示说明 | dev-test |
+| R7.1 | desktop 单元 | `test-shortcuts.mjs › match_digits`、`pick_index` | ⌘3 → `{kind:'index', n:3}`；⌘0、⌘⌥3、⌃⌘3 不匹配；5 个会话时 ⌘3 → 下标 2，⌘7 → null；12 个会话时 ⌘9 → 下标 8 | T16 |
+| R7.1 | 浏览器 | R7.1 按序号切换 | 5 个可见会话，按 ⌘3 打开第 3 个；按 ⌘7 不动 | dev-test |
+| R7.2 | desktop 单元 | `test-shortcuts.mjs › pick_prev_next_wraps` | 共 5 个：当前下标 4 按「下一个」→ 0；当前 0 按「上一个」→ 4；当前 -1 时「下一个」→ 0、「上一个」→ 4；共 0 个 → null | T16 |
+| R7.2 | 浏览器 | R7.2 上一个 / 下一个 | 在第 5 个按 ⌘⇧] 回到第 1 个；⌘⇧[ 反向循环 | dev-test |
+| R7.3 | desktop 单元 | `test-shortcuts.mjs › capture_blocks_propagation` | 焦点在 textarea 上派发 ⌘3：`defaultPrevented` 为真，textarea 自己的 keydown 监听没有被调用，`open(2)` 被调用一次；派发普通键 `a` 时监听照常被调用 | T16 |
+| R7.3 | 浏览器 | R7.3 焦点在终端或输入框里 | 焦点在 xterm 里按 ⌘3：切换成功，发往 daemon 的 `data` 帧为 0 字节；焦点在对话输入框里按 ⌘⇧]：切换成功，输入框内容不变 | dev-test |
+| R7.4 | desktop 单元 | `test-shortcuts.mjs › blocked_does_not_intercept` | `blocked()` 为真 → `open` 没有被调用，`defaultPrevented` 为假 | T16 |
+| R7.4 | 浏览器 | R7.4 对话框打开时 | 新建会话对话框、删除确认框开着时按 ⌘2、⌘⇧]，当前会话不变 | dev-test |
+| R7.5 | desktop 单元 | `test-tree.mjs › visible_sessions_skip_collapsed` | 3 个项目各 2 个会话，折叠第 2 个项目 → 结果是第 1、3 个项目的 4 个会话，顺序从上到下；折叠的机器整台跳过 | T5 |
+| R7.5 | 浏览器 | R7.5 折叠的项目 | 折叠一个项目后按 ⌘⇧] 一圈，不会停在其中的会话上 | dev-test |
