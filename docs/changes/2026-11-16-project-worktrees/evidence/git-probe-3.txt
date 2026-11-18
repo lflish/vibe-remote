@@ -770,3 +770,21 @@ f968885 2026-10-27 fix(desktop): replay creates by id, stop on fatal errors, det
 $ grep -n 'return `' desktop/src/renderer/client.ts | head -1
 54:  return `${Date.now()}-${hex}`;                                                                # 桌面端：同样是 <13 位毫秒>-<8 位小写十六进制>
 # daemon 接受任何满足 ValidSessionID（^[A-Za-z0-9_-]+$，≤64）的客户端 id，但仓库里唯一的客户端只发上面这一种。
+
+######## H　目录在 .git 里面或在裸仓库里：区分「没有工作目录」和「git 失败」（ResolveHome 用，不看报错文字）
+
+$ git -C <tmp>/r/.git/hooks rev-parse --show-toplevel
+fatal: this operation must be run in a work tree
+[exit 128]
+$ git -C <tmp>/r/.git/hooks rev-parse --is-inside-git-dir
+true
+[exit 0]
+$ git -C <tmp>/b.git rev-parse --is-inside-git-dir          # 裸仓库
+true
+[exit 0]
+$ git -C <tmp>/r rev-parse --is-inside-git-dir               # 普通工作目录
+false
+[exit 0]
+$ git -C <tmp>/plain rev-parse --is-inside-git-dir           # 不是仓库
+fatal: not a git repository (or any of the parent directories): .git
+[exit 128]

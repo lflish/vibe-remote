@@ -18,3 +18,5 @@
 | 2026-11-18 16:18 | dev-design | 原型实验 | 5 | 工程评审后的 git 探针：`@{-1}` 与名字校验、`update-ref` 先占后建、子模块与 separate-git-dir、locale 与 `GIT_DIR`、锁定和含子模块的 worktree 的删除（evidence/git-probe-3.txt A–E） |
 | 2026-11-18 16:18 | dev-design | 原型实验 | 1 | tmux 用户选项存创建时间（私有 socket；evidence/git-probe-3.txt F） |
 | 2026-11-18 16:18 | dev-design | 原型实验 | 1 | 项目行标签 0–359 色相的对比度（evidence/contrast-tag.txt） |
+| 2026-11-18 17:03 | dev-design | 用量 | 评审者 1 次 | 工程评审：3 个严重、12 个一般 |
+| 2026-11-18 17:03 | dev-design | 验证拦下问题 | 11 | 工程评审的错误类意见 |

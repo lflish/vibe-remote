@@ -329,12 +329,12 @@ func (m *Manager) RemoveWorktree(req protocol.WorktreeRemoveRequest, allow Allow
 
 - **`allow` 必须解析符号链接。** `AllowFunc` 就是现有的 `cfg.ResolveAllowedWorkdir`：把路径解析成规范路径后再判断是否在某个（同样解析过的）根内。不用 `cfg.IsAllowedWorkdir`，它只做字面比较、没有生产调用方（V16）：git 列出的是规范路径（`/private/tmp/…`），`allowed_roots` 常按解析前的写法配置（`/tmp`），字面比较会把所有 worktree 滤掉；路径字面在根内、经符号链接指向根外时它也拦不住。`Projects` 只用它的成功与否做过滤；`WorktreeStatus` / `RemoveWorktree` 还要求返回的规范路径与传入的 `path` 逐字相等，否则按 `ErrWorktreeNotFound` 处理。
 - **认不出主目录的仓库（`Home.Single`）。** `ResolveHome` 先取 `git rev-parse --show-toplevel`（记作 T），再读 worktree 列表。第一项标了 `bare`，或第一项的路径下有 `.git`：正常情况，`Project` = `Repo` = 第一项的路径，`Path` = T。否则（子模块、`--separate-git-dir`：第一项是 git 目录，V11）：`Project` = `Path` = T，`Repo` = 第一项的路径，`Single` = 真。`Single` 的项目只有 T 这一个 worktree，按主目录对待（`main:true`，分支和提交取列表里路径等于 T 的那一项，没有就取第一项）：不能在其中新建命名 worktree（`ErrUnsupportedRepo`），不能删除（`ErrWorktreeIsMain`）；不带名字的旧 Worktree 模式照旧可用（它只依赖 T，R9.2）。
-- **「不是仓库」和「git 失败」不靠匹配文字区分。** `rev-parse --show-toplevel` 失败（未超时）时，从 `dir` 逐级向上找名为 `.git` 的文件或目录：一个都没有 → 不是仓库，返回 `Home{Git:false}`；有 → 返回错误（仓库损坏、属主不被 git 信任等）。超时一律是错误。
+- **「不是仓库」和「git 失败」不靠匹配文字区分。** `rev-parse --show-toplevel` 失败（未超时）时，先看 `git rev-parse --is-inside-git-dir`：退出码 0 且输出是 `true`（目录在某个 `.git` 目录或裸仓库里面，没有工作目录可归）→ 按不是仓库处理。否则从 `dir` 逐级向上找名为 `.git` 的文件或目录：一个都没有 → 不是仓库，返回 `Home{Git:false}`；有 → 返回错误（仓库损坏、属主不被 git 信任等）。超时一律是错误。
 - **git 的运行环境。** `gitAt` 和 `gitAtTimeout` 都设 `LC_ALL=C`，并从继承的环境里去掉 `GIT_DIR`、`GIT_WORK_TREE`、`GIT_INDEX_FILE`、`GIT_COMMON_DIR`、`GIT_OBJECT_DIRECTORY`、`GIT_NAMESPACE`（V12）。git 的错误输出可以原样转给用户，但 daemon 不靠匹配这些文字做判断：一律用退出码、重查状态或文件系统检查。
 
 `CreateOptions`、`ChatCreateOptions` 各加 `WorktreeName string`；`CreateOptions` 另加 `Home *Home`（交接时照抄对话会话的归属，非空就不再推导）；`RunnerConfig` 加 `Project, Home string` 和 `Created time.Time`（零值取当前时间），读取用 `func (r *Runner) Home() (project, home string)`；`chat.Record` 加 `Project, Home`（5.1）。`CreateOptions.ValidateWorkdir`、`ChatCreateOptions.ValidateWorkdir` 的名字和签名不变，server 改为传 `cfg.ResolveAllowedNewPath`，`Manager` 把它包成 `WorktreeSpec.AllowPath`。读 worktree 列表和预检用的 git 调用走 `gitAtTimeout(dir, args...)`，超时取包级变量 `gitTimeout`（5 秒，测试里可以调小）。`config.Config` 加 `ResolveAllowedNewPath(path string) (string, error)`：对还不存在的路径，把最深的已存在祖先解析成规范路径后拼回剩余部分，再做与 `ResolveAllowedWorkdir` 相同的包含判断（R3.10 要在创建之前判断）。
 
-`Manager` 另有两张受 `Manager.mu` 保护的表，用来让「删除 worktree」和「在其中新建会话」互斥（6.2）：`startingDirs map[string]int`（正在创建、还没登记的会话的工作目录）和 `removingRoots map[string]struct{}`（正在删除的 worktree 根）。创建会话的两条路径（终端、对话；交接出来的终端会话也走终端这一条）在工作目录确定之后、启动进程之前调 `beginStart(workdir) (done func(), err error)`：工作目录等于某个 `removingRoots` 或在它下面 → `ErrWorktreeBusy`（attach 收到 fatal 的 `create_failed`，`message` 写明这个 worktree 正在被删除）；否则计数加一。Worktree 模式在放开项目锁之前对新 worktree 里的工作目录调它（6.1 第 10 步）。`beginStart` 成功之后（已放开 `Manager.mu`）再 `os.Stat` 一次工作目录：不存在（刚好在这之前被删完）→ 调 `done` 并返回 `create_failed`。`done` 在会话登记进会话表之后、或创建失败时调用，所以删除方任何时刻看这个会话，要么在 `startingDirs` 里，要么在会话表里。这两张表只在 `Manager.mu` 内读写，不引入新的锁（#22）。
+`Manager` 另有两张受 `Manager.mu` 保护的表，用来让「删除 worktree」和「在其中新建会话」互斥（6.2）：`startingDirs map[string]int`（正在创建、还没登记的会话的工作目录）和 `removingRoots map[string]struct{}`（正在删除的 worktree 根）。创建会话的两条路径（终端、对话；交接出来的终端会话也走终端这一条）在工作目录确定之后、启动进程之前调 `beginStart(workdir) (done func(), err error)`：工作目录等于某个 `removingRoots` 或在它下面 → `ErrWorktreeBusy`（attach 收到 fatal 的 `create_failed`，`message` 写明这个 worktree 正在被删除）；否则计数加一。Worktree 模式在放开项目锁之前对新 worktree 里的工作目录调它（6.1 第 10 步）。交接在停对话进程**之前**调它：被拒绝时对话会话原样继续运行，不会出现对话已停、终端没起来的中间状态。`beginStart` 成功之后（已放开 `Manager.mu`）再 `os.Stat` 一次工作目录：不存在（刚好在这之前被删完）→ 调 `done` 并返回 `create_failed`。`done` 在会话登记进会话表之后、或创建失败时调用，所以删除方任何时刻看这个会话，要么在 `startingDirs` 里，要么在会话表里。这两张表只在 `Manager.mu` 内读写，不引入新的锁（#22）。
 
 `protocol.go` 新增类型 `ProjectsResponse`、`Project`、`ProjectWorktree`、`WorktreePlan`、`WorktreeBase`、`WorktreeStatus`、`WorktreeRemoveRequest`、`WorktreeRemoveResult`，字段名即 4.2–4.6 的 JSON 名；可缺省的字段用 `omitempty`，数组字段输出 `[]` 而不是 `null`。
 
@@ -592,7 +592,7 @@ function terminalTheme(): ITheme     // 底色、前景、光标、选区读 CSS
 |------|------------|------------------|
 | 终端模式纯字节透传 | 不受影响；终端只换 4 个主题色 | `cd desktop && npm test` |
 | 协议三处一致 | 受影响：三处都要加 v4 的内容 | `/protocol-sync` skill（它的核对清单要补 v4，属于 c3） |
-| 终端会话的帧除 proto 外逐字节不变 | 守住：S→C 帧不加字段；测试文件和 golden 一个字不改，`proto` 的值本来就被测试归一化 | `cd vibe-remoted && go test -race ./internal/server -run TestTerminalFramesUnchangedV3` |
+| 终端会话的帧除 proto 外逐字节不变 | 守住：S→C 帧不加字段；测试文件和 golden 一个字不改，`proto` 的值本来就被测试归一化。找回的终端会话 `created` 的值换了来源（d23），它同样被测试归一化（`golden_test.go:33,50`），格式不变 | `cd vibe-remoted && go test -race ./internal/server -run TestTerminalFramesUnchangedV3` |
 | 同一 claude 会话 id 最多一个进程 | 不受影响；新 worktree 没有历史对话，走现有的新建路径 | 现有命令 |
 | 客户端断开不停对话进程 | 不受影响 | 现有命令 |
 | 待答请求不被缓冲淘汰 | 不受影响 | 现有命令 |
@@ -633,6 +633,7 @@ function terminalTheme(): ITheme     // 底色、前景、光标、选区读 CSS
 - `CreateWorktree` 换成 4.9 的签名后，直接调用它的现有测试（`worktree_test.go` 10 处、`manager_test.go` 1 处）只改调用写法。
 - `session.TestWorktreeRollbackToleratesMissingWorktreeOrBranch` 在 T13 随 `RollbackWorktree` 的删除改名为 `TestUndoToleratesMissingWorktreeOrBranch`，改调 `Undo`，断言不变（目录已被删时连续撤销两次都不报错）。
 - 协议冒烟脚本 `.claude/skills/verify/scripts/ws-chat-smoke.mjs:416` 写死了 `info.proto !== 3`，随版本号改为 `!== 4`（c1）。
+- T6a 为「只搬不改」写的快照用例 `test-sidebar.mjs › flat_dom_snapshot_unchanged` 和它的快照文件，在 T6b 删除：侧边栏的 DOM 按 7.4 改成三层，由 T6b 的用例接替；T6a 的另外 3 个用例保留。
 - T1 为过渡行为新写的测试，在最终行为落地时换掉：`server.TestDeleteCleanWorktreeWithUnmergedCommitsReturns409` 在 T12 删除（由 `TestDeleteSessionNeverReturnsPreserved` 取代，后者同样断言目录、分支、提交都在）；`session.TestCleanupKeepsCleanWorktreeWithUnmergedCommits`、`TestCleanupKeepsBranchWhenWorktreeDirMissing` 在 T13 随 `CleanupWorktree` 删除（由 `TestRemoveUnmergedNeedsConsent` 取代）。`TestUnmergedCommits` 一直保留。
 
 ## 7.2 外部影响和开关
@@ -666,8 +667,8 @@ function terminalTheme(): ITheme     // 底色、前景、光标、选区读 CSS
 
 `index.ts` 现有约 1500 行，不重写。分两步改（d27）：先原样搬家，行为和 DOM 一个字不变，两份 gui 冒烟脚本不改就通过（T6a）；再在搬好的文件里做三层结构（T6b）。这样出问题时能分清是搬坏了还是新结构的问题。改法：
 
-- `renderSidebar`（现 1100–1282 行）、`startInlineRename`（1288–1334）和 `rendererIcon` 搬到新文件 `sidebar.ts`。`index.ts` 里留一个同名的薄函数：`renamingActive` 为真时直接返回（现有保护），否则用模块状态拼出 `SidebarModel` 并传入回调（打开、重命名、重载、删除会话、折叠、在 worktree 里新建会话、新建 worktree、删除 worktree、移除项目）。
-- 新增模块状态：`machineTrees: Map<machineKey, TreeProject[]>`、`machineCaps: Map<machineKey, Capability>`、`collapsedProjects: Set<string>`（元素是 `<machineKey>|<项目 id>`，存 `localStorage` 的 `vibe-remote.collapsed-projects`，与现有的 `vibe-remote.collapsed-machines` 并列）。
+- `renderSidebar`（现 1100–1282 行）、`startInlineRename`（1288–1334）和 `rendererIcon` 搬到新文件 `sidebar.ts`（T6a）。`sidebar.ts` 不从 `index.ts` 导入任何东西：状态经 `SidebarModel` 读，改动经 `SidebarActions` 发出。`index.ts` 里留一个同名的薄函数：`renamingActive` 为真时直接返回（现有保护），否则用模块状态拼出 `SidebarModel` 并传入回调（打开、重命名、重载、删除会话、折叠、在 worktree 里新建会话、新建 worktree、删除 worktree、移除项目）。
+- 新增模块状态（T6b 起）：`machineTrees: Map<machineKey, TreeProject[]>`、`machineCaps: Map<machineKey, Capability>`、`collapsedProjects: Set<string>`（元素是 `<machineKey>|<项目 id>`，存 `localStorage` 的 `vibe-remote.collapsed-projects`，与现有的 `vibe-remote.collapsed-machines` 并列）。
 - 其余函数原地做小改：`refreshAllMachines` 多一个 `listProjects()` 请求；`setActive` 在展开机器的同时展开当前会话所在的项目；`updateStatusBar` 的标题；三处 `notifyDesktop` 的标题；`closeSession`（留在 `index.ts` 原位置，继续处理 409 `worktree_preserved`，`package.json` 里的 `test:preserved-notice` 不动）；`makeTerminal` 的 theme 改为 `terminalTheme()`。
 
 DOM（现有 class 保留，gui 冒烟脚本的选择器因此大多不用动）：
