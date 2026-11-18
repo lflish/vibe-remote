@@ -14,6 +14,7 @@
 - 每个任务的完成定义除了自己列的命令，都还包含：`TMUX_TMPDIR=$(mktemp -d) make check` 退出码为 0。
 - 新写的 CSS 只用 `var(--…)`，不写颜色字面量（T18 会断言 `:root` 之外没有颜色字面量）；T18 之前的任务只追加新规则，不改现有规则的颜色和形态。
 - 改了侧边栏或对话框结构的任务（T6、T9、T12、T19）负责同步调整 `.claude/skills/verify/scripts/gui-smoke.mjs`、`gui-chat-smoke.mjs` 里的选择器，用例数和断言不动（decisions #12）。
+- 完成定义里的 `gui-smoke.mjs`、`gui-chat-smoke.mjs` 都在仓库根执行；脚本自己会 `vite build`，并使用临时 daemon、临时 userData 和独立的 tmux server，不碰本机正在运行的 daemon 和 machines.json。基线：`gui-chat-smoke.mjs` 有 26 个 `test(` 用例，`gui-smoke.mjs` 有 14 处 `check(`；两个数只能增不能减。
 - 浏览器层的测试统一由 dev-test 写，实现任务负责加任务里列出的 `data-testid`。
 
 ## 测试计划
@@ -167,7 +168,7 @@
 | R8.1 | 浏览器 | R8.1 对话会话 | 有来回消息、工具调用和权限请求的对话会话：用户消息是右对齐气泡，输入框是圆角卡片，权限卡片和工具块按效果页 M1；Markdown、代码块复制、diff、链接行为与 `gui-chat-smoke.mjs` 现有用例一致 | dev-test |
 | R8.2 | desktop 单元 | `test-theme-tokens.mjs › terminal_theme_from_css_vars`；现有的 `test-terminal-selection.mjs` | `terminalTheme()` 的 `background`、`foreground`、`cursor`、`selectionBackground` 分别等于 `--term-bg`（`#FFFFFF`）、`--term-fg`（`#1C1B22`）、`--term-cursor`（`#6B54D3`）、`--term-selection`（`#D9D2F4`）；16 个 ANSI 色与改动前 `index.ts` 里的值逐个相同 | T18 |
 | R8.2 | 浏览器 | R8.2 终端会话 | 终端底色、前景、光标、选区是新主题色；远程输出的字节原样显示（现有 `gui-smoke.mjs` 的透传用例通过） | dev-test |
-| R8.3 | 浏览器 | R8.3 现有功能入口都在 | 跑 `gui-smoke.mjs` 和 `gui-chat-smoke.mjs`：全部通过；与 `change/dual-mode` 基线逐个对比，用例数不减少（`gui-chat-smoke.mjs` 基线 26 个 `test(`）、断言不放宽，只有选择器有改动 | dev-test |
+| R8.3 | 浏览器 | R8.3 现有功能入口都在 | 跑 `gui-smoke.mjs` 和 `gui-chat-smoke.mjs`：全部通过；与 `change/dual-mode` 基线逐个对比，用例数不减少（`gui-chat-smoke.mjs` 基线 26 个 `test(`，`gui-smoke.mjs` 基线 14 处 `check(`）、断言不放宽，只有选择器有改动 | dev-test |
 | R8.4 | desktop 单元 | `test-theme-tokens.mjs › contrast_table`、`dot_shapes_differ` | 从 `styles.css` 的 `:root` 解析变量，按 `evidence/contrast-m1.txt` 的 35 对计算：正文和按钮文字 ≥ 4.5，次要文字 ≥ 3，三种状态点对 `--bg-sidebar` ≥ 3；`.session-unread.output`（空心）、`.idle`（实心）、`.waiting`（实心加光圈）的形状属性两两不同 | T18 |
 | R8.4 | 浏览器 | R8.4 可读性 | 在运行中的应用里读真实元素的 `color` 和实际背景色（含 `color-mix` 算出来的），达到同样的比值；三种状态点在侧边栏上同时出现时形状可区分 | dev-test |
 | R8.5 | desktop 单元 | `test-dialog-layout.mjs` | `dirpicker.ts`、`worktree-dialogs.ts` 里每个对话框只往 `.modal` 里放标题、`.modal-body`、`.modal-footer` 三个直接子元素 | T9（T11、T12、T14 新增的对话框自动被它覆盖） |
@@ -292,7 +293,7 @@
 - 文件：
   - 新建 `vibe-remoted/internal/session/projects.go`（`Manager` 的方法）、`vibe-remoted/internal/session/projects_test.go`、`vibe-remoted/internal/server/projects.go`（两个处理函数）、`vibe-remoted/internal/server/projects_test.go`
   - 修改 `vibe-remoted/internal/protocol/protocol.go`（`Version = 4`；类型 `ProjectsResponse`、`Project`、`ProjectWorktree`）、`vibe-remoted/internal/server/server.go`（`routes()` 加两条路由）、`vibe-remoted/cmd/vibe-remoted/main.go`（打开 `ProjectStore`，失败时改用内存清单并记一行日志，`mgr.SetProjectStore`）、`vibe-remoted/internal/session/manager.go` 和 `chat_manager.go`（新建会话成功后 `AddProject`；现有 worktree 模式建好后 `AddWorktree`、回滚时 `RemoveWorktree`；都在 `Manager.mu` 之外调用）
-  - 修改 `desktop/src/shared/protocol.ts`（`PROTOCOL_VERSION = 4`、`CHAT_MIN_PROTO = 3`、类型 `Project`、`ProjectWorktree`）、`desktop/src/renderer/rest.ts`（`listProjects`、`removeProject`、`RestError`）、`desktop/src/renderer/chat/availability.ts`（改用 `CHAT_MIN_PROTO`）、`desktop/src/renderer/i18n.ts`（`terminal.oldDaemon`、`picker.oldDaemon` 中英文改成 design 7.4 末尾的新文案）
+  - 修改 `desktop/src/shared/protocol.ts`（`PROTOCOL_VERSION = 4`、`CHAT_MIN_PROTO = 3`、类型 `Project`、`ProjectWorktree`）、`desktop/src/renderer/rest.ts`（`listProjects`、`removeProject`、`RestError`）、`desktop/src/renderer/chat/availability.ts`（比较和文案里的 `want` 都改用 `CHAT_MIN_PROTO`，所以对协议 2 的 daemon 仍然显示「需要协议 3」，`gui-chat-smoke.mjs` 的 R17.2 断言不用改）、`desktop/src/renderer/i18n.ts`（`terminal.oldDaemon`、`picker.oldDaemon` 中英文改成 design 7.4 末尾的新文案）
   - 修改 `docs/protocol.md`（版本表加第 4 行，先写本任务已落地的部分：两个新端点、`/api/v1/info.proto` 为 4、「所有 S→C 帧的字段与 v3 相同」；REST 一节加这两个端点的请求、响应、错误码）
   - 随版本号改的断言（c1 已同意，decisions #11）：`vibe-remoted/internal/server/contract_test.go` 的 `TestInfoAndReadyProto3` 改名 `TestInfoAndReadyProto4`、3 改 4；`vibe-remoted/internal/protocol/protocol_test.go:41` 的 `Version != 3` 改为 4；`.claude/skills/verify/scripts/ws-chat-smoke.mjs:416` 的 `info.proto !== 3` 改为 4。`desktop/scripts/test-chat-client.mjs` 里假 daemon 发的 `proto: 3` 不改
   - 测试 `desktop/scripts/test-chat-availability.mjs`、新建 `desktop/scripts/test-rest-projects.mjs`
@@ -314,7 +315,7 @@
   - `TestProjectsWithUnwritableStateDir`：用 `NewMemoryProjectStore()` → 只返回现存会话所在的项目，不报错
   - `TestProjectsOneGitCallPerProject`（session 包）：20 个仓库各 5 个 worktree，`PATH` 前面放一个记数后转调真实 git 的包装脚本 → 一次 `Projects()` 的调用数是 20，同时在跑的不超过 8；`TestSessionsEndpointRunsNoGit`：同一环境下 `GET /api/v1/sessions` 的调用数是 0
   - `TestNewEndpointsRequireToken`：两个新端点不带 token、带错 token 都是 401
-  - `test-chat-availability.mjs › proto3_daemon_supports_chat`：`info.proto` 是 3 且 `chat.supported` 为真 → `enabled` 为真；现有的 `proto 2` 用例照常通过
+  - `test-chat-availability.mjs › proto3_daemon_supports_chat`：`info.proto` 是 3 且 `chat.supported` 为真 → `enabled` 为真；`proto2_reason_still_says_3`：`info.proto` 是 2 → 原因文字含「协议 2」和「需要协议 3」；现有用例不改、照常通过
   - `test-rest-projects.mjs`：`fetch` 返回 404 → `listProjects()` 得到 `null`；返回 500 → 抛 `RestError`，`status` 是 500；`removeProject` 遇到 409 → `RestError.code` 是 `project_has_sessions`
 - 完成定义：
   - `cd vibe-remoted && TMUX_TMPDIR=$(mktemp -d) go test -race -count=1 ./internal/session ./internal/server ./internal/protocol -run 'TestProjects|TestRemoveProject|TestProjectReappears|TestNonGitProject|TestBackfillHome|TestSessionsEndpointRunsNoGit|TestNewEndpointsRequireToken|TestInfoAndReadyProto4|TestTerminalFramesUnchangedV3|TestProtocolChatFramesJSON'` 输出三行 `ok`
@@ -369,8 +370,7 @@
   - `collapsed_projects_persist`：折叠 `devflow` 后 `localStorage` 的 `vibe-remote.collapsed-projects` 含 `<machineKey>|<项目 id>`；重新加载后仍是折叠的；`setActive` 打开其中的会话会把它展开
 - 完成定义：
   - `cd desktop && npm run typecheck && npm run test:sidebar && npm run test:i18n-parity && npm run test:chat-activity && npm run test:chat-render-guard` 退出码 0
-  - `cd desktop && npm run build` 之后 `node .claude/skills/verify/scripts/gui-smoke.mjs` 和 `node .claude/skills/verify/scripts/gui-chat-smoke.mjs` 全部 PASS；`git diff HEAD~1 -- .claude/skills/verify/scripts/` 里只有选择器字符串的改动，`grep -c "^test(" .claude/skills/verify/scripts/gui-chat-smoke.mjs` 仍是 26
-  - 手动看一眼最小闭环：`make dev-server` 加 `npm run dev`，在一个有 2 个 worktree 的仓库里各开一个会话，侧边栏是 机器 → 项目 → worktree → 会话 三层
+  - 在仓库根执行 `node .claude/skills/verify/scripts/gui-smoke.mjs` 和 `node .claude/skills/verify/scripts/gui-chat-smoke.mjs`，都以退出码 0 结束、没有 FAIL 行；`git diff HEAD~1 -- .claude/skills/verify/scripts/` 里只有选择器字符串的改动，`grep -c "^test(" .claude/skills/verify/scripts/gui-chat-smoke.mjs` 仍是 26，`grep -c "check(" .claude/skills/verify/scripts/gui-smoke.mjs` 不小于 14
 - 依赖：T4、T5
 
 ### T7 daemon 和客户端连接层：attach 带 `worktreeName` 新建命名 worktree
@@ -449,7 +449,7 @@
   - `test-dialog-layout.mjs`：`worktree-dialogs.ts` 和 `dirpicker.ts` 里每个对话框只往 `.modal` 里放标题、`.modal-body`、`.modal-footer`；现有的 `test-picker-layout.mjs` 不改、照常通过
 - 完成定义：
   - `cd desktop && npm run typecheck && npm run test:worktree-name && npm run test:session-form && npm run test:worktree-dialogs && npm run test:dialog-layout && npm run test:picker-layout && npm run test:i18n-parity` 退出码 0
-  - `cd desktop && npm run build` 之后 `node .claude/skills/verify/scripts/gui-smoke.mjs`、`node .claude/skills/verify/scripts/picker-layout.mjs` 全部 PASS
+  - 在仓库根执行 `node .claude/skills/verify/scripts/gui-smoke.mjs`，以退出码 0 结束、没有 FAIL 行（其中包含 `picker-layout.mjs` 对新建会话对话框在 500/700/803 高度下的测量）
 - 依赖：T6、T7、T8
 
 ### T10 daemon：对话界面的信任规则认「主目录已被信任的 worktree 根」
@@ -505,7 +505,7 @@
   - `test-chat-availability.mjs › worktree_untrusted_reason`：断言见测试计划 R4.4；现有用例不改、照常通过
 - 完成定义：
   - `cd desktop && npm run typecheck && npm run test:worktree-dialogs && npm run test:chat-availability && npm run test:dialog-layout && npm run test:i18n-parity` 退出码 0
-  - `cd desktop && npm run build` 之后 `node .claude/skills/verify/scripts/gui-smoke.mjs` 全部 PASS
+  - 在仓库根执行 `node .claude/skills/verify/scripts/gui-smoke.mjs`，以退出码 0 结束、没有 FAIL 行
 - 依赖：T6、T9、T10
 
 ### T12 删除会话不再动 worktree 和分支；删除确认换成应用内对话框
@@ -532,7 +532,7 @@
   - `cd vibe-remoted && TMUX_TMPDIR=$(mktemp -d) go test -race -count=1 ./internal/session ./internal/server -run 'TestDeleteSession|TestDeleteOneOfTwo|TestManagerDelete|TestChatWorktreeAndFlags|TestTerminalFramesUnchangedV3'` 输出两行 `ok`
   - `grep -n "worktree_preserved" vibe-remoted/internal/server/server.go` 没有输出；`grep -rn "CleanupWorktree(" vibe-remoted/internal/session/manager.go vibe-remoted/internal/session/chat_manager.go` 没有输出
   - `cd desktop && npm run typecheck && npm run test:worktree-dialogs && npm run test:preserved-notice && npm run test:i18n-parity && npm run test:dialog-layout` 退出码 0
-  - `cd desktop && npm run build` 之后 `node .claude/skills/verify/scripts/gui-smoke.mjs` 和 `gui-chat-smoke.mjs` 全部 PASS，`grep -c "^test(" .claude/skills/verify/scripts/gui-chat-smoke.mjs` 仍是 26
+  - 在仓库根执行 `node .claude/skills/verify/scripts/gui-smoke.mjs` 和 `node .claude/skills/verify/scripts/gui-chat-smoke.mjs`，都以退出码 0 结束、没有 FAIL 行，`grep -c "^test(" .claude/skills/verify/scripts/gui-chat-smoke.mjs` 仍是 26
 - 依赖：T1、T4、T6、T9
 
 ### T13 协议 4：worktree 的状态和删除（`GET /api/v1/worktrees/status`、`POST /api/v1/worktrees/remove`）
@@ -588,7 +588,7 @@
   - `test-sidebar.mjs › remove_result_closes_views`（经 `loadIndex()`）：`fix-login` 下打开着 2 个会话，流程返回 `endedSessions` 含这 2 个 id → 两个视图都被关闭，`views` 里没有它们，随后发出了一次 `listProjects` 和 `listSessions`
 - 完成定义：
   - `cd desktop && npm run typecheck && npm run test:worktree-dialogs && npm run test:sidebar && npm run test:dialog-layout && npm run test:i18n-parity` 退出码 0
-  - `cd desktop && npm run build` 之后 `node .claude/skills/verify/scripts/gui-smoke.mjs` 全部 PASS
+  - 在仓库根执行 `node .claude/skills/verify/scripts/gui-smoke.mjs`，以退出码 0 结束、没有 FAIL 行
 - 依赖：T6、T12、T13
 
 ### T15 新建对话框里写明 `-c` 的后果
@@ -670,7 +670,7 @@
   - 现有的 `test-terminal-selection.mjs`、`test-terminal-layout.mjs` 不改、照常通过
 - 完成定义：
   - `cd desktop && npm run typecheck && npm run test:theme-tokens && npm run test:terminal-selection && npm run test:terminal-layout && npm run test:chat-view` 退出码 0
-  - `cd desktop && npm run build` 之后 `node .claude/skills/verify/scripts/gui-smoke.mjs` 和 `gui-chat-smoke.mjs` 全部 PASS
+  - 在仓库根执行 `node .claude/skills/verify/scripts/gui-smoke.mjs` 和 `node .claude/skills/verify/scripts/gui-chat-smoke.mjs`，都以退出码 0 结束、没有 FAIL 行
 - 依赖：T14、T15（它们是最后往 `styles.css` 追加规则的任务；先让追加的规则都在，再统一换颜色）
 
 ### T19 视觉 M1（二）：形态
@@ -688,7 +688,7 @@
 - 完成定义：
   - `cd desktop && npm run typecheck && npm test` 退出码 0
   - `git diff --stat HEAD~1 -- desktop/src/renderer/chat/ desktop/src/renderer/index.html` 没有输出
-  - `cd desktop && npm run build` 之后 `node .claude/skills/verify/scripts/gui-smoke.mjs`、`gui-chat-smoke.mjs`、`picker-layout.mjs`、`slash-menu-layout.mjs` 全部 PASS；`grep -c "^test(" .claude/skills/verify/scripts/gui-chat-smoke.mjs` 仍是 26；`git diff $(git merge-base HEAD change/dual-mode) -- .claude/skills/verify/scripts/gui-smoke.mjs .claude/skills/verify/scripts/gui-chat-smoke.mjs` 里没有被删掉或放宽的断言
+  - 在仓库根执行 `node .claude/skills/verify/scripts/gui-smoke.mjs` 和 `node .claude/skills/verify/scripts/gui-chat-smoke.mjs`，都以退出码 0 结束、没有 FAIL 行（两者内含 `picker-layout.mjs` 和 `slash-menu-layout.mjs` 的测量）；`grep -c "^test(" .claude/skills/verify/scripts/gui-chat-smoke.mjs` 仍是 26；`git diff $(git merge-base HEAD change/dual-mode) -- .claude/skills/verify/scripts/gui-smoke.mjs .claude/skills/verify/scripts/gui-chat-smoke.mjs` 里没有被删掉或放宽的断言
   - `sed -n 12p CLAUDE.md` 含「M1 方案为准」；`git diff HEAD~1 -- CLAUDE.md` 只有这一行
   - 用 `VIBE_REMOTE_DEBUG_PORT=9222` 起构建产物，经 CDP 截 3 张图（有三层的侧边栏加终端会话、对话会话、删除 worktree 确认框），和效果页 M1 并排存进 `evidence/m1-*.png`
 - 依赖：T18
