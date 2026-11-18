@@ -218,3 +218,71 @@
 | `/api/v1/projects` 某一轮请求失败（网络抖动） | 能力状态和侧边栏的树保持上一轮的样子，不闪成旧版分组，也不清空 | `test-tree.mjs › capability_transitions`、`test-sidebar.mjs › keeps_tree_when_projects_request_fails` | T5、T6 |
 | 侧边栏正在内联重命名时到了下一轮刷新 | 不重绘，输入框和已输入的字还在（现有保护保留） | `test-sidebar.mjs › no_rerender_while_renaming` | T6 |
 | 名字输入框连续输入，较早的 `planWorktree` 请求比较晚的后返回 | 界面显示最后一次输入对应的结果 | `test-session-form.mjs › last_plan_wins` | T9 |
+
+## 任务
+
+顺序：T1 是可以单独合并的先行修复；T2–T6 跑通最小闭环（daemon 下发项目和 worktree → 侧边栏分组显示）；T7–T9 新建命名 worktree；T10–T11 在已有 worktree 里开会话；T12–T14 会话与 worktree 分开收尾；T15 `-c` 说明；T16 快捷键；T17 降级核对；T18–T19 视觉 M1；T20 规则文件（等 c3）。
+
+`desktop/src/renderer/index.ts` 只在 T6 做一次结构性改动（把侧边栏搬到 `sidebar.ts`），之后的任务每个只往里加一个回调和一小段接线。`desktop/src/renderer/styles.css` 在 T6–T15 只追加新规则，T18 统一换配色，T19 统一换形态。
+
+### T1 先行修复：分支有未合并提交时，删会话不删分支
+- 状态：待办
+- 文件：修改 `vibe-remoted/internal/session/worktree.go`（新增 `UnmergedCommits`；`CleanupWorktree` 里两处会执行 `git branch -D` 的路径之前先查）；测试 `vibe-remoted/internal/session/worktree_test.go`、`vibe-remoted/internal/server/worktree_test.go`。不改桌面端、不改协议、不改任何现有测试。
+- 接口：
+  - 使用：`gitAt(dir, args...)`、`WorktreePreservedError`、`RollbackWorktree(meta)`（都是现有的）
+  - 提供：`UnmergedCommits(repoDir, branch string) (int, error)`，`branch` 为空表示 `repoDir` 的 `HEAD`；命令见 design 第 3 节「未合并提交数」
+- 场景：R5.5（H9 的判定）、R5.10（过渡行为，d5）、R5.11（detached 的计数）
+- 测试：
+  - `TestUnmergedCommits`：分支 `fix-login` 上 2 个独有提交 → 2；另建一个本地分支指向它之后 → 0；只被 `refs/remotes/origin/fix-login` 包含 → 0；子测试 `detached`：`branch` 传空，detached 的 `HEAD` 上 2 个不属于任何分支的提交 → 2
+  - `TestCleanupKeepsCleanWorktreeWithUnmergedCommits`：工作区干净、分支有 2 个未合并提交 → 返回 `*WorktreePreservedError`；目录在，分支在，`git rev-list --count main..<分支>` 是 2
+  - `TestCleanupKeepsBranchWhenWorktreeDirMissing`：worktree 目录已被 `rm -rf`、分支有 2 个未合并提交 → 返回 `*WorktreePreservedError`，分支在
+  - `TestCleanupFailsClosedWhenUnmergedCheckFails`：`UnmergedCommits` 执行失败（`meta.SourceRepo` 指向不存在的目录）→ 返回错误，目录和分支都没有被删
+  - `TestDeleteCleanWorktreeWithUnmergedCommitsReturns409`（server）：`DELETE /api/v1/sessions/{id}` → 409，响应体 `error` 是 `worktree_preserved`，`worktreeRoot`、`branch` 是该会话的值
+  - 现有的 `TestWorktreeCleanCleanupRemovesWorktreeAndBranch`、`TestWorktreeDirtyCleanupPreservesBoth`、`TestWorktreeIgnoredFileIsPreserved`、`TestDeleteDirtyWorktreeReturnsStructuredConflict` 不改、照常通过
+- 完成定义：
+  - `cd vibe-remoted && TMUX_TMPDIR=$(mktemp -d) go test -race -count=1 ./internal/session ./internal/server -run 'TestUnmergedCommits|TestCleanup|TestWorktree|TestDelete'` 输出两行 `ok`
+  - 这个任务是单独的一个提交，`git show --stat HEAD` 只列出上面 3 个文件；提交可以不带后续任务直接挑到 `change/dual-mode` 上，挑过去后 `make check` 通过
+- 依赖：无
+
+### T2 daemon：读 worktree 列表，创建会话时记下归属
+- 状态：待办
+- 文件：修改 `vibe-remoted/internal/session/worktree.go`（`Worktree`、`ListWorktrees`、`Home`、`ResolveHome`、`gitAtTimeout`、包级变量 `gitTimeout`）；`vibe-remoted/internal/session/runner.go`（`RunnerConfig.Project/Home`、`Runner.Home()`、`start` 里写 tmux 用户选项 `@vibe_remote_project` 和 `@vibe_remote_home`、`list-sessions` 格式串加到 11 列、`parseTmuxSessionLine` 接受 8、9、11 列）；`vibe-remoted/internal/session/manager.go`（`CreateOptions.Home`、创建时算归属、reconcile 找回会话时读回两个选项）；`vibe-remoted/internal/session/chat_manager.go`（创建对话会话时算归属并写进记录，`Handoff` 把对话会话的归属传给新终端会话）；`vibe-remoted/internal/chat/store.go`（`Record.Project`、`Record.Home`，`omitempty`，`version` 仍是 1）。测试 `worktree_test.go`、`runner_test.go`、`manager_test.go`、`chat_manager_test.go`、`vibe-remoted/internal/chat/store_test.go`
+- 接口：
+  - 使用：`gitAt`、`CreateWorktree(sourceWorkdir, sessionID)`（现有签名，T7 才改）、`WorktreeMetadata`
+  - 提供：`type Worktree struct { Path, Branch, Head string; Detached, Bare, Prunable bool }`；`ListWorktrees(dir string) ([]Worktree, error)`；`type Home struct { Project, Path string; Git bool }`；`ResolveHome(dir string) Home`；`gitAtTimeout(dir string, args ...string)`；`(r *Runner) Home() (project, home string)`；`CreateOptions.Home *Home`；`chat.Record.Project`、`chat.Record.Home`
+  - 归属的规则（design 5.1、H19）：普通模式是 `ResolveHome(workdir)`；worktree 模式 `home` 是新 worktree 的根、`project` 是 `ResolveHome(meta.SourceRepo).Project`；交接出来的终端会话照抄对话会话的归属；之后不随 `cd` 变。`/api/v1/sessions`、`sessions` 帧、`ready` 帧不加任何字段
+- 场景：R1.3、R1.8、R4.2
+- 测试：
+  - `TestListWorktrees`：第一项是主目录，从链接 worktree 里、从符号链接路径调用时第一项的路径相同且是规范路径；detached 的一项 `Detached` 为真、`Branch` 为空、`Head` 是 40 位；目录被删的一项 `Prunable` 为真；裸仓库第一项 `Bare` 为真；`<仓库>/.devflow-tmp/worktrees/general-skills` 这样的隐藏目录照常列出
+  - `TestResolveHome`：主目录 → `Project` 和 `Path` 都是主目录；主目录的子目录 → `Path` 是主目录；链接 worktree 的子目录 → `Project` 是主目录、`Path` 是该 worktree 的根；`TestResolveHomeNonGit`：`notes` 目录 → `Git` 为假，`Project` 和 `Path` 都是目录本身
+  - `TestGitTimeoutKillsProcess`：`gitTimeout` 调成 50 ms，`PATH` 里放一个睡 5 秒的假 git → 1 秒内返回错误，假 git 进程已不存在
+  - `TestWorktreeModeHome`：worktree 模式新建 → `runner.Home()` 的 `home` 是新 worktree 的根，`project` 是源仓库主目录
+  - `TestCreateInHiddenWorktreeDir`：在 `.devflow-tmp/worktrees/general-skills` 新建普通会话 → `home` 是该目录
+  - `TestParseTmuxSessionLineColumns`：8、9、11 列的行都解析成功，11 列时读出 `project`、`home`；10 列被拒
+  - `TestHomeSurvivesRestartTmux`（需要 tmux）：建会话后新建一个 `Manager`，`List()` 找回的会话 `Home()` 与重启前相同
+  - `TestHomeDoesNotFollowCd`（需要 tmux）：会话里执行 `cd /tmp` 后由新的 `Manager` 找回 → `workdir` 变成 `/tmp`（现有行为），`Home()` 不变
+  - `TestChatRecordHomeRoundTrip`：带 `project`、`home` 的记录写盘再读回相同；没有这两个字段的旧文件能读，字段为空
+  - `TestHandoffCopiesHome`：对话会话在 worktree `fix-login` 里，交接出来的终端会话 `Home()` 与它相同（即使 `workdir` 是子目录）
+- 完成定义：
+  - `cd vibe-remoted && TMUX_TMPDIR=$(mktemp -d) go test -race -count=1 ./internal/session ./internal/chat -run 'TestListWorktrees|TestResolveHome|TestGitTimeout|TestWorktreeModeHome|TestCreateInHidden|TestParseTmuxSessionLine|TestHome|TestChatRecordHome|TestHandoffCopiesHome'` 输出两行 `ok`
+  - `cd vibe-remoted && TMUX_TMPDIR=$(mktemp -d) go test -race -count=1 ./internal/server -run TestTerminalFramesUnchangedV3` 通过，`git status --short vibe-remoted/internal/server/testdata vibe-remoted/internal/server/golden_test.go` 没有输出
+- 依赖：无
+
+### T3 daemon：项目清单和创建记录（projects.json）
+- 状态：待办
+- 文件：新建 `vibe-remoted/internal/session/projects_store.go`、`vibe-remoted/internal/session/projects_store_test.go`
+- 接口：
+  - 使用：`ValidSessionID(id)`（现有，`manager.go`）；写盘方式照 `vibe-remoted/internal/chat/store.go`（临时文件、fsync、rename，文件 0600）
+  - 提供：`OpenProjectStore(stateDir string) (*ProjectStore, error)`；`NewMemoryProjectStore() *ProjectStore`；`AddProject(id string)`；`RemoveProject(id string) bool`；`Projects() []string`；`AddWorktree(project, path, branch string)`；`RemoveWorktree(path string)`；`Managed(project, path, branch string) bool`
+  - 文件格式见 design 5.2；`Managed` 的两条规则见 design 5.3（第 2 条每次现算，不写文件）。`ProjectStore` 自己的互斥锁是叶子锁，每次修改在锁内同步写盘
+- 场景：R2.2（清单跨重启）、R5.8（`managed` 的判定，H17）
+- 测试：
+  - `TestProjectStoreRoundTrip`：`AddProject("/r/devflow")`、`AddWorktree("/r/devflow", "/r/devflow-worktrees/fix-login", "fix-login")` 后重新 `OpenProjectStore` 同一目录 → `Projects()` 含该 id，`Managed(…, "fix-login")` 为真；文件权限是 0600；重复 `AddProject` 不产生第二条
+  - `TestProjectStoreRemove`：`RemoveProject` 对存在的 id 返回 true 并落盘，对不存在的返回 false；`RemoveWorktree` 之后 `Managed` 为假
+  - `TestManagedRequiresPathAndBranch`：记录的路径相同、分支传 `other` → 假；分支传空（detached）→ 假；路径不同、分支相同 → 假
+  - `TestManagedLegacyVibeBranch`：没有任何记录时，`path` 是 `/r/devflow-worktrees/1794824025040-12b763ac`、分支是 `vibe/1794824025040-12b763ac` → 真；分支是 `vibe/另一个id` → 假；`path` 的末段是 `foo bar`（不满足 `ValidSessionID`）→ 假；容器目录不是 `<主目录名>-worktrees` → 假
+  - `TestProjectStoreCorruptFileRenamed`：文件内容不是 JSON、`version` 是 2 各一例 → 打开成功、清单为空，目录里有 `projects.json.corrupt-<数字>`；随后 `AddProject` 写出新的 `projects.json`
+  - `TestOpenProjectStoreUnwritableDir`：目录是 0500 → 返回错误
+  - `TestMemoryProjectStore`：增删查都可用，不创建任何文件
+- 完成定义：`cd vibe-remoted && go test -race -count=1 ./internal/session -run 'TestProjectStore|TestManaged|TestOpenProjectStore|TestMemoryProjectStore'` 输出 `ok`
+- 依赖：无
