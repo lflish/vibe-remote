@@ -623,5 +623,119 @@
   - `skips_collapsed_via_index`（经 `loadIndex()`）：2 个项目各 2 个会话，折叠第 1 个项目，当前打开第 2 个项目的第 2 个会话，派发 ⌘⇧] → 打开的是第 2 个项目的第 1 个会话
 - 完成定义：
   - `cd desktop && npm run typecheck && npm run test:shortcuts && npm run test:tree && npm run test:terminal-clipboard` 退出码 0
-  - 真实键盘确认一次（design V7 留下的风险：CDP 注入的按键不经过 macOS 的原生菜单分发）：`npm run dev` 起应用，焦点在终端里用实体键盘按 ⌘2 和 ⌘⇧]，会话切换且终端里没有多出字符；把结果写进 design.md 第 10 节「变更」
+  - 真实键盘确认一次（design V7 留下的风险：CDP 注入的按键不经过 macOS 的原生菜单分发）：`npm run dev` 起应用并打开 2 个终端会话，焦点在终端里时执行 `osascript -e 'tell application "System Events" to keystroke "2" using command down'` 和 `osascript -e 'tell application "System Events" to key code 30 using {command down, shift down}'`（这两条经过系统的按键分发和原生菜单），会话切换且终端里没有多出字符；结果写进 design.md 第 10 节「变更」。`osascript` 因为没有辅助功能权限而报错时，这一项记进 design.md 第 10 节并标「待人工确认」，不算任务未完成
 - 依赖：T5、T6
+
+### T17 新旧版本互连：整体核对（R9）
+- 状态：待办
+- 文件：新建 `desktop/scripts/test-legacy-daemon.mjs`、`vibe-remoted/internal/server/compat_test.go`；修改 `desktop/package.json`（`test:legacy-daemon`）、`docs/protocol.md`（在「协议版本」一节下加「版本互连」小节：新桌面端连协议 3 的 daemon 时怎么降级、旧桌面端连协议 4 的 daemon 时哪些行为变了，内容照 spec R9.1、R9.2 和 design 4.1、4.7、6.4）。各个降级分支已经写在 T4、T5、T6、T9、T11、T12 里（d20）；这两个测试发现缺口时，在对应的文件里补上
+- 接口：
+  - 使用：`loadIndex()`、`indexDom()`（`desktop/scripts/chat-test-util.mjs`，T6 扩过）；`nextCapability`、`buildTree`（T5）；`confirmDeleteSession`（T12）；`CHAT_MIN_PROTO`（T4）；`closeSession` 里的 409 处理（现有）
+  - 提供：无新接口
+- 场景：R9.1、R9.2
+- 测试：
+  - `test-legacy-daemon.mjs`（渲染进程入口连一个假 daemon：`/api/v1/info` 返回 `proto: 3` 且 `chat.supported` 为真，`/api/v1/projects` 返回 404，`/api/v1/sessions` 返回 3 个会话：`/r/devflow` 的普通会话、`sourceRepo:"/r/devflow"` 且 `branch:"vibe/1794824025040-12b763ac"` 的 worktree 会话、`/tmp/notes` 的普通会话）：
+    - `groups_by_session_fields`：侧边栏有 2 个 `project-row`（`devflow`、`notes`）；`devflow` 下有 2 个 `worktree-row`；没有 `worktree-empty`
+    - `note_and_disabled_entries`：有 `machine-legacy-note`；`project-new-worktree` 是 `disabled`；`worktree-delete` 是 `disabled`，提示是「需要升级这台机器的 vibe-remoted」
+    - `chat_still_available`：新建会话对话框里 `picker-ui-chat` 可选（协议 3 支持对话）
+    - `worktree_mode_sends_no_name`：目录选择器选 Worktree 模式 → 没有 `wt-name-input`；确认后发出的 attach 帧没有 `worktreeName` 键
+    - `delete_confirm_is_legacy_text`：点 worktree 会话的删除 → `delete-session-note` 的文字是 `session.delete.legacyWorktree`；普通会话的确认框没有 `delete-session-note`
+    - `preserved_409_still_shown`：`DELETE` 返回 409 `worktree_preserved`（带 `worktreeRoot`、`branch`）→ 状态栏显示「Worktree 已保留 · <路径> · 分支 <分支>」
+    - `old_daemon_warning_text`：收到 `proto: 3` 的 `ready` → 状态栏的文字是改写后的 `terminal.oldDaemon`，含「3」和「4」
+    - `upgrade_in_place`：下一轮 `/api/v1/projects` 改为返回 200 和项目数组 → 说明条消失，两个入口可用（d7）
+  - `TestV3ClientFlowAgainstV4Daemon`（server，真实 WebSocket，需要 tmux 的部分用 `use_tmux:false` 的会话）：只用协议 3 的帧和端点：`auth` → 收到 `sessions` → attach（新建，`mode:"worktree"`，没有 `ui`、没有 `worktreeName`）→ `ready` 的键集合与 `testdata/v2-golden` 里 `ready` 的键集合相同，`branch` 是 `vibe/<会话id>` → `POST …/rename` 200 → `GET /api/v1/sessions` 每条的键都在协议 3 的字段表里 → `DELETE` 返回 204 → worktree 目录和分支都在
+  - `TestTerminalFramesUnchangedV3`：不改，照常通过
+- 完成定义：
+  - `cd desktop && npm run typecheck && npm run test:legacy-daemon` 退出码 0
+  - `cd vibe-remoted && TMUX_TMPDIR=$(mktemp -d) go test -race -count=1 ./internal/server -run 'TestV3ClientFlowAgainstV4Daemon|TestTerminalFramesUnchangedV3'` 输出 `ok`
+  - `git diff --stat $(git merge-base HEAD change/dual-mode) -- vibe-remoted/internal/server/testdata vibe-remoted/internal/server/golden_test.go` 没有输出
+- 依赖：T9、T11、T12、T14
+
+### T18 视觉 M1（一）：配色变量、终端主题、窗口底色
+- 状态：待办
+- 文件：新建 `desktop/src/renderer/theme.ts`、`desktop/scripts/test-theme-tokens.mjs`；修改 `desktop/src/renderer/styles.css`（`:root` 里现有变量换成 design 7.5 表里的值，补上表里标「新」的变量；`:root` 之外现有的 59 处十六进制或 `rgba()` 全部换成变量或 `color-mix(in srgb, var(--…) N%, var(--…))`；三种状态点的规则按 H23；文件开头两处 `Claude Desktop-inspired` 注释改为指向本需求的 M1）、`desktop/src/renderer/index.ts`（`makeTerminal` 里写死的 theme 换成 `terminalTheme()`）、`desktop/src/main/index.ts`（`backgroundColor` 改为 `#EFEFF4`）、`desktop/package.json`（`test:theme-tokens`）
+- 接口：
+  - 使用：xterm 的 `ITheme`（现有依赖）
+  - 提供：`terminalTheme(): ITheme`：`background`、`foreground`、`cursor`、`selectionBackground` 在调用时用 `getComputedStyle(document.documentElement)` 读 `--term-bg`、`--term-fg`、`--term-cursor`、`--term-selection`（去掉首尾空白）；16 个 ANSI 色是这个文件里的常量，值照搬 `index.ts` 现在的（d14）
+  - 本任务只换颜色，不改布局、圆角、间距、阴影的形态（那些在 T19）；`--radius`、`--radius-card`、`--radius-item`、`--sidebar-width`、三个 `--shadow-*` 变量在这里定义好值，T19 才开始在新规则里用到后两类
+- 场景：R8.2、R8.4、R8.6
+- 测试（`test-theme-tokens.mjs`，读 `src/renderer/styles.css` 和 `src/main/index.ts` 的文本，另用 jsdom 跑 `theme.ts`）：
+  - `root_values_match_design`：design 7.5 表里每个变量在 `:root` 里的值与表相同（例如 `--accent` 是 `#6B54D3`，`--bg-app` 和 `--bg-sidebar` 是 `#EFEFF4`，`--text-muted` 是 `#6A6779`）
+  - `no_color_literals_outside_root`：去掉 `:root { … }` 块和注释之后，`styles.css` 里匹配 `#[0-9a-fA-F]{3,8}\b`、`rgba?\(`、`hsla?\(` 的次数是 0
+  - `contrast_table`：对 `evidence/contrast-m1.txt` 里标 `ok` 的 35 对（前景变量、背景变量、最低比值写成测试里的一张表）算 WCAG 对比度，全部不低于各自的最低值；其中正文 `--text-primary` 对 `--bg-primary` ≥ 4.5，`--on-accent` 对 `--accent` ≥ 4.5，`--text-muted` 对 `--bg-sidebar` ≥ 3，`--dot-new`、`--dot-idle`、`--dot-wait` 对 `--bg-sidebar` ≥ 3
+  - `dot_shapes_differ`：`.session-unread.output` 有 `border` 且背景透明；`.session-unread.idle` 背景是 `var(--dot-idle)`、没有 `box-shadow`；`.session-unread.waiting` 背景是 `var(--dot-wait)` 且有 3px 的 `box-shadow` 光圈；三者直径都是 8px
+  - `window_background_matches_bg_app`：`src/main/index.ts` 里 `backgroundColor` 的值等于 `styles.css` 的 `--bg-app`，是 `#EFEFF4`
+  - `terminal_theme_from_css_vars`：jsdom 里把 `styles.css` 的 `:root` 块放进 `<style>` → `terminalTheme()` 的四个值是 `#FFFFFF`、`#1C1B22`、`#6B54D3`、`#D9D2F4`；改掉 `--term-bg` 后再调用，`background` 跟着变
+  - `ansi_colors_unchanged`：`terminalTheme()` 的 16 个 ANSI 色与测试里写死的一份改动前的值（从本任务开始前的 `index.ts` 抄出）逐个相同
+  - 现有的 `test-terminal-selection.mjs`、`test-terminal-layout.mjs` 不改、照常通过
+- 完成定义：
+  - `cd desktop && npm run typecheck && npm run test:theme-tokens && npm run test:terminal-selection && npm run test:terminal-layout && npm run test:chat-view` 退出码 0
+  - `cd desktop && npm run build` 之后 `node .claude/skills/verify/scripts/gui-smoke.mjs` 和 `gui-chat-smoke.mjs` 全部 PASS
+- 依赖：T14、T15（它们是最后往 `styles.css` 追加规则的任务；先让追加的规则都在，再统一换颜色）
+
+### T19 视觉 M1（二）：形态
+- 状态：待办
+- 文件：修改 `desktop/src/renderer/styles.css`（按效果页 `docs/changes/2026-11-16-project-worktrees/pages/prototype/index.html` 的 M1：`#main-area` 是外边距 10px、`--radius-card`、带边框和 `--shadow-card` 的浮起卡片，标题栏在卡片里、没有底边线；侧边栏宽 `--sidebar-width`、顶部 124px 的 `--sidebar-glow` 渐变；项目行、worktree 行、两行的会话行、选中行用 `--bg-selected` 和 `--radius-item`；`.chat-instance` 一段里用户消息是右对齐气泡（`--accent-soft`，圆角 17px），输入框是圆角 17px 的卡片、发送按钮是圆形，权限卡片、工具行、代码块、diff 按效果页；对话框用 `--shadow-lift` 和 `--scrim`）、`desktop/scripts/test-theme-tokens.mjs`（加形态用例）、`CLAUDE.md` 第 12 行（只改 c2 同意的那一句：「（侧边栏/状态栏对标 Claude Desktop）」改为「（侧边栏、标题、状态栏，外观以 `docs/changes/2026-11-16-project-worktrees` 选定的 M1 方案为准）」）、`.claude/skills/verify/scripts/gui-smoke.mjs` 和 `gui-chat-smoke.mjs`（只在选择器受影响时调整）
+- 接口：
+  - 使用：T18 定义的全部 CSS 变量；T6、T9、T11、T12、T14、T15 追加的 class 和 `data-testid`
+  - 提供：无新接口。不改 `desktop/src/renderer/chat/` 下任何 `.ts`，不改 DOM 结构和 `data-testid`；新规则继续只用变量
+- 场景：R8.1、R8.3（现有功能入口都在）、R8.5（对话框结构不变）
+- 测试：
+  - `test-theme-tokens.mjs › main_area_is_card`：`#main-area` 的规则里有 `border-radius: var(--radius-card)`、`box-shadow: var(--shadow-card)`、`margin: 10px`
+  - `chat_shape_rules`：`.chat-instance` 一段里用户消息那条规则的背景是 `var(--accent-soft)`、`border-radius` 是 17px、靠右对齐；输入框容器的 `border-radius` 是 17px
+  - `no_color_literals_outside_root`（T18 的用例）仍然通过
+  - `test-dialog-layout.mjs`、`test-picker-layout.mjs`、`test-slash-menu-layout.mjs`、`test-terminal-layout.mjs`、`test-chat-view.mjs`、`test-chat-markdown.mjs`、`test-chat-diff.mjs`、`test-chat-render-guard.mjs` 不改、照常通过
+- 完成定义：
+  - `cd desktop && npm run typecheck && npm test` 退出码 0
+  - `git diff --stat HEAD~1 -- desktop/src/renderer/chat/ desktop/src/renderer/index.html` 没有输出
+  - `cd desktop && npm run build` 之后 `node .claude/skills/verify/scripts/gui-smoke.mjs`、`gui-chat-smoke.mjs`、`picker-layout.mjs`、`slash-menu-layout.mjs` 全部 PASS；`grep -c "^test(" .claude/skills/verify/scripts/gui-chat-smoke.mjs` 仍是 26；`git diff $(git merge-base HEAD change/dual-mode) -- .claude/skills/verify/scripts/gui-smoke.mjs .claude/skills/verify/scripts/gui-chat-smoke.mjs` 里没有被删掉或放宽的断言
+  - `sed -n 12p CLAUDE.md` 含「M1 方案为准」；`git diff HEAD~1 -- CLAUDE.md` 只有这一行
+  - 用 `VIBE_REMOTE_DEBUG_PORT=9222` 起构建产物，经 CDP 截 3 张图（有三层的侧边栏加终端会话、对话会话、删除 worktree 确认框），和效果页 M1 并排存进 `evidence/m1-*.png`
+- 依赖：T18
+
+### T20 更新约束 AI 的规则文件（CLAUDE.md、`.devflow.yml`、protocol-sync skill）
+- 状态：阻塞
+- 阻塞原因：等 c3
+- 文件：修改 `CLAUDE.md`（除 T19 改的那一句以外：协议版本 4 与 5 个新端点、`attach.worktreeName` 和 4 个错误码；会话归属和 `projects.json`；删会话不再动 worktree 和分支；对话界面信任规则的 worktree 条款；客户端侧边栏的三层模型、`tree.ts` / `sidebar.ts`、`/api/v1/projects` 轮询与能力状态；`state_dir` 一节加 `projects.json`）、`.devflow.yml`（`invariants` 新增 6 条，规则原文和检查命令照 design 7.1「本次新增 6 条」的表）、`.claude/skills/protocol-sync/SKILL.md`（第 4 步后面加一段 v4 的核对项：`attach.worktreeName`；`Project`、`ProjectWorktree`、`WorktreePlan`、`WorktreeStatus`、`WorktreeRemoveRequest`、`WorktreeRemoveResult`；5 个新端点的方法、路径、错误码；4 个新的 error 帧代码都是 fatal；版本表第 4 行和 `Version` / `PROTOCOL_VERSION` = 4、`CHAT_MIN_PROTO` = 3）
+- 接口：
+  - 使用：T3、T7、T10、T12、T13 写好的测试名（6 条规则的检查命令里引用）
+  - 提供：无
+- 场景：无（不改产品行为；让规则文件与代码一致）
+- 测试：
+  - `.devflow.yml` 新增的 6 条 `check` 命令逐条执行，全部退出码 0（涉及 `./internal/session`、`./internal/server` 的命令前带 `TMUX_TMPDIR=$(mktemp -d)`）
+  - 按改好的 protocol-sync 第 4 步核对一遍三处协议，无差异
+- 完成定义：
+  - `grep -c "rule:" .devflow.yml` 比改动前多 6
+  - `grep -n "当前为 3\|worktree 模式查所选的源目录本身（不是仓库根，也不是新 worktree）。只读这一个字段" CLAUDE.md` 没有输出（旧表述已更新）
+  - `git diff --stat HEAD~1` 只列出这 3 个文件
+- 依赖：T3、T4、T6、T7、T8、T10、T12、T13
+
+## 进度
+
+（dev-build 每完成一个任务追加一行）
+
+| 任务 | 完成时间 | 提交 | 测试 |
+|------|----------|------|------|
+
+## 后续
+
+spec「推迟到以后」的条目：
+
+- E2 一个窗口里并排看 2 个会话（分屏）。
+- E3 多个 macOS 窗口。
+- E4 worktree 行上常驻显示「有未提交改动 / 领先 N 个提交」（本次只在删除确认时现查；放进列表会让 100 个 worktree 的列表超出 200 ms，见 decisions #7）。
+- 为已存在的分支创建 worktree（本次新建 worktree 总是新建分支）。
+- 新建 worktree 时选择基于哪个分支（本次固定基于发起处当前 HEAD）。
+
+设计中发现、不在本次范围的改进：
+
+- daemon 在 `git worktree add` 成功之后、会话登记之前崩溃：重放会得到 `worktree_branch_exists`，那个 worktree 以「没有会话」的行留在侧边栏（design 6.1 的已知窄窗口）。以后可以在启动时对账，或让重放认领自己刚建的 worktree。
+- daemon 重启后找回的终端会话，`created` 是找回的时刻（d16）。把创建时间存进 tmux 用户选项后，同一 worktree 下的会话在重启前后顺序就完全一致。
+- 会话行显示「最近活动的相对时间」（效果页 M1 上有，d10 去掉了）：需要协议给会话加最近活动时间，终端会话目前没有来源。
+- 折叠的项目行把三种状态都上卷、取最紧急的一种（d11 只上卷「等你处理」）。
+- 重载、交接、删除机器的系统 `confirm` 也换成应用内对话框（d15 只换了删除会话）。
+- 给终端重新配一套 16 个 ANSI 色（d14 保留现值）；状态点压在选中行底色上的对比度不到 3:1（当前打开的会话不显示状态点，所以现在不会出现）。
+- `/api/v1/info` 给每个启动选项下发「是否续接」字段，`-c` 说明就不必依赖 id 恰好叫 `continue`（d13）。
+- `state_dir` 不可写时，命名 worktree 的创建记录重启后丢失、按「外部」处理（方向安全但会留下分支）。可以把记录另存一份到仓库的 git 配置，或在界面上提示 `state_dir` 不可写。
+- 把 `/protocol-sync` 的三处比对做成脚本并接进 `make check`，协议漂移就能自动发现。
+- 新建 worktree 对话框确认之后才出现的竞态错误（另一台桌面刚建了同名分支）只显示在状态栏（design 第 1 节方案 A 的代价）。以后可以把这类错误带回对话框。
