@@ -467,6 +467,7 @@
     - `worktree_itself_trusted`：主目录没有记录、worktree 路径自己有 → `trusted`
     - `neither_trusted` → `untrusted`
     - `main_false`：主目录的记录是 `hasTrustDialogAccepted:false` → worktree 是 `untrusted`
+    - `self_false_main_trusted`：worktree 自己的记录是 `false`、主目录被信任 → `trusted`（7.3 第 1 步只在 `trusted` 或 `unknown` 时直接返回）
     - `subdir_of_worktree`：主目录被信任，查 `<worktree>/src` → `untrusted`
     - `subdir_of_main`：主目录被信任，查 `<主目录>/src` → `untrusted`
     - `main_not_via_worktree`：只有某个链接 worktree 被信任，查主目录 → `untrusted`
@@ -529,7 +530,98 @@
   - `test:preserved-notice`（`desktop/package.json` 里现有的检查）不改、照常通过
 - 完成定义：
   - `cd vibe-remoted && TMUX_TMPDIR=$(mktemp -d) go test -race -count=1 ./internal/session ./internal/server -run 'TestDeleteSession|TestDeleteOneOfTwo|TestManagerDelete|TestChatWorktreeAndFlags|TestTerminalFramesUnchangedV3'` 输出两行 `ok`
-  - `grep -rn "worktree_preserved" vibe-remoted/internal --include='*.go'` 没有输出；`grep -rn "CleanupWorktree(" vibe-remoted/internal/session/manager.go vibe-remoted/internal/session/chat_manager.go` 没有输出
+  - `grep -n "worktree_preserved" vibe-remoted/internal/server/server.go` 没有输出；`grep -rn "CleanupWorktree(" vibe-remoted/internal/session/manager.go vibe-remoted/internal/session/chat_manager.go` 没有输出
   - `cd desktop && npm run typecheck && npm run test:worktree-dialogs && npm run test:preserved-notice && npm run test:i18n-parity && npm run test:dialog-layout` 退出码 0
   - `cd desktop && npm run build` 之后 `node .claude/skills/verify/scripts/gui-smoke.mjs` 和 `gui-chat-smoke.mjs` 全部 PASS，`grep -c "^test(" .claude/skills/verify/scripts/gui-chat-smoke.mjs` 仍是 26
-- 依赖：T1、T4、T6、T11
+- 依赖：T1、T4、T6、T9
+
+### T13 协议 4：worktree 的状态和删除（`GET /api/v1/worktrees/status`、`POST /api/v1/worktrees/remove`）
+- 状态：待办
+- 文件：
+  - 修改 `vibe-remoted/internal/session/worktree.go`（`DirtyFiles`、`ErrWorktreeNotFound`、`ErrWorktreeIsMain`、`WorktreeChangedError`；删除 `CleanupWorktree` 和 `WorktreePreservedError`）、`vibe-remoted/internal/session/projects.go`（`WorktreeStatus`、`RemoveWorktree`，步骤照 design 6.2）、`vibe-remoted/internal/server/projects.go`（两个处理函数）、`vibe-remoted/internal/server/server.go`（路由）
+  - 修改 `vibe-remoted/internal/protocol/protocol.go`（`WorktreeStatus`、`WorktreeRemoveRequest`、`WorktreeRemoveResult`）、`desktop/src/shared/protocol.ts`（同名类型）、`desktop/src/renderer/rest.ts`（`worktreeStatus`、`removeWorktree`）、`docs/protocol.md`（两个端点的请求、响应、错误码；版本表第 4 行补全，补完后与 design 第 4 节开头那句一致）
+  - 测试：新建 `vibe-remoted/internal/session/worktree_remove_test.go`；修改 `vibe-remoted/internal/session/worktree_test.go`、`vibe-remoted/internal/server/projects_test.go`、`desktop/scripts/test-rest-projects.mjs`
+  - 按 spec 改写的现有测试（decisions #11，design 7.1）：`TestWorktreeCleanCleanupRemovesWorktreeAndBranch` → `TestRemoveCleanMergedWorktree`；`TestWorktreeDirtyCleanupPreservesBoth` → `TestRemoveDirtyNeedsConsent`；`TestWorktreeIgnoredFileIsPreserved` → `TestRemoveIgnoredOnlyIsClean`。T1 的 `TestCleanupKeepsCleanWorktreeWithUnmergedCommits`、`TestCleanupKeepsBranchWhenWorktreeDirMissing`、`TestCleanupFailsClosedWhenUnmergedCheckFails` 随 `CleanupWorktree` 删除，由 `TestRemoveUnmergedNeedsConsent` 和 `TestRemoveFailsClosedWhenRecheckFails` 取代；`TestUnmergedCommits` 保留。测试里当清理用的 `defer CleanupWorktree(meta)` 改为 `RollbackWorktree(meta)`
+- 接口：
+  - 使用：`ListWorktrees`、`ResolveHome`、`gitAt`、`gitAtTimeout`（T2）；`UnmergedCommits`（T1）；`ProjectStore.Managed` / `RemoveWorktree`（T3）；按项目的互斥锁（T7）；`Manager.Delete`（T12 之后不再碰 worktree）；会话归属（T2）
+  - 提供：`DirtyFiles(worktreeDir string) (int, error)`；`(m *Manager) WorktreeStatus(path string, allow func(string) bool) (protocol.WorktreeStatus, error)`；`(m *Manager) RemoveWorktree(req protocol.WorktreeRemoveRequest, allow func(string) bool) (protocol.WorktreeRemoveResult, error)`；`ErrWorktreeNotFound`、`ErrWorktreeIsMain`、`type WorktreeChangedError struct { Status protocol.WorktreeStatus }`；TS `worktreeStatus(path): Promise<WorktreeStatus>`、`removeWorktree(req): Promise<WorktreeRemoveResult>`
+  - HTTP 的映射照 design 4.5、4.6：`ErrWorktreeNotFound` → 404 `worktree_not_found`；`ErrWorktreeIsMain` → 400 `worktree_is_main`；`*WorktreeChangedError` → 409 `worktree_changed`，响应体多一个 `status`；git 删除失败 → 500 `worktree_remove_failed`；状态查询的 git 失败 → 500 `git_failed`
+  - `path` 先过 `allow`，不通过直接 404，不对它运行 git；通过后只和 daemon 读到的列表做相等比较，传给 git 的路径和分支名取自列表
+- 场景：R5.2–R5.9、R5.11（daemon 一侧）、安全、可靠性
+- 测试（除注明的以外都在 `worktree_remove_test.go`）：
+  - `TestDirtyFiles`：改 1、暂存 1、未跟踪 1 → 3；子测试 `ignored_only` → 0；`clean` → 0；`TestDirtyFilesDoesNotRunFsmonitor`：仓库配置 `core.fsmonitor` 指向一个会创建标记文件的脚本 → 调用后标记文件不存在
+  - `TestWorktreeStatus`：`head` 是 40 位；`managed`、`main`、`branch` 正确；`sessions` 含该 worktree 下运行中的会话和已结束的对话会话；detached 时 `detached:true`、没有 `branch`
+  - `TestRemoveCleanMergedWorktree`、`TestRemoveDirtyNeedsConsent`、`TestRemoveIgnoredOnlyIsClean`、`TestRemoveUnmergedNeedsConsent`、`TestRemoveEndsSessionsFirst`、`TestRemoveMainRefused`、`TestRemoveExternalNeverDeletesBranch`（含 `switched_branch`）、`TestRemoveDetachedNeedsConsent`、`TestRemoveGitFailureKeepsState`：断言见测试计划 R5.2–R5.9、R5.11 和「容易出问题的情况」各行
+  - `TestRemoveChangedSinceStatus`：子测试 `new_file`、`head_moved`、`new_session`，都返回 `*WorktreeChangedError`，其中的 `Status` 是最新值，目录、分支、会话都没有变化
+  - `TestRemoveGitRefusesNewFiles`：用包内的测试钩子在重查之后、`git worktree remove` 之前往 worktree 里写一个文件 → 返回 `*WorktreeChangedError`（不是 500），目录还在
+  - `TestRemoveOnlyListedWorktrees`：`path` 分别是任意临时目录、主目录的子目录、`<worktree>/../<worktree>` 这种没有规范化的写法、子测试 `outside_allowed_roots`（真实存在但 `allow` 不放行的 worktree）→ 都是 `ErrWorktreeNotFound`，磁盘不变；`outside_allowed_roots` 里 git 包装脚本的调用记录为 0
+  - `TestRemoveFailsClosedWhenRecheckFails`：重查时 git 失败（`gitTimeout` 调成 50 ms 加睡眠的假 git）→ 返回错误，没有会话被结束，目录和分支都在
+  - `TestRemoveBranchDeleteFailureReported`：git 包装脚本让 `branch -D` 失败 → 结果 `removed:true, branchDeleted:false`，`branchError` 非空，目录已删
+  - `TestRemoveCleansRecordAndEmptyContainer`：删除后 `Managed(…)` 为假；`<仓库>-worktrees` 目录为空时被删掉，里面还有另一个 worktree 时保留
+  - `TestWorktreeStatusEndpoint`、`TestWorktreeRemoveEndpoint`（server）：子测试 `clean`（200，响应体 `{"removed":true,"branchDeleted":true,"endedSessions":[]}`）、`main`（400）、`not_found`（404）、`changed`（409，响应体有 `status.dirtyFiles`）、`git_failure`（500，`message` 含 git 的输出）；`TestNewEndpointsRequireToken` 加上这两个端点
+  - `test-rest-projects.mjs › remove_409_carries_status`：`removeWorktree` 遇到 409 → 抛 `RestError`，`code` 是 `worktree_changed`，`body.status.dirtyFiles` 可读
+- 完成定义：
+  - `cd vibe-remoted && TMUX_TMPDIR=$(mktemp -d) go test -race -count=1 ./internal/session ./internal/server -run 'TestDirtyFiles|TestWorktreeStatus|TestRemove|TestWorktreeRemoveEndpoint|TestUnmergedCommits|TestNewEndpointsRequireToken|TestManagedRequiresPathAndBranch'` 输出两行 `ok`
+  - `grep -rn "CleanupWorktree\|WorktreePreservedError" vibe-remoted/` 没有输出
+  - `cd desktop && npm run typecheck && npm run test:rest-projects` 退出码 0
+  - 按 `/protocol-sync` 核对：三个类型的字段、五个新端点的方法和路径在三处一致；`docs/protocol.md` 版本表第 4 行与 design 第 4 节开头列的内容逐项相同
+- 依赖：T1、T2、T3、T4、T7、T12
+
+### T14 桌面端：删除 worktree 的确认和流程
+- 状态：待办
+- 文件：修改 `desktop/src/renderer/worktree-dialogs.ts`（加 `confirmDeleteWorktree`、`deleteWorktreeFlow`）、`desktop/src/renderer/index.ts`（给 `SidebarActions` 传 `deleteWorktree`：跑 `deleteWorktreeFlow`，成功后关闭 `endedSessions` 里各会话的视图并立刻刷新这台机器）、`desktop/src/renderer/styles.css`（追加确认框里警告段、单选、错误条的规则）、`desktop/src/renderer/i18n.ts`（`wt.delete.*`）；测试 `desktop/scripts/test-worktree-dialogs.mjs`、`test-sidebar.mjs`
+- 接口：
+  - 使用：`worktreeStatus`、`removeWorktree`、`WorktreeStatus`、`WorktreeRemoveRequest`、`WorktreeRemoveResult`、`RestError`（T13、T4）；`SidebarActions.deleteWorktree`、`TreeWorktree`（T6、T5）；`activateModal`（现有）
+  - 提供：`confirmDeleteWorktree(status: WorktreeStatus, opts: { label: string; changed: boolean; error?: string }): Promise<WorktreeRemoveRequest | null>`；`deleteWorktreeFlow(rest, target: { path: string; label: string }, notify: (text: string) => void): Promise<WorktreeRemoveResult | null>`
+  - 确认框的形态、默认按钮、同意项照 design 6.2 的表和它下面那一段：`data-variant` 按 `files` > `detached` > `commits` > `external` > `clean` 取第一个成立的；显示了 `files` 或 `detached`（有提交）的警告时初始焦点在 `dialog-cancel`、确认按钮是 `delete-wt-force`；`commits` 的两个单选预选 `delete-wt-keep-branch`；几种情况同时成立时各段都显示、同意项取并集；请求里的 `path`、`head`、`sessions` 原样取自传入的 `status`
+  - 流程：`worktreeStatus` → 确认 → `removeWorktree`。409 `worktree_changed` → 用响应里的 `status` 再弹一次确认（`changed:true`）；500 → 带着 `error` 重新打开同一个确认框；404 → `notify(wt.delete.gone)` 并返回 `null`；成功且带 `branchError` → `notify(wt.delete.branchKept)`；用户取消 → 返回 `null`
+- 场景：R5.2–R5.9、R5.11（界面一侧）
+- data-testid：`delete-wt-dialog`（带 `data-variant`）、`delete-wt-files`、`delete-wt-commits`、`delete-wt-sessions`、`delete-wt-external`、`delete-wt-keep-branch`、`delete-wt-delete-branch`、`delete-wt-force`、`delete-wt-changed`、`delete-wt-error`、`dialog-confirm`、`dialog-cancel`
+- 测试（`test-worktree-dialogs.mjs`，除最后一个）：
+  - `delete_wt_clean`、`delete_wt_files`、`delete_wt_commits`、`delete_wt_external`、`delete_wt_detached`、`delete_wt_detached_clean`、`delete_wt_sessions_line`、`delete_flow_500_reopens_with_error`、`delete_flow_409_reconfirms`：断言见测试计划 R5.2、R5.3、R5.5、R5.8、R5.11、R5.6、R5.9 和「容易出问题的情况」各行
+  - `delete_wt_files_and_commits`：`managed`、`dirtyFiles:3`、`unmergedCommits:2` → `data-variant` 是 `files`，`delete-wt-files` 和 `delete-wt-commits` 都在，初始焦点在 `dialog-cancel`，单选预选保留分支；点 `delete-wt-force` → 请求是 `discardFiles:true`，没有 `deleteBranch`；改选删分支后再点 → `discardFiles:true, deleteBranch:true, dropCommits:true`
+  - `delete_wt_files_managed_merged`：`managed`、`dirtyFiles:3`、`unmergedCommits:0` → 点 `delete-wt-force` 的请求是 `discardFiles:true, deleteBranch:true`
+  - `delete_wt_external_detached`：不是 `managed`、detached、干净 → `delete-wt-external` 的文字是 `wt.delete.externalDetached`，请求没有同意项
+  - `delete_wt_enter_key`：`clean` 形态回车 = 删除；`files` 和 `detached`（有提交）形态回车 = 取消；`commits` 形态回车 = 只删目录的请求（H22）
+  - `delete_flow_404_notifies_gone`：`worktreeStatus` 返回 404 → 没有弹确认框，`notify` 收到「这个 worktree 已经不存在」，返回 `null`
+  - `delete_flow_branch_error`：结果带 `branchError:"x"` → `notify` 收到「目录已删除，分支没删掉：x」，返回该结果
+  - `test-sidebar.mjs › remove_result_closes_views`（经 `loadIndex()`）：`fix-login` 下打开着 2 个会话，流程返回 `endedSessions` 含这 2 个 id → 两个视图都被关闭，`views` 里没有它们，随后发出了一次 `listProjects` 和 `listSessions`
+- 完成定义：
+  - `cd desktop && npm run typecheck && npm run test:worktree-dialogs && npm run test:sidebar && npm run test:dialog-layout && npm run test:i18n-parity` 退出码 0
+  - `cd desktop && npm run build` 之后 `node .claude/skills/verify/scripts/gui-smoke.mjs` 全部 PASS
+- 依赖：T6、T12、T13
+
+### T15 新建对话框里写明 `-c` 的后果
+- 状态：待办
+- 文件：修改 `desktop/src/renderer/session-form.ts`（`createFlagsSection` 按 `existingSessions` 显示说明）、`desktop/src/renderer/dirpicker.ts`（`openDirPicker` 加第 3 个可缺省参数 `opts?: { sessionCountAt?(workdir: string): number }`，每次列出目录后把结果传给启动选项段；Worktree 模式下传 0）、`desktop/src/renderer/worktree-dialogs.ts`（`openWorktreeSessionDialog` 传 `worktree.sessions.length`；`openNewWorktreeDialog` 传 0）、`desktop/src/renderer/index.ts`（调 `openDirPicker` 时传 `sessionCountAt`：这台机器的会话里 `workdir` 等于该目录的个数）、`desktop/src/renderer/styles.css`（追加说明条的规则）、`desktop/src/renderer/i18n.ts`（`wt.session.continueNote`）；测试 `desktop/scripts/test-session-form.mjs`、`test-worktree-dialogs.mjs`
+- 接口：
+  - 使用：`createFlagsSection`、`setExistingSessions`（T9）；`openWorktreeSessionDialog`（T11）；`machineSessions`（`index.ts` 现有）
+  - 提供：说明的显示条件（d13、d17、H20）：勾选了 id 为 `continue` 的启动选项，且 `existingSessions > 0`。确认按钮不因此置灰。机器没有 id 为 `continue` 的启动选项时永远不显示
+- 场景：R6.1、R6.2
+- data-testid：`continue-note`
+- 测试：
+  - `test-session-form.mjs › continue_note_shown`、`continue_note_hidden_without_sessions`：断言见测试计划 R6.1、R6.2
+  - `continue_note_default_checked`：`continue` 的 `default` 为真且已有会话数是 2 → 对话框一打开就有说明
+  - `continue_note_other_flag`：只勾选别的启动选项 → 没有说明
+  - `picker_count_follows_directory`：目录选择器从 `/r/devflow`（`sessionCountAt` 返回 1）进到 `/r/devflow/src`（返回 0）→ 说明消失；切到 Worktree 模式 → 说明消失
+  - `test-worktree-dialogs.mjs › continue_note_counts`：`openWorktreeSessionDialog` 对有 1 个会话的 worktree 显示说明、对没有会话的不显示；`openNewWorktreeDialog` 勾选 `continue` 也不显示
+- 完成定义：`cd desktop && npm run typecheck && npm run test:session-form && npm run test:worktree-dialogs && npm run test:picker-layout && npm run test:i18n-parity` 退出码 0
+- 依赖：T9、T11
+
+### T16 切换会话的快捷键（⌘1–9、⌘⇧[、⌘⇧]）
+- 状态：待办
+- 文件：新建 `desktop/src/renderer/shortcuts.ts`、`desktop/scripts/test-shortcuts.mjs`；修改 `desktop/src/renderer/index.ts`（启动时 `installShortcuts(window, …)`：`blocked` = 页面上有 `.modal-overlay` 或正在内联重命名；`count` 和 `activeIndex` 来自 `visibleSessions(…)`；`open` 调 `openExisting`）、`desktop/package.json`（`test:shortcuts`）
+- 接口：
+  - 使用：`visibleSessions`（T5）；`machineTrees`、`collapsedProjects`、折叠的机器集合、`renamingActive`、`openExisting`（`index.ts`，T6 和现有）
+  - 提供：`type ShortcutAction`；`matchShortcut(e)`；`pickTarget(count, activeIndex, action)`；`installShortcuts(target: Window, deps: { blocked(): boolean; count(): number; activeIndex(): number; open(index: number): void }): () => void`。签名见 design 4.10，规则见 6.5：只在 `window` 的 keydown 捕获阶段监听；匹配且没有被 `blocked` 时 `preventDefault()` 加 `stopPropagation()`；被 `blocked` 时不切换也不拦截
+- 场景：R7.1–R7.5
+- 测试（`test-shortcuts.mjs`）：
+  - `match_digits`、`pick_index`、`pick_prev_next_wraps`、`capture_blocks_propagation`、`blocked_does_not_intercept`：断言见测试计划 R7.1–R7.4
+  - `match_brackets`：⌘⇧`BracketRight` → `next`，⌘⇧`BracketLeft` → `prev`；不带 ⇧ 的 ⌘`BracketRight`、带 ⌥ 或 ⌃ 的都不匹配；用 `code` 判断，`key` 是 `{` 或 `}` 时同样匹配
+  - `index_out_of_range_still_intercepted`：5 个会话时按 ⌘7 → `open` 没有被调用，`defaultPrevented` 为真（按键不会落进终端）
+  - `uninstall_removes_listener`：调用返回的卸载函数后再派发 ⌘3 → `open` 没有被调用
+  - `skips_collapsed_via_index`（经 `loadIndex()`）：2 个项目各 2 个会话，折叠第 1 个项目，当前打开第 2 个项目的第 2 个会话，派发 ⌘⇧] → 打开的是第 2 个项目的第 1 个会话
+- 完成定义：
+  - `cd desktop && npm run typecheck && npm run test:shortcuts && npm run test:tree && npm run test:terminal-clipboard` 退出码 0
+  - 真实键盘确认一次（design V7 留下的风险：CDP 注入的按键不经过 macOS 的原生菜单分发）：`npm run dev` 起应用，焦点在终端里用实体键盘按 ⌘2 和 ⌘⇧]，会话切换且终端里没有多出字符；把结果写进 design.md 第 10 节「变更」
+- 依赖：T5、T6
