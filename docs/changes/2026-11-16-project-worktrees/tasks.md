@@ -395,7 +395,7 @@
   - `TestResolveAllowedNewPath`：白名单内不存在的路径 → 通过并返回规范路径；白名单外 → 错误；白名单内的符号链接祖先指向白名单外 → 错误；已存在的路径与 `ResolveAllowedWorkdir` 结果相同
   - `TestConcurrentCreateSameNameOneWins`：两个不同的会话 id 并发 `Create`、`WorktreeName` 都是 `fix-login`，跑 20 轮 → 每轮恰好一个成功，另一个 `errors.Is(err, ErrWorktreeBranchExists)`；成功那个的目录和分支完好
   - `TestNamedWorktreeReplaySameID`：同一个 `ID` 加 `WorktreeName:"fix-login"` 先后 `Create` 2 次、再并发 2 次 → 返回同一个会话，`git worktree list` 里一个 `fix-login`，没有 `ErrWorktreeBranchExists`
-  - `TestNamedWorktreeRolledBackWhenSessionStartFails`：`claude_cmd` 指向不存在的程序 → `Create` 报错；分支和目录都不存在；`Managed(…)` 为假
+  - `TestNamedWorktreeRolledBackWhenSessionStartFails`：让会话启动失败（做法同现有的 `TestManagerCreateWorktreeRollsBackWhenRunnerStartFails`）且 `WorktreeName` 是 `fix-login` → `Create` 报错；分支和目录都不存在；`Managed(…)` 为假
   - `TestWSAttachWorktreeName`、`TestWSAttachWorktreeCreateFailed`、`TestAttachWorktreeWithoutNameKeepsLegacyNaming`（server）：断言见测试计划 R3.1、R3.8、R9.2 各行
   - `TestWSWorktreeErrorsAreFatal`（server）：名字不合法、分支已存在、目录已存在、目录不在白名单内 4 种 → error 帧的 `code` 分别是 4 个新代码，`fatal` 都是 true，`worktree_path_not_allowed` 的 `message` 含完整路径
   - `TestHandoffIgnoresWorktreeName`（server）：attach 同时带 `handoffFrom` 和 `worktreeName` → 交接成功，没有新 worktree
@@ -451,3 +451,85 @@
   - `cd desktop && npm run typecheck && npm run test:worktree-name && npm run test:session-form && npm run test:worktree-dialogs && npm run test:dialog-layout && npm run test:picker-layout && npm run test:i18n-parity` 退出码 0
   - `cd desktop && npm run build` 之后 `node .claude/skills/verify/scripts/gui-smoke.mjs`、`node .claude/skills/verify/scripts/picker-layout.mjs` 全部 PASS
 - 依赖：T6、T7、T8
+
+### T10 daemon：对话界面的信任规则认「主目录已被信任的 worktree 根」
+- 状态：待办
+- 文件：新建 `vibe-remoted/internal/session/trust.go`、`vibe-remoted/internal/session/trust_test.go`；修改 `vibe-remoted/internal/server/ws_chat.go`（`wsCreateChat` 里的 `chat.WorkdirTrusted(workdir)` 换成 `session.ChatTrust(workdir)`）、`vibe-remoted/internal/server/server.go`（`handleFS` 的 `chatTrust` 同样换）、`docs/protocol.md`（`/api/v1/fs` 的 `chatTrust` 说明改成 design 7.3 的规则，版本表第 4 行补「`/api/v1/fs.chatTrust` 的 worktree 规则」）；测试 `vibe-remoted/internal/server/ws_chat_test.go`、`fs_test.go`。`protocol.go`、`protocol.ts`、`rest.ts` 里 `chatTrust` 的取值不变，核对后不需要改
+- 接口：
+  - 使用：`chat.WorkdirTrusted(dir)`、`chat.TrustState`（现有，`vibe-remoted/internal/chat/trust.go`，不改）；`ListWorktrees`（T2）
+  - 提供：`ChatTrust(dir string) chat.TrustState`，5 步规则照 design 7.3；`dir` 是规范路径
+  - worktree 模式新建对话会话时查的仍是所选的源目录（现有行为不变）
+- 场景：R4.3、R4.4、R4.6
+- 测试：
+  - `TestChatTrust`（子测试，`CLAUDE_CONFIG_DIR` 指向临时目录里的 `.claude.json`）：
+    - `self_trusted`：目录自己有 `hasTrustDialogAccepted:true` → `trusted`
+    - `worktree_of_trusted_main`：只有主目录被信任 → 它的 worktree 根（含隐藏目录下的 `.devflow-tmp/worktrees/general-skills`）→ `trusted`
+    - `worktree_itself_trusted`：主目录没有记录、worktree 路径自己有 → `trusted`
+    - `neither_trusted` → `untrusted`
+    - `main_false`：主目录的记录是 `hasTrustDialogAccepted:false` → worktree 是 `untrusted`
+    - `subdir_of_worktree`：主目录被信任，查 `<worktree>/src` → `untrusted`
+    - `subdir_of_main`：主目录被信任，查 `<主目录>/src` → `untrusted`
+    - `main_not_via_worktree`：只有某个链接 worktree 被信任，查主目录 → `untrusted`
+    - `sibling_worktree_trusted`：只有另一个 worktree 被信任 → `untrusted`
+    - `parent_of_main_trusted`：只有主目录的父目录被信任 → `untrusted`
+    - `forged_gitfile`：一个目录里放 `.git` 文件，内容指向受信任仓库的 `.git/worktrees/x` → `untrusted`
+    - `bare_repo`：裸仓库的 worktree，裸仓库目录被信任 → `untrusted`
+    - `prunable`：列表里标了 `prunable` 的路径 → `untrusted`
+    - `config_missing`：没有 `.claude.json` → `unknown`，而且没有调用 git（`PATH` 里的记数包装脚本记录为 0）
+    - `non_git_untrusted`：不在 git 仓库里、没有记录 → `untrusted`
+  - `TestFSChatTrustWorktree`（server）：`GET /api/v1/fs?path=<worktree>` 的 `chatTrust` 是 `trusted`；`path=<worktree>/src` 是 `untrusted`
+  - `TestWSCreateChatInWorktreeOfTrustedMain`（server，假 claude）：在该 worktree 新建对话会话 → 收到 `ui:"chat"` 的 `ready`
+  - `TestWSCreateChatWorktreeUntrusted`（server）：主目录和 worktree 都没有记录 → error 帧 `code:"chat_unsupported"`、`fatal:true`、`message` 含 `workdir_untrusted`；现有的 `TestCreateChatUntrustedWorkdir` 不改、照常通过
+- 完成定义：
+  - `cd vibe-remoted && go test -race -count=1 ./internal/session ./internal/server ./internal/chat -run 'TestChatTrust|TestFSChatTrust|TestWSCreateChatInWorktree|TestWSCreateChatWorktreeUntrusted|TestCreateChatUntrustedWorkdir|TestWorkdirTrusted|TestNoCredentialAccess'` 输出三行 `ok`
+  - `grep -rn "chat.WorkdirTrusted" vibe-remoted/internal/server` 没有输出（两处使用点都换成了 `session.ChatTrust`）
+- 依赖：T2
+
+### T11 桌面端：在已有 worktree 里新建会话
+- 状态：待办
+- 文件：修改 `desktop/src/renderer/worktree-dialogs.ts`（加 `openWorktreeSessionDialog`）、`desktop/src/renderer/chat/availability.ts`（`chatAvailability` 加第 4 个可缺省参数 `opts?: { mainPath?: string }`）、`desktop/src/renderer/index.ts`（给 `SidebarActions` 传 `newSession`：打开对话框，确认后走现有的新建会话流程）、`desktop/src/renderer/styles.css`（追加对话框副标题里路径一行的规则）、`desktop/src/renderer/i18n.ts`（`wt.session.title` / `subtitle` / `confirm`、`picker.ui.chat.reason.worktree_untrusted`、`label.dir`、`label.branch`）；测试 `desktop/scripts/test-worktree-dialogs.mjs`、`test-chat-availability.mjs`
+- 接口：
+  - 使用：`createUiSection`、`createFlagsSection`（T9）；`rest.info()`、`rest.listDir(path)` 的 `chatTrust`（现有；规则由 T10 放宽）；`TreeProject`、`TreeWorktree`、`Capability`、`SidebarActions.newSession`（T5、T6）
+  - 提供：`openWorktreeSessionDialog(machine, project: TreeProject, worktree: TreeWorktree): Promise<PickedSession | null>`：标题 `wt.session.title`（带 worktree 的 `label`），副标题 `wt.session.subtitle`（项目名和完整路径）；只有界面段和启动选项段；确认后返回 `{ workdir: worktree.path, flags, mode: 'normal', ui }`
+  - 提供：`chatAvailability(info?, error?, trust?, opts?)`：`trust` 是 `untrusted` 且传了 `opts.mainPath` 时，原因用 `picker.ui.chat.reason.worktree_untrusted`（带主目录路径），其余情况与现在相同
+  - `opts.mainPath` 只在两个条件同时成立时传：这台机器的能力状态是 `v4`，且目标是某个 git 项目的非主目录 worktree；值是该项目主目录行的 `path`（design 7.3 末段）
+- 场景：R4.1、R4.2、R4.4（界面一侧）、R4.5
+- data-testid：`session-dialog-path`、`dialog-confirm`、`dialog-cancel`（界面段沿用 `picker-ui-terminal`、`picker-ui-chat`、`picker-ui-chat-reason`）
+- 测试：
+  - `test-worktree-dialogs.mjs › worktree_session_dialog_shape`：断言见测试计划 R4.1；另外 `rest.listDir` 被调用一次，参数是 worktree 的路径
+  - `worktree_session_hidden_dir`：`path` 是 `/Users/mac/github/devflow/.devflow-tmp/worktrees/general-skills` → 确认后 `workdir` 原样是这个路径
+  - `worktree_session_chat_disabled_reason`：`chatTrust` 是 `untrusted`、能力状态 `v4`、非主目录 → `picker-ui-chat` 是 `disabled`，`picker-ui-chat-reason` 的文字含主目录路径 `/Users/mac/github/devflow`；`picker-ui-terminal` 可选
+  - `worktree_session_main_row_uses_existing_reason`：目标是主目录行，或能力状态是 `legacy` → 原因是现有的 `workdir_untrusted` 文案
+  - `flat_project_new_session`：非 git 项目传入由项目拼成的节点 → 确认后 `workdir` 是项目 id
+  - `test-chat-availability.mjs › worktree_untrusted_reason`：断言见测试计划 R4.4；现有用例不改、照常通过
+- 完成定义：
+  - `cd desktop && npm run typecheck && npm run test:worktree-dialogs && npm run test:chat-availability && npm run test:dialog-layout && npm run test:i18n-parity` 退出码 0
+  - `cd desktop && npm run build` 之后 `node .claude/skills/verify/scripts/gui-smoke.mjs` 全部 PASS
+- 依赖：T6、T9、T10
+
+### T12 删除会话不再动 worktree 和分支；删除确认换成应用内对话框
+- 状态：待办
+- 文件：
+  - 修改 `vibe-remoted/internal/session/manager.go`（`Delete` 去掉对 `CleanupWorktree` 的调用）、`vibe-remoted/internal/session/chat_manager.go`（`deleteChat` 同样）、`vibe-remoted/internal/server/server.go`（`handleDeleteSession` 删掉 409 `worktree_preserved` 的分支）、`docs/protocol.md`（`DELETE /api/v1/sessions/{id}`：协议 4 起一律 204、不清理 worktree；版本表第 4 行补这一条）。`protocol.go`、`protocol.ts` 没有类型变化；`rest.ts` 的 `DeleteSessionError` 保留（还可能连着旧 daemon）
+  - 按 spec 改写断言的现有测试（decisions #11，新旧断言见 design 7.1 的表）：`chat_manager_test.go` 的 `TestChatWorktreeAndFlags` 末段；`manager_test.go` 的 `TestManagerDeleteRecoveredCleanWorktreeRemovesGitResources`（改名 `…KeepsGitResources`）和 `TestManagerDeleteDirtyWorktreeStopsSessionAndPreservesGitResources`；`server/worktree_test.go` 的 `TestDeleteDirtyWorktreeReturnsStructuredConflict`（改名 `TestDeleteSessionNeverReturnsPreserved`）。T1 的过渡测试 `TestDeleteCleanWorktreeWithUnmergedCommitsReturns409` 删除，它的断言（目录、分支、2 个提交都在）并入 `TestDeleteSessionNeverReturnsPreserved`
+  - 修改 `desktop/src/renderer/worktree-dialogs.ts`（加 `confirmDeleteSession`）、`desktop/src/renderer/index.ts`（删除会话的回调把 `window.confirm(t('session.deleteConfirm'))` 换成 `confirmDeleteSession`；`closeSession` 原样保留，包括 409 `worktree_preserved` 的处理）、`desktop/src/renderer/styles.css`（追加确认框说明段的规则）、`desktop/src/renderer/i18n.ts`（加 `session.delete.title` / `body` / `confirm` / `keepsWorktree` / `legacyWorktree`，删 `session.deleteConfirm`；`session.worktreePreserved` 保留）、`.claude/skills/verify/scripts/gui-smoke.mjs` 和 `gui-chat-smoke.mjs`（删除会话的步骤从接受系统对话框改为点 `dialog-confirm`，用例数和断言不动）；测试 `desktop/scripts/test-worktree-dialogs.mjs`
+- 接口：
+  - 使用：`Manager.Projects`（T4，测试里核对行还在）；`sessionContext`、`Capability`、`TreeWorktree`（T5）；`activateModal`（现有）
+  - 提供：`confirmDeleteSession(opts: { name: string; worktreeLabel?: string; legacyWorktree: boolean }): Promise<boolean>`：初始焦点在 `dialog-cancel`（d18）；`worktreeLabel` 只在会话挂在非主目录的 worktree 行下时传；`legacyWorktree` = 这台机器的能力状态不是 `v4` 且会话的 `mode` 是 `worktree`；两句说明不同时出现，`legacyWorktree` 优先
+  - 重载、交接、删除机器的 `window.confirm` 不动（d15）
+- 场景：R5.1、R5.10、R9.1（旧版 daemon 的删除文案）、R9.2（旧桌面端的删除照常工作）
+- data-testid：`delete-session-dialog`、`delete-session-note`、`dialog-confirm`、`dialog-cancel`
+- 测试：
+  - `TestDeleteSessionKeepsWorktreeAndBranch`（session）：终端会话、对话会话各一例，worktree 干净且分支有 2 个未合并提交 → `Delete` 返回 nil；目录在，分支在，提交数是 2；`Projects()` 里该 worktree 行还在、`sessions` 为 `[]`、`managed:true`
+  - `TestDeleteSessionNeverReturnsPreserved`（server）：干净加 2 个未合并提交、有 1 个未提交文件、只有被忽略的文件 3 种 → 都是 204，响应体为空，目录和分支都在
+  - `TestDeleteOneOfTwoSessionsKeepsWorktree`（session）：同一 worktree 下 2 个会话，删掉一个 → 另一个仍在会话表里，它的 `workdir` 目录存在
+  - `TestDeleteSessionWhenWorktreeDirGone`（session）：worktree 目录已被外部删除 → `Delete` 返回 nil，分支还在（不再走回滚）
+  - 改写的 3 个 session 测试：断言按 design 7.1 的表
+  - `test-worktree-dialogs.mjs`：`delete_session_keeps_worktree_note`、`delete_session_legacy_note`：断言见测试计划 R5.1、R9.1；`delete_session_plain`：两个参数都不传说明 → 没有 `delete-session-note`，正文是 `session.delete.body`；`delete_session_enter_cancels`：对话框打开后直接按回车 → 返回 false
+  - `test:preserved-notice`（`desktop/package.json` 里现有的检查）不改、照常通过
+- 完成定义：
+  - `cd vibe-remoted && TMUX_TMPDIR=$(mktemp -d) go test -race -count=1 ./internal/session ./internal/server -run 'TestDeleteSession|TestDeleteOneOfTwo|TestManagerDelete|TestChatWorktreeAndFlags|TestTerminalFramesUnchangedV3'` 输出两行 `ok`
+  - `grep -rn "worktree_preserved" vibe-remoted/internal --include='*.go'` 没有输出；`grep -rn "CleanupWorktree(" vibe-remoted/internal/session/manager.go vibe-remoted/internal/session/chat_manager.go` 没有输出
+  - `cd desktop && npm run typecheck && npm run test:worktree-dialogs && npm run test:preserved-notice && npm run test:i18n-parity && npm run test:dialog-layout` 退出码 0
+  - `cd desktop && npm run build` 之后 `node .claude/skills/verify/scripts/gui-smoke.mjs` 和 `gui-chat-smoke.mjs` 全部 PASS，`grep -c "^test(" .claude/skills/verify/scripts/gui-chat-smoke.mjs` 仍是 26
+- 依赖：T1、T4、T6、T11
