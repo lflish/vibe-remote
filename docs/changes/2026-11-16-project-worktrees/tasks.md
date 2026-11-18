@@ -21,7 +21,7 @@
 
 ## 测试计划
 
-层级：「Go 单元」是包内直接调用函数；「Go 集成」是经 `httptest` 或真实 WebSocket 走 `internal/server`；「desktop 单元」是 `desktop/scripts/test-*.mjs`；「浏览器」是用 CDP 驱动构建产物；「协议冒烟」是不经界面、直接对临时 daemon 发 REST 和 WebSocket 帧。
+层级：「Go 单元」是包内直接调用函数；「Go 集成」是经 `httptest` 或真实 WebSocket 走 `internal/server`；「desktop 单元」是 `desktop/scripts/test-*.mjs`；「浏览器」是用 CDP 驱动构建产物；「协议冒烟」是不经界面、直接对临时 daemon 发 REST 和 WebSocket 帧。「浏览器」和「协议冒烟」两层（多数由 dev-test 写）同样只用临时实例：随机端口的临时 daemon、临时 `state_dir` 和 userData、`--use-mock-keychain`、独立的 `TMUX_TMPDIR`，git 仓库建在临时目录里；不连 127.0.0.1:8765 的真实 daemon。
 
 示例值照 spec：机器 `this-mac`，项目 `devflow`（主目录在 `main`），外部 worktree `.devflow-tmp/worktrees/general-skills`（分支 `change/general-skills`）。
 
@@ -842,7 +842,7 @@ spec「推迟到以后」的条目：
 - daemon 在 `git worktree add` 成功之后、会话登记之前崩溃：重放会得到 `worktree_branch_exists`，那个 worktree 以「没有会话」的行留在侧边栏（design 6.1 的已知窄窗口）。以后可以在启动时对账，或让重放认领自己刚建的 worktree。
 - 等 c4（用户决定，不阻塞任何任务）：删除「干净」的 worktree 时，被 git 忽略的文件（`.env`、本地配置）会一并删除，而 R5.4 的确认框说的是「工作区是干净的」。建议在确认框里加一句不拦截的说明「另有 N 个被 git 忽略的文件会一并删除」，判定仍按「干净」，`GET /api/v1/worktrees/status` 多返回这个数量。用户同意后是一个小任务：改 R5.4 的文案（spec）、status 加一个字段（三处协议）、确认框加一行和一个用例。决定之前按原 spec 做：不加说明，status 不返回该数量。
 - 有初始化过的子模块的 worktree 不能从界面删除（d26），只能在终端里 `git worktree remove --force`。以后可以把子模块里未推送的提交数也查出来放进确认框，再放开。
-- 子模块和 `--separate-git-dir` 的仓库里不能新建命名 worktree（decisions #19）。以后可以把这类仓库的 worktree 建到工作目录旁边。
+- 子模块和 `--separate-git-dir` 的仓库里不能新建命名 worktree（decisions #19）；它们已有的链接 worktree 在侧边栏里各自显示成一个单独的项目，也不能从界面删除。以后可以认出这类仓库真正的工作目录，把它们的 worktree 归到同一个项目下。
 - 被锁定的 worktree、有子模块的 worktree 现在要点了删除才知道删不了；可以让 status 带上这两个标志，在确认框打开时就说明。
 - 会话行显示「最近活动的相对时间」（效果页 M1 上有，d10 去掉了）：需要协议给会话加最近活动时间，终端会话目前没有来源。
 - 折叠的项目行把三种状态都上卷、取最紧急的一种（d11 只上卷「等你处理」）。
