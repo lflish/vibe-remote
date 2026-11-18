@@ -1,6 +1,6 @@
 # 任务：按项目和 worktree 组织会话，并更换视觉风格
 
-依据：spec.md、design.md　共 20 个任务　更新：2026-11-18
+依据：spec.md、design.md　共 21 个任务（T1–T20，其中 T6 拆成 T6a 和 T6b）　更新：2026-11-18（按工程评审修订，decisions #16–#27、d22–d27、c4）
 
 ## 约定
 
@@ -10,11 +10,13 @@
 - 改协议的任务（T4、T7、T8、T10、T12、T13）在同一个任务里把三处一起改完：`vibe-remoted/internal/protocol/protocol.go`、`desktop/src/shared/protocol.ts` 与 `desktop/src/renderer/rest.ts`、`docs/protocol.md`。这些任务的完成定义都包含「按 `/protocol-sync` 现有的第 1–3 步（逐帧、逐端点列表比对 JSON 名、可缺省性、路由）核对，三处无差异」；v4 专用的核对项到 T20 才写进那个 skill，不影响这里的核对。
 - 新增的界面文案，中英文键在用到它的任务里一起加进 `desktop/src/renderer/i18n.ts`，键名和中文原文照 design 7.4「文案」表；`cd desktop && npm run test:i18n-parity` 必须通过。
 - 新增的 desktop 测试脚本放 `desktop/scripts/`，写法同现有脚本（`chat-test-util.mjs` 的 `load()` 用 esbuild 打包后导入；需要 DOM 的用 jsdom），并在 `desktop/package.json` 里加 `test:<名字>` 且接进 `test` 这一串，所以 `make check` 会跑到。下文写成 `test-tree.mjs › 用例名`。
-- Go 测试里的 git 仓库一律建在 `t.TempDir()` 里。涉及 tmux 的 Go 测试，命令前带独立的 `TMUX_TMPDIR=$(mktemp -d)`，不和本机正在用的 vibe-remote 会话共用 socket。完整检查因此写成 `TMUX_TMPDIR=$(mktemp -d) make check`。
+- Go 测试里的 git 仓库一律建在 `t.TempDir()` 里。所有跑 Go 测试的命令前都带独立的 `TMUX_TMPDIR=$(mktemp -d)`（不管这一组测试用不用 tmux），不和本机正在用的 vibe-remote 会话共用 socket。完整检查因此写成 `TMUX_TMPDIR=$(mktemp -d) make check`。
+- **只用临时实例**（decisions #18）。任何任务、任何完成定义里启动的 daemon、Electron、tmux 都必须是临时的：随机端口、临时配置和 `state_dir`、临时 userData、`--use-mock-keychain`、独立的 `TMUX_TMPDIR`、独立的 `CLAUDE_CONFIG_DIR`。不连接本机正在运行的 daemon（127.0.0.1:8765），不碰默认 socket 上的 `tmux -L vibe-remote`，不用固定的调试端口（如 9222），不直接启动构建产物去读真实的 userData、machines.json 和钥匙串。需要一个开着的应用时，用 `gui-smoke.mjs --keep` 留下的实例。
+- daemon 里交给 git 的分支只写成完整引用名 `refs/heads/<名字>`，不调用 `git branch`，不用 `worktree add -b`；git 调用都经 `gitAt` / `gitAtTimeout`（固定 `LC_ALL=C`），不靠匹配 git 的报错文字做判断（design 4.9、7、7.1 第 7 条新规则）。
 - 每个任务的完成定义除了自己列的命令，都还包含：`TMUX_TMPDIR=$(mktemp -d) make check` 退出码为 0。
 - 新写的 CSS 只用 `var(--…)`，不写颜色字面量（T18 会断言 `:root` 之外没有颜色字面量）；T18 之前的任务只追加新规则，不改现有规则的颜色和形态。
-- 改了侧边栏或对话框结构的任务（T6、T9、T12、T19）负责同步调整 `.claude/skills/verify/scripts/gui-smoke.mjs`、`gui-chat-smoke.mjs` 里的选择器，用例数和断言不动（decisions #12）。
-- 完成定义里的 `gui-smoke.mjs`、`gui-chat-smoke.mjs` 都在仓库根执行；脚本自己会 `vite build`，并使用临时 daemon、临时 userData 和独立的 tmux server，不碰本机正在运行的 daemon 和 machines.json。基线：`gui-chat-smoke.mjs` 有 26 个 `test(` 用例，`gui-smoke.mjs` 有 14 处 `check(`；两个数只能增不能减。
+- 改了侧边栏或对话框结构的任务（T6b、T9、T12、T19）负责同步调整 `.claude/skills/verify/scripts/gui-smoke.mjs`、`gui-chat-smoke.mjs` 里的选择器，用例数和断言不动（decisions #12）。
+- 完成定义里的 `gui-smoke.mjs`、`gui-chat-smoke.mjs` 都在仓库根执行，命令前都带 `TMUX_TMPDIR=$(mktemp -d /tmp/vr-XXXXXX)`。脚本自己会 `vite build`，并使用临时 daemon（20000–29999 的随机端口，配置和 `state_dir` 在临时目录）、临时 userData、`--use-mock-keychain` 和 30000–39999 的随机调试端口，不碰本机正在运行的 daemon 和 machines.json。必须带 `TMUX_TMPDIR` 的原因：`gui-smoke.mjs` 的终端 daemon 直接继承环境，脚本只给对话 daemon 设了独立的 tmux 目录（design V16），不带的话它会和本机真实 daemon 共用 `tmux -L vibe-remote`。基线：`gui-chat-smoke.mjs` 有 26 个 `test(` 用例，`gui-smoke.mjs` 有 14 处 `check(`；两个数只能增不能减。
 - 浏览器层的测试统一由 dev-test 写，实现任务负责加任务里列出的 `data-testid`。
 
 ## 测试计划
@@ -26,45 +28,46 @@
 | 场景 | 层级 | 测试名 | 要点 | 谁写 |
 |------|------|--------|------|------|
 | R1.1 | Go 集成 | `TestProjectsTree` | 主目录 1 个对话会话、`fix-login` 1 个终端会话 → `projects[0].worktrees` 两项，`branch` 为 `main`、`fix-login`，各自的 `sessions` 含对应会话 id | T4 |
-| R1.1 | desktop 单元 | `test-tree.mjs › two_worktrees_each_with_session`、`test-sidebar.mjs › renders_three_levels` | 树里 1 个项目 2 个 worktree 节点；DOM 里 2 个 `worktree-row`，两个 `session-row` 各在自己的 `.worktree-group` 里，带 `data-ui` 和 `data-dot` | T5、T6 |
+| R1.1 | desktop 单元 | `test-tree.mjs › two_worktrees_each_with_session`、`test-sidebar.mjs › renders_three_levels` | 树里 1 个项目 2 个 worktree 节点；DOM 里 2 个 `worktree-row`，两个 `session-row` 各在自己的 `.worktree-group` 里，带 `data-ui` 和 `data-dot` | T5、T6b |
 | R1.1 | 浏览器 | R1.1 一个项目两个 worktree 都有会话 | `this-mac` 下有 `devflow`，其下两行显示 `main` 和 `fix-login`，会话行有界面类型图标和状态点 | dev-test |
-| R1.2 | desktop 单元 | `test-tree.mjs › single_worktree_is_flat`、`test-sidebar.mjs › flat_project_has_no_worktree_row` | `new-api` 只有主目录、2 个会话 → `flat` 为真、`branchLabel` 是当前分支；DOM 里没有 `worktree-row`，`project-branch` 的文字是分支名 | T5、T6 |
+| R1.2 | desktop 单元 | `test-tree.mjs › single_worktree_is_flat`、`test-sidebar.mjs › flat_project_has_no_worktree_row` | `new-api` 只有主目录、2 个会话 → `flat` 为真、`branchLabel` 是当前分支；DOM 里没有 `worktree-row`，`project-branch` 的文字是分支名 | T5、T6b |
 | R1.2 | 浏览器 | R1.2 项目只有一个 worktree | 2 个会话直接列在 `new-api` 下，项目行显示分支名 | dev-test |
 | R1.3 | Go 单元 | `TestResolveHomeNonGit` | 非 git 目录 `notes` → `Home{Project: 目录, Path: 目录, Git: false}` | T2 |
 | R1.3 | Go 集成 | `TestProjectsNonGitProject` | `git:false`，`worktrees` 为 `[]`，会话在项目级 `sessions` 里，没有 `error` | T4 |
-| R1.3 | desktop 单元 | `test-tree.mjs › non_git_project`、`test-sidebar.mjs › non_git_has_no_worktree_entries` | `flat` 为真、没有 `branchLabel`；DOM 里没有 `project-branch`、`project-new-worktree`、`project-menu` | T5、T6 |
+| R1.3 | desktop 单元 | `test-tree.mjs › non_git_project`、`test-sidebar.mjs › non_git_has_no_worktree_entries` | `flat` 为真、没有 `branchLabel`；DOM 里没有 `project-branch`、`project-new-worktree`、`project-menu` | T5、T6b |
 | R1.3 | 浏览器 | R1.3 不在 git 仓库里的目录 | 会话在名为 `notes` 的项目下，没有 worktree 层和分支名 | dev-test |
 | R1.4 | desktop 单元 | `test-tree.mjs › duplicate_names_get_numbers` | 同一 worktree 下 3 个 `title` 都是 `devflow` 的会话，按创建顺序得到 `devflow`、`devflow 2`、`devflow 3`；改过名的不加序号 | T5 |
 | R1.4 | 浏览器 | R1.4 同一 worktree 下多个未改名的会话 | `main` 下先后开 3 个会话，3 行显示名互不相同 | dev-test |
 | R1.5 | Go 集成 | `TestProjectsOrderStable` | 3 个项目共 8 个会话，连续请求 40 次，响应体逐字节相同；项目按小写名称、主目录在前其余按分支名、会话按 `created` 再按 id | T4 |
+| R1.5 | Go 集成 | `TestCreatedSurvivesRestartTmux`、`TestProjectsOrderSurvivesRestart` | 同一 worktree 下先后建 2 个终端会话，用新的 `Manager` 找回（相当于 daemon 重启）→ 两个会话的 `created` 与重启前相同（来自 tmux 选项 `@vibe_remote_created`），`/api/v1/projects` 里的先后不变（d23） | T2、T4 |
 | R1.5 | desktop 单元 | `test-tree.mjs › keeps_daemon_order`、`legacy_order_sorted` | 新 daemon：不重排；旧 daemon：在桌面端按同样规则排，打乱输入 40 次结果相同 | T5 |
 | R1.5 | 浏览器 | R1.5 顺序稳定 | 等 40 次轮询刷新，每次读侧边栏各行的顺序，全部相同 | dev-test |
-| R1.6 | desktop 单元 | `test-tree.mjs › rollup_waiting_only`、`test-sidebar.mjs › collapsed_project_shows_waiting_dot` | 任一会话的点是 `waiting` → `projectRollup` 返回 `waiting`，只有 `idle` 或 `output` → `none`；折叠时项目行有 `project-dot`，展开后项目行没有、会话行 `data-dot="waiting"` | T5、T6 |
+| R1.6 | desktop 单元 | `test-tree.mjs › rollup_waiting_only`、`test-sidebar.mjs › collapsed_project_shows_waiting_dot` | 任一会话的点是 `waiting` → `projectRollup` 返回 `waiting`，只有 `idle` 或 `output` → `none`；折叠时项目行有 `project-dot`，展开后项目行没有、会话行 `data-dot="waiting"` | T5、T6b |
 | R1.6 | 浏览器 | R1.6 折叠的项目里有会话在等用户 | 折叠 `devflow`，对话会话出现待答的权限请求 → 项目行有「等你处理」的点；展开后会话行有同样的点 | dev-test |
-| R1.7 | desktop 单元 | `test-tree.mjs › session_context_and_notification_title`、`test-sidebar.mjs › toolbar_title_parts` | 通知标题 `this-mac · devflow / fix-login · 登录修复`，非 git 时 `this-mac · notes · <会话名>`；标题栏 `title-project`=`devflow`、`title-branch`=`fix-login`、`title-session`=`登录修复`，不含机器名 | T5、T6 |
+| R1.7 | desktop 单元 | `test-tree.mjs › session_context_and_notification_title`、`test-sidebar.mjs › toolbar_title_parts` | 通知标题 `this-mac · devflow / fix-login · 登录修复`，非 git 时 `this-mac · notes · <会话名>`；标题栏 `title-project`=`devflow`、`title-branch`=`fix-login`、`title-session`=`登录修复`，不含机器名 | T5、T6b |
 | R1.7 | 浏览器 | R1.7 标题和通知带上项目与分支 | 顶部标题和后台会话触发的通知标题都含 `devflow`、`fix-login`、`登录修复` | dev-test |
 | R1.8 | Go 单元 | `TestListWorktrees` | detached 的一项 `Detached` 为真、`Branch` 为空、`Head` 是 40 位哈希 | T2 |
 | R1.8 | desktop 单元 | `test-tree.mjs › detached_label_is_short_hash` | `label` 是 7 位 `head`，不是空串 | T5 |
 | R1.8 | 浏览器 | R1.8 worktree 当前不在任何分支上 | 该行显示提交的短哈希 | dev-test |
 | R2.1 | Go 集成 | `TestProjectsListsSessionlessAndExternal` | 用 `git worktree add` 直接建的 `change/general-skills`（没有会话）在列表里，`sessions` 为 `[]`，没有 `managed` 和 `main` | T4 |
-| R2.1 | desktop 单元 | `test-sidebar.mjs › empty_worktree_row` | 该行下有 `worktree-empty`（文字「没有会话」）和 `worktree-tag-external`；传了回调时有 `worktree-new-session` 按钮 | T6 |
+| R2.1 | desktop 单元 | `test-sidebar.mjs › empty_worktree_row` | 该行下有 `worktree-empty`（文字「没有会话」）和 `worktree-tag-external`；传了回调时有 `worktree-new-session` 按钮 | T6b |
 | R2.1 | 浏览器 | R2.1 别的工具建的、没有会话的 worktree | `devflow` 下有一行 `change/general-skills`，标明没有会话，有「新建会话」入口 | dev-test |
 | R2.2 | Go 单元 | `TestProjectStoreRoundTrip` | `AddProject` 后重新 `OpenProjectStore`，`Projects()` 仍含该 id | T3 |
 | R2.2 | Go 集成 | `TestProjectsSurviveSessionDeletionAndRestart` | 删掉 `devflow` 的全部会话，再用同一个 `state_dir` 新建 `Manager` → `/api/v1/projects` 仍返回 `devflow` 和它的 2 个 worktree | T4 |
 | R2.2 | 浏览器 | R2.2 项目的会话全部删除后 | 重启桌面端、重启 daemon 各一次，`devflow` 和 2 个 worktree 仍在侧边栏 | dev-test |
 | R2.3 | Go 集成 | `TestRemoveProjectKeepsDisk`、`TestProjectReappearsAfterNewSession` | `POST /api/v1/projects/remove` → 204，列表里没有它；仓库目录、worktree 目录、分支都在；之后在仓库子目录新建会话，项目重新出现 | T4 |
-| R2.3 | desktop 单元 | `test-sidebar.mjs › project_menu_remove` | 点 `project-menu` → `project-remove` → 调用 `removeProject` 回调一次，参数是项目 id | T6 |
+| R2.3 | desktop 单元 | `test-sidebar.mjs › project_menu_remove` | 点 `project-menu` → `project-remove` → 调用 `removeProject` 回调一次，参数是项目 id | T6b |
 | R2.3 | 浏览器 | R2.3 从侧边栏移除项目 | 移除后该项目不显示，磁盘不变；再在该仓库新建会话后重新出现 | dev-test |
 | R2.4 | Go 集成 | `TestRemoveProjectWithSessions409`、`TestRemoveProjectNotFound` | 还有会话 → 409 `project_has_sessions`，清单不变；不在清单里 → 404 `project_not_found` | T4 |
-| R2.4 | desktop 单元 | `test-sidebar.mjs › project_remove_disabled_with_sessions` | `project-remove` 是 `disabled`，旁边的说明是 `sidebar.project.removeBlocked` 的文字 | T6 |
+| R2.4 | desktop 单元 | `test-sidebar.mjs › project_remove_disabled_with_sessions` | `project-remove` 是 `disabled`，旁边的说明是 `sidebar.project.removeBlocked` 的文字 | T6b |
 | R2.4 | 浏览器 | R2.4 项目下有会话时不能移除 | 菜单项不可用，写明要先结束会话 | dev-test |
 | R2.5 | Go 集成 | `TestProjectsPrunedWorktreeSessionsMoveUp` | 会话还在时在测试里执行 `git worktree remove --force` → 该 worktree 不在 `worktrees` 里，会话 id 出现在项目级 `sessions` | T4 |
-| R2.5 | desktop 单元 | `test-tree.mjs › gone_sessions`、`test-sidebar.mjs › gone_session_meta` | git 项目、没有 `error`、会话在项目级列表里 → `gone` 为真；会话行第二行是 `session-gone`（「目录已不存在」） | T5、T6 |
+| R2.5 | desktop 单元 | `test-tree.mjs › gone_sessions`、`test-sidebar.mjs › gone_session_meta` | git 项目、没有 `error`、会话在项目级列表里 → `gone` 为真；会话行第二行是 `session-gone`（「目录已不存在」） | T5、T6b |
 | R2.5 | 浏览器 | R2.5 worktree 在别处被删掉 | 终端里执行 `git worktree remove` 后下一次刷新该行消失，原来的会话显示在项目下并标明目录已不存在 | dev-test |
-| R2.6 | Go 集成 | `TestProjectsHidesWorktreesOutsideAllowedRoots` | `allow` 只放行仓库目录时，仓库外的 worktree 不在响应里 | T4 |
+| R2.6 | Go 集成 | `TestProjectsHidesWorktreesOutsideAllowedRoots`、`TestProjectsAllowedRootIsSymlink` | 经 `httptest` 用真实的 `config.Config`（`allow` 是 `cfg.ResolveAllowedWorkdir`）：`allowed_roots` 只含仓库目录时，仓库外的 worktree 不在响应里；`allowed_roots` 写的是一个指向仓库父目录的符号链接（相当于把根配成 `/tmp`，git 列出的是 `/private/tmp/…`）时，主目录和 worktree 全部照常列出 | T4 |
 | R2.6 | 浏览器 | R2.6 worktree 不在允许的目录范围内 | daemon 的 `allowed_roots` 只含仓库本身，仓库外的 worktree 不出现在侧边栏 | dev-test |
 | R2.7 | Go 集成 | `TestProjectsRepoMissing`、`TestProjectsGitFailed` | 清单里的仓库目录被删 → `error:"repo_missing"`；目录在但 git 失败或超时（`gitTimeout` 调成 50 ms，`PATH` 里放一个睡 1 秒的假 git）→ `error:"git_failed"`、`errorMessage` 非空；两种情况 `worktrees` 为 `[]`、会话全在项目级 `sessions` | T4 |
-| R2.7 | desktop 单元 | `test-tree.mjs › project_error`、`test-sidebar.mjs › project_error_row_sessions_usable` | `project-error` 显示「读取失败：<原因>」或「仓库目录不存在」；该项目的 `session-row` 仍在，点它调用 `open` 回调 | T5、T6 |
+| R2.7 | desktop 单元 | `test-tree.mjs › project_error`、`test-sidebar.mjs › project_error_row_sessions_usable` | `project-error` 显示「读取失败：<原因>」或「仓库目录不存在」；该项目的 `session-row` 仍在，点它调用 `open` 回调 | T5、T6b |
 | R2.7 | 浏览器 | R2.7 读不到 worktree 列表 | 删掉仓库目录后项目行显示读取失败和原因，已有会话照常能打开 | dev-test |
 | R3.1 | Go 单元 | `TestCreateNamedWorktree` | `Name:"fix-login"`、发起处在 `main` → 分支 `fix-login` 指向 `main` 当前提交，目录是 `<仓库父目录>/devflow-worktrees/fix-login`，返回的 `Home.Project` 是主目录 | T7 |
 | R3.1 | Go 集成 | `TestWSAttachWorktreeName` | attach 带 `mode:"worktree"`、`worktreeName:"fix-login"`、`ui:"chat"` → `ready.branch` 是 `fix-login`；`/api/v1/projects` 里出现该行，`managed:true`，`sessions` 含新会话 | T7 |
@@ -73,10 +76,10 @@
 | R3.2 | Go 单元 | `TestWorktreeDirName`、`TestCreateNamedWorktree/slash` | `change/foo` → 分支 `change/foo`，目录名 `change-foo` | T7 |
 | R3.2 | desktop 单元 | `test-worktree-name.mjs › dir_name` | `worktreeDirName("change/foo")` 是 `change-foo` | T9 |
 | R3.2 | 浏览器 | R3.2 名字里有斜杠 | 侧边栏显示 `change/foo`，目录名是 `change-foo` | dev-test |
-| R3.3 | Go 单元 | `TestValidateWorktreeName`、`TestWorktreeNameNeverReachesShell` | 读共用向量 `testdata/worktree-names.json`：空、`a b`、`a..b`、`-x`、`a~b` 都返回 `ErrInvalidWorktreeName`，`-x` 在任何 git 调用之前被拒；`$(touch${IFS}PWNED)` 这类名字不会生成文件 `PWNED` | T7 |
+| R3.3 | Go 单元 | `TestValidateWorktreeName`、`TestValidateWorktreeNameRejectsExpansion`、`TestWorktreeNameNeverReachesShell` | 读共用向量 `testdata/worktree-names.json`：空、`a b`、`a..b`、`-x`、`a~b`、`@{-1}`、`@{-2}`、`a@{b`、`HEAD` 都返回 `ErrInvalidWorktreeName`，`-x` 和含 `@{` 的在任何 git 调用之前被拒；仓库有「上一个检出的分支」时 `@{-1}` 仍被拒，那个分支原样还在；`$(touch${IFS}PWNED)` 这类名字不会生成文件 `PWNED` | T7 |
 | R3.3 | Go 集成 | `TestPlanWorktree/invalid_name` | `name` 为空或不合法 → `ok:false`、`error:"invalid_worktree_name"`，仓库里没有新分支和目录 | T8 |
-| R3.3 | desktop 单元 | `test-worktree-name.mjs › shared_vectors`、`test-session-form.mjs › invalid_name_disables_confirm` | 同一份向量在桌面端得到 `empty` / `whitespace` / `dotdot` / `leading_dash`；`wt-name-error` 显示对应文案，`dialog-confirm` 是 `disabled` | T9 |
-| R3.3 | 浏览器 | R3.3 名字不合法 | 逐个输入空、含空格、含 `..`、以 `-` 开头、`a~b`，对话框内显示原因，确认按钮不可用，磁盘上没有新东西 | dev-test |
+| R3.3 | desktop 单元 | `test-worktree-name.mjs › shared_vectors`、`test-session-form.mjs › invalid_name_disables_confirm` | 同一份向量在桌面端得到 `empty` / `whitespace` / `dotdot` / `leading_dash`，`@{-1}`、`@{-2}`、`a@{b` 得到 `invalid`；`wt-name-error` 显示对应文案，`dialog-confirm` 是 `disabled` | T9 |
+| R3.3 | 浏览器 | R3.3 名字不合法 | 逐个输入空、含空格、含 `..`、以 `-` 开头、`a~b`、`@{-1}`，对话框内显示原因，确认按钮不可用，磁盘上没有新东西 | dev-test |
 | R3.4 | Go 单元 | `TestCreateNamedWorktreeBranchExists` | 仓库已有分支 `fix-login` → `ErrWorktreeBranchExists`，目标目录不存在，原分支指向不变 | T7 |
 | R3.4 | Go 集成 | `TestPlanWorktree/branch_exists` | `ok:false`、`error:"worktree_branch_exists"` | T8 |
 | R3.4 | desktop 单元 | `test-worktree-dialogs.mjs › plan_rejection_keeps_dialog_open` | 确认时 plan 返回 `worktree_branch_exists` → `wt-name-error` 显示「分支 fix-login 已存在」，对话框还在，Promise 未结束；改名后再点能成功 | T9 |
@@ -91,9 +94,9 @@
 | R3.7 | Go 集成 | `TestNamedWorktreeReplaySameID` | 同一个 `newSessionId` 加 `worktreeName:"fix-login"` 先后发 2 次、再并发发 2 次 → `git worktree list` 里只有一个 `fix-login`，`git branch --list fix-login` 一行，会话表里一个会话，两次 `ready.sessionId` 相同 | T7 |
 | R3.7 | desktop 单元 | `test-attach-replay.mjs › replay_carries_worktree_name` | `ready` 之前断线，自动重连和手动重试发出的 attach 都带同一个 `newSessionId` 和 `worktreeName` | T7 |
 | R3.7 | 浏览器 | R3.7 创建中途断线 | 确认后、就绪前切断连接，重连后只有一个 worktree、一个分支、一个会话 | dev-test |
-| R3.8 | Go 单元 | `TestCreateNamedWorktreeGitFailureLeavesNothing` | 容器目录 `devflow-worktrees` 预先建成只读（0555）让 `git worktree add` 失败 → 返回的错误含 git 的输出；分支 `fix-login` 不存在，目标目录不存在，`ProjectStore` 里没有记录 | T7 |
+| R3.8 | Go 单元 | `TestCreateNamedWorktreeGitFailureLeavesNothing` | 把仓库的 `.git/worktrees` 预先建成只读（0555），让 `git worktree add` 在目录和分支都占好之后失败（design V14）→ 返回的错误含 git 的输出；分支 `fix-login` 不存在，目标目录不存在，本次新建的容器目录不存在，`ProjectStore` 里没有记录。子测试 `container_readonly`：容器目录只读 → 占目录就失败，同样什么都不留 | T7 |
 | R3.8 | Go 集成 | `TestWSAttachWorktreeCreateFailed` | 同样的失败 → error 帧 `code:"create_failed"`、`fatal:true`、`message` 含 git 输出；`/api/v1/projects` 里没有新行 | T7 |
-| R3.8 | 浏览器 | R3.8 创建失败 | 容器目录只读时确认 → 显示 git 的错误信息，侧边栏不出现新行，磁盘上没有半截目录或分支 | dev-test |
+| R3.8 | 浏览器 | R3.8 创建失败 | 临时仓库的 `.git/worktrees` 只读时确认 → 显示 git 的错误信息，侧边栏不出现新行，磁盘上没有半截目录或分支 | dev-test |
 | R3.9 | desktop 单元 | `test-session-form.mjs › picker_worktree_mode_name_segment` | 目录选择器选「创建隔离 Worktree」且 `info.proto` 为 4 → 出现 `wt-name-input`，名字为空时 `dialog-confirm` 是 `disabled`，规则与 R3.2–R3.6 的用例共用同一个名字段 | T9 |
 | R3.9 | 浏览器 | R3.9 机器概览里的 Worktree 模式 | 出现名字输入框，空名字时确认按钮不可用，填合法名字后创建出同名分支 | dev-test |
 | R3.10 | Go 单元 | `TestResolveAllowedNewPath`、`TestCreateNamedWorktreePathNotAllowed` | `allowed_roots` 只含仓库 → `<仓库父目录>/devflow-worktrees/fix-login` 被拒，返回 `ErrWorktreePathNotAllowed`，错误信息含完整路径；没有新目录和分支；经符号链接祖先指到白名单外的路径同样被拒 | T7 |
@@ -126,7 +129,7 @@
 | R5.3 | 浏览器 | R5.3 有未提交或未跟踪的文件 | 确认框写明 3 个文件会被丢弃，回车 = 取消且什么都不变；点「仍然删除」后目录被删 | dev-test |
 | R5.4 | Go 单元 | `TestDirtyFiles/ignored_only`、`TestRemoveIgnoredOnlyIsClean` | 只有被忽略的 `node_modules/` → `dirtyFiles` 是 0；不带 `discardFiles` 就能删掉目录 | T13 |
 | R5.4 | 浏览器 | R5.4 只有被 git 忽略的文件 | 确认框是「干净」的那一种，没有丢弃文件的警告 | dev-test |
-| R5.5 | Go 单元 | `TestUnmergedCommits` | 分支上 2 个独有提交 → 2；被另一个本地分支包含后 → 0；被远程跟踪引用包含后 → 0 | T1 |
+| R5.5 | Go 单元 | `TestUnmergedCommits` | 分支上 2 个独有提交 → 2；被另一个本地分支包含后 → 0；被远程跟踪引用包含后 → 0；子测试 `tag_with_same_name`：另有一个同名 tag 指向 `main` 时仍是 2（按完整引用名数，design V10） | T1 |
 | R5.5 | Go 单元 | `TestRemoveUnmergedNeedsConsent` | `unmergedCommits` 是 2：不带 `deleteBranch` → 目录被删、分支和 2 个提交都在、`branchDeleted:false`；`deleteBranch:true` 而没有 `dropCommits` → `WorktreeChangedError`，什么都没动；两个都带 → 分支被删 | T13 |
 | R5.5 | desktop 单元 | `test-worktree-dialogs.mjs › delete_wt_commits` | `data-variant` 是 `commits`；`delete-wt-commits` 含「2」；`delete-wt-keep-branch` 预选，回车发出的请求没有 `deleteBranch`；改选 `delete-wt-delete-branch` 后请求是 `deleteBranch:true, dropCommits:true` | T14 |
 | R5.5 | 浏览器 | R5.5 有未合并的提交 | 确认框写明 2 个未合并提交，默认选「只删目录、保留分支」；确认后目录消失、分支仍在 | dev-test |
@@ -134,15 +137,15 @@
 | R5.6 | desktop 单元 | `test-worktree-dialogs.mjs › delete_wt_sessions_line`、`test-sidebar.mjs › remove_result_closes_views` | `delete-wt-sessions` 的文字是「会先结束这 2 个会话。」；请求的 `sessions` 与 status 的相同；删除成功后 `endedSessions` 里的会话视图被关闭 | T14 |
 | R5.6 | 浏览器 | R5.6 worktree 下还有会话 | 确认框写明会先结束这 2 个会话；确认后两个会话都结束，worktree 按 R5.2 处理 | dev-test |
 | R5.7 | Go 单元 | `TestRemoveMainRefused` | `path` 是主目录 → `ErrWorktreeIsMain`（HTTP 400 `worktree_is_main`），主目录原样 | T13 |
-| R5.7 | desktop 单元 | `test-sidebar.mjs › main_worktree_has_no_menu` | 带 `worktree-tag-main` 的那一行没有 `worktree-menu` 按钮 | T6 |
+| R5.7 | desktop 单元 | `test-sidebar.mjs › main_worktree_has_no_menu` | 带 `worktree-tag-main` 的那一行没有 `worktree-menu` 按钮 | T6b |
 | R5.7 | 浏览器 | R5.7 主目录不能删 | 主目录这一行的操作里没有「删除 worktree」 | dev-test |
-| R5.8 | Go 单元 | `TestManagedRequiresPathAndBranch`、`TestManagedLegacyVibeBranch` | 记录的路径相同但当前分支不同 → 不是 `managed`；`<仓库>-worktrees/<会话id>` 加分支 `vibe/<会话id>` → 是；`<仓库>-worktrees/foo` 加分支 `vibe/foo`（`foo` 不满足 `ValidSessionID`）→ 不是 | T3 |
+| R5.8 | Go 单元 | `TestManagedRequiresPathAndBranch`、`TestManagedLegacyVibeBranch` | 记录的路径相同但当前分支不同 → 不是 `managed`；`<仓库>-worktrees/1794824025040-12b763ac` 加分支 `vibe/1794824025040-12b763ac` → 是；`<仓库>-worktrees/foo` 加分支 `vibe/foo` → 不是（`foo` 满足 `ValidSessionID`，但不是 vibe-remote 生成过的会话 id 形态，d22） | T3 |
 | R5.8 | Go 单元 | `TestRemoveExternalNeverDeletesBranch` | 外部 worktree `change/general-skills`，请求带 `deleteBranch:true, dropCommits:true` → 目录被删，分支 `change/general-skills` 仍在，`branchDeleted:false`；它有 3 个未提交文件时同样要 `discardFiles` | T13 |
 | R5.8 | desktop 单元 | `test-worktree-dialogs.mjs › delete_wt_external` | `data-variant` 是 `external`；`delete-wt-external` 的文字含「不是由 vibe-remote 创建」和分支名；没有两个单选；请求里没有 `deleteBranch` | T14 |
 | R5.8 | 浏览器 | R5.8 不是 vibe-remote 创建的 worktree | 确认框标明不是由 vibe-remote 创建；确认后目录消失，`git branch --list change/general-skills` 仍有一行 | dev-test |
-| R5.9 | Go 单元 | `TestRemoveGitFailureKeepsState` | 先 `git worktree lock` 让 `git worktree remove` 失败 → HTTP 500 `worktree_remove_failed`，`message` 含 git 的输出；目录、分支、`ProjectStore` 记录都在 | T13 |
+| R5.9 | Go 单元 | `TestRemoveGitFailureKeepsState`、`TestRemoveLockedRefusedBeforeEndingSessions` | `PATH` 前面的 git 包装脚本让 `worktree remove` 以非 0 退出并输出一行错误 → `*WorktreeRemoveError`（HTTP 500 `worktree_remove_failed`），`Message` 含这行输出；目录、分支、`ProjectStore` 记录都在。先 `git worktree lock --reason usb` → 同样是 500，`Message` 含 `locked` 和 `usb`，而且该 worktree 下的 2 个会话都还在会话表里（没有被结束，d26） | T13 |
 | R5.9 | desktop 单元 | `test-worktree-dialogs.mjs › delete_flow_500_reopens_with_error` | `removeWorktree` 抛 500 → 同一个确认框再次打开，`delete-wt-error` 显示「删除失败：<git 的输出>」；`deleteWorktreeFlow` 在用户取消后返回 null | T14 |
-| R5.9 | 浏览器 | R5.9 删除失败 | 把 worktree 锁住后删除 → 对话框内显示 git 的错误信息，worktree 行和磁盘状态不变 | dev-test |
+| R5.9 | 浏览器 | R5.9 删除失败 | 临时 daemon 的 `PATH` 前面放一个 git 包装脚本，让 `worktree remove` 以非 0 退出并输出一行错误 → 对话框内显示这行错误，worktree 行和磁盘状态不变。另一例：把 worktree 锁住后删除 → 对话框内写明已被锁定，其中的会话没有被结束 | dev-test |
 | R5.10 | Go 集成 | `TestDeleteCleanWorktreeWithUnmergedCommitsReturns409`（过渡，T12 时删除） | T1 的过渡行为：工作区干净、分支有 2 个未合并提交 → 409 `worktree_preserved`，目录、分支、提交都在 | T1 |
 | R5.10 | Go 集成 | `TestDeleteSessionNeverReturnsPreserved` | 只发 `DELETE /api/v1/sessions/{id}`（旧桌面端的做法）：干净加 2 个未合并提交、有未提交文件各一例 → 都是 204，目录和分支都在 | T12 |
 | R5.10 | 协议冒烟 | R5.10 旧版桌面端删会话不丢提交 | 用 `change/dual-mode` 基线的 `ws-smoke.mjs` 的删除步骤连新 daemon：删除成功，worktree 目录和分支都保留 | dev-test |
@@ -150,7 +153,7 @@
 | R5.11 | Go 单元 | `TestRemoveDetachedNeedsConsent` | status：`detached:true, unmergedCommits:2`；不带 `dropCommits` → `WorktreeChangedError`；带上 → 目录被删。没有这样的提交且干净 → 不带任何同意项就能删 | T13 |
 | R5.11 | desktop 单元 | `test-worktree-dialogs.mjs › delete_wt_detached`、`delete_wt_detached_clean` | 有提交：`data-variant` 是 `detached`，文字是「这 2 个提交删除后不再属于任何分支，无法恢复。」，初始焦点在 `dialog-cancel`，`delete-wt-force` 发出 `dropCommits:true`；没有提交：`data-variant` 是 `clean`，文字是 `wt.delete.cleanDetached`，请求没有同意项 | T14 |
 | R5.11 | 浏览器 | R5.11 worktree 不在任何分支上 | 确认框写明这 2 个提交删除后不再属于任何分支，回车 = 取消；点「仍然删除」才删除 | dev-test |
-| R6.1 | desktop 单元 | `test-session-form.mjs › continue_note_shown`、`test-worktree-dialogs.mjs › continue_note_counts` | 已有会话数是 1 且勾选 id 为 `continue` 的选项 → `continue-note` 出现，文字是 `wt.session.continueNote`，`dialog-confirm` 不是 `disabled`；取消勾选后消失。`openWorktreeSessionDialog` 传该 worktree 的会话数；目录选择器普通模式传 `workdir` 等于当前所列目录的会话数；Worktree 模式和新建 worktree 对话框传 0 | T15 |
+| R6.1 | desktop 单元 | `test-session-form.mjs › continue_note_shown`、`test-worktree-dialogs.mjs › continue_note_counts` | 已有会话数是 1 且勾选 id 为 `continue` 的选项 → `continue-note` 出现，文字是 `wt.session.continueNote`，`dialog-confirm` 不是 `disabled`；取消勾选后消失。两个入口用同一个口径（d24）：工作目录等于将要启动的目录、且没有结束的会话数；Worktree 模式和新建 worktree 对话框传 0。`test-tree.mjs › count_active_sessions_at`（T5）：`workdir` 相等的运行中会话算，子目录里的、`state` 是 `ended` 的不算 | T15 |
 | R6.1 | 浏览器 | R6.1 目录里已有会话在用最近那段对话 | `main` 已有一个对话会话，在同一 worktree 新建并勾选 `-c` → 显示说明，确认按钮可点 | dev-test |
 | R6.2 | desktop 单元 | `test-session-form.mjs › continue_note_hidden_without_sessions` | 已有会话数是 0 且勾选 `continue` → DOM 里没有 `continue-note` | T15 |
 | R6.2 | 浏览器 | R6.2 目录里没有会话 | 没有会话的 worktree 上勾选 `-c` → 不显示说明 | dev-test |
@@ -169,6 +172,7 @@
 | R8.2 | desktop 单元 | `test-theme-tokens.mjs › terminal_theme_from_css_vars`；现有的 `test-terminal-selection.mjs` | `terminalTheme()` 的 `background`、`foreground`、`cursor`、`selectionBackground` 分别等于 `--term-bg`（`#FFFFFF`）、`--term-fg`（`#1C1B22`）、`--term-cursor`（`#6B54D3`）、`--term-selection`（`#D9D2F4`）；16 个 ANSI 色与改动前 `index.ts` 里的值逐个相同 | T18 |
 | R8.2 | 浏览器 | R8.2 终端会话 | 终端底色、前景、光标、选区是新主题色；远程输出的字节原样显示（现有 `gui-smoke.mjs` 的透传用例通过） | dev-test |
 | R8.3 | 浏览器 | R8.3 现有功能入口都在 | 跑 `gui-smoke.mjs` 和 `gui-chat-smoke.mjs`：全部通过；与 `change/dual-mode` 基线逐个对比，用例数不减少（`gui-chat-smoke.mjs` 基线 26 个 `test(`，`gui-smoke.mjs` 基线 14 处 `check(`）、断言不放宽，只有选择器有改动 | dev-test |
+| R8.4 | desktop 单元 | `test-theme-tokens.mjs › tag_contrast_all_hues`；`test-tree.mjs › project_hue_stable` | 用 `:root` 里的四个 `--tag-*` 值，对色相 0–359 逐个算项目行标签文字对标签底色的对比度，最小值 ≥ 4.5；`projectHue` 对同一个 id 恒返回同一个 0–359 的整数 | T18、T5 |
 | R8.4 | desktop 单元 | `test-theme-tokens.mjs › contrast_table`、`dot_shapes_differ` | 从 `styles.css` 的 `:root` 解析变量，按 `evidence/contrast-m1.txt` 的 35 对计算：正文和按钮文字 ≥ 4.5，次要文字 ≥ 3，三种状态点对 `--bg-sidebar` ≥ 3；`.session-unread.output`（空心）、`.idle`（实心）、`.waiting`（实心加光圈）的形状属性两两不同 | T18 |
 | R8.4 | 浏览器 | R8.4 可读性 | 在运行中的应用里读真实元素的 `color` 和实际背景色（含 `color-mix` 算出来的），达到同样的比值；三种状态点在侧边栏上同时出现时形状可区分 | dev-test |
 | R8.5 | desktop 单元 | `test-dialog-layout.mjs` | `dirpicker.ts`、`worktree-dialogs.ts` 里每个对话框只往 `.modal` 里放标题、`.modal-body`、`.modal-footer` 三个直接子元素 | T9（T11、T12、T14 新增的对话框自动被它覆盖） |
@@ -177,7 +181,7 @@
 | R8.6 | 浏览器 | R8.6 启动不闪 | 冷启动后第一帧截图的窗口底色是 `#EFEFF4`，没有旧的米色（`#F5F4EF`）或深色 | dev-test |
 | R9.1 | desktop 单元 | `test-tree.mjs › legacy_groups_by_session_fields`、`capability_transitions` | `projects` 为 `null`：`mode:"worktree"` 的会话归到 `sourceRepo` 项目下的 `worktreeRoot` 行（`label` 是 `branch`），其余按 `workdir` 归位，不出现没有会话的 worktree；`nextCapability`：数组 → `v4`，`null` → `legacy`，`Error` → 保持上一个 | T5 |
 | R9.1 | desktop 单元 | `test-chat-availability.mjs › proto3_daemon_supports_chat` | `info.proto` 是 3、`chat.supported` 为真 → 对话可用（用 `CHAT_MIN_PROTO` 判断，不因 `PROTOCOL_VERSION` 升到 4 而置灰） | T4 |
-| R9.1 | desktop 单元 | `test-sidebar.mjs › legacy_note_and_disabled_entries` | 能力状态是 `legacy`：有 `machine-legacy-note`；`project-new-worktree` 和 `worktree-delete` 是 `disabled`，提示是「需要升级这台机器的 vibe-remoted」；`unknown`：同样置灰，没有说明 | T6 |
+| R9.1 | desktop 单元 | `test-sidebar.mjs › legacy_note_and_disabled_entries` | 能力状态是 `legacy`：有 `machine-legacy-note`；`project-new-worktree` 和 `worktree-delete` 是 `disabled`，提示是「需要升级这台机器的 vibe-remoted」；`unknown`：同样置灰，没有说明 | T6b |
 | R9.1 | desktop 单元 | `test-session-form.mjs › picker_proto3_has_no_name_segment` | `info.proto` 是 3 时目录选择器的 Worktree 模式没有 `wt-name-input`，确认后返回值里没有 `worktreeName` | T9 |
 | R9.1 | desktop 单元 | `test-worktree-dialogs.mjs › delete_session_legacy_note` | `legacyWorktree` 为真 → `delete-session-note` 的文字是 `session.delete.legacyWorktree`（写明旧版会在工作区干净时一并删除 worktree 和分支），同时传了 `worktreeLabel` 也以它为准 | T12 |
 | R9.1 | desktop 单元 | `test-legacy-daemon.mjs` | 渲染进程入口连一个假的协议 3 daemon（`/api/v1/projects` 返回 404，`info.proto` 是 3）：侧边栏按项目和 worktree 分组；有说明条；两个入口置灰；删除 worktree 会话的确认框是旧版文案；409 `worktree_preserved` 仍显示「Worktree 已保留」 | T17 |
@@ -195,19 +199,19 @@
 |------|------------|------|------|
 | 新建命名 worktree，`ready` 之前断线，客户端带同一个 `newSessionId` 和 `worktreeName` 重放（自动重连、手动重试、两次并发） | 只有一个 `fix-login` worktree、一个分支、一个会话；第二次 attach 收到同一个 `sessionId` 的 `ready`，不是 `worktree_branch_exists` | `TestNamedWorktreeReplaySameID`、`test-attach-replay.mjs › replay_carries_worktree_name` | T7 |
 | 两个不同的 `newSessionId` 并发新建同名 worktree `fix-login` | 恰好一个成功；另一个收到 fatal `worktree_branch_exists`；成功那个的分支和目录完好，`git worktree list` 里只有一个 `fix-login`；用 `-race` 跑 20 轮结果相同 | `TestConcurrentCreateSameNameOneWins` | T7 |
-| git 先建出分支、随后失败（目标的父目录不可写；design 前置验证 V3 实测会留下分支） | 返回 `create_failed` 和 git 的错误输出；`git show-ref refs/heads/fix-login` 找不到；目标目录不存在；本次新建的空容器目录被删掉；`ProjectStore` 里没有记录 | `TestCreateNamedWorktreeGitFailureLeavesNothing` | T7 |
+| 目录和分支都占好之后 `git worktree add` 失败（`.git/worktrees` 不可写，design V14；V3 实测旧做法 `worktree add -b` 这时会留下分支） | 返回 `create_failed` 和 git 的错误输出；`git show-ref refs/heads/fix-login` 找不到；目标目录不存在；本次新建的空容器目录被删掉；`ProjectStore` 里没有记录 | `TestCreateNamedWorktreeGitFailureLeavesNothing` | T7 |
 | 目标目录已经存在但是空的（V3 实测 git 会直接用它） | daemon 自己拒绝：`worktree_path_exists`；空目录还在、没有被 git 用掉，没有新分支 | `TestCreateNamedWorktreePathExists/empty_dir` | T7 |
-| worktree 建好之后会话启动失败（例如对话进程起不来） | worktree 目录和分支被回滚，`ProjectStore` 的创建记录被删掉，侧边栏不出现新行 | `TestNamedWorktreeRolledBackWhenSessionStartFails` | T7 |
+| worktree 建好之后会话启动失败（例如对话进程起不来） | worktree 目录和分支被撤销（`CreatedWorktree.Undo`），`ProjectStore` 的创建记录被删掉，侧边栏不出现新行 | `TestNamedWorktreeRolledBackWhenSessionStartFails` | T7 |
 | 用户看到确认框之后、点确认之前，worktree 里多了一个未提交的文件 | 409 `worktree_changed`，响应体里的 `status.dirtyFiles` 是 1；目录、分支、文件都在，没有会话被结束；桌面端用新状态重新弹确认框，`delete-wt-changed` 可见 | `TestRemoveChangedSinceStatus/new_file`、`test-worktree-dialogs.mjs › delete_flow_409_reconfirms` | T13、T14 |
 | 确认框打开之后分支上多了一个提交（`head` 变了） | 409 `worktree_changed`，`status.head` 是新的哈希；什么都没删 | `TestRemoveChangedSinceStatus/head_moved` | T13 |
 | 确认框打开之后该 worktree 下又新建了一个会话 | 409 `worktree_changed`，`status.sessions` 含新会话；没有任何会话被结束 | `TestRemoveChangedSinceStatus/new_session` | T13 |
-| 重查通过之后、`git worktree remove` 执行之前出现新文件，git 以「contains modified or untracked files」拒绝 | 409 `worktree_changed` 加最新状态，不是 500；目录还在 | `TestRemoveGitRefusesNewFiles` | T13 |
+| 重查通过之后、`git worktree remove` 执行之前出现新文件，git 拒绝删除 | daemon 不看报错文字，失败后重查：文件数变了 → 409 `worktree_changed` 加最新状态，不是 500；目录还在 | `TestRemoveGitRefusesNewFiles` | T13 |
 | daemon 重启后，会话的归属还在 | 终端会话：重启后 `Projects()` 里它仍在原来的 worktree 行下（tmux 用户选项 `@vibe_remote_project`、`@vibe_remote_home`）；在终端里 `cd /tmp` 之后也不换位置。对话会话：从 `chat-sessions.json` 读回 `project`、`home` | `TestHomeSurvivesRestartTmux`、`TestHomeDoesNotFollowCd`、`TestChatRecordHomeRoundTrip` | T2 |
 | daemon 重启后，「由 vibe-remote 创建」的记录和项目清单还在 | 用同一个 `state_dir` 重新打开：`fix-login` 仍是 `managed:true`，会话已删光的 `devflow` 仍在列表里 | `TestProjectStoreRoundTrip`、`TestProjectsSurviveSessionDeletionAndRestart` | T3、T4 |
-| 升级前留下的会话没有归属字段 | 第一次 `Projects()` 时补一次：worktree 会话归到 `@vibe_remote_worktree_root`，其余按当时的 `pane_current_path` 推导；补出来的 git 项目进清单；对话记录在 `LoadChats` 里补并落盘 | `TestBackfillHomeForLegacyTmuxSessions`、`TestBackfillHomeForLegacyChatRecords` | T4 |
+| 升级前留下的会话没有归属字段 | `Projects()` 对还没有归属的会话补一次（补不上就下一次再试）：worktree 会话归到 `@vibe_remote_worktree_root`，其余按当时的 `pane_current_path` 推导；补出来的 git 项目进清单；对话记录在 `LoadChats` 里补并落盘 | `TestBackfillHomeForLegacyTmuxSessions`、`TestBackfillHomeForLegacyChatRecords` | T4 |
 | `state_dir` 不可写 | daemon 正常启动，终端会话照常；`/api/v1/projects` 只返回现存会话所在的项目；新建命名 worktree 成功，本次运行期间是 `managed:true`；重启后它变成外部 worktree，能删目录、分支保留 | `TestProjectsWithUnwritableStateDir`、`TestMemoryProjectStore`、`TestNamedWorktreeWithMemoryStore`、`TestRemoveExternalNeverDeletesBranch` | T4、T3、T7、T13 |
 | `projects.json` 损坏或 `version` 不是 1 | 文件被改名为 `projects.json.corrupt-<unix 时间>`，按空清单启动，日志有一行说明；之后的写入生成新的 `projects.json` | `TestProjectStoreCorruptFileRenamed` | T3 |
-| 清单里的仓库目录被删除，但它下面还有会话 | 项目行 `error:"repo_missing"`，会话全部在项目级 `sessions` 里，仍能打开、输入、删除；其他项目不受影响 | `TestProjectsRepoMissing`、`test-sidebar.mjs › project_error_row_sessions_usable` | T4、T6 |
+| 清单里的仓库目录被删除，但它下面还有会话 | 项目行 `error:"repo_missing"`，会话全部在项目级 `sessions` 里，仍能打开、输入、删除；其他项目不受影响 | `TestProjectsRepoMissing`、`test-sidebar.mjs › project_error_row_sessions_usable` | T4、T6b |
 | git 卡住不返回 | 5 秒后该项目按 `git_failed` 返回，其余项目正常；连续轮询 3 次后 git 进程不堆积 | `TestProjectsGitFailed`、`TestGitTimeoutKillsProcess` | T4、T2 |
 | 仓库有一个 worktree 在 `allowed_roots` 之外 | 列表里没有它；对它调 status 或 remove 返回 404 `worktree_not_found`，而且 daemon 没有对这个路径运行 git | `TestProjectsHidesWorktreesOutsideAllowedRoots`、`TestRemoveOnlyListedWorktrees/outside_allowed_roots` | T4、T13 |
 | remove 的 `path` 不是 daemon 读到的 worktree（任意目录、主目录里的子目录、带 `..` 的路径） | 404 `worktree_not_found`，磁盘不变 | `TestRemoveOnlyListedWorktrees` | T13 |
@@ -216,15 +220,34 @@
 | 同一个 worktree 下有 2 个会话，删掉其中一个 | 另一个会话脚下的目录还在，仍能输入 | `TestDeleteOneOfTwoSessionsKeepsWorktree` | T12 |
 | 用户在 vibe-remote 建的 worktree 里切到了别的分支，然后删除它 | 不再是 `managed`：只删目录，原来的分支和切过去的分支都保留 | `TestManagedRequiresPathAndBranch`、`TestRemoveExternalNeverDeletesBranch/switched_branch` | T3、T13 |
 | 两次轮询之间新建或删除了会话，`/api/v1/sessions` 和 `/api/v1/projects` 的内容对不上 | 树里引用了、会话列表里没有的 id 被跳过；会话列表里有、树里没有引用的会话按旧版规则临时归位；不抛错，下一轮恢复一致 | `test-tree.mjs › tolerates_stale_ids`、`unreferenced_session_placed_by_legacy_rule` | T5 |
-| `/api/v1/projects` 某一轮请求失败（网络抖动） | 能力状态和侧边栏的树保持上一轮的样子，不闪成旧版分组，也不清空 | `test-tree.mjs › capability_transitions`、`test-sidebar.mjs › keeps_tree_when_projects_request_fails` | T5、T6 |
-| 侧边栏正在内联重命名时到了下一轮刷新 | 不重绘，输入框和已输入的字还在（现有保护保留） | `test-sidebar.mjs › no_rerender_while_renaming` | T6 |
+| `/api/v1/projects` 某一轮请求失败（网络抖动） | 能力状态和侧边栏的树保持上一轮的样子，不闪成旧版分组，也不清空 | `test-tree.mjs › capability_transitions`、`test-sidebar.mjs › keeps_tree_when_projects_request_fails` | T5、T6b |
+| 侧边栏正在内联重命名时到了下一轮刷新 | 不重绘，输入框和已输入的字还在（现有保护保留） | `test-sidebar.mjs › no_rerender_while_renaming` | T6a（T6b 保持通过） |
 | 名字输入框连续输入，较早的 `planWorktree` 请求比较晚的后返回 | 界面显示最后一次输入对应的结果 | `test-session-form.mjs › last_plan_wins` | T9 |
+| 名字是 `@{-1}`、`@{-2}`（git 把它展开成上一个检出的分支），仓库里确实有上一个检出的分支 `prev`，上面有 1 个只在它上面的提交 | `invalid_worktree_name`，一次会改东西的 git 调用都没有；`prev` 和它的提交原样还在；桌面端不问 daemon 就显示「git 不接受这个分支名」 | `TestValidateWorktreeNameRejectsExpansion`、`test-worktree-name.mjs › shared_vectors` | T7、T9 |
+| daemon 交给 git 的参数里出现短分支名（会被展开、被当成选项、或被解析成同名 tag） | 走完新建成功、新建失败后撤销、会话启动失败后撤销、删除 worktree 并删分支这 4 条路径，git 包装脚本记下的全部参数里：没有 `branch` 子命令，没有 `-b` / `-B`；名字只以 `refs/heads/<名字>`、`--exclude=<名字>`、`branch.<名字>`、`check-ref-format --branch <名字>` 这 4 种形式出现 | `TestGitNeverGetsShortBranchName`（T7 写前 3 条路径，T13 补第 4 条） | T7、T13 |
+| 校验通过之后、占分支之前，daemon 之外有人建了同名分支（或同名目录） | `worktree_branch_exists`（或 `worktree_path_exists`）；对方的分支仍指向对方的提交、对方的目录和里面的文件原样还在；本次占到的另一样东西已撤销 | `TestCreateRaceWithExternalBranch`、`TestCreateRaceWithExternalDir`（包内测试钩子卡在第 5 步之后） | T7 |
+| 撤销创建时，分支已经被人往前提交过（会话启动失败前，有人在新 worktree 里提交了一次） | 目录被注销并删除；分支保留、仍指向那个新提交；返回的错误里写明分支没有删。分支已经不在、目录已经被删时，撤销不报错 | `TestUndoOnlyRemovesOwnArtifacts` | T7 |
+| 删除 worktree 并删分支时，另有一个同名 tag，或这个分支还被别的 worktree 检出着，或分支在确认之后又多了提交 | 同名 tag：只删 `refs/heads/<名字>`，tag 和其他分支都在；被别处检出：目录已删，`branchDeleted:false`，`branchError` 写明那个路径，分支还在；多了提交：409 `worktree_changed`，什么都没删 | `TestRemoveDeletesBranchByFullRef` | T13 |
+| `allowed_roots` 配的是符号链接（`/tmp`），git 列出的是规范路径（`/private/tmp/…`） | 主目录和 worktree 照常列出；status 和 remove 用规范路径照常工作 | `TestProjectsAllowedRootIsSymlink`、`TestWorktreeStatusEndpoint/symlink_root` | T4、T13 |
+| status / remove 的 `path` 字面在 `allowed_roots` 内，但经符号链接指向根外的一个真实 worktree | 404 `worktree_not_found`；git 包装脚本的调用记录为 0；根外的 worktree 原样 | `TestRemoveOnlyListedWorktrees/symlink_escape` | T13 |
+| 会话开在子模块里，或开在 `git init --separate-git-dir` 的仓库里（`git worktree list` 第一项是 git 目录，design V11） | 项目 id 是工作目录的顶层（不是 git 目录），项目只有这一个 worktree、标 `main`，会话挂在它下面，不标「目录已不存在」；新建命名 worktree 被拒（plan 返回 `unsupported_repo`，attach 返回 `create_failed`），仓库旁边没有多出目录；不带名字的旧 Worktree 模式照旧成功；它的 worktree 的对话信任只查目录自己 | `TestResolveHomeSubmodule`、`TestResolveHomeSeparateGitDir`、`TestProjectsSingleWorktreeRepo`、`TestCreateNamedWorktreeUnsupportedRepo`、`TestPlanWorktree/unsupported_repo`、`TestChatTrust/submodule`、`TestRemoveSingleRepoRefused` | T2、T4、T7、T8、T10、T13 |
+| 轮询在 `git worktree add` 完成之前读了列表，新建随后写了创建记录，轮询再回头清理「不在列表里」的记录 | 新记录不被删：这个 worktree 在下一轮仍是 `managed:true` | `TestProjectsKeepsRecordCreatedDuringPoll`（测试钩子卡在取快照和读列表之间） | T4 |
+| 删除 worktree 时，有一个会话正在这个目录里创建、还没登记 | 删除返回 409 `worktree_changed`，目录还在，没有会话被结束，那个会话正常建成；反过来，删除进行中时在它下面新建会话 → `create_failed`，`message` 写明正在删除；删除结束后标记被清掉 | `TestRemoveRefusedWhileSessionStarting`、`TestCreateRefusedWhileWorktreeRemoving`、`TestRemovingMarkClearedAfterFailure` | T13 |
+| daemon 的环境是 `LANG=zh_CN.UTF-8`、`LC_ALL=zh_CN.UTF-8`，还带着 `GIT_DIR` | git 子进程拿到的环境里 `LC_ALL=C`、没有 `GIT_DIR` / `GIT_WORK_TREE`；非 git 目录仍判成 `Git:false`；git 的报错是中文时，删除失败的分类不变（新出现的文件 → 409，其余 → 500） | `TestGitEnvIsFixed`、`TestResolveHomeNonGit/zh_locale`、`TestRemoveClassifiesFailureWithoutMessage`（git 包装脚本输出中文报错） | T2、T13 |
+| 创建会话时 git 超时或失败 | 会话照常建成；归属留空，不进项目清单；列表里它临时自成一个项目；git 恢复后的下一次 `Projects()` 把它补到正确的项目和 worktree 下，并写回 tmux 选项或对话记录 | `TestCreateSessionWhenGitFailsLeavesHomeEmpty`、`TestBackfillRetriesUntilGitWorks` | T2、T4 |
+| `projects.json` 写盘失败（目录中途变成只读） | 调用不 panic、不报错；内存里的清单照常更新；日志有一行 `projects store: write failed`；目录恢复可写后的下一次修改把整份清单写下去 | `TestProjectStoreWriteFailureLogsAndKeepsMemory` | T3 |
+| 要删的 worktree 被 `git worktree lock` 锁定，或里面有初始化过的子模块 | 500 `worktree_remove_failed`，`message` 写明原因；该 worktree 下的会话都没有被结束，目录和分支都在 | `TestRemoveLockedRefusedBeforeEndingSessions`、`TestRemoveSubmoduleCheckoutRefused` | T13 |
+| `git worktree remove` 删到一半失败（某个子目录不可写）：git 已经注销了这个 worktree，目录还剩一部分 | 500 `worktree_remove_failed`，`message` 含 git 的输出并写明目录还剩一部分；分支没有被删；下一次 `Projects()` 里这一行消失、创建记录被清掉 | `TestRemovePartialFailureReported` | T13 |
+| 删除请求超过桌面端的超时（3 个忙碌的对话会话，每个停 4 秒） | `removeWorktree` 的超时随会话数放大（3 个会话是 25 秒，上限 60 秒）；真的超时或断网后桌面端再查一次状态：已经 404 → 按删除成功收尾（关视图、刷新）；还在 → 提示「可能还在删除中」并刷新；daemon 在请求断开后照样删完 | `test-rest-projects.mjs › remove_timeout_scales`、`test-worktree-dialogs.mjs › delete_flow_timeout_then_gone`、`delete_flow_timeout_still_there`、`TestRemoveCompletesAfterClientDisconnect` | T13、T14 |
+| daemon 重启后，同一 worktree 下两个未改名的终端会话 | 两个会话的 `created` 与重启前相同，先后不变，所以 `fix-login` 和 `fix-login 2` 不对调；升级前建的会话（没有 `@vibe_remote_created`）用 tmux 的 `session_created` | `TestCreatedSurvivesRestartTmux`、`TestCreatedFallsBackToTmuxSessionCreated`、`TestProjectsOrderSurvivesRestart` | T2、T4 |
+| 删除确认框里既有未提交文件、又有未合并提交 | 初始焦点在取消，回车 = 取消、不发请求（d25）；只有单独的 `commits` 形态回车才是「只删目录、保留分支」 | `test-worktree-dialogs.mjs › delete_wt_files_and_commits`、`delete_wt_enter_key` | T14 |
+| 别人手工建的 `devflow-worktrees/foo` 加分支 `vibe/foo` | 不是 `managed`：删除时只删目录，分支 `vibe/foo` 保留 | `TestManagedLegacyVibeBranch` | T3 |
 
 ## 任务
 
-顺序：T1 是可以单独合并的先行修复；T2–T6 跑通最小闭环（daemon 下发项目和 worktree → 侧边栏分组显示）；T7–T9 新建命名 worktree；T10–T11 在已有 worktree 里开会话；T12–T14 会话与 worktree 分开收尾；T15 `-c` 说明；T16 快捷键；T17 降级核对；T18–T19 视觉 M1；T20 规则文件（等 c3）。
+顺序：T1 是可以单独合并的先行修复；T2–T6b 跑通最小闭环（daemon 下发项目和 worktree → 侧边栏分组显示），其中 T6a 只搬家、不依赖别的任务，可以最先做；T7–T9 新建命名 worktree；T10–T11 在已有 worktree 里开会话；T12–T14 会话与 worktree 分开收尾；T15 `-c` 说明；T16 快捷键；T17 降级核对；T18–T19 视觉 M1；T20 规则文件（等 c3）。
 
-`desktop/src/renderer/index.ts` 只在 T6 做一次结构性改动（把侧边栏搬到 `sidebar.ts`），之后的任务每个只往里加一个回调和一小段接线。`desktop/src/renderer/styles.css` 在 T6–T15 只追加新规则，T18 统一换配色，T19 统一换形态。
+`desktop/src/renderer/index.ts` 只在 T6a 做一次结构性改动（把侧边栏原样搬到 `sidebar.ts`），T6b 在搬好的文件里做三层结构，之后的任务每个只往里加一个回调和一小段接线。`desktop/src/renderer/styles.css` 在 T6b–T15 只追加新规则，T18 统一换配色，T19 统一换形态。
 
 ### T1 先行修复：分支有未合并提交时，删会话不删分支
 - 状态：待办
@@ -285,7 +308,7 @@
   - `TestProjectStoreCorruptFileRenamed`：文件内容不是 JSON、`version` 是 2 各一例 → 打开成功、清单为空，目录里有 `projects.json.corrupt-<数字>`；随后 `AddProject` 写出新的 `projects.json`
   - `TestOpenProjectStoreUnwritableDir`：目录是 0500 → 返回错误
   - `TestMemoryProjectStore`：增删查都可用，不创建任何文件
-- 完成定义：`cd vibe-remoted && go test -race -count=1 ./internal/session -run 'TestProjectStore|TestManaged|TestOpenProjectStore|TestMemoryProjectStore'` 输出 `ok`
+- 完成定义：`cd vibe-remoted && TMUX_TMPDIR=$(mktemp -d) go test -race -count=1 ./internal/session -run 'TestProjectStore|TestManaged|TestOpenProjectStore|TestMemoryProjectStore'` 输出 `ok`
 - 依赖：无
 
 ### T4 协议 4：项目树端点 `GET /api/v1/projects`、`POST /api/v1/projects/remove`
@@ -344,7 +367,7 @@
 - 完成定义：`cd desktop && npm run typecheck && npm run test:tree` 退出码 0，输出里每个用例一行 `ok - <用例名>`
 - 依赖：T4
 
-### T6 桌面端：三层侧边栏、标题和通知标题（最小闭环完成）
+### T6b 桌面端：三层侧边栏、标题和通知标题（最小闭环完成）
 - 状态：待办
 - 文件：
   - 新建 `desktop/src/renderer/sidebar.ts`（`renderSidebar`、`renderToolbarTitle`，以及从 `index.ts` 搬来的 `startInlineRename`、`rendererIcon`）、`desktop/src/renderer/menu.ts`（定位在按钮下方的列表，Esc 和点外面关闭）、`desktop/scripts/test-sidebar.mjs`
@@ -370,7 +393,7 @@
   - `collapsed_projects_persist`：折叠 `devflow` 后 `localStorage` 的 `vibe-remote.collapsed-projects` 含 `<machineKey>|<项目 id>`；重新加载后仍是折叠的；`setActive` 打开其中的会话会把它展开
 - 完成定义：
   - `cd desktop && npm run typecheck && npm run test:sidebar && npm run test:i18n-parity && npm run test:chat-activity && npm run test:chat-render-guard` 退出码 0
-  - 在仓库根执行 `node .claude/skills/verify/scripts/gui-smoke.mjs` 和 `node .claude/skills/verify/scripts/gui-chat-smoke.mjs`，都以退出码 0 结束、没有 FAIL 行；`git diff HEAD~1 -- .claude/skills/verify/scripts/` 里只有选择器字符串的改动，`grep -c "^test(" .claude/skills/verify/scripts/gui-chat-smoke.mjs` 仍是 26，`grep -c "check(" .claude/skills/verify/scripts/gui-smoke.mjs` 不小于 14
+  - 在仓库根执行 `TMUX_TMPDIR=$(mktemp -d /tmp/vr-XXXXXX) node .claude/skills/verify/scripts/gui-smoke.mjs` 和 `TMUX_TMPDIR=$(mktemp -d /tmp/vr-XXXXXX) node .claude/skills/verify/scripts/gui-chat-smoke.mjs`，都以退出码 0 结束、没有 FAIL 行；`git diff HEAD~1 -- .claude/skills/verify/scripts/` 里只有选择器字符串的改动，`grep -c "^test(" .claude/skills/verify/scripts/gui-chat-smoke.mjs` 仍是 26，`grep -c "check(" .claude/skills/verify/scripts/gui-smoke.mjs` 不小于 14
 - 依赖：T4、T5
 
 ### T7 daemon 和客户端连接层：attach 带 `worktreeName` 新建命名 worktree
@@ -423,7 +446,7 @@
   - `TestPlanWorktreeHTTPErrors`：`workdir` 在白名单外 → 403；缺 `workdir` → 400；`TestNewEndpointsRequireToken` 加上这个端点 → 401
   - `test-rest-projects.mjs › plan_encodes_query`：`planWorktree('/r/a b', 'change/foo')` 请求的 URL 里两个参数都经过 URL 编码；HTTP 403 → 抛 `RestError`，`status` 是 403
 - 完成定义：
-  - `cd vibe-remoted && go test -race -count=1 ./internal/session ./internal/server -run 'TestPlan|TestNewEndpointsRequireToken'` 输出两行 `ok`
+  - `cd vibe-remoted && TMUX_TMPDIR=$(mktemp -d) go test -race -count=1 ./internal/session ./internal/server -run 'TestPlan|TestNewEndpointsRequireToken'` 输出两行 `ok`
   - `cd desktop && npm run typecheck && npm run test:rest-projects` 退出码 0
   - 按 `/protocol-sync` 核对：`WorktreePlan` 的字段在三处一致
 - 依赖：T7
@@ -434,7 +457,7 @@
   - 新建 `desktop/src/renderer/worktree-name.ts`、`desktop/src/renderer/session-form.ts`、`desktop/src/renderer/worktree-dialogs.ts`（本任务只有 `openNewWorktreeDialog`）；新建测试 `desktop/scripts/test-worktree-name.mjs`、`test-session-form.mjs`、`test-worktree-dialogs.mjs`、`test-dialog-layout.mjs`
   - 修改 `desktop/src/renderer/dirpicker.ts`（界面卡片和启动选项改用 `session-form.ts` 的两个段，行为不变；Worktree 模式且 `info.proto >= 4` 时在模式卡片下方加名字段，此时不显示 `picker.modeNote`；`PickedSession` 加可缺省的 `worktreeName`、`worktreePath`）、`desktop/src/renderer/index.ts`（给 `SidebarActions` 传 `newWorktree`；新建会话时把 `picked.worktreeName` 放进 `attach` 的 `AttachOptions`；`client.onError` 收到 4 个新错误码时状态栏用 `worktreeErrorText`）、`desktop/src/renderer/styles.css`（追加「名字段」的规则）、`desktop/src/renderer/i18n.ts`（`wt.new.*`、`wt.name.*`、`wt.error.*`）、`desktop/package.json`（4 个 `test:*`）、`.claude/skills/verify/scripts/gui-smoke.mjs` 和 `gui-chat-smoke.mjs`（目录选择器的选择器有变时同步）
 - 接口：
-  - 使用：`planWorktree`、`WorktreePlan`、`RestError`（T8、T4）；`AttachOptions.worktreeName`（T7）；`TreeProject`、`SidebarActions.newWorktree`（T5、T6）；`chatAvailability`、`activateModal`、`openDirPicker`（现有）
+  - 使用：`planWorktree`、`WorktreePlan`、`RestError`（T8、T4）；`AttachOptions.worktreeName`（T7）；`TreeProject`、`SidebarActions.newWorktree`（T5、T6b）；`chatAvailability`、`activateModal`、`openDirPicker`（现有）
   - 提供（`worktree-name.ts`）：`validateWorktreeName(name)`、`worktreeDirName(name)`、`worktreeErrorText(code, ctx)`，签名见 design 4.10。`worktreeErrorText` 的对应关系：`invalid_worktree_name` → `wt.name.invalid`；`worktree_branch_exists`、`worktree_path_exists`、`worktree_path_not_allowed` → 同名的 `wt.error.*`；其他代码 → `null`。`index.ts` 调它时 `ctx` 取自对话框的返回值：`branch` = `worktreeName`，`path` = `worktreePath`
   - 提供（`session-form.ts`，三个段都返回 `{ el: HTMLElement, … }`，由调用方放进 `.modal-body`）：
     - `createUiSection(opts: { onChange(): void }): { el; value(): SessionUI; setAvailability(a: ChatAvailability): void }`：终端和对话两张卡片及置灰原因，保留现有的 `picker-ui-terminal`、`picker-ui-chat`、`picker-ui-chat-reason`
@@ -450,8 +473,8 @@
   - `test-dialog-layout.mjs`：`worktree-dialogs.ts` 和 `dirpicker.ts` 里每个对话框只往 `.modal` 里放标题、`.modal-body`、`.modal-footer`；现有的 `test-picker-layout.mjs` 不改、照常通过
 - 完成定义：
   - `cd desktop && npm run typecheck && npm run test:worktree-name && npm run test:session-form && npm run test:worktree-dialogs && npm run test:dialog-layout && npm run test:picker-layout && npm run test:i18n-parity` 退出码 0
-  - 在仓库根执行 `node .claude/skills/verify/scripts/gui-smoke.mjs`，以退出码 0 结束、没有 FAIL 行（其中包含 `picker-layout.mjs` 对新建会话对话框在 500/700/803 高度下的测量）
-- 依赖：T6、T7、T8
+  - 在仓库根执行 `TMUX_TMPDIR=$(mktemp -d /tmp/vr-XXXXXX) node .claude/skills/verify/scripts/gui-smoke.mjs`，以退出码 0 结束、没有 FAIL 行（其中包含 `picker-layout.mjs` 对新建会话对话框在 500/700/803 高度下的测量）
+- 依赖：T6b、T7、T8
 
 ### T10 daemon：对话界面的信任规则认「主目录已被信任的 worktree 根」
 - 状态：待办
@@ -483,7 +506,7 @@
   - `TestWSCreateChatInWorktreeOfTrustedMain`（server，假 claude）：在该 worktree 新建对话会话 → 收到 `ui:"chat"` 的 `ready`
   - `TestWSCreateChatWorktreeUntrusted`（server）：主目录和 worktree 都没有记录 → error 帧 `code:"chat_unsupported"`、`fatal:true`、`message` 含 `workdir_untrusted`；现有的 `TestCreateChatUntrustedWorkdir` 不改、照常通过
 - 完成定义：
-  - `cd vibe-remoted && go test -race -count=1 ./internal/session ./internal/server ./internal/chat -run 'TestChatTrust|TestFSChatTrust|TestWSCreateChatInWorktree|TestWSCreateChatWorktreeUntrusted|TestCreateChatUntrustedWorkdir|TestWorkdirTrusted|TestNoCredentialAccess'` 输出三行 `ok`
+  - `cd vibe-remoted && TMUX_TMPDIR=$(mktemp -d) go test -race -count=1 ./internal/session ./internal/server ./internal/chat -run 'TestChatTrust|TestFSChatTrust|TestWSCreateChatInWorktree|TestWSCreateChatWorktreeUntrusted|TestCreateChatUntrustedWorkdir|TestWorkdirTrusted|TestNoCredentialAccess'` 输出三行 `ok`
   - `grep -rn "chat.WorkdirTrusted" vibe-remoted/internal/server` 没有输出（两处使用点都换成了 `session.ChatTrust`）
 - 依赖：T2
 
@@ -491,7 +514,7 @@
 - 状态：待办
 - 文件：修改 `desktop/src/renderer/worktree-dialogs.ts`（加 `openWorktreeSessionDialog`）、`desktop/src/renderer/chat/availability.ts`（`chatAvailability` 加第 4 个可缺省参数 `opts?: { mainPath?: string }`）、`desktop/src/renderer/index.ts`（给 `SidebarActions` 传 `newSession`：打开对话框，确认后走现有的新建会话流程）、`desktop/src/renderer/styles.css`（追加对话框副标题里路径一行的规则）、`desktop/src/renderer/i18n.ts`（`wt.session.title` / `subtitle` / `confirm`、`picker.ui.chat.reason.worktree_untrusted`、`label.dir`、`label.branch`）；测试 `desktop/scripts/test-worktree-dialogs.mjs`、`test-chat-availability.mjs`
 - 接口：
-  - 使用：`createUiSection`、`createFlagsSection`（T9）；`rest.info()`、`rest.listDir(path)` 的 `chatTrust`（现有；规则由 T10 放宽）；`TreeProject`、`TreeWorktree`、`Capability`、`SidebarActions.newSession`（T5、T6）
+  - 使用：`createUiSection`、`createFlagsSection`（T9）；`rest.info()`、`rest.listDir(path)` 的 `chatTrust`（现有；规则由 T10 放宽）；`TreeProject`、`TreeWorktree`、`Capability`、`SidebarActions.newSession`（T5、T6b）
   - 提供：`openWorktreeSessionDialog(machine, project: TreeProject, worktree: TreeWorktree): Promise<PickedSession | null>`：标题 `wt.session.title`（带 worktree 的 `label`），副标题 `wt.session.subtitle`（项目名和完整路径）；只有界面段和启动选项段；确认后返回 `{ workdir: worktree.path, flags, mode: 'normal', ui }`
   - 提供：`chatAvailability(info?, error?, trust?, opts?)`：`trust` 是 `untrusted` 且传了 `opts.mainPath` 时，原因用 `picker.ui.chat.reason.worktree_untrusted`（带主目录路径），其余情况与现在相同
   - `opts.mainPath` 只在两个条件同时成立时传：这台机器的能力状态是 `v4`，且目标是某个 git 项目的非主目录 worktree；值是该项目主目录行的 `path`（design 7.3 末段）
@@ -506,8 +529,8 @@
   - `test-chat-availability.mjs › worktree_untrusted_reason`：断言见测试计划 R4.4；现有用例不改、照常通过
 - 完成定义：
   - `cd desktop && npm run typecheck && npm run test:worktree-dialogs && npm run test:chat-availability && npm run test:dialog-layout && npm run test:i18n-parity` 退出码 0
-  - 在仓库根执行 `node .claude/skills/verify/scripts/gui-smoke.mjs`，以退出码 0 结束、没有 FAIL 行
-- 依赖：T6、T9、T10
+  - 在仓库根执行 `TMUX_TMPDIR=$(mktemp -d /tmp/vr-XXXXXX) node .claude/skills/verify/scripts/gui-smoke.mjs`，以退出码 0 结束、没有 FAIL 行
+- 依赖：T6b、T9、T10
 
 ### T12 删除会话不再动 worktree 和分支；删除确认换成应用内对话框
 - 状态：待办
@@ -533,8 +556,8 @@
   - `cd vibe-remoted && TMUX_TMPDIR=$(mktemp -d) go test -race -count=1 ./internal/session ./internal/server -run 'TestDeleteSession|TestDeleteOneOfTwo|TestManagerDelete|TestChatWorktreeAndFlags|TestTerminalFramesUnchangedV3'` 输出两行 `ok`
   - `grep -n "worktree_preserved" vibe-remoted/internal/server/server.go` 没有输出；`grep -rn "CleanupWorktree(" vibe-remoted/internal/session/manager.go vibe-remoted/internal/session/chat_manager.go` 没有输出
   - `cd desktop && npm run typecheck && npm run test:worktree-dialogs && npm run test:preserved-notice && npm run test:i18n-parity && npm run test:dialog-layout` 退出码 0
-  - 在仓库根执行 `node .claude/skills/verify/scripts/gui-smoke.mjs` 和 `node .claude/skills/verify/scripts/gui-chat-smoke.mjs`，都以退出码 0 结束、没有 FAIL 行，`grep -c "^test(" .claude/skills/verify/scripts/gui-chat-smoke.mjs` 仍是 26
-- 依赖：T1、T4、T6、T9
+  - 在仓库根执行 `TMUX_TMPDIR=$(mktemp -d /tmp/vr-XXXXXX) node .claude/skills/verify/scripts/gui-smoke.mjs` 和 `TMUX_TMPDIR=$(mktemp -d /tmp/vr-XXXXXX) node .claude/skills/verify/scripts/gui-chat-smoke.mjs`，都以退出码 0 结束、没有 FAIL 行，`grep -c "^test(" .claude/skills/verify/scripts/gui-chat-smoke.mjs` 仍是 26
+- 依赖：T1、T4、T6b、T9
 
 ### T13 协议 4：worktree 的状态和删除（`GET /api/v1/worktrees/status`、`POST /api/v1/worktrees/remove`）
 - 状态：待办
@@ -572,7 +595,7 @@
 - 状态：待办
 - 文件：修改 `desktop/src/renderer/worktree-dialogs.ts`（加 `confirmDeleteWorktree`、`deleteWorktreeFlow`）、`desktop/src/renderer/index.ts`（给 `SidebarActions` 传 `deleteWorktree`：跑 `deleteWorktreeFlow`，成功后关闭 `endedSessions` 里各会话的视图并立刻刷新这台机器）、`desktop/src/renderer/styles.css`（追加确认框里警告段、单选、错误条的规则）、`desktop/src/renderer/i18n.ts`（`wt.delete.*`）；测试 `desktop/scripts/test-worktree-dialogs.mjs`、`test-sidebar.mjs`
 - 接口：
-  - 使用：`worktreeStatus`、`removeWorktree`、`WorktreeStatus`、`WorktreeRemoveRequest`、`WorktreeRemoveResult`、`RestError`（T13、T4）；`SidebarActions.deleteWorktree`、`TreeWorktree`（T6、T5）；`activateModal`（现有）
+  - 使用：`worktreeStatus`、`removeWorktree`、`WorktreeStatus`、`WorktreeRemoveRequest`、`WorktreeRemoveResult`、`RestError`（T13、T4）；`SidebarActions.deleteWorktree`、`TreeWorktree`（T6b、T5）；`activateModal`（现有）
   - 提供：`confirmDeleteWorktree(status: WorktreeStatus, opts: { label: string; changed: boolean; error?: string }): Promise<WorktreeRemoveRequest | null>`；`deleteWorktreeFlow(rest, target: { path: string; label: string }, notify: (text: string) => void): Promise<WorktreeRemoveResult | null>`
   - 确认框的形态、默认按钮、同意项照 design 6.2 的表和它下面那一段：`data-variant` 按 `files` > `detached` > `commits` > `external` > `clean` 取第一个成立的；显示了 `files` 或 `detached`（有提交）的警告时初始焦点在 `dialog-cancel`、确认按钮是 `delete-wt-force`；`commits` 的两个单选预选 `delete-wt-keep-branch`；几种情况同时成立时各段都显示、同意项取并集；请求里的 `path`、`head`、`sessions` 原样取自传入的 `status`
   - 流程：`worktreeStatus` → 确认 → `removeWorktree`。409 `worktree_changed` → 用响应里的 `status` 再弹一次确认（`changed:true`）；500 → 带着 `error` 重新打开同一个确认框；404 → `notify(wt.delete.gone)` 并返回 `null`；成功且带 `branchError` → `notify(wt.delete.branchKept)`；用户取消 → 返回 `null`
@@ -589,8 +612,8 @@
   - `test-sidebar.mjs › remove_result_closes_views`（经 `loadIndex()`）：`fix-login` 下打开着 2 个会话，流程返回 `endedSessions` 含这 2 个 id → 两个视图都被关闭，`views` 里没有它们，随后发出了一次 `listProjects` 和 `listSessions`
 - 完成定义：
   - `cd desktop && npm run typecheck && npm run test:worktree-dialogs && npm run test:sidebar && npm run test:dialog-layout && npm run test:i18n-parity` 退出码 0
-  - 在仓库根执行 `node .claude/skills/verify/scripts/gui-smoke.mjs`，以退出码 0 结束、没有 FAIL 行
-- 依赖：T6、T12、T13
+  - 在仓库根执行 `TMUX_TMPDIR=$(mktemp -d /tmp/vr-XXXXXX) node .claude/skills/verify/scripts/gui-smoke.mjs`，以退出码 0 结束、没有 FAIL 行
+- 依赖：T6b、T12、T13
 
 ### T15 新建对话框里写明 `-c` 的后果
 - 状态：待办
@@ -613,7 +636,7 @@
 - 状态：待办
 - 文件：新建 `desktop/src/renderer/shortcuts.ts`、`desktop/scripts/test-shortcuts.mjs`；修改 `desktop/src/renderer/index.ts`（启动时 `installShortcuts(window, …)`：`blocked` = 页面上有 `.modal-overlay` 或正在内联重命名；`count` 和 `activeIndex` 来自 `visibleSessions(…)`；`open` 调 `openExisting`）、`desktop/package.json`（`test:shortcuts`）
 - 接口：
-  - 使用：`visibleSessions`（T5）；`machineTrees`、`collapsedProjects`、折叠的机器集合、`renamingActive`、`openExisting`（`index.ts`，T6 和现有）
+  - 使用：`visibleSessions`（T5）；`machineTrees`、`collapsedProjects`、折叠的机器集合、`renamingActive`、`openExisting`（`index.ts`，T6b 和现有）
   - 提供：`type ShortcutAction`；`matchShortcut(e)`；`pickTarget(count, activeIndex, action)`；`installShortcuts(target: Window, deps: { blocked(): boolean; count(): number; activeIndex(): number; open(index: number): void }): () => void`。签名见 design 4.10，规则见 6.5：只在 `window` 的 keydown 捕获阶段监听；匹配且没有被 `blocked` 时 `preventDefault()` 加 `stopPropagation()`；被 `blocked` 时不切换也不拦截
 - 场景：R7.1–R7.5
 - 测试（`test-shortcuts.mjs`）：
@@ -625,13 +648,13 @@
 - 完成定义：
   - `cd desktop && npm run typecheck && npm run test:shortcuts && npm run test:tree && npm run test:terminal-clipboard` 退出码 0
   - 真实键盘确认一次（design V7 留下的风险：CDP 注入的按键不经过 macOS 的原生菜单分发）：用 `gui-smoke.mjs --keep` 留下的临时实例（临时 daemon 和 userData），先确认它是最前面的应用（`osascript -e 'tell application "System Events" to get name of first process whose frontmost is true'` 输出 `Electron`），再执行 `osascript -e 'tell application "System Events" to keystroke "2" using command down'` 和 `osascript -e 'tell application "System Events" to key code 30 using {command down, shift down}'`；期望会话切换、终端里没有多出字符。结果写进 design.md 第 10 节「变更」。最前面的应用不是它，或 `osascript` 因为没有辅助功能权限报错时，不发按键，在第 10 节记「真实键盘待人工确认」并交给 dev-test 的测试报告，不算本任务未完成
-- 依赖：T5、T6
+- 依赖：T5、T6b
 
 ### T17 新旧版本互连：整体核对（R9）
 - 状态：待办
-- 文件：新建 `desktop/scripts/test-legacy-daemon.mjs`、`vibe-remoted/internal/server/compat_test.go`；修改 `desktop/package.json`（`test:legacy-daemon`）、`docs/protocol.md`（在「协议版本」一节下加「版本互连」小节：新桌面端连协议 3 的 daemon 时怎么降级、旧桌面端连协议 4 的 daemon 时哪些行为变了，内容照 spec R9.1、R9.2 和 design 4.1、4.7、6.4）。各个降级分支已经写在 T4（`CHAT_MIN_PROTO`）、T5（分组）、T6（说明条和置灰）、T9（名字段）、T11（置灰原因）、T12（删除文案）里（d20）；这两个测试发现缺口时，在对应的文件里补上
+- 文件：新建 `desktop/scripts/test-legacy-daemon.mjs`、`vibe-remoted/internal/server/compat_test.go`；修改 `desktop/package.json`（`test:legacy-daemon`）、`docs/protocol.md`（在「协议版本」一节下加「版本互连」小节：新桌面端连协议 3 的 daemon 时怎么降级、旧桌面端连协议 4 的 daemon 时哪些行为变了，内容照 spec R9.1、R9.2 和 design 4.1、4.7、6.4）。各个降级分支已经写在 T4（`CHAT_MIN_PROTO`）、T5（分组）、T6b（说明条和置灰）、T9（名字段）、T11（置灰原因）、T12（删除文案）里（d20）；这两个测试发现缺口时，在对应的文件里补上
 - 接口：
-  - 使用：`loadIndex()`、`indexDom()`（`desktop/scripts/chat-test-util.mjs`，T6 扩过）；`nextCapability`、`buildTree`（T5）；`confirmDeleteSession`（T12）；`CHAT_MIN_PROTO`（T4）；`closeSession` 里的 409 处理（现有）
+  - 使用：`loadIndex()`、`indexDom()`（`desktop/scripts/chat-test-util.mjs`，T6b 扩过）；`nextCapability`、`buildTree`（T5）；`confirmDeleteSession`（T12）；`CHAT_MIN_PROTO`（T4）；`closeSession` 里的 409 处理（现有）
   - 提供：无新接口
 - 场景：R9.1、R9.2
 - 测试：
@@ -671,14 +694,14 @@
   - 现有的 `test-terminal-selection.mjs`、`test-terminal-layout.mjs` 不改、照常通过
 - 完成定义：
   - `cd desktop && npm run typecheck && npm run test:theme-tokens && npm run test:terminal-selection && npm run test:terminal-layout && npm run test:chat-view` 退出码 0
-  - 在仓库根执行 `node .claude/skills/verify/scripts/gui-smoke.mjs` 和 `node .claude/skills/verify/scripts/gui-chat-smoke.mjs`，都以退出码 0 结束、没有 FAIL 行
+  - 在仓库根执行 `TMUX_TMPDIR=$(mktemp -d /tmp/vr-XXXXXX) node .claude/skills/verify/scripts/gui-smoke.mjs` 和 `TMUX_TMPDIR=$(mktemp -d /tmp/vr-XXXXXX) node .claude/skills/verify/scripts/gui-chat-smoke.mjs`，都以退出码 0 结束、没有 FAIL 行
 - 依赖：T14、T15（它们是最后往 `styles.css` 追加规则的任务；先让追加的规则都在，再统一换颜色）
 
 ### T19 视觉 M1（二）：形态
 - 状态：待办
 - 文件：修改 `desktop/src/renderer/styles.css`（按效果页 `docs/changes/2026-11-16-project-worktrees/pages/prototype/index.html` 的 M1：`#main-area` 是外边距 10px、`--radius-card`、带边框和 `--shadow-card` 的浮起卡片，标题栏在卡片里、没有底边线；侧边栏宽 `--sidebar-width`、顶部 124px 的 `--sidebar-glow` 渐变；项目行、worktree 行、两行的会话行、选中行用 `--bg-selected` 和 `--radius-item`；`.chat-instance` 一段里用户消息是右对齐气泡（`--accent-soft`，圆角 17px），输入框是圆角 17px 的卡片、发送按钮是圆形，权限卡片、工具行、代码块、diff 按效果页；对话框用 `--shadow-lift` 和 `--scrim`）、`desktop/scripts/test-theme-tokens.mjs`（加形态用例）、`CLAUDE.md` 第 12 行（只改 c2 同意的那一句：「（侧边栏/状态栏对标 Claude Desktop）」改为「（侧边栏、标题、状态栏，外观以 `docs/changes/2026-11-16-project-worktrees` 选定的 M1 方案为准）」）、`.claude/skills/verify/scripts/gui-smoke.mjs` 和 `gui-chat-smoke.mjs`（只在选择器受影响时调整）
 - 接口：
-  - 使用：T18 定义的全部 CSS 变量；T6、T9、T11、T12、T14、T15 追加的 class 和 `data-testid`
+  - 使用：T18 定义的全部 CSS 变量；T6b、T9、T11、T12、T14、T15 追加的 class 和 `data-testid`
   - 提供：无新接口。不改 `desktop/src/renderer/chat/` 下任何 `.ts`，不改 DOM 结构和 `data-testid`；新规则继续只用变量
 - 场景：R8.1、R8.3（现有功能入口都在）、R8.5（对话框结构不变）
 - 测试：
@@ -689,7 +712,7 @@
 - 完成定义：
   - `cd desktop && npm run typecheck && npm test` 退出码 0
   - `git diff --stat HEAD~1 -- desktop/src/renderer/chat/ desktop/src/renderer/index.html` 没有输出
-  - 在仓库根执行 `node .claude/skills/verify/scripts/gui-smoke.mjs` 和 `node .claude/skills/verify/scripts/gui-chat-smoke.mjs`，都以退出码 0 结束、没有 FAIL 行（两者内含 `picker-layout.mjs` 和 `slash-menu-layout.mjs` 的测量）；`grep -c "^test(" .claude/skills/verify/scripts/gui-chat-smoke.mjs` 仍是 26；`git diff $(git merge-base HEAD change/dual-mode) -- .claude/skills/verify/scripts/gui-smoke.mjs .claude/skills/verify/scripts/gui-chat-smoke.mjs` 里没有被删掉或放宽的断言
+  - 在仓库根执行 `TMUX_TMPDIR=$(mktemp -d /tmp/vr-XXXXXX) node .claude/skills/verify/scripts/gui-smoke.mjs` 和 `TMUX_TMPDIR=$(mktemp -d /tmp/vr-XXXXXX) node .claude/skills/verify/scripts/gui-chat-smoke.mjs`，都以退出码 0 结束、没有 FAIL 行（两者内含 `picker-layout.mjs` 和 `slash-menu-layout.mjs` 的测量）；`grep -c "^test(" .claude/skills/verify/scripts/gui-chat-smoke.mjs` 仍是 26；`git diff $(git merge-base HEAD change/dual-mode) -- .claude/skills/verify/scripts/gui-smoke.mjs .claude/skills/verify/scripts/gui-chat-smoke.mjs` 里没有被删掉或放宽的断言
   - `sed -n 12p CLAUDE.md` 含「M1 方案为准」；`git diff HEAD~1 -- CLAUDE.md` 只有这一行
   - 用 `VIBE_REMOTE_DEBUG_PORT=9222` 起构建产物，经 CDP 截 3 张图（有三层的侧边栏加终端会话、对话会话、删除 worktree 确认框），和效果页 M1 并排存进 `evidence/m1-*.png`
 - 依赖：T18
@@ -709,7 +732,7 @@
   - `grep -c "rule:" .devflow.yml` 比改动前多 6
   - `grep -n "当前为 3\|worktree 模式查所选的源目录本身（不是仓库根，也不是新 worktree）。只读这一个字段" CLAUDE.md` 没有输出（旧表述已更新）
   - `git diff --stat HEAD~1` 只列出这 3 个文件
-- 依赖：T3、T4、T6、T7、T8、T10、T12、T13
+- 依赖：T3、T4、T6b、T7、T8、T10、T12、T13
 
 ## 进度
 
