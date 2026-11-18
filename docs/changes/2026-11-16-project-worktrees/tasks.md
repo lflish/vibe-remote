@@ -7,13 +7,13 @@
 这些约定对所有任务生效，任务里不再重复。
 
 - 接口的名字和签名以 design.md 第 4 节为准；任务里只写用到和提供的名字，章节号（如 4.2、6.1）都指 design.md。
-- 改协议的任务（T4、T7、T8、T10、T12、T13）在同一个任务里把三处一起改完：`vibe-remoted/internal/protocol/protocol.go`、`desktop/src/shared/protocol.ts` 与 `desktop/src/renderer/rest.ts`、`docs/protocol.md`。这些任务的完成定义都包含「按 `/protocol-sync` 的核对清单逐项核对，三处无差异」。
+- 改协议的任务（T4、T7、T8、T10、T12、T13）在同一个任务里把三处一起改完：`vibe-remoted/internal/protocol/protocol.go`、`desktop/src/shared/protocol.ts` 与 `desktop/src/renderer/rest.ts`、`docs/protocol.md`。这些任务的完成定义都包含「按 `/protocol-sync` 现有的第 1–3 步（逐帧、逐端点列表比对 JSON 名、可缺省性、路由）核对，三处无差异」；v4 专用的核对项到 T20 才写进那个 skill，不影响这里的核对。
 - 新增的界面文案，中英文键在用到它的任务里一起加进 `desktop/src/renderer/i18n.ts`，键名和中文原文照 design 7.4「文案」表；`cd desktop && npm run test:i18n-parity` 必须通过。
 - 新增的 desktop 测试脚本放 `desktop/scripts/`，写法同现有脚本（`chat-test-util.mjs` 的 `load()` 用 esbuild 打包后导入；需要 DOM 的用 jsdom），并在 `desktop/package.json` 里加 `test:<名字>` 且接进 `test` 这一串，所以 `make check` 会跑到。下文写成 `test-tree.mjs › 用例名`。
 - Go 测试里的 git 仓库一律建在 `t.TempDir()` 里。涉及 tmux 的 Go 测试，命令前带独立的 `TMUX_TMPDIR=$(mktemp -d)`，不和本机正在用的 vibe-remote 会话共用 socket。完整检查因此写成 `TMUX_TMPDIR=$(mktemp -d) make check`。
 - 每个任务的完成定义除了自己列的命令，都还包含：`TMUX_TMPDIR=$(mktemp -d) make check` 退出码为 0。
 - 新写的 CSS 只用 `var(--…)`，不写颜色字面量（T18 会断言 `:root` 之外没有颜色字面量）；T18 之前的任务只追加新规则，不改现有规则的颜色和形态。
-- 改了侧边栏或对话框结构的任务（T6、T9、T14、T19）负责同步调整 `.claude/skills/verify/scripts/gui-smoke.mjs`、`gui-chat-smoke.mjs` 里的选择器，用例数和断言不动（decisions #12）。
+- 改了侧边栏或对话框结构的任务（T6、T9、T12、T19）负责同步调整 `.claude/skills/verify/scripts/gui-smoke.mjs`、`gui-chat-smoke.mjs` 里的选择器，用例数和断言不动（decisions #12）。
 - 浏览器层的测试统一由 dev-test 写，实现任务负责加任务里列出的 `data-testid`。
 
 ## 测试计划
@@ -342,3 +342,33 @@
   - `capability_transitions`：`unknown` 加数组 → `v4`；`v4` 加 `null` → `legacy`；`v4` 加 `Error` → `v4`；`unknown` 加 `Error` → `unknown`
 - 完成定义：`cd desktop && npm run typecheck && npm run test:tree` 退出码 0，输出里每个用例一行 `ok - <用例名>`
 - 依赖：T4
+
+### T6 桌面端：三层侧边栏、标题和通知标题（最小闭环完成）
+- 状态：待办
+- 文件：
+  - 新建 `desktop/src/renderer/sidebar.ts`（`renderSidebar`、`renderToolbarTitle`，以及从 `index.ts` 搬来的 `startInlineRename`、`rendererIcon`）、`desktop/src/renderer/menu.ts`（定位在按钮下方的列表，Esc 和点外面关闭）、`desktop/scripts/test-sidebar.mjs`
+  - 修改 `desktop/src/renderer/index.ts`：`renderSidebar` 变成薄函数（`renamingActive` 为真时直接返回，否则拼 `SidebarModel` 调 `sidebar.ts`）；新增模块状态 `machineTrees`、`machineCaps`、`collapsedProjects`（存 `localStorage` 的 `vibe-remote.collapsed-projects`）；`refreshAllMachines` 每台机器并行多发一个 `listProjects()`，结果经 `nextCapability` 和 `buildTree` 更新状态（design 6.4）；`setActive` 同时展开当前会话所在的项目；`updateStatusBar` 的标题改用 `renderToolbarTitle`；3 处 `notifyDesktop` 的标题改用 `notificationTitle`；`sessionDisplayTitle` 优先取树里的 `name`
+  - 修改 `desktop/src/renderer/styles.css`（末尾追加「项目树」一段：`.project-group`、`.project-row`、`.worktree-group`、`.worktree-row`、`.worktree-empty`、`.worktree-tag`、`.session-meta`、`.machine-note`、`.row-actions`、菜单）、`desktop/src/renderer/i18n.ts`（`sidebar.project.*`、`sidebar.worktree.*`、`sidebar.session.*`、`sidebar.legacy.*`）、`desktop/scripts/chat-test-util.mjs`（`loadIndex()` 的 `__test` 多导出 `machineTrees`、`machineCaps`）、`desktop/package.json`（`test:sidebar`）、`.claude/skills/verify/scripts/gui-smoke.mjs` 和 `gui-chat-smoke.mjs`（只调选择器）
+- 接口：
+  - 使用：`buildTree`、`projectRollup`、`sessionContext`、`notificationTitle`、`nextCapability`、`TreeProject`、`TreeWorktree`、`Capability`（T5）；`listProjects`、`removeProject`、`RestError`（T4）
+  - 提供：`renderSidebar(container: HTMLElement, model: SidebarModel, actions: SidebarActions): void`；`renderToolbarTitle(container, ctx, fallback)`
+  - `SidebarModel`：每台机器的 `{ machine, key, online, collapsed, cap: Capability, tree: TreeProject[] }`，加上 `activeKey`、`collapsedProjects`、取某个会话状态点的 `dotOf(machineKey, sessionId)`，以及现有渲染读的其余模块状态
+  - `SidebarActions`：现有的 `open`、`rename`、`reload`、`deleteSession`、`toggleMachine`，新增 `toggleProject(machineKey, projectId)`、`removeProject(machine, project)`，以及三个可缺省的 `newSession?(machine, project, worktree)`、`newWorktree?(machine, project)`、`deleteWorktree?(machine, project, worktree)`。可缺省的回调没传时，对应的按钮和菜单项不渲染；本任务的 `index.ts` 只传前 7 个，后三个分别由 T11、T9、T14 接上
+  - 渲染规则照 design 7.4「侧边栏」的 DOM：`flat` 的项目没有 `.worktree-group`；会话行保留现有的 class 和 `data-session-id`、`data-ui`、`data-dot`；`gone` 的会话第二行显示「目录已不存在」；项目折叠且 `projectRollup` 是 `waiting` 时项目行显示点（d11）；项目行的两个字母标签和色相按 7.4
+  - 置灰规则：`cap` 不是 `v4` 时 `project-new-worktree`、`worktree-delete` 是 `disabled`，提示文字是 `sidebar.legacy.needUpgrade`；`cap` 是 `legacy` 时机器行下多一条 `machine-legacy-note`；项目的 worktree 列表里没有主目录（被白名单滤掉）时 `project-new-worktree` 也是 `disabled`；项目下有会话时 `project-remove` 是 `disabled` 并带 `sidebar.project.removeBlocked` 的说明；主目录那一行没有 `worktree-menu`
+  - 扁平项目行上的 `project-new-session`（d19）：git 项目把它唯一的 worktree 传给 `newSession`；非 git 项目传一个由项目本身拼成的节点（`path` = 项目 id，`label` = 项目名）；有 `error` 的项目不渲染这个按钮
+  - `removeProject` 回调在 `index.ts` 里调 `rest.removeProject(id)`，成功后立刻刷新这台机器；409 `project_has_sessions` 在状态栏显示 `sidebar.project.removeBlocked`
+- 场景：R1.1–R1.8、R2.1–R2.5、R2.7（界面一侧）、R5.7、R9.1（说明条和置灰）
+- data-testid：`machine-legacy-note`、`project-row`、`project-branch`、`project-error`、`project-dot`、`project-new-session`、`project-new-worktree`、`project-menu`、`project-remove`、`worktree-row`、`worktree-tag-main`、`worktree-tag-external`、`worktree-new-session`、`worktree-menu`、`worktree-delete`、`worktree-empty`、`session-row`、`session-gone`、`title-project`、`title-branch`、`title-session`
+- 测试（`test-sidebar.mjs`，jsdom；前 11 个直接调 `renderSidebar`，后 3 个经 `loadIndex()` 驱动 `index.ts`）：
+  - `renders_three_levels`、`flat_project_has_no_worktree_row`、`non_git_has_no_worktree_entries`、`empty_worktree_row`、`gone_session_meta`、`project_error_row_sessions_usable`、`collapsed_project_shows_waiting_dot`、`project_menu_remove`、`project_remove_disabled_with_sessions`、`main_worktree_has_no_menu`、`legacy_note_and_disabled_entries`：断言见测试计划 R1.1、R1.2、R1.3、R2.1、R2.5、R2.7、R1.6、R2.3、R2.4、R5.7、R9.1 各行
+  - `optional_actions_hide_entries`：不传 `newSession`、`newWorktree`、`deleteWorktree` 时，DOM 里没有 `worktree-new-session`、`project-new-session`、`project-new-worktree`、`worktree-menu`
+  - `toolbar_title_parts`：打开 `devflow` / `fix-login` 下的 `登录修复` → `#toolbar-title` 里依次是 `title-project`=`devflow`、`title-branch`=`fix-login`、`title-session`=`登录修复`；非 git 项目没有 `title-branch`；没有打开会话时显示机器名
+  - `keeps_tree_when_projects_request_fails`：第一轮 `listProjects` 成功、第二轮抛错 → `machineCaps` 仍是 `v4`，`project-row` 的数量不变
+  - `no_rerender_while_renaming`：内联重命名的输入框存在时触发一轮刷新 → 输入框还是同一个节点，已输入的字还在
+  - `collapsed_projects_persist`：折叠 `devflow` 后 `localStorage` 的 `vibe-remote.collapsed-projects` 含 `<machineKey>|<项目 id>`；重新加载后仍是折叠的；`setActive` 打开其中的会话会把它展开
+- 完成定义：
+  - `cd desktop && npm run typecheck && npm run test:sidebar && npm run test:i18n-parity && npm run test:chat-activity && npm run test:chat-render-guard` 退出码 0
+  - `cd desktop && npm run build` 之后 `node .claude/skills/verify/scripts/gui-smoke.mjs` 和 `node .claude/skills/verify/scripts/gui-chat-smoke.mjs` 全部 PASS；`git diff HEAD~1 -- .claude/skills/verify/scripts/` 里只有选择器字符串的改动，`grep -c "^test(" .claude/skills/verify/scripts/gui-chat-smoke.mjs` 仍是 26
+  - 手动看一眼最小闭环：`make dev-server` 加 `npm run dev`，在一个有 2 个 worktree 的仓库里各开一个会话，侧边栏是 机器 → 项目 → worktree → 会话 三层
+- 依赖：T4、T5
