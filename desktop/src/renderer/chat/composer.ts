@@ -332,20 +332,34 @@ export class Composer {
       return;
     }
     this.slashIndex = Math.min(this.slashIndex, this.slashItems.length - 1);
+    const scrolled = this.slashMenu.scrollTop;
     this.slashMenu.textContent = '';
-    this.slashMenu.appendChild(el('div', 'mh', t('chat.slash.title')));
+    const head = this.slashMenu.appendChild(el('div', 'mh', t('chat.slash.title')));
+    let selected: HTMLElement | null = null;
     this.slashItems.forEach((c, i) => {
       const item = el('div', `mi${i === this.slashIndex ? ' on' : ''}`);
       item.dataset.testid = 'chat-slash-item';
       item.setAttribute('role', 'option');
-      item.append(el('span', 'cmd', `/${c.name.replace(/^\//, '')}`), el('small', undefined, c.description ?? ''));
+      const name = `/${c.name.replace(/^\//, '')}`;
+      item.appendChild(el('span', 'cmd', name)).title = name;
+      if (c.description) item.appendChild(el('small', undefined, c.description)).title = c.description;
       item.addEventListener('mousedown', (e) => {
         e.preventDefault();
         this.pickSlash(i);
       });
       this.slashMenu.appendChild(item);
+      if (i === this.slashIndex) selected = item;
     });
     this.slashMenu.hidden = false;
+    this.revealSlashItem(selected, head.offsetTop, scrolled);
+  }
+
+  /** Restores the scroll position after a rebuild, moved just enough to show the selected row. */
+  private revealSlashItem(item: HTMLElement | null, pad: number, scrolled: number) {
+    if (!item) return;
+    const top = this.slashIndex ? item.offsetTop - pad : 0;
+    const bottom = item.offsetTop + item.offsetHeight + pad - this.slashMenu.clientHeight;
+    this.slashMenu.scrollTop = Math.min(top, Math.max(bottom, scrolled));
   }
 
   private closeSlash() {

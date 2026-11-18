@@ -303,6 +303,52 @@ test('slash menu and terminal-only commands', () => {
   assert.equal(input.value, '/login', 'input kept');
 });
 
+test('slash menu rows: description only when there is one, full text in titles, selection scrolled into view', () => {
+  const { client, $ } = makeView();
+  const long = 'A description that is far too long to fit in the menu. '.repeat(6).trim();
+  const slashCommands = [{ name: 'compact', description: long }, { name: 'plain' }, { name: 'empty', description: '' }, { name: 'plugin:a-skill', description: 'Skill' }, { name: 'zz', description: 'Last' }];
+  client.onChatState(state({ slashCommands }));
+  flush();
+  const input = $('chat-input');
+  const menu = $('chat-slash-menu');
+  const rows = () => [...menu.querySelectorAll('[data-testid="chat-slash-item"]')];
+  const key = (k) => input.dispatchEvent(new KeyboardEvent('keydown', { key: k, bubbles: true }));
+  // jsdom has no layout: 20px header, 50px rows, 5px padding, 130px of menu.
+  const fake = {
+    offsetTop() { const i = [...(this.parentElement?.children ?? [])].indexOf(this); return i <= 0 ? 5 : 25 + 50 * (i - 1); },
+    offsetHeight() { return this.classList.contains('mi') ? 50 : 20; },
+    clientHeight() { return this === menu ? 130 : 0; },
+  };
+  const saved = Object.keys(fake).map((k) => [k, Object.getOwnPropertyDescriptor(w.HTMLElement.prototype, k)]);
+  for (const [k, get] of Object.entries(fake)) Object.defineProperty(w.HTMLElement.prototype, k, { get, configurable: true });
+  try {
+    input.value = '/';
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+    assert.deepEqual(rows().map((r) => [...r.children].map((c) => c.tagName)), [['SPAN', 'SMALL'], ['SPAN'], ['SPAN'], ['SPAN', 'SMALL'], ['SPAN', 'SMALL']], 'no description element without a description');
+    assert.deepEqual(rows().map((r) => r.querySelector('.cmd').title), ['/compact', '/plain', '/empty', '/plugin:a-skill', '/zz']);
+    assert.equal(rows()[0].querySelector('small').textContent, long);
+    assert.equal(rows()[0].querySelector('small').title, long, 'full description in the title');
+    assert.equal(menu.querySelector('script, b, a'), null);
+    const seen = [];
+    for (const k of ['ArrowDown', 'ArrowDown', 'ArrowDown', 'ArrowDown', 'ArrowDown', 'ArrowUp', 'ArrowUp', 'ArrowUp']) {
+      key(k);
+      const on = rows().filter((r) => r.classList.contains('on'));
+      assert.equal(on.length, 1);
+      seen.push([on[0].querySelector('.cmd').textContent, menu.scrollTop]);
+    }
+    // Scrolls only as far as needed; the first row also shows the header.
+    assert.deepEqual(seen, [['/plain', 0], ['/empty', 50], ['/plugin:a-skill', 100], ['/zz', 150], ['/compact', 0], ['/zz', 150], ['/plugin:a-skill', 150], ['/empty', 120]]);
+    key('Escape');
+    assert.equal(menu.hidden, true, 'Esc closes the menu');
+    assert.equal(input.value, '/', 'Esc keeps the input');
+  } finally {
+    for (const [k, d] of saved) {
+      delete w.HTMLElement.prototype[k];
+      if (d) Object.defineProperty(w.HTMLElement.prototype, k, d);
+    }
+  }
+});
+
 test('terminal-only notice: closed when the session ends, relabelled on a locale switch (X1)', () => {
   const { view, client, $ } = makeView();
   view.onHandoff = () => {};

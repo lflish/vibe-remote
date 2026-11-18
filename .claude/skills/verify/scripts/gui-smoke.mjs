@@ -4,7 +4,8 @@
 // changes (an Electron major upgrade, terminal or clipboard work):
 //
 //   legacy machines.json → encrypted on launch (real safeStorage path)
-//   overview → new session → dir picker → terminal fills the window
+//   overview → new session → dir picker (fits 500/700/803px-high windows) →
+//   terminal fills the window
 //   typing → PTY echo; drag-select under mouse reporting + ⌘C; ⌘V paste
 //   navigation / window.open blocked; hook event → desktop notification
 //   daemon restart → reconnect banner → session recovered
@@ -32,6 +33,7 @@ import { join, resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createRequire } from 'node:module';
 import { randomBytes } from 'node:crypto';
+import { pickerLayout } from './picker-layout.mjs';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../../../..');
 const DESKTOP = join(ROOT, 'desktop');
@@ -266,6 +268,7 @@ async function main() {
   await cdp.evaluate(`document.querySelector('.workspace-mode-card:not([disabled])').click(), true`);
   await waitFor(() => cdp.evaluate(`(() => { const b = document.querySelector('.modal .modal-footer .btn-primary'); return !!b && !b.disabled; })()`), 15000, 'dir picker ready');
   ok('dir picker lists the remote directory');
+  for (const l of await pickerLayout(cdp)) check(l.problems.length === 0, `dir picker fits a ${l.height}px-high window`, l.problems.join('; '));
   await cdp.evaluate(`document.querySelector('.modal .modal-footer .btn-primary').click(), true`);
   await waitFor(async () => /\$ ?$|\$\s/m.test(await screenText()), 20000, 'shell prompt in terminal');
   ok('terminal attached and shows the remote shell prompt');
@@ -420,6 +423,7 @@ async function chatCases() {
     await waitFor(() => cdp.evaluate(`(() => { const c = ${$tid('picker-ui-chat')}; return !!c && !c.disabled; })()`), 15000, 'chat card enabled');
     await cdp.evaluate(`${$tid('picker-ui-chat')}.click(), true`);
     await waitFor(() => cdp.evaluate(`(() => { const b = document.querySelector('.modal .modal-footer .btn-primary'); return !!b && !b.disabled && ${$tid('picker-ui-chat')}.getAttribute('aria-pressed') === 'true'; })()`), 10000, 'picker ready with chat chosen');
+    for (const l of await pickerLayout(cdp)) check(l.problems.length === 0, `dir picker with chat chosen fits a ${l.height}px-high window`, l.problems.join('; '));
     await cdp.evaluate(`document.querySelector('.modal .modal-footer .btn-primary').click(), true`);
     await waitFor(() => cdp.evaluate(`(() => {
       const v = ${visibleChat};

@@ -48,8 +48,11 @@ export function openDirPicker(
     header.textContent = t('picker.chooseFolder', { name: machine.name });
     modal.appendChild(header);
 
+    const body = el('div', 'modal-body');
+    modal.appendChild(body);
+
     const pathBar = el('div', 'modal-path');
-    modal.appendChild(pathBar);
+    body.appendChild(pathBar);
 
     const uiBox = el('div', 'modal-modes modal-ui');
     const uiTitle = el('div', 'modal-flags-title');
@@ -65,7 +68,7 @@ export function openDirPicker(
     const uiFixed = el('div', 'modal-mode-note');
     uiFixed.textContent = t('picker.ui.note.fixed');
     uiBox.append(uiTitle, uiCards, uiNote, uiFixed);
-    modal.appendChild(uiBox);
+    body.appendChild(uiBox);
     termCard.addEventListener('click', () => setUI('terminal'));
     chatCard.addEventListener('click', () => {
       if (!chatCard.disabled) setUI('chat');
@@ -102,14 +105,14 @@ export function openDirPicker(
     modeNote.textContent = t('picker.modeNote');
     modeNote.hidden = mode !== 'worktree';
     modesBox.appendChild(modeNote);
-    modal.appendChild(modesBox);
+    body.appendChild(modesBox);
 
     const list = el('div', 'modal-list');
     list.setAttribute('aria-live', 'polite');
-    modal.appendChild(list);
+    body.appendChild(list);
 
     const flagsBox = el('div', 'modal-flags');
-    modal.appendChild(flagsBox);
+    body.appendChild(flagsBox);
     // How -c / bypass behave in the chat interface (prototype scene 4).
     const flagNote = el('div', 'modal-mode-note modal-ui-flag-note');
     flagNote.textContent = t('picker.ui.flagNote');
@@ -130,7 +133,7 @@ export function openDirPicker(
           const warn = el('div', 'modal-mode-note');
           warn.setAttribute('role', 'note');
           warn.textContent = t('picker.oldDaemon', { proto, want: PROTOCOL_VERSION, version: loaded.version ?? '?' });
-          modal.insertBefore(warn, modesBox);
+          body.insertBefore(warn, modesBox);
         }
         const flags = loaded.claude_flags || [];
         if (flags.length === 0) return;

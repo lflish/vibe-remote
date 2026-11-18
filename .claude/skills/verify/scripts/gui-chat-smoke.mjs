@@ -34,6 +34,8 @@ import { join, resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createRequire } from 'node:module';
 import { randomBytes, randomUUID } from 'node:crypto';
+import { pickerLayout } from './picker-layout.mjs';
+import { slashMenuLayout } from './slash-menu-layout.mjs';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../../../..');
 const DESKTOP = join(ROOT, 'desktop');
@@ -257,7 +259,7 @@ async function connectMain() {
 }
 
 const MOD = { alt: 1, ctrl: 2, meta: 4, shift: 8 };
-const KEYS = { Enter: [13, 'Enter', '\r'], Escape: [27, 'Escape'], Tab: [9, 'Tab'], ArrowDown: [40, 'ArrowDown'] };
+const KEYS = { Enter: [13, 'Enter', '\r'], Escape: [27, 'Escape'], Tab: [9, 'Tab'], ArrowDown: [40, 'ArrowDown'], ArrowUp: [38, 'ArrowUp'] };
 
 async function pressKey(key, modifiers = 0) {
   const [vk, code, txt] = KEYS[key] ?? [key.toUpperCase().charCodeAt(0), `Key${key.toUpperCase()}`, key];
@@ -449,6 +451,19 @@ test('R1.4', 'R1.4 claude too old: chat card disabled, upgrade claude', async ()
   await evidence('R1.4');
   await pickerCancel();
   return st.reason;
+});
+
+test('picker-layout', 'new-session dialog: buttons reachable in 500/700/803px-high windows', async () => {
+  // tallest state: chat chosen on a machine with launch flags (flag note shown)
+  await openPicker(CHAT.name);
+  await waitFor(() => ev(`document.querySelectorAll('.modal .modal-flag').length === 2`), 10000, 'launch flags listed');
+  await pickerChat();
+  const layout = await pickerLayout(cdp);
+  await evidence('picker-layout');
+  await pickerCancel();
+  const bad = layout.filter((l) => l.problems.length > 0);
+  assert(bad.length === 0, bad.map((l) => `${l.height}px: ${l.problems.join('; ')}`).join(' | '));
+  return layout.map((l) => `${l.height}px ok`).join(', ');
 });
 
 test('R17.2', 'R17.2 new desktop + protocol-2 daemon: terminal works, chat card says upgrade vibe-remoted', async () => {
@@ -783,6 +798,57 @@ test('R10', 'R10 slash menu and terminal-only commands', async () => {
   return `menu ${all.join(' ')}; "/re" → ${filtered.join(' ')}`;
 });
 
+test('slash-layout', 'slash menu with long names and descriptions: rows readable in 800x500 and 1280x800 windows, selection stays in view', async () => {
+  const menu = inChat('[data-testid="chat-slash-menu"]');
+  const input = inChat('[data-testid="chat-input"]');
+  const openMenu = async () => {
+    await ev(`${input}.focus(), true`);
+    await cdp.send('Input.insertText', { text: '/' });
+    await waitFor(() => ev(`!${menu}.hidden`), 5000, 'slash menu');
+  };
+  await openMenu();
+  const names = await ev(`[...${menu}.querySelectorAll('[data-testid="chat-slash-item"] .cmd')].map((c) => c.textContent)`);
+  assert(names.length >= 10 && names.some((n) => n.length > 150) && names.includes('/dev-requirements'), `the fake claude's long commands are missing: ${names.length} commands`);
+  const selected = () => ev(`(() => {
+    const m = ${menu}; const on = m.querySelector('.mi.on'); const mr = m.getBoundingClientRect(); const r = on.getBoundingClientRect();
+    return { name: on.querySelector('.cmd').textContent, shown: r.top >= mr.top - 0.5 && r.bottom <= mr.bottom + 0.5, scrollTop: m.scrollTop };
+  })()`);
+  const lost = [];
+  const layout = await slashMenuLayout(cdp, {
+    at: async ({ width, height }) => {
+      const where = `${width}x${height}`;
+      await evidence(`slash-layout-${where}`);
+      // once around the list and back over both ends
+      const walk = [...names.map((_, i) => ['ArrowDown', names[(i + 1) % names.length]]), ['ArrowUp', names[names.length - 1]], ['ArrowDown', names[0]]];
+      for (const [key, want] of walk) {
+        await pressKey(key);
+        const s = await selected();
+        if (s.name !== want) lost.push(`${where}: ${key} selected ${s.name.slice(0, 30)}, expected ${want.slice(0, 30)}`);
+        else if (!s.shown) lost.push(`${where}: ${key} → ${want.slice(0, 30)} is selected but scrolled out of the menu`);
+      }
+      const s = await selected();
+      if (s.scrollTop !== 0) lost.push(`${where}: back on the first command the list is still scrolled by ${s.scrollTop}px`);
+    },
+  });
+  for (const l of layout) for (const p of l.problems) console.log(`NOTE slash menu ${l.size.width}x${l.size.height}: ${p}`);
+  for (const l of lost) console.log(`NOTE slash menu ${l}`);
+  const problems = layout.flatMap((l) => l.problems.map((p) => `${l.size.width}x${l.size.height} ${p}`)).concat(lost);
+  // a click picks the row under the pointer
+  const at = await ev(`(() => { const r = [...${menu}.querySelectorAll('[data-testid="chat-slash-item"]')][1].getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + r.height / 2 }; })()`);
+  await cdp.send('Input.dispatchMouseEvent', { type: 'mousePressed', ...at, button: 'left', clickCount: 1 });
+  await cdp.send('Input.dispatchMouseEvent', { type: 'mouseReleased', ...at, button: 'left', clickCount: 1 });
+  const clicked = await ev(`({ value: ${input}.value, hidden: ${menu}.hidden })`);
+  await clearInput();
+  await openMenu();
+  await pressKey('Escape');
+  const escaped = await ev(`({ value: ${input}.value, hidden: ${menu}.hidden })`);
+  await clearInput();
+  assert(problems.length === 0, `${problems.length} layout problem(s), see the NOTE lines; first: ${problems.slice(0, 3).join(' | ')}`);
+  assert(clicked.value === `${names[1]} ` && clicked.hidden, `click on the second row: ${JSON.stringify(clicked)}`);
+  assert(escaped.value === '/' && escaped.hidden, `Esc: ${JSON.stringify(escaped)}`);
+  return layout.map((l) => `${l.size.width}x${l.size.height}: menu ${l.menu}, ${l.rows} rows (${l.whole} whole) ok`).join('; ');
+});
+
 test('R11', 'R11.1 permission mode: Shift+Tab cycle and menu', async () => {
   const mode = () => ev(`${inChat('[data-testid="chat-mode"]')}.dataset.mode`);
   assert((await mode()) === 'default', `start mode ${await mode()}`);
@@ -1029,7 +1095,7 @@ async function main() {
       { id: 'continue', label: '-c', arg: '-c' },
       { id: 'skip', label: '--dangerously-skip-permissions', arg: '--dangerously-skip-permissions' },
     ] },
-    env: { FAKE_CLAUDE_ARGV_LOG: join(work, 'argv.log') },
+    env: { FAKE_CLAUDE_ARGV_LOG: join(work, 'argv.log'), FAKE_CLAUDE_LONG_COMMANDS: '1' },
   });
   writeHistory(chatConfig, join(chatRoot, 'hist'));
 

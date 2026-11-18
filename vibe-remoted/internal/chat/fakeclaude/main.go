@@ -11,6 +11,8 @@
 // FAKE_CLAUDE_CAPS, FAKE_CLAUDE_HOOK_LINES, FAKE_CLAUDE_NO_INIT_REPLY,
 // FAKE_CLAUDE_STUBBORN, FAKE_CLAUDE_EXIT_AFTER_RESULT, FAKE_CLAUDE_ARGV_LOG,
 // FAKE_CLAUDE_PIDDIR, FAKE_CLAUDE_SIGNAL_LOG, FAKE_CLAUDE_RULES. See design 9.2.
+// FAKE_CLAUDE_LONG_COMMANDS=1 adds slash commands with long names and
+// descriptions (layout tests of the slash menu).
 package main
 
 import (
@@ -33,6 +35,35 @@ import (
 )
 
 const model = "claude-fable-5-1"
+
+// baseCommands is the slash command list of the fake; longCommands is added by
+// FAKE_CLAUDE_LONG_COMMANDS=1: plugin-style names, descriptions of several
+// lines, one without a description and one that is a single unbroken word.
+var baseCommands = [][2]string{
+	{"compact", "Clear conversation history but keep a summary in context"},
+	{"review", "Review a pull request"},
+	{"fake-skill", "A skill of the fake claude"},
+}
+
+var longCommands = [][2]string{
+	{"baoyu-post-to-wechat", "Posts content to WeChat Official Account (微信公众号) via API or Chrome CDP. Supports article posting (文章) with HTML, markdown, or plain text input, and image-text posting (贴图) with multiple images."},
+	{"dev-build", "开发（devflow 第 3 阶段）。在使用 devflow 的项目里，机器关口 B 放行后，或用户对某个需求说“开始开发”“开始实现”时使用。按 tasks.md 逐个任务先写测试再实现、提交，遇到问题自己裁决并记录，不停下来问用户。"},
+	{"dev-design", "技术设计和任务拆分（devflow 第 2 阶段）。需求确认后，或用户说“设计一下”“技术方案”“拆任务”时使用。"},
+	{"dev-release", "发布（devflow 第 5 阶段）。"},
+	{"dev-requirements", "需求讨论、需求评审与需求文档（devflow 第 1 阶段，用户必须参与的阶段）。用户提出新功能、新项目想法、较大的行为改动，或要写需求文档/PRD/spec 时使用。先读代码，做前提挑战、产品方案和范围模式评审，把理解、前提、范围、问题合成一条带推荐答案的消息。"},
+	{"posthog:signals-scout-customer-analytics-billing-and-usage", ""},
+	{"reverse-engineering-with-code-eval-and-ida-domain:ida-domain-scripting", "Write and run IDA Domain scripts against the binary open in IDA Pro: decompile functions, walk cross references, rename symbols and apply types, then summarize what the code does."},
+	{"unbroken-description", "https://example.com/" + strings.Repeat("a-very-long-path-segment/", 12)},
+	{"very-long-command-name-" + strings.Repeat("that-keeps-going-", 8) + "to-the-end", "A name longer than any menu is wide"},
+	{"zz-last", "The last command of the list"},
+}
+
+func commands() [][2]string {
+	if os.Getenv("FAKE_CLAUDE_LONG_COMMANDS") == "1" {
+		return append(append([][2]string{}, baseCommands...), longCommands...)
+	}
+	return baseCommands
+}
 
 type options struct {
 	print     bool
@@ -354,10 +385,14 @@ func (f *fake) init() map[string]any {
 	f.mu.Lock()
 	mode := f.mode
 	f.mu.Unlock()
+	names := []any{}
+	for _, c := range commands() {
+		names = append(names, c[0])
+	}
 	m := f.system("init", map[string]any{
 		"cwd": f.cwd, "tools": []any{"Task", "AskUserQuestion", "Bash", "Edit", "ExitPlanMode", "Grep", "Read", "Write"},
 		"mcp_servers": []any{}, "model": model + "[1m]", "permissionMode": mode,
-		"slash_commands": []any{"compact", "review", "fake-skill"}, "apiKeySource": "none",
+		"slash_commands": names, "apiKeySource": "none",
 		"output_style": "default", "agents": []any{"claude", "Explore"}, "skills": []any{"fake-skill"},
 		"plugins":            []any{map[string]any{"name": "fake-plugin", "path": "/opt/fake-plugin", "source": "fake-plugin@fake"}},
 		"analytics_disabled": true, "product_feedback_disabled": true,
@@ -461,12 +496,16 @@ func (f *fake) handleControl(id string, req map[string]any) {
 		if os.Getenv("FAKE_CLAUDE_NO_INIT_REPLY") == "1" {
 			return
 		}
+		cmds := []any{}
+		for _, c := range commands() {
+			hint := ""
+			if c[0] == "compact" {
+				hint = "<optional custom summarization instructions>"
+			}
+			cmds = append(cmds, map[string]any{"name": c[0], "description": c[1], "argumentHint": hint})
+		}
 		f.emit(f.controlResponse(id, map[string]any{
-			"commands": []any{
-				map[string]any{"name": "compact", "description": "Clear conversation history but keep a summary in context", "argumentHint": "<optional custom summarization instructions>"},
-				map[string]any{"name": "review", "description": "Review a pull request", "argumentHint": ""},
-				map[string]any{"name": "fake-skill", "description": "A skill of the fake claude", "argumentHint": ""},
-			},
+			"commands":                cmds,
 			"agents":                  []any{map[string]any{"name": "claude", "description": "General-purpose agent"}},
 			"output_style":            "default",
 			"available_output_styles": []any{"default"},
