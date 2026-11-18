@@ -286,3 +286,59 @@
   - `TestMemoryProjectStore`：增删查都可用，不创建任何文件
 - 完成定义：`cd vibe-remoted && go test -race -count=1 ./internal/session -run 'TestProjectStore|TestManaged|TestOpenProjectStore|TestMemoryProjectStore'` 输出 `ok`
 - 依赖：无
+
+### T4 协议 4：项目树端点 `GET /api/v1/projects`、`POST /api/v1/projects/remove`
+- 状态：待办
+- 文件：
+  - 新建 `vibe-remoted/internal/session/projects.go`（`Manager` 的方法）、`vibe-remoted/internal/session/projects_test.go`、`vibe-remoted/internal/server/projects.go`（两个处理函数）、`vibe-remoted/internal/server/projects_test.go`
+  - 修改 `vibe-remoted/internal/protocol/protocol.go`（`Version = 4`；类型 `ProjectsResponse`、`Project`、`ProjectWorktree`）、`vibe-remoted/internal/server/server.go`（`routes()` 加两条路由）、`vibe-remoted/cmd/vibe-remoted/main.go`（打开 `ProjectStore`，失败时改用内存清单并记一行日志，`mgr.SetProjectStore`）、`vibe-remoted/internal/session/manager.go` 和 `chat_manager.go`（新建会话成功后 `AddProject`；现有 worktree 模式建好后 `AddWorktree`、回滚时 `RemoveWorktree`；都在 `Manager.mu` 之外调用）
+  - 修改 `desktop/src/shared/protocol.ts`（`PROTOCOL_VERSION = 4`、`CHAT_MIN_PROTO = 3`、类型 `Project`、`ProjectWorktree`）、`desktop/src/renderer/rest.ts`（`listProjects`、`removeProject`、`RestError`）、`desktop/src/renderer/chat/availability.ts`（改用 `CHAT_MIN_PROTO`）、`desktop/src/renderer/i18n.ts`（`terminal.oldDaemon`、`picker.oldDaemon` 中英文改成 design 7.4 末尾的新文案）
+  - 修改 `docs/protocol.md`（版本表加第 4 行，先写本任务已落地的部分：两个新端点、`/api/v1/info.proto` 为 4、「所有 S→C 帧的字段与 v3 相同」；REST 一节加这两个端点的请求、响应、错误码）
+  - 随版本号改的断言（c1 已同意，decisions #11）：`vibe-remoted/internal/server/contract_test.go` 的 `TestInfoAndReadyProto3` 改名 `TestInfoAndReadyProto4`、3 改 4；`vibe-remoted/internal/protocol/protocol_test.go:41` 的 `Version != 3` 改为 4；`.claude/skills/verify/scripts/ws-chat-smoke.mjs:416` 的 `info.proto !== 3` 改为 4。`desktop/scripts/test-chat-client.mjs` 里假 daemon 发的 `proto: 3` 不改
+  - 测试 `desktop/scripts/test-chat-availability.mjs`、新建 `desktop/scripts/test-rest-projects.mjs`
+- 接口：
+  - 使用：`ListWorktrees`、`ResolveHome`、`gitAtTimeout`、`Runner.Home()`、`chat.Record.Project/Home`（T2）；`ProjectStore` 的全部方法（T3）；`checkToken`、`maxRESTBody`、`cfg.IsAllowedWorkdir`（现有）
+  - 提供（Go）：`(m *Manager) SetProjectStore(s *ProjectStore)`；`(m *Manager) Projects(allow func(path string) bool) []protocol.Project`；`(m *Manager) RemoveProject(id string) error`，错误是 `ErrProjectNotFound` 或 `ErrProjectHasSessions`
+  - 提供（TS）：`listProjects(): Promise<Project[] | null>`（404 → `null`，其他失败抛错）；`removeProject(id: string): Promise<void>`；`class RestError extends Error { status: number; code: string; body: unknown }`
+  - 行为照 design 4.2、4.3、5.4：每个项目 id 只跑一次 `ListWorktrees`，最多 8 个同时在跑，git 调用不在 `Manager.mu` 里；排序由 daemon 定；数组字段输出 `[]` 不输出 `null`；过滤掉 `prunable`、裸仓库本身、`allow` 不放行的；成功读到列表而创建记录的 `path` 不在其中时删掉那条记录；第一次调用时给没有归属的旧会话补归属（5.4），补出来的 git 项目进清单
+- 场景：R1.1、R1.3、R1.5、R2.1–R2.7（daemon 一侧）、R4.5、R9.1（`CHAT_MIN_PROTO`）、性能、安全
+- 测试（除注明的以外都在 `server/projects_test.go`，经 `httptest` 请求）：
+  - `TestProjectsTree`、`TestProjectsNonGitProject`、`TestProjectsListsSessionlessAndExternal`、`TestProjectsTwoSessionsOneWorktree`、`TestProjectsPrunedWorktreeSessionsMoveUp`、`TestProjectsHidesWorktreesOutsideAllowedRoots`、`TestProjectsRepoMissing`、`TestProjectsGitFailed`：断言见测试计划 R1.1、R1.3、R2.1、R4.5、R2.5、R2.6、R2.7 各行
+  - `TestProjectsResponseShape`：响应体有 `proto: 4`；没有会话的 worktree `sessions` 是 `[]`；detached 的一项有 `detached:true`、没有 `branch` 键；`head` 是 7 位；主目录有 `main:true`；T3 记录过的有 `managed:true`
+  - `TestProjectsOrderStable`：3 个项目共 8 个会话，连续 40 次响应体逐字节相同；名称 `Beta`、`alpha`、`gamma` 的顺序是 `alpha`、`Beta`、`gamma`；worktree 顺序是主目录、`a-branch`、`b-branch`、detached
+  - `TestProjectsSurviveSessionDeletionAndRestart`：删光会话后用同一个 `state_dir` 新建 `Manager` 和 `ProjectStore` → `devflow` 和 2 个 worktree 仍在
+  - `TestRemoveProjectKeepsDisk`、`TestProjectReappearsAfterNewSession`、`TestRemoveProjectWithSessions409`、`TestRemoveProjectNotFound`：断言见测试计划 R2.3、R2.4
+  - `TestNonGitProjectDisappearsWithLastSession`：`notes` 的最后一个会话删除后，响应里没有 `notes`（H18）
+  - `TestProjectsDropsStaleWorktreeRecord`：记录过的 worktree 被 `git worktree remove` 之后请求一次 → 记录没了；同一路径上再手工建一个同名分支的 worktree，它不是 `managed`
+  - `TestBackfillHomeForLegacyTmuxSessions`（session 包，需要 tmux）：会话的 tmux 选项里没有 `@vibe_remote_project` → 第一次 `Projects()` 之后有了，项目进了清单；`TestBackfillHomeForLegacyChatRecords`：没有 `project` 的对话记录经 `LoadChats` 后有了并已落盘
+  - `TestProjectsWithUnwritableStateDir`：用 `NewMemoryProjectStore()` → 只返回现存会话所在的项目，不报错
+  - `TestProjectsOneGitCallPerProject`（session 包）：20 个仓库各 5 个 worktree，`PATH` 前面放一个记数后转调真实 git 的包装脚本 → 一次 `Projects()` 的调用数是 20，同时在跑的不超过 8；`TestSessionsEndpointRunsNoGit`：同一环境下 `GET /api/v1/sessions` 的调用数是 0
+  - `TestNewEndpointsRequireToken`：两个新端点不带 token、带错 token 都是 401
+  - `test-chat-availability.mjs › proto3_daemon_supports_chat`：`info.proto` 是 3 且 `chat.supported` 为真 → `enabled` 为真；现有的 `proto 2` 用例照常通过
+  - `test-rest-projects.mjs`：`fetch` 返回 404 → `listProjects()` 得到 `null`；返回 500 → 抛 `RestError`，`status` 是 500；`removeProject` 遇到 409 → `RestError.code` 是 `project_has_sessions`
+- 完成定义：
+  - `cd vibe-remoted && TMUX_TMPDIR=$(mktemp -d) go test -race -count=1 ./internal/session ./internal/server ./internal/protocol -run 'TestProjects|TestRemoveProject|TestProjectReappears|TestNonGitProject|TestBackfillHome|TestSessionsEndpointRunsNoGit|TestNewEndpointsRequireToken|TestInfoAndReadyProto4|TestTerminalFramesUnchangedV3|TestProtocolChatFramesJSON'` 输出三行 `ok`
+  - `cd desktop && npm run test:chat-availability && npm run test:rest-projects` 都以退出码 0 结束
+  - `git diff --stat HEAD~1 -- vibe-remoted/internal/server/testdata vibe-remoted/internal/server/golden_test.go` 没有输出
+  - 按 `/protocol-sync` 核对：`Project`、`ProjectWorktree` 的 JSON 名在三处一致
+- 依赖：T2、T3
+
+### T5 桌面端：把会话和项目树合并成三层树（tree.ts，纯函数）
+- 状态：待办
+- 文件：新建 `desktop/src/renderer/tree.ts`、`desktop/scripts/test-tree.mjs`；修改 `desktop/package.json`（加 `test:tree`）
+- 接口：
+  - 使用：`SessionInfo`、`Project`（`desktop/src/shared/protocol.ts`，T4）；`Dot`（`desktop/src/renderer/chat/activity.ts`，现有）
+  - 提供：`TreeSession`、`TreeWorktree`、`TreeProject`、`Capability`；`buildTree(sessions, projects)`；`visibleSessions(machines, collapsedProjects)`；`projectRollup(project, dotOf)`；`sessionContext(tree, id)`；`notificationTitle(machineName, ctx)`；`nextCapability(prev, result)`。签名见 design 4.10，规则见 4.10 末尾的「`buildTree` 的规则」。文件里不引用 DOM
+- 场景：R1.1–R1.8（树的一侧）、R2.5、R2.7、R7.5、R9.1（旧 daemon 的分组和能力状态）
+- 测试（`test-tree.mjs`）：
+  - `two_worktrees_each_with_session`、`single_worktree_is_flat`、`non_git_project`、`detached_label_is_short_hash`、`gone_sessions`、`project_error`：断言见测试计划 R1.1、R1.2、R1.3、R1.8、R2.5、R2.7 各行
+  - `duplicate_names_get_numbers`：同一 worktree 下 `title` 都是 `devflow` 的 3 个会话 → `devflow`、`devflow 2`、`devflow 3`；中间那个改名为 `登录修复` → `devflow`、`登录修复`、`devflow 2`；不同 worktree 下同名的不互相编号
+  - `keeps_daemon_order`：输入的项目、worktree、会话 id 顺序原样保留；`legacy_order_sorted`：`projects` 为 `null` 时把同一组会话打乱 40 次，结果都相同，顺序符合 design 4.2 的规则
+  - `legacy_groups_by_session_fields`：`mode:"worktree"`、`sourceRepo:"/r/devflow"`、`worktreeRoot:"/r/devflow-worktrees/x"`、`branch:"vibe/x"` 的会话在项目 `/r/devflow` 的 worktree `vibe/x` 下，`managed` 为真；`workdir:"/r/devflow/src"` 的普通会话在同一项目的主目录行；`workdir:"/r/devflow-worktrees/x/sub"` 的普通会话在 `vibe/x` 行；`workdir:"/tmp/notes"` 自成一个项目
+  - `tolerates_stale_ids`：树里引用的 id 不在会话列表里 → 跳过、不抛错；`unreferenced_session_placed_by_legacy_rule`：会话列表里有、树里没有引用的会话按旧版规则归位，全树里只出现一次
+  - `rollup_waiting_only`：会话的点是 `idle`、`output` → `none`；有一个 `waiting` → `waiting`
+  - `visible_sessions_skip_collapsed`：断言见测试计划 R7.5；另外 worktree 层和扁平项目的会话按从上到下的顺序给出
+  - `session_context_and_notification_title`：`sessionContext` 返回 `{project:"devflow", branch:"fix-login", name:"登录修复"}`；通知标题是 `this-mac · devflow / fix-login · 登录修复`；非 git 是 `this-mac · notes · todo`；找不到 id 返回 `null`
+  - `capability_transitions`：`unknown` 加数组 → `v4`；`v4` 加 `null` → `legacy`；`v4` 加 `Error` → `v4`；`unknown` 加 `Error` → `unknown`
+- 完成定义：`cd desktop && npm run typecheck && npm run test:tree` 退出码 0，输出里每个用例一行 `ok - <用例名>`
+- 依赖：T4
