@@ -65,3 +65,51 @@
 | R2.7 | Go 集成 | `TestProjectsRepoMissing`、`TestProjectsGitFailed` | 清单里的仓库目录被删 → `error:"repo_missing"`；目录在但 git 失败或超时（`gitTimeout` 调成 50 ms，`PATH` 里放一个睡 1 秒的假 git）→ `error:"git_failed"`、`errorMessage` 非空；两种情况 `worktrees` 为 `[]`、会话全在项目级 `sessions` | T4 |
 | R2.7 | desktop 单元 | `test-tree.mjs › project_error`、`test-sidebar.mjs › project_error_row_sessions_usable` | `project-error` 显示「读取失败：<原因>」或「仓库目录不存在」；该项目的 `session-row` 仍在，点它调用 `open` 回调 | T5、T6 |
 | R2.7 | 浏览器 | R2.7 读不到 worktree 列表 | 删掉仓库目录后项目行显示读取失败和原因，已有会话照常能打开 | dev-test |
+| R3.1 | Go 单元 | `TestCreateNamedWorktree` | `Name:"fix-login"`、发起处在 `main` → 分支 `fix-login` 指向 `main` 当前提交，目录是 `<仓库父目录>/devflow-worktrees/fix-login`，返回的 `Home.Project` 是主目录 | T7 |
+| R3.1 | Go 集成 | `TestWSAttachWorktreeName` | attach 带 `mode:"worktree"`、`worktreeName:"fix-login"`、`ui:"chat"` → `ready.branch` 是 `fix-login`；`/api/v1/projects` 里出现该行，`managed:true`，`sessions` 含新会话 | T7 |
+| R3.1 | desktop 单元 | `test-worktree-dialogs.mjs › new_worktree_confirm_resolves` | 填 `fix-login`、选「对话」、点 `dialog-confirm` → 先调一次 `planWorktree(主目录, "fix-login")`，再以 `{mode:"worktree", workdir: 主目录, ui:"chat", worktreeName:"fix-login", worktreePath: plan 的 path}` 结束 | T9 |
+| R3.1 | 浏览器 | R3.1 新建成功 | 侧边栏 `devflow` 下出现 `fix-login`，其中打开了一个新的对话会话；磁盘上分支和目录都符合 | dev-test |
+| R3.2 | Go 单元 | `TestWorktreeDirName`、`TestCreateNamedWorktree/slash` | `change/foo` → 分支 `change/foo`，目录名 `change-foo` | T7 |
+| R3.2 | desktop 单元 | `test-worktree-name.mjs › dir_name` | `worktreeDirName("change/foo")` 是 `change-foo` | T9 |
+| R3.2 | 浏览器 | R3.2 名字里有斜杠 | 侧边栏显示 `change/foo`，目录名是 `change-foo` | dev-test |
+| R3.3 | Go 单元 | `TestValidateWorktreeName`、`TestWorktreeNameNeverReachesShell` | 读共用向量 `testdata/worktree-names.json`：空、`a b`、`a..b`、`-x`、`a~b` 都返回 `ErrInvalidWorktreeName`，`-x` 在任何 git 调用之前被拒；`$(touch${IFS}PWNED)` 这类名字不会生成文件 `PWNED` | T7 |
+| R3.3 | Go 集成 | `TestPlanWorktree/invalid_name` | `name` 为空或不合法 → `ok:false`、`error:"invalid_worktree_name"`，仓库里没有新分支和目录 | T8 |
+| R3.3 | desktop 单元 | `test-worktree-name.mjs › shared_vectors`、`test-session-form.mjs › invalid_name_disables_confirm` | 同一份向量在桌面端得到 `empty` / `whitespace` / `dotdot` / `leading_dash`；`wt-name-error` 显示对应文案，`dialog-confirm` 是 `disabled` | T9 |
+| R3.3 | 浏览器 | R3.3 名字不合法 | 逐个输入空、含空格、含 `..`、以 `-` 开头、`a~b`，对话框内显示原因，确认按钮不可用，磁盘上没有新东西 | dev-test |
+| R3.4 | Go 单元 | `TestCreateNamedWorktreeBranchExists` | 仓库已有分支 `fix-login` → `ErrWorktreeBranchExists`，目标目录不存在，原分支指向不变 | T7 |
+| R3.4 | Go 集成 | `TestPlanWorktree/branch_exists` | `ok:false`、`error:"worktree_branch_exists"` | T8 |
+| R3.4 | desktop 单元 | `test-worktree-dialogs.mjs › plan_rejection_keeps_dialog_open` | 确认时 plan 返回 `worktree_branch_exists` → `wt-name-error` 显示「分支 fix-login 已存在」，对话框还在，Promise 未结束；改名后再点能成功 | T9 |
+| R3.4 | 浏览器 | R3.4 分支名已存在 | 对话框内提示分支已存在，保持打开，改名后创建成功 | dev-test |
+| R3.5 | Go 单元 | `TestCreateNamedWorktreePathExists` | 目标目录已存在（非空、空目录各一例）→ `ErrWorktreePathExists`，没有新分支，目录内容不变 | T7 |
+| R3.5 | Go 集成 | `TestPlanWorktree/path_exists` | `ok:false`、`error:"worktree_path_exists"` | T8 |
+| R3.5 | 浏览器 | R3.5 目标目录已存在 | 先手工建好 `devflow-worktrees/fix-login` → 提示目录已存在，不创建、不覆盖 | dev-test |
+| R3.6 | Go 单元 | `TestCreateNamedWorktreeExcludesUncommitted` | 发起处有 1 个未提交的改动 → 新 worktree 里 `git status --porcelain` 为空，`HEAD` 等于发起处的 `HEAD` | T7 |
+| R3.6 | Go 集成 | `TestPlanWorktreeBase` | `base.branch` 是 `main`、`base.head` 是当前提交前 7 位；发起处 detached 时没有 `branch`、`detached:true`；`name` 为空时仍返回 `base` | T8 |
+| R3.6 | desktop 单元 | `test-session-form.mjs › base_info_text` | `wt-base-info` 的文字是「基于 main @ a1b2c3d，不包含未提交的改动」，`wt-target-path` 是 plan 的 `path` | T9 |
+| R3.6 | 浏览器 | R3.6 发起处有未提交改动 | 对话框写明基于哪个分支的哪个提交、不包含未提交的改动 | dev-test |
+| R3.7 | Go 集成 | `TestNamedWorktreeReplaySameID` | 同一个 `newSessionId` 加 `worktreeName:"fix-login"` 先后发 2 次、再并发发 2 次 → `git worktree list` 里只有一个 `fix-login`，`git branch --list fix-login` 一行，会话表里一个会话，两次 `ready.sessionId` 相同 | T7 |
+| R3.7 | desktop 单元 | `test-attach-replay.mjs › replay_carries_worktree_name` | `ready` 之前断线，自动重连和手动重试发出的 attach 都带同一个 `newSessionId` 和 `worktreeName` | T7 |
+| R3.7 | 浏览器 | R3.7 创建中途断线 | 确认后、就绪前切断连接，重连后只有一个 worktree、一个分支、一个会话 | dev-test |
+| R3.8 | Go 单元 | `TestCreateNamedWorktreeGitFailureLeavesNothing` | 容器目录 `devflow-worktrees` 预先建成只读（0555）让 `git worktree add` 失败 → 返回的错误含 git 的输出；分支 `fix-login` 不存在，目标目录不存在，`ProjectStore` 里没有记录 | T7 |
+| R3.8 | Go 集成 | `TestWSAttachWorktreeCreateFailed` | 同样的失败 → error 帧 `code:"create_failed"`、`fatal:true`、`message` 含 git 输出；`/api/v1/projects` 里没有新行 | T7 |
+| R3.8 | 浏览器 | R3.8 创建失败 | 容器目录只读时确认 → 显示 git 的错误信息，侧边栏不出现新行，磁盘上没有半截目录或分支 | dev-test |
+| R3.9 | desktop 单元 | `test-session-form.mjs › picker_worktree_mode_name_segment` | 目录选择器选「创建隔离 Worktree」且 `info.proto` 为 4 → 出现 `wt-name-input`，名字为空时 `dialog-confirm` 是 `disabled`，规则与 R3.2–R3.6 的用例共用同一个名字段 | T9 |
+| R3.9 | 浏览器 | R3.9 机器概览里的 Worktree 模式 | 出现名字输入框，空名字时确认按钮不可用，填合法名字后创建出同名分支 | dev-test |
+| R3.10 | Go 单元 | `TestResolveAllowedNewPath`、`TestCreateNamedWorktreePathNotAllowed` | `allowed_roots` 只含仓库 → `<仓库父目录>/devflow-worktrees/fix-login` 被拒，返回 `ErrWorktreePathNotAllowed`，错误信息含完整路径；没有新目录和分支；经符号链接祖先指到白名单外的路径同样被拒 | T7 |
+| R3.10 | Go 集成 | `TestPlanWorktree/path_not_allowed` | `ok:false`、`error:"worktree_path_not_allowed"`，`message` 含路径 | T8 |
+| R3.10 | desktop 单元 | `test-worktree-dialogs.mjs › plan_rejection_keeps_dialog_open`（`path_not_allowed` 分支） | `wt-name-error` 显示「目录不在允许的范围内：<路径>」 | T9 |
+| R3.10 | 浏览器 | R3.10 目标目录不在允许的范围内 | `allowed_roots` 只含仓库本身时新建 worktree → 提示不在允许的范围内并写出路径，磁盘不变 | dev-test |
+| R4.1 | desktop 单元 | `test-worktree-dialogs.mjs › worktree_session_dialog_shape` | 标题含 `fix-login`；`session-dialog-path` 含 `devflow` 和完整路径；对话框里没有目录列表和会话模式卡片；确认后以 `{mode:"normal", workdir: worktree 路径}` 结束 | T11 |
+| R4.1 | 浏览器 | R4.1 在 worktree 行上新建 | 点 `fix-login` 行的「新建会话」，对话框只让选界面和启动选项 | dev-test |
+| R4.2 | Go 集成 | `TestCreateInHiddenWorktreeDir` | 在 `<仓库>/.devflow-tmp/worktrees/general-skills` 新建终端会话 → 会话的 `workdir` 是该目录，归属的 worktree 根也是它 | T2 |
+| R4.2 | 浏览器 | R4.2 隐藏目录下的 worktree | 在 `change/general-skills` 行新建终端会话，在终端里执行 `pwd` 得到该目录 | dev-test |
+| R4.3 | Go 单元 | `TestChatTrust/worktree_of_trusted_main` | `.claude.json` 只信任主目录 → 对它的 worktree 根返回 `trusted` | T10 |
+| R4.3 | Go 集成 | `TestFSChatTrustWorktree`、`TestWSCreateChatInWorktreeOfTrustedMain` | `/api/v1/fs?path=<worktree>` 的 `chatTrust` 是 `trusted`；在该目录新建对话会话收到 `ready`（`ui:"chat"`） | T10 |
+| R4.3 | 浏览器 | R4.3 主目录已被 claude 信任 | 在 `general-skills` 上新建会话时「对话」可选，创建成功 | dev-test |
+| R4.4 | Go 单元 | `TestChatTrust/neither_trusted` | 主目录和 worktree 都没有信任记录 → `untrusted`；新建对话会话被拒，error 帧 `chat_unsupported` | T10 |
+| R4.4 | desktop 单元 | `test-chat-availability.mjs › worktree_untrusted_reason` | 传 `opts.mainPath` 时原因是 `picker.ui.chat.reason.worktree_untrusted`，文字含主目录路径；不传时沿用现有文案 | T11 |
+| R4.4 | 浏览器 | R4.4 主目录和该 worktree 都未被信任 | 「对话」置灰，原因写明先用终端界面在项目主目录打开一次 claude；「终端」可用 | dev-test |
+| R4.5 | Go 集成 | `TestProjectsTwoSessionsOneWorktree` | 同一 worktree 先后新建 2 个不带 `-c` 的会话 → 两个 id 都在该 worktree 的 `sessions` 里，按创建顺序 | T4 |
+| R4.5 | 浏览器 | R4.5 同一 worktree 再开一个 | `fix-login` 下出现第二个会话，两个都能输入 | dev-test |
+| R4.6 | Go 单元 | `TestChatTrust/worktree_itself_trusted` | 只有 worktree 路径本身被信任、主目录没有 → `trusted` | T10 |
+| R4.6 | 浏览器 | R4.6 worktree 本身已被信任 | 「对话」可选 | dev-test |
