@@ -14,7 +14,7 @@
 - **只用临时实例**（decisions #18）。任何任务、任何完成定义里启动的 daemon、Electron、tmux 都必须是临时的：随机端口、临时配置和 `state_dir`、临时 userData、`--use-mock-keychain`、独立的 `TMUX_TMPDIR`、独立的 `CLAUDE_CONFIG_DIR`。不连接本机正在运行的 daemon（127.0.0.1:8765），不碰默认 socket 上的 `tmux -L vibe-remote`，不用固定的调试端口（如 9222），不直接启动构建产物去读真实的 userData、machines.json 和钥匙串。需要一个开着的应用时，用 `gui-smoke.mjs --keep` 留下的实例。
 - daemon 里交给 git 的分支只写成完整引用名 `refs/heads/<名字>`，不调用 `git branch`，不用 `worktree add -b`；git 调用都经 `gitAt` / `gitAtTimeout`（固定 `LC_ALL=C`），不靠匹配 git 的报错文字做判断（design 4.9、7、7.1 第 7 条新规则）。
 - 每个任务的完成定义除了自己列的命令，都还包含：`TMUX_TMPDIR=$(mktemp -d) make check` 退出码为 0。
-- 新写的 CSS 只用 `var(--…)`，不写颜色字面量（T18 会断言 `:root` 之外没有颜色字面量）；T18 之前的任务只追加新规则，不改现有规则的颜色和形态。
+- 新写的 CSS 只用 `var(--…)`，不写颜色字面量（T18 会断言 `:root` 之外没有颜色字面量）；唯一的例外是项目行标签的 `hsl(var(--tag-hue) var(--…) var(--…))`，参数全是变量，不算字面量（design 7.5）。TS 里不写颜色。T18 之前的任务只追加新规则，不改现有规则的颜色和形态。
 - 改了侧边栏或对话框结构的任务（T6b、T9、T12、T19）负责同步调整 `.claude/skills/verify/scripts/gui-smoke.mjs`、`gui-chat-smoke.mjs` 里的选择器，用例数和断言不动（decisions #12）。
 - 完成定义里的 `gui-smoke.mjs`、`gui-chat-smoke.mjs` 都在仓库根执行，命令前都带 `TMUX_TMPDIR=$(mktemp -d /tmp/vr-XXXXXX)`。脚本自己会 `vite build`，并使用临时 daemon（20000–29999 的随机端口，配置和 `state_dir` 在临时目录）、临时 userData、`--use-mock-keychain` 和 30000–39999 的随机调试端口，不碰本机正在运行的 daemon 和 machines.json。必须带 `TMUX_TMPDIR` 的原因：`gui-smoke.mjs` 的终端 daemon 直接继承环境，脚本只给对话 daemon 设了独立的 tmux 目录（design V16），不带的话它会和本机真实 daemon 共用 `tmux -L vibe-remote`。基线：`gui-chat-smoke.mjs` 有 26 个 `test(` 用例，`gui-smoke.mjs` 有 14 处 `check(`；两个数只能增不能减。
 - 浏览器层的测试统一由 dev-test 写，实现任务负责加任务里列出的 `data-testid`。
@@ -254,10 +254,10 @@
 - 文件：修改 `vibe-remoted/internal/session/worktree.go`（新增 `UnmergedCommits`；`CleanupWorktree` 里两处会执行 `git branch -D` 的路径之前先查）；测试 `vibe-remoted/internal/session/worktree_test.go`、`vibe-remoted/internal/server/worktree_test.go`。不改桌面端、不改协议、不改任何现有测试。
 - 接口：
   - 使用：`gitAt(dir, args...)`、`WorktreePreservedError`、`RollbackWorktree(meta)`（都是现有的）
-  - 提供：`UnmergedCommits(repoDir, branch string) (int, error)`，`branch` 为空表示 `repoDir` 的 `HEAD`；命令见 design 第 3 节「未合并提交数」
+  - 提供：`UnmergedCommits(dir, branch string) (int, error)`，`branch` 为空表示 `dir` 的 `HEAD`；命令见 design 第 3 节「未合并提交数」。分支写成完整引用名 `refs/heads/<branch>`，不用短名：有同名 tag 时短名会被解析成 tag，把未合并的提交数成 0（design V10）
 - 场景：R5.5（H9 的判定）、R5.10（过渡行为，d5）、R5.11（detached 的计数）
 - 测试：
-  - `TestUnmergedCommits`：分支 `fix-login` 上 2 个独有提交 → 2；另建一个本地分支指向它之后 → 0；只被 `refs/remotes/origin/fix-login` 包含 → 0；子测试 `detached`：`branch` 传空，detached 的 `HEAD` 上 2 个不属于任何分支的提交 → 2
+  - `TestUnmergedCommits`：分支 `fix-login` 上 2 个独有提交 → 2；另建一个本地分支指向它之后 → 0；只被 `refs/remotes/origin/fix-login` 包含 → 0；子测试 `detached`：`branch` 传空，detached 的 `HEAD` 上 2 个不属于任何分支的提交 → 2；子测试 `tag_with_same_name`：分支 `fix-login` 有 2 个独有提交，另建一个同名 tag 指向 `main` → 仍是 2
   - `TestCleanupKeepsCleanWorktreeWithUnmergedCommits`：工作区干净、分支有 2 个未合并提交 → 返回 `*WorktreePreservedError`；目录在，分支在，`git rev-list --count main..<分支>` 是 2
   - `TestCleanupKeepsBranchWhenWorktreeDirMissing`：worktree 目录已被 `rm -rf`、分支有 2 个未合并提交 → 返回 `*WorktreePreservedError`，分支在
   - `TestCleanupFailsClosedWhenUnmergedCheckFails`：`UnmergedCommits` 执行失败（`meta.SourceRepo` 指向不存在的目录）→ 返回错误，目录和分支都没有被删
@@ -270,25 +270,35 @@
 
 ### T2 daemon：读 worktree 列表，创建会话时记下归属
 - 状态：待办
-- 文件：修改 `vibe-remoted/internal/session/worktree.go`（`Worktree`、`ListWorktrees`、`Home`、`ResolveHome`、`gitAtTimeout`、包级变量 `gitTimeout`）；`vibe-remoted/internal/session/runner.go`（`RunnerConfig.Project/Home`、`Runner.Home()`、`start` 里写 tmux 用户选项 `@vibe_remote_project` 和 `@vibe_remote_home`、`list-sessions` 格式串加到 11 列、`parseTmuxSessionLine` 接受 8、9、11 列）；`vibe-remoted/internal/session/manager.go`（`CreateOptions.Home`、创建时算归属、reconcile 找回会话时读回两个选项）；`vibe-remoted/internal/session/chat_manager.go`（创建对话会话时算归属并写进记录，`Handoff` 把对话会话的归属传给新终端会话）；`vibe-remoted/internal/chat/store.go`（`Record.Project`、`Record.Home`，`omitempty`，`version` 仍是 1）。测试 `worktree_test.go`、`runner_test.go`、`manager_test.go`、`chat_manager_test.go`、`vibe-remoted/internal/chat/store_test.go`
+- 文件：修改 `vibe-remoted/internal/session/worktree.go`（`Worktree`、`ListWorktrees`、`Home`、`ResolveHome`、`gitAtTimeout`、包级变量 `gitTimeout`；`gitAt` 和 `gitAtTimeout` 共用一个建命令的函数，固定 git 的运行环境）；`vibe-remoted/internal/session/runner.go`（`RunnerConfig.Project/Home/Created`、`Runner.Home()`、`start` 里写 tmux 用户选项 `@vibe_remote_project`、`@vibe_remote_home`、`@vibe_remote_created`、`list-sessions` 格式串加到 13 列、`parseTmuxSessionLine` 接受 8、9、13 列）；`vibe-remoted/internal/session/manager.go`（`CreateOptions.Home`、创建时算归属、reconcile 找回会话时读回归属和创建时间）；`vibe-remoted/internal/session/chat_manager.go`（创建对话会话时算归属并写进记录，`Handoff` 把对话会话的归属传给新终端会话）；`vibe-remoted/internal/chat/store.go`（`Record.Project`、`Record.Home`，`omitempty`，`version` 仍是 1）。测试 `worktree_test.go`、`runner_test.go`、`manager_test.go`、`chat_manager_test.go`、`vibe-remoted/internal/chat/store_test.go`
 - 接口：
   - 使用：`gitAt`、`CreateWorktree(sourceWorkdir, sessionID)`（现有签名，本任务不改）、`WorktreeMetadata`
-  - 提供：`type Worktree struct { Path, Branch, Head string; Detached, Bare, Prunable bool }`；`ListWorktrees(dir string) ([]Worktree, error)`；`type Home struct { Project, Path string; Git bool }`；`ResolveHome(dir string) Home`；`gitAtTimeout(dir string, args ...string)`；`(r *Runner) Home() (project, home string)`；`CreateOptions.Home *Home`；`chat.Record.Project`、`chat.Record.Home`
+  - 提供：`type Worktree struct { Path, Branch, Head string; Detached, Bare, Prunable, Locked bool; LockReason string }`；`ListWorktrees(dir string) ([]Worktree, error)`；`type Home struct { Project, Path, Repo string; Git, Single bool }`；`ResolveHome(dir string) (Home, error)`；`gitAtTimeout(dir string, args ...string)`；`(r *Runner) Home() (project, home string)`；`RunnerConfig.Created time.Time`；`CreateOptions.Home *Home`；`chat.Record.Project`、`chat.Record.Home`
+  - `ResolveHome` 的三种结果（design 4.9）：不是仓库 → `Home{Git:false}`、`nil`；git 失败或超时 → 错误；认不出主目录（列表第一项没标 `bare`、其下也没有 `.git`：子模块、`--separate-git-dir`）→ `Project` = `Path` = `rev-parse --show-toplevel`，`Repo` = 第一项的路径，`Single` 为真。「不是仓库」不靠匹配 git 的报错文字判断：`rev-parse` 失败且没有超时时，从目录逐级向上找 `.git`，一个都没有才算不是仓库
+  - git 的运行环境（design 4.9）：`LC_ALL=C`；去掉继承来的 `GIT_DIR`、`GIT_WORK_TREE`、`GIT_INDEX_FILE`、`GIT_COMMON_DIR`、`GIT_OBJECT_DIRECTORY`、`GIT_NAMESPACE`
+  - `ResolveHome` 返回错误时：会话照常创建，归属两个字段留空（tmux 选项写空串、对话记录不写），由 T4 的补归属在之后重试（design 5.1）
+  - 创建时间（d23，design 4.2、5.1）：`start` 把 `r.Created` 以 RFC 3339 纳秒 UTC 写进 `@vibe_remote_created`；找回会话时先用它，解析不了用 `#{session_created}`（unix 秒），都没有才用找回的时刻。`/api/v1/sessions` 里 `created` 的格式不变
   - 归属的规则（design 5.1、H19）：普通模式是 `ResolveHome(workdir)`；worktree 模式 `home` 是新 worktree 的根、`project` 是 `ResolveHome(meta.SourceRepo).Project`；交接出来的终端会话照抄对话会话的归属；之后不随 `cd` 变。`/api/v1/sessions`、`sessions` 帧、`ready` 帧不加任何字段
-- 场景：R1.3、R1.8、R4.2
+- 场景：R1.3、R1.5（重启后顺序不变）、R1.8、R4.2
 - 测试：
-  - `TestListWorktrees`：第一项是主目录，从链接 worktree 里、从符号链接路径调用时第一项的路径相同且是规范路径；detached 的一项 `Detached` 为真、`Branch` 为空、`Head` 是 40 位；目录被删的一项 `Prunable` 为真；裸仓库第一项 `Bare` 为真；`<仓库>/.devflow-tmp/worktrees/general-skills` 这样的隐藏目录照常列出
-  - `TestResolveHome`：主目录 → `Project` 和 `Path` 都是主目录；主目录的子目录 → `Path` 是主目录；链接 worktree 的子目录 → `Project` 是主目录、`Path` 是该 worktree 的根；`TestResolveHomeNonGit`：`notes` 目录 → `Git` 为假，`Project` 和 `Path` 都是目录本身
+  - `TestListWorktrees`：第一项是主目录，从链接 worktree 里、从符号链接路径调用时第一项的路径相同且是规范路径；detached 的一项 `Detached` 为真、`Branch` 为空、`Head` 是 40 位；目录被删的一项 `Prunable` 为真；裸仓库第一项 `Bare` 为真；`<仓库>/.devflow-tmp/worktrees/general-skills` 这样的隐藏目录照常列出；`git worktree lock` 过的一项 `Locked` 为真，带 `--reason usb` 的 `LockReason` 是 `usb`
+  - `TestResolveHome`：主目录 → `Project` 和 `Path` 都是主目录；主目录的子目录 → `Path` 是主目录；链接 worktree 的子目录 → `Project` 是主目录、`Path` 是该 worktree 的根；`TestResolveHomeNonGit`：`notes` 目录 → `Git` 为假，`Project` 和 `Path` 都是目录本身，错误为 `nil`；子测试 `zh_locale`：测试进程设 `LANG`、`LC_ALL` 为 `zh_CN.UTF-8` 时结果相同
+  - `TestResolveHomeSubmodule`、`TestResolveHomeSeparateGitDir`（design V11）：子模块的工作目录、`git init --separate-git-dir` 的工作目录 → `Git` 为真、`Single` 为真，`Project` 和 `Path` 都是工作目录的顶层（不是 git 目录），`Repo` 是 git 目录；它们的链接 worktree 同样是 `Single`，`Project` 是那个 worktree 自己
+  - `TestResolveHomeGitFailure`：目录上一级有一个空的 `.git` 目录（git 认不出的仓库）→ 返回错误，不是 `Git:false`；`gitTimeout` 调成 50 ms 加睡眠的假 git → 返回错误
+  - `TestGitEnvIsFixed`：测试进程设 `LC_ALL=zh_CN.UTF-8`、`GIT_DIR=<另一个仓库>/.git`、`GIT_WORK_TREE=/`，`PATH` 前面的 git 包装脚本把自己的环境记进文件 → 记录里 `LC_ALL=C`，没有 `GIT_DIR`、`GIT_WORK_TREE`；`ListWorktrees(<本仓库>)` 的第一项是本仓库，不是 `GIT_DIR` 指的那个
+  - `TestCreateSessionWhenGitFailsLeavesHomeEmpty`：创建会话时让 git 超时 → 会话建成，`Home()` 两个值都是空串，不是工作目录本身
   - `TestGitTimeoutKillsProcess`：`gitTimeout` 调成 50 ms，`PATH` 里放一个睡 5 秒的假 git → 1 秒内返回错误，假 git 进程已不存在
   - `TestWorktreeModeHome`：worktree 模式新建 → `runner.Home()` 的 `home` 是新 worktree 的根，`project` 是源仓库主目录
   - `TestCreateInHiddenWorktreeDir`：在 `.devflow-tmp/worktrees/general-skills` 新建普通会话 → `home` 是该目录
-  - `TestParseTmuxSessionLineColumns`：8、9、11 列的行都解析成功，11 列时读出 `project`、`home`；10 列被拒
+  - `TestParseTmuxSessionLineColumns`：8、9、13 列的行都解析成功，13 列时读出 `project`、`home`、两个创建时间；10、11、12 列被拒
+  - `TestCreatedSurvivesRestartTmux`（需要 tmux）：先后建 2 个会话，新建一个 `Manager` 找回 → 两个会话 `List()` 里的 `created` 与重启前逐字相同，内存里的 `Created` 相差 0 纳秒
+  - `TestCreatedFallsBackToTmuxSessionCreated`（需要 tmux）：把会话的 `@vibe_remote_created` 清掉（相当于升级前建的会话），等 2 秒后由新的 `Manager` 找回 → `Created` 比找回的时刻早至少 1 秒（来自 `session_created`）
   - `TestHomeSurvivesRestartTmux`（需要 tmux）：建会话后新建一个 `Manager`，`List()` 找回的会话 `Home()` 与重启前相同
   - `TestHomeDoesNotFollowCd`（需要 tmux）：会话里执行 `cd` 到另一个临时目录后由新的 `Manager` 找回 → `workdir` 跟着变成那个目录（现有行为），`Home()` 不变
   - `TestChatRecordHomeRoundTrip`：带 `project`、`home` 的记录写盘再读回相同；没有这两个字段的旧文件能读，字段为空
   - `TestHandoffCopiesHome`：对话会话在 worktree `fix-login` 里，交接出来的终端会话 `Home()` 与它相同（即使 `workdir` 是子目录）
 - 完成定义：
-  - `cd vibe-remoted && TMUX_TMPDIR=$(mktemp -d) go test -race -count=1 ./internal/session ./internal/chat -run 'TestListWorktrees|TestResolveHome|TestGitTimeout|TestWorktreeModeHome|TestCreateInHidden|TestParseTmuxSessionLine|TestHome|TestChatRecordHome|TestHandoffCopiesHome'` 输出两行 `ok`
+  - `cd vibe-remoted && TMUX_TMPDIR=$(mktemp -d) go test -race -count=1 ./internal/session ./internal/chat -run 'TestListWorktrees|TestResolveHome|TestGitTimeout|TestGitEnvIsFixed|TestWorktreeModeHome|TestCreateInHidden|TestCreateSessionWhenGitFails|TestParseTmuxSessionLine|TestHome|TestCreated|TestChatRecordHome|TestHandoffCopiesHome'` 输出两行 `ok`
   - `cd vibe-remoted && TMUX_TMPDIR=$(mktemp -d) go test -race -count=1 ./internal/server -run TestTerminalFramesUnchangedV3` 通过，`git status --short vibe-remoted/internal/server/testdata vibe-remoted/internal/server/golden_test.go` 没有输出
 - 依赖：无
 
@@ -296,19 +306,22 @@
 - 状态：待办
 - 文件：新建 `vibe-remoted/internal/session/projects_store.go`、`vibe-remoted/internal/session/projects_store_test.go`
 - 接口：
-  - 使用：`ValidSessionID(id)`（现有，`manager.go`）；写盘方式照 `vibe-remoted/internal/chat/store.go`（临时文件、fsync、rename，文件 0600）
-  - 提供：`OpenProjectStore(stateDir string) (*ProjectStore, error)`；`NewMemoryProjectStore() *ProjectStore`；`AddProject(id string)`；`RemoveProject(id string) bool`；`Projects() []string`；`AddWorktree(project, path, branch string)`；`RemoveWorktree(path string)`；`Managed(project, path, branch string) bool`
-  - 文件格式见 design 5.2；`Managed` 的两条规则见 design 5.3（第 2 条每次现算，不写文件）。`ProjectStore` 自己的互斥锁是叶子锁，每次修改在锁内同步写盘
+  - 使用：写盘方式照 `vibe-remoted/internal/chat/store.go`（临时文件、fsync、rename，文件 0600）
+  - 提供：`OpenProjectStore(stateDir string) (*ProjectStore, error)`；`NewMemoryProjectStore() *ProjectStore`；`AddProject(id string)`；`RemoveProject(id string) bool`；`Projects() []string`；`type WorktreeRecord struct { Project, Path, Branch, CreatedAt string }`；`AddWorktree(project, path, branch string)`（同一路径已有记录时替换，`CreatedAt` 取当前时间，纳秒精度）；`RemoveWorktree(path string)`；`Worktrees() []WorktreeRecord`（快照）；`RemoveWorktreeIfSame(rec WorktreeRecord) bool`（记录仍与 `rec` 逐字段相同时才删）；`Managed(project, path, branch string) bool`
+  - 文件格式见 design 5.2；`Managed` 的两条规则见 design 5.3（第 2 条每次现算，不写文件）。第 2 条里的 `X` 必须是 vibe-remote 生成过的会话 id 形态：`^[0-9]{13}-[0-9a-f]{8}$` 或 `^[0-9]{19}$`，不再用 `ValidSessionID`（d22）。`ProjectStore` 自己的互斥锁是叶子锁，每次修改在锁内同步写盘
+  - 写盘失败（design 5.2）：内存照常更新，记一行日志 `projects store: write failed: <错误>`，不 panic、不向调用方报错；下一次修改把整份清单重写
 - 场景：R2.2（清单跨重启）、R5.8（`managed` 的判定，H17）
 - 测试：
   - `TestProjectStoreRoundTrip`：`AddProject("/r/devflow")`、`AddWorktree("/r/devflow", "/r/devflow-worktrees/fix-login", "fix-login")` 后重新 `OpenProjectStore` 同一目录 → `Projects()` 含该 id，`Managed(…, "fix-login")` 为真；文件权限是 0600；重复 `AddProject` 不产生第二条
   - `TestProjectStoreRemove`：`RemoveProject` 对存在的 id 返回 true 并落盘，对不存在的返回 false；`RemoveWorktree` 之后 `Managed` 为假
   - `TestManagedRequiresPathAndBranch`：记录的路径相同、分支传 `other` → 假；分支传空（detached）→ 假；路径不同、分支相同 → 假
-  - `TestManagedLegacyVibeBranch`：没有任何记录时，`path` 是 `/r/devflow-worktrees/1794824025040-12b763ac`、分支是 `vibe/1794824025040-12b763ac` → 真；分支是 `vibe/另一个id` → 假；`path` 的末段是 `foo bar`（不满足 `ValidSessionID`）→ 假；容器目录不是 `<主目录名>-worktrees` → 假
+  - `TestManagedLegacyVibeBranch`：没有任何记录时，`path` 是 `/r/devflow-worktrees/1794824025040-12b763ac`、分支是 `vibe/1794824025040-12b763ac` → 真；末段和分支里的 id 是 19 位数字 → 真；分支是 `vibe/另一个id` → 假；末段是 `foo`、分支是 `vibe/foo` → 假；末段是 `1794824025040-12B763AC`（大写）或 `abc123` → 假；容器目录不是 `<主目录名>-worktrees` → 假
+  - `TestProjectStoreRemoveWorktreeIfSame`：取快照后把同一路径的记录删掉再 `AddWorktree`（`CreatedAt` 变了）→ 用快照里的旧记录调用返回 false，新记录还在；记录没变时返回 true 并落盘
+  - `TestProjectStoreWriteFailureLogsAndKeepsMemory`：打开后把目录改成 0500，`AddProject`、`AddWorktree` → 不 panic，`Projects()`、`Managed(…)` 反映新内容，捕获的日志里有 `projects store: write failed`；目录改回 0700 后再 `AddProject` 另一个 id → 重新打开能读到全部 3 条
   - `TestProjectStoreCorruptFileRenamed`：文件内容不是 JSON、`version` 是 2 各一例 → 打开成功、清单为空，目录里有 `projects.json.corrupt-<数字>`；随后 `AddProject` 写出新的 `projects.json`
   - `TestOpenProjectStoreUnwritableDir`：目录是 0500 → 返回错误
   - `TestMemoryProjectStore`：增删查都可用，不创建任何文件
-- 完成定义：`cd vibe-remoted && TMUX_TMPDIR=$(mktemp -d) go test -race -count=1 ./internal/session -run 'TestProjectStore|TestManaged|TestOpenProjectStore|TestMemoryProjectStore'` 输出 `ok`
+- 完成定义：`cd vibe-remoted && TMUX_TMPDIR=$(mktemp -d) go test -race -count=1 ./internal/session -run 'TestProjectStore|TestManaged|TestOpenProjectStore|TestMemoryProjectStore'` 输出 `ok`；`grep -n "ValidSessionID" vibe-remoted/internal/session/projects_store.go` 没有输出
 - 依赖：无
 
 ### T4 协议 4：项目树端点 `GET /api/v1/projects`、`POST /api/v1/projects/remove`
@@ -321,10 +334,12 @@
   - 随版本号改的断言（c1 已同意，decisions #11）：`vibe-remoted/internal/server/contract_test.go` 的 `TestInfoAndReadyProto3` 改名 `TestInfoAndReadyProto4`、3 改 4；`vibe-remoted/internal/protocol/protocol_test.go:41` 的 `Version != 3` 改为 4；`.claude/skills/verify/scripts/ws-chat-smoke.mjs:416` 的 `info.proto !== 3` 改为 4。`desktop/scripts/test-chat-client.mjs` 里假 daemon 发的 `proto: 3` 不改
   - 测试 `desktop/scripts/test-chat-availability.mjs`、新建 `desktop/scripts/test-rest-projects.mjs`
 - 接口：
-  - 使用：`ListWorktrees`、`ResolveHome`、`gitAtTimeout`、`Runner.Home()`、`chat.Record.Project/Home`（T2）；`ProjectStore` 的全部方法（T3）；`checkToken`、`maxRESTBody`、`cfg.IsAllowedWorkdir`（现有）
-  - 提供（Go）：`(m *Manager) SetProjectStore(s *ProjectStore)`；`(m *Manager) Projects(allow func(path string) bool) []protocol.Project`；`(m *Manager) RemoveProject(id string) error`，错误是 `ErrProjectNotFound` 或 `ErrProjectHasSessions`
+  - 使用：`ListWorktrees`、`ResolveHome`、`gitAtTimeout`、`Runner.Home()`、`chat.Record.Project/Home`（T2）；`ProjectStore` 的全部方法（T3）；`checkToken`、`maxRESTBody`、`cfg.ResolveAllowedWorkdir`（现有；它就是传给 `Projects` 的 `allow`。不用 `cfg.IsAllowedWorkdir`：它只做字面比较，根配成 `/tmp` 时会把 git 列出的 `/private/tmp/…` 全部滤掉，decisions #17）
+  - 提供（Go）：`(m *Manager) SetProjectStore(s *ProjectStore)`；`type AllowFunc func(path string) (canonical string, err error)`；`(m *Manager) Projects(allow AllowFunc) []protocol.Project`；`(m *Manager) RemoveProject(id string) error`，错误是 `ErrProjectNotFound` 或 `ErrProjectHasSessions`
   - 提供（TS）：`listProjects(): Promise<Project[] | null>`（404 → `null`，其他失败抛错）；`removeProject(id: string): Promise<void>`；`class RestError extends Error { status: number; code: string; body: unknown }`
-  - 行为照 design 4.2、4.3、5.4：每个项目 id 只跑一次 `ListWorktrees`，最多 8 个同时在跑，git 调用不在 `Manager.mu` 里；排序由 daemon 定；数组字段输出 `[]` 不输出 `null`；过滤掉 `prunable`、裸仓库本身、`allow` 不放行的；成功读到列表而创建记录的 `path` 不在其中时删掉那条记录；第一次调用时给没有归属的旧会话补归属（5.4），补出来的 git 项目进清单
+  - 行为照 design 4.2、4.3、5.4：每个项目 id 只跑一次 `ListWorktrees`，最多 8 个同时在跑，git 调用不在 `Manager.mu` 里；排序由 daemon 定；数组字段输出 `[]` 不输出 `null`；过滤掉 `prunable`、裸仓库本身、`allow` 报错的；认不出主目录的仓库（列表第一项没标 `bare`、其下也没有 `.git`）只生成一个 `main:true` 的 worktree（design 4.2 的判定表）
+  - 清理过期的创建记录按固定顺序做（design 5.2，decisions #20）：先 `store.Worktrees()` 取快照，再读各项目的列表，最后只对快照里、且 `path` 不在所属项目列表中的记录调 `RemoveWorktreeIfSame`。包内测试钩子 `testAfterWorktreeSnapshot func()` 在取完快照、读列表之前调用
+  - 每次调用都给还没有归属的会话补归属（5.4：升级前的会话，或创建时 git 失败的），`ResolveHome` 仍报错就留空、下次再试；补出来的 git 项目进清单。补不上的会话这一轮临时自成一个项目（id = 它的工作目录，`git:false`）
 - 场景：R1.1、R1.3、R1.5、R2.1–R2.7（daemon 一侧）、R4.5、R9.1（`CHAT_MIN_PROTO`）、性能、安全
 - 测试（除注明的以外都在 `server/projects_test.go`，经 `httptest` 请求）：
   - `TestProjectsTree`、`TestProjectsNonGitProject`、`TestProjectsListsSessionlessAndExternal`、`TestProjectsTwoSessionsOneWorktree`、`TestProjectsPrunedWorktreeSessionsMoveUp`、`TestProjectsHidesWorktreesOutsideAllowedRoots`、`TestProjectsRepoMissing`、`TestProjectsGitFailed`：断言见测试计划 R1.1、R1.3、R2.1、R4.5、R2.5、R2.6、R2.7 各行
@@ -334,6 +349,11 @@
   - `TestRemoveProjectKeepsDisk`、`TestProjectReappearsAfterNewSession`、`TestRemoveProjectWithSessions409`、`TestRemoveProjectNotFound`：断言见测试计划 R2.3、R2.4
   - `TestNonGitProjectDisappearsWithLastSession`：`notes` 的最后一个会话删除后，响应里没有 `notes`（H18）
   - `TestProjectsDropsStaleWorktreeRecord`：记录过的 worktree 被 `git worktree remove` 之后请求一次 → 记录没了；同一路径上再手工建一个同名分支的 worktree，它不是 `managed`
+  - `TestProjectsAllowedRootIsSymlink`：`allowed_roots` 是一个指向仓库父目录的符号链接，请求经 `httptest` 走真实的 `config.Config` → 主目录和 2 个 worktree 都在响应里（用 `cfg.IsAllowedWorkdir` 时这个用例会得到空的 `worktrees`）
+  - `TestProjectsSingleWorktreeRepo`：会话开在子模块的工作目录里、开在 `--separate-git-dir` 仓库里各一例 → 项目 id 是工作目录的顶层，`name` 是它的末段，`worktrees` 恰好一项（`path` = id，`main:true`，`branch` 是当前分支），会话在这一项的 `sessions` 里；响应里没有任何路径以 `/.git/modules/sub` 结尾
+  - `TestProjectsKeepsRecordCreatedDuringPoll`（session 包）：在 `testAfterWorktreeSnapshot` 里用真实的 git 建一个 worktree 并 `AddWorktree` → 这一次 `Projects()` 返回后记录还在；下一次 `Projects()` 里该行 `managed:true`。对照：记录在快照里、worktree 已被 `git worktree remove` → 记录被删
+  - `TestProjectsOrderSurvivesRestart`（session 包，需要 tmux）：同一 worktree 下先后建 2 个终端会话，记下 `Projects()` 里它们的先后；用新的 `Manager` 和同一个 `ProjectStore` 再取一次 → 先后相同
+  - `TestBackfillRetriesUntilGitWorks`（session 包）：会话创建时 git 超时（归属为空）→ 第一次 `Projects()`（git 仍超时）里它在一个 `git:false` 的临时项目下，清单里没有这个项目；恢复 git 后的下一次 `Projects()` 里它在仓库项目的主目录行下，归属已写回，项目进了清单
   - `TestBackfillHomeForLegacyTmuxSessions`（session 包，需要 tmux）：会话的 tmux 选项里没有 `@vibe_remote_project` → 第一次 `Projects()` 之后有了，项目进了清单；`TestBackfillHomeForLegacyChatRecords`：没有 `project` 的对话记录经 `LoadChats` 后有了并已落盘
   - `TestProjectsWithUnwritableStateDir`：用 `NewMemoryProjectStore()` → 只返回现存会话所在的项目，不报错
   - `TestProjectsOneGitCallPerProject`（session 包）：20 个仓库各 5 个 worktree，`PATH` 前面放一个记数后转调真实 git 的包装脚本 → 一次 `Projects()` 的调用数是 20，同时在跑的不超过 8；`TestSessionsEndpointRunsNoGit`：同一环境下 `GET /api/v1/sessions` 的调用数是 0
@@ -341,9 +361,10 @@
   - `test-chat-availability.mjs › proto3_daemon_supports_chat`：`info.proto` 是 3 且 `chat.supported` 为真 → `enabled` 为真；`proto2_reason_still_says_3`：`info.proto` 是 2 → 原因文字含「协议 2」和「需要协议 3」；现有用例不改、照常通过
   - `test-rest-projects.mjs`：`fetch` 返回 404 → `listProjects()` 得到 `null`；返回 500 → 抛 `RestError`，`status` 是 500；`removeProject` 遇到 409 → `RestError.code` 是 `project_has_sessions`
 - 完成定义：
-  - `cd vibe-remoted && TMUX_TMPDIR=$(mktemp -d) go test -race -count=1 ./internal/session ./internal/server ./internal/protocol -run 'TestProjects|TestRemoveProject|TestProjectReappears|TestNonGitProject|TestBackfillHome|TestSessionsEndpointRunsNoGit|TestNewEndpointsRequireToken|TestInfoAndReadyProto4|TestTerminalFramesUnchangedV3|TestProtocolChatFramesJSON'` 输出三行 `ok`
+  - `cd vibe-remoted && TMUX_TMPDIR=$(mktemp -d) go test -race -count=1 ./internal/session ./internal/server ./internal/protocol -run 'TestProjects|TestRemoveProject|TestProjectReappears|TestNonGitProject|TestBackfill|TestSessionsEndpointRunsNoGit|TestNewEndpointsRequireToken|TestInfoAndReadyProto4|TestTerminalFramesUnchangedV3|TestProtocolChatFramesJSON'` 输出三行 `ok`
   - `cd desktop && npm run test:chat-availability && npm run test:rest-projects` 都以退出码 0 结束
   - `git diff --stat HEAD~1 -- vibe-remoted/internal/server/testdata vibe-remoted/internal/server/golden_test.go` 没有输出
+  - `grep -rn "IsAllowedWorkdir" vibe-remoted/internal/server vibe-remoted/internal/session vibe-remoted/cmd --include='*.go' | grep -v _test.go` 没有输出
   - 按 `/protocol-sync` 核对：`Project`、`ProjectWorktree` 的 JSON 名在三处一致
 - 依赖：T2、T3
 
@@ -352,7 +373,7 @@
 - 文件：新建 `desktop/src/renderer/tree.ts`、`desktop/scripts/test-tree.mjs`；修改 `desktop/package.json`（加 `test:tree`）
 - 接口：
   - 使用：`SessionInfo`、`Project`（`desktop/src/shared/protocol.ts`，T4）；`Dot`（`desktop/src/renderer/chat/activity.ts`，现有）
-  - 提供：`TreeSession`、`TreeWorktree`、`TreeProject`、`Capability`；`buildTree(sessions, projects)`；`visibleSessions(machines, collapsedProjects)`；`projectRollup(project, dotOf)`；`sessionContext(tree, id)`；`notificationTitle(machineName, ctx)`；`nextCapability(prev, result)`。签名见 design 4.10，规则见 4.10 末尾的「`buildTree` 的规则」。文件里不引用 DOM
+  - 提供：`TreeSession`、`TreeWorktree`、`TreeProject`、`Capability`；`buildTree(sessions, projects)`；`visibleSessions(machines, collapsedProjects)`；`projectRollup(project, dotOf)`；`sessionContext(tree, id)`；`notificationTitle(machineName, ctx)`；`nextCapability(prev, result)`；`projectHue(id)`（项目 id 的 FNV-1a 32 位哈希对 360 取模，T6b 用它给项目行标签定色相）；`countActiveSessionsAt(sessions, dir)`（`workdir` 等于 `dir` 且 `state` 不是 `ended` 的会话数，T15 用，d24）。签名见 design 4.10，规则见 4.10 末尾的「`buildTree` 的规则」。文件里不引用 DOM
 - 场景：R1.1–R1.8（树的一侧）、R2.5、R2.7、R7.5、R9.1（旧 daemon 的分组和能力状态）
 - 测试（`test-tree.mjs`）：
   - `two_worktrees_each_with_session`、`single_worktree_is_flat`、`non_git_project`、`detached_label_is_short_hash`、`gone_sessions`、`project_error`：断言见测试计划 R1.1、R1.2、R1.3、R1.8、R2.5、R2.7 各行
@@ -364,37 +385,65 @@
   - `visible_sessions_skip_collapsed`：断言见测试计划 R7.5；另外 worktree 层和扁平项目的会话按从上到下的顺序给出
   - `session_context_and_notification_title`：`sessionContext` 返回 `{project:"devflow", branch:"fix-login", name:"登录修复"}`；通知标题是 `this-mac · devflow / fix-login · 登录修复`；非 git 是 `this-mac · notes · todo`；找不到 id 返回 `null`
   - `capability_transitions`：`unknown` 加数组 → `v4`；`v4` 加 `null` → `legacy`；`v4` 加 `Error` → `v4`；`unknown` 加 `Error` → `unknown`
+  - `project_hue_stable`：同一个 id 调用 100 次结果相同，是 0–359 的整数；`/r/devflow` 和 `/r/new-api` 的结果不同；空串不抛错
+  - `count_active_sessions_at`：`/r/devflow` 下 1 个运行中的终端会话、1 个 `state:"ended"` 的对话会话、1 个 `workdir` 是 `/r/devflow/src` 的会话 → `countActiveSessionsAt(sessions, '/r/devflow')` 是 1，对 `/r/devflow/src` 是 1，对 `/r/other` 是 0
 - 完成定义：`cd desktop && npm run typecheck && npm run test:tree` 退出码 0，输出里每个用例一行 `ok - <用例名>`
 - 依赖：T4
+
+### T6a 桌面端：侧边栏渲染原样搬到 `sidebar.ts`（只搬不改）
+- 状态：待办
+- 文件：
+  - 新建 `desktop/src/renderer/sidebar.ts`：从 `index.ts` 原样搬来 `renderSidebar` 的函数体（现 1100–1282 行）、`startInlineRename`（1288–1334 行）、`rendererIcon`（98 行起）。新建 `desktop/scripts/test-sidebar.mjs`、`desktop/scripts/fixtures/sidebar-flat.html`（搬之前生成的 DOM 快照）
+  - 修改 `desktop/src/renderer/index.ts`：`renderSidebar()` 变成薄函数（`renamingActive` 为真时直接返回，否则用模块状态拼出 `SidebarModel`、把现有的处理逻辑包成 `SidebarActions`，调 `sidebar.ts`）；其余用到 `rendererIcon` 的地方改为从 `sidebar.ts` 导入。修改 `desktop/package.json`（`test:sidebar`）
+  - 不改：`styles.css`、`i18n.ts`、`chat/` 下的文件、两份 gui 冒烟脚本、任何现有测试
+- 接口：
+  - 使用：`index.ts` 现有的模块状态和函数（`machines`、`machineSessions`、`machineOnline`、`collapsedMachines`、`views`、`sessionDots`、`activeKey`、`overviewMachineKey`、`reloadingSessions`、`openExisting`、`closeSession`、重载和打开机器概览的现有逻辑）
+  - 提供：`renderSidebar(container: HTMLElement, model: SidebarModel, actions: SidebarActions): void`；`rendererIcon(name)`（导出，签名不变）
+  - `SidebarModel`（本任务的形状，T6b 在它上面扩）：`machines: { machine, key, online, collapsed, sessions: SessionInfo[] }[]`、`activeKey`、`overviewMachineKey`、`dotOf(machineKey, sessionId): Dot`、`isOpen(viewKey): boolean`、`isReloading(viewKey): boolean`
+  - `SidebarActions`（本任务的形状）：`open(machine, session)`、`openOverview(machine)`、`rename(machine, session, name)`、`setRenaming(active: boolean)`、`reload(machine, session)`、`deleteSession(machine, session)`、`toggleMachine(machineKey)`。确认框（重载、删除的 `window.confirm`）仍在 `index.ts` 的回调里，原样不动
+  - `sidebar.ts` 不从 `index.ts` 导入任何东西（否则是循环引用）：状态只经 `model` 读，改动只经 `actions` 发出。生成的 DOM、class、属性、事件行为与搬之前逐字节相同
+- 场景：无新场景（纯重构）；守住 R8.3（现有功能入口都在）
+- 测试（`test-sidebar.mjs`，jsdom，经 `loadIndex()` 驱动 `index.ts`）：
+  - `flat_dom_snapshot_unchanged`：固定的一组数据（2 台机器；3 个会话：一个终端、一个状态点是 `waiting` 的对话、一个当前打开的；一台机器折叠）下 `#machine-list` 的 `innerHTML` 与 `fixtures/sidebar-flat.html` 逐字节相同。**先写这个用例并用还没搬的代码生成快照**（`UPDATE_SNAPSHOT=1 npm run test:sidebar`），单独提交；再搬代码，搬完后不带 `UPDATE_SNAPSHOT` 通过
+  - `no_rerender_while_renaming`：内联重命名的输入框存在时触发一轮刷新 → 输入框还是同一个节点，已输入的字还在
+  - `inline_rename_commits`：双击会话名 → 出现输入框；改成 `登录修复` 按回车 → `rename` 回调收到这个名字一次；按 Esc → 不调用
+  - `actions_fire_once`：点会话行 → `open` 一次；点关闭按钮并接受确认 → `deleteSession` 一次；点机器的折叠按钮 → `toggleMachine` 一次
+- 完成定义：
+  - `cd desktop && npm run typecheck && npm test` 退出码 0
+  - 在仓库根执行 `TMUX_TMPDIR=$(mktemp -d /tmp/vr-XXXXXX) node .claude/skills/verify/scripts/gui-smoke.mjs` 和 `TMUX_TMPDIR=$(mktemp -d /tmp/vr-XXXXXX) node .claude/skills/verify/scripts/gui-chat-smoke.mjs`，都以退出码 0 结束、没有 FAIL 行；`git diff --stat $(git merge-base HEAD change/dual-mode) -- .claude/skills/verify/scripts/gui-smoke.mjs .claude/skills/verify/scripts/gui-chat-smoke.mjs` 在本任务前后的输出相同（本任务没有改这两个脚本）
+  - 本任务是两个提交：先是快照用例加快照文件（此时 `npm run test:sidebar` 已经通过），再是搬家；第二个提交的 `git show --stat HEAD` 只列出 `index.ts`、`sidebar.ts`、`test-sidebar.mjs`，其中 `index.ts` 净减少不少于 200 行，`git show HEAD -- desktop/scripts/fixtures/` 没有输出（快照没有被改）
+  - `grep -n "from './index'" desktop/src/renderer/sidebar.ts` 没有输出
+- 依赖：无
 
 ### T6b 桌面端：三层侧边栏、标题和通知标题（最小闭环完成）
 - 状态：待办
 - 文件：
-  - 新建 `desktop/src/renderer/sidebar.ts`（`renderSidebar`、`renderToolbarTitle`，以及从 `index.ts` 搬来的 `startInlineRename`、`rendererIcon`）、`desktop/src/renderer/menu.ts`（定位在按钮下方的列表，Esc 和点外面关闭）、`desktop/scripts/test-sidebar.mjs`
-  - 修改 `desktop/src/renderer/index.ts`：`renderSidebar` 变成薄函数（`renamingActive` 为真时直接返回，否则拼 `SidebarModel` 调 `sidebar.ts`）；新增模块状态 `machineTrees`、`machineCaps`、`collapsedProjects`（存 `localStorage` 的 `vibe-remote.collapsed-projects`）；`refreshAllMachines` 每台机器并行多发一个 `listProjects()`，结果经 `nextCapability` 和 `buildTree` 更新状态（design 6.4）；`setActive` 同时展开当前会话所在的项目；`updateStatusBar` 的标题改用 `renderToolbarTitle`；3 处 `notifyDesktop` 的标题改用 `notificationTitle`；`sessionDisplayTitle` 优先取树里的 `name`
-  - 修改 `desktop/src/renderer/styles.css`（末尾追加「项目树」一段：`.project-group`、`.project-row`、`.worktree-group`、`.worktree-row`、`.worktree-empty`、`.worktree-tag`、`.session-meta`、`.machine-note`、`.row-actions`、菜单）、`desktop/src/renderer/i18n.ts`（`sidebar.project.*`、`sidebar.worktree.*`、`sidebar.session.*`、`sidebar.legacy.*`）、`desktop/scripts/chat-test-util.mjs`（`loadIndex()` 的 `__test` 多导出 `machineTrees`、`machineCaps`）、`desktop/package.json`（`test:sidebar`）、`.claude/skills/verify/scripts/gui-smoke.mjs` 和 `gui-chat-smoke.mjs`（只调选择器）
+  - 修改 `desktop/src/renderer/sidebar.ts`（T6a 搬好的 `renderSidebar` 改成三层结构；新增 `renderToolbarTitle`）、`desktop/scripts/test-sidebar.mjs`（T6a 的快照用例 `flat_dom_snapshot_unchanged` 和它的快照文件在这里删除：DOM 按 design 7.4 改成三层，由下面的用例接替；T6a 的另外 3 个用例保留并保持通过）；新建 `desktop/src/renderer/menu.ts`（定位在按钮下方的列表，Esc 和点外面关闭）
+  - 修改 `desktop/src/renderer/index.ts`：`renderSidebar` 这个薄函数改为拼新的 `SidebarModel`；新增模块状态 `machineTrees`、`machineCaps`、`collapsedProjects`（存 `localStorage` 的 `vibe-remote.collapsed-projects`）；`refreshAllMachines` 每台机器并行多发一个 `listProjects()`，结果经 `nextCapability` 和 `buildTree` 更新状态（design 6.4）；`setActive` 同时展开当前会话所在的项目；`updateStatusBar` 的标题改用 `renderToolbarTitle`；3 处 `notifyDesktop` 的标题改用 `notificationTitle`；`sessionDisplayTitle` 优先取树里的 `name`
+  - 修改 `desktop/src/renderer/styles.css`（末尾追加「项目树」一段：`.project-group`、`.project-row`、`.project-tag`、`.worktree-group`、`.worktree-row`、`.worktree-empty`、`.worktree-tag`、`.session-meta`、`.machine-note`、`.row-actions`、菜单；`:root` 里追加 `--tag-bg-s: 62%`、`--tag-bg-l: 90%`、`--tag-fg-s: 48%`、`--tag-fg-l: 30%` 四个变量）、`desktop/src/renderer/i18n.ts`（`sidebar.project.*`、`sidebar.worktree.*`、`sidebar.session.*`、`sidebar.legacy.*`）、`desktop/scripts/chat-test-util.mjs`（`loadIndex()` 的 `__test` 多导出 `machineTrees`、`machineCaps`）、`desktop/package.json`（`test:sidebar`）、`.claude/skills/verify/scripts/gui-smoke.mjs` 和 `gui-chat-smoke.mjs`（只调选择器）
 - 接口：
-  - 使用：`buildTree`、`projectRollup`、`sessionContext`、`notificationTitle`、`nextCapability`、`TreeProject`、`TreeWorktree`、`Capability`（T5）；`listProjects`、`removeProject`、`RestError`（T4）
-  - 提供：`renderSidebar(container: HTMLElement, model: SidebarModel, actions: SidebarActions): void`；`renderToolbarTitle(container, ctx, fallback)`
-  - `SidebarModel`：每台机器的 `{ machine, key, online, collapsed, cap: Capability, tree: TreeProject[] }`，加上 `activeKey`、`collapsedProjects`、取某个会话状态点的 `dotOf(machineKey, sessionId)`，以及现有渲染读的其余模块状态
-  - `SidebarActions`：现有的 `open`、`rename`、`reload`、`deleteSession`、`toggleMachine`，新增 `toggleProject(machineKey, projectId)`、`removeProject(machine, project)`，以及三个可缺省的 `newSession?(machine, project, worktree)`、`newWorktree?(machine, project)`、`deleteWorktree?(machine, project, worktree)`。可缺省的回调没传时，对应的按钮和菜单项不渲染；本任务的 `index.ts` 只传前 7 个，后三个分别由 T11、T9、T14 接上
-  - 渲染规则照 design 7.4「侧边栏」的 DOM：`flat` 的项目没有 `.worktree-group`；会话行保留现有的 class 和 `data-session-id`、`data-ui`、`data-dot`；`gone` 的会话第二行显示「目录已不存在」；项目折叠且 `projectRollup` 是 `waiting` 时项目行显示点（d11）；项目行的两个字母标签和色相按 7.4
+  - 使用：`renderSidebar` 的签名、`SidebarModel`、`SidebarActions`、`rendererIcon`（T6a）；`buildTree`、`projectRollup`、`sessionContext`、`notificationTitle`、`nextCapability`、`projectHue`、`TreeProject`、`TreeWorktree`、`Capability`（T5）；`listProjects`、`removeProject`、`RestError`（T4）
+  - 提供：`renderToolbarTitle(container, ctx, fallback)`；`renderSidebar(container, model, actions)` 的签名不变，`SidebarModel` 和 `SidebarActions` 扩成下面的形状
+  - `SidebarModel`：T6a 的字段里，每台机器的 `sessions` 换成 `cap: Capability` 和 `tree: TreeProject[]`；另加 `collapsedProjects: Set<string>`。其余字段（`activeKey`、`overviewMachineKey`、`dotOf`、`isOpen`、`isReloading`）不变
+  - `SidebarActions`：T6a 的 7 个（`open`、`openOverview`、`rename`、`setRenaming`、`reload`、`deleteSession`、`toggleMachine`）不变，新增 `toggleProject(machineKey, projectId)`、`removeProject(machine, project)`，以及三个可缺省的 `newSession?(machine, project, worktree)`、`newWorktree?(machine, project)`、`deleteWorktree?(machine, project, worktree)`。可缺省的回调没传时，对应的按钮和菜单项不渲染；本任务的 `index.ts` 只传前 9 个，后三个分别由 T11、T9、T14 接上
+  - 渲染规则照 design 7.4「侧边栏」的 DOM：`flat` 的项目没有 `.worktree-group`；会话行保留现有的 class 和 `data-session-id`、`data-ui`、`data-dot`；`gone` 的会话第二行显示「目录已不存在」；项目折叠且 `projectRollup` 是 `waiting` 时项目行显示点（d11）
+  - 项目行的两个字母标签（design 7.4，decisions #26）：文字是项目名的前两个字符（大写）；颜色只有色相随项目变，`sidebar.ts` 只做 `el.style.setProperty('--tag-hue', String(projectHue(project.id)))`，不在 TS 里写任何颜色；CSS 规则是 `.project-tag { background: hsl(var(--tag-hue) var(--tag-bg-s) var(--tag-bg-l)); color: hsl(var(--tag-hue) var(--tag-fg-s) var(--tag-fg-l)); }`
   - 置灰规则：`cap` 不是 `v4` 时 `project-new-worktree`、`worktree-delete` 是 `disabled`，提示文字是 `sidebar.legacy.needUpgrade`；`cap` 是 `legacy` 时机器行下多一条 `machine-legacy-note`；项目的 worktree 列表里没有主目录（被白名单滤掉）时 `project-new-worktree` 也是 `disabled`；项目下有会话时 `project-remove` 是 `disabled` 并带 `sidebar.project.removeBlocked` 的说明；主目录那一行没有 `worktree-menu`
   - 扁平项目行上的 `project-new-session`（d19）：git 项目把它唯一的 worktree 传给 `newSession`；非 git 项目传一个由项目本身拼成的节点（`path` = 项目 id，`label` = 项目名）；有 `error` 的项目不渲染这个按钮
   - `removeProject` 回调在 `index.ts` 里调 `rest.removeProject(id)`，成功后立刻刷新这台机器；409 `project_has_sessions` 在状态栏显示 `sidebar.project.removeBlocked`
 - 场景：R1.1–R1.8、R2.1–R2.5、R2.7（界面一侧）、R5.7、R9.1（说明条和置灰）
 - data-testid：`machine-legacy-note`、`project-row`、`project-branch`、`project-error`、`project-dot`、`project-new-session`、`project-new-worktree`、`project-menu`、`project-remove`、`worktree-row`、`worktree-tag-main`、`worktree-tag-external`、`worktree-new-session`、`worktree-menu`、`worktree-delete`、`worktree-empty`、`session-row`、`session-gone`、`title-project`、`title-branch`、`title-session`
-- 测试（`test-sidebar.mjs`，jsdom；前 11 个直接调 `renderSidebar`，后 3 个经 `loadIndex()` 驱动 `index.ts`）：
+- 测试（`test-sidebar.mjs`，jsdom；前 13 个直接调 `renderSidebar`，后 3 个经 `loadIndex()` 驱动 `index.ts`；T6a 的 `no_rerender_while_renaming`、`inline_rename_commits`、`actions_fire_once` 原样保留）：
   - `renders_three_levels`、`flat_project_has_no_worktree_row`、`non_git_has_no_worktree_entries`、`empty_worktree_row`、`gone_session_meta`、`project_error_row_sessions_usable`、`collapsed_project_shows_waiting_dot`、`project_menu_remove`、`project_remove_disabled_with_sessions`、`main_worktree_has_no_menu`、`legacy_note_and_disabled_entries`：断言见测试计划 R1.1、R1.2、R1.3、R2.1、R2.5、R2.7、R1.6、R2.3、R2.4、R5.7、R9.1 各行
+  - `project_tag_hue_via_css_var`：`project-row` 里的 `.project-tag` 文字是 `DE`（项目 `devflow`）；它的 `style` 里只有 `--tag-hue` 一个属性，值等于 `projectHue(项目 id)`；没有内联的 `color`、`background`。另外读 `src/renderer/sidebar.ts` 的文本：不含 `hsl(`、`rgb(`，也不含 `#` 开头的 3–8 位十六进制颜色
   - `optional_actions_hide_entries`：不传 `newSession`、`newWorktree`、`deleteWorktree` 时，DOM 里没有 `worktree-new-session`、`project-new-session`、`project-new-worktree`、`worktree-menu`
   - `toolbar_title_parts`：打开 `devflow` / `fix-login` 下的 `登录修复` → `#toolbar-title` 里依次是 `title-project`=`devflow`、`title-branch`=`fix-login`、`title-session`=`登录修复`；非 git 项目没有 `title-branch`；没有打开会话时显示机器名
   - `keeps_tree_when_projects_request_fails`：第一轮 `listProjects` 成功、第二轮抛错 → `machineCaps` 仍是 `v4`，`project-row` 的数量不变
-  - `no_rerender_while_renaming`：内联重命名的输入框存在时触发一轮刷新 → 输入框还是同一个节点，已输入的字还在
   - `collapsed_projects_persist`：折叠 `devflow` 后 `localStorage` 的 `vibe-remote.collapsed-projects` 含 `<machineKey>|<项目 id>`；重新加载后仍是折叠的；`setActive` 打开其中的会话会把它展开
 - 完成定义：
   - `cd desktop && npm run typecheck && npm run test:sidebar && npm run test:i18n-parity && npm run test:chat-activity && npm run test:chat-render-guard` 退出码 0
   - 在仓库根执行 `TMUX_TMPDIR=$(mktemp -d /tmp/vr-XXXXXX) node .claude/skills/verify/scripts/gui-smoke.mjs` 和 `TMUX_TMPDIR=$(mktemp -d /tmp/vr-XXXXXX) node .claude/skills/verify/scripts/gui-chat-smoke.mjs`，都以退出码 0 结束、没有 FAIL 行；`git diff HEAD~1 -- .claude/skills/verify/scripts/` 里只有选择器字符串的改动，`grep -c "^test(" .claude/skills/verify/scripts/gui-chat-smoke.mjs` 仍是 26，`grep -c "check(" .claude/skills/verify/scripts/gui-smoke.mjs` 不小于 14
-- 依赖：T4、T5
+- 依赖：T4、T5、T6a
 
 ### T7 daemon 和客户端连接层：attach 带 `worktreeName` 新建命名 worktree
 - 状态：待办
