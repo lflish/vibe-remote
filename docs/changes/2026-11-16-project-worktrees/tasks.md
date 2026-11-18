@@ -170,7 +170,7 @@
 | R8.3 | 浏览器 | R8.3 现有功能入口都在 | 跑 `gui-smoke.mjs` 和 `gui-chat-smoke.mjs`：全部通过；与 `change/dual-mode` 基线逐个对比，用例数不减少（`gui-chat-smoke.mjs` 基线 26 个 `test(`）、断言不放宽，只有选择器有改动 | dev-test |
 | R8.4 | desktop 单元 | `test-theme-tokens.mjs › contrast_table`、`dot_shapes_differ` | 从 `styles.css` 的 `:root` 解析变量，按 `evidence/contrast-m1.txt` 的 35 对计算：正文和按钮文字 ≥ 4.5，次要文字 ≥ 3，三种状态点对 `--bg-sidebar` ≥ 3；`.session-unread.output`（空心）、`.idle`（实心）、`.waiting`（实心加光圈）的形状属性两两不同 | T18 |
 | R8.4 | 浏览器 | R8.4 可读性 | 在运行中的应用里读真实元素的 `color` 和实际背景色（含 `color-mix` 算出来的），达到同样的比值；三种状态点在侧边栏上同时出现时形状可区分 | dev-test |
-| R8.5 | desktop 单元 | `test-dialog-layout.mjs` | `dirpicker.ts`、`worktree-dialogs.ts` 里每个对话框只往 `.modal` 里放标题、`.modal-body`、`.modal-footer` 三个直接子元素 | T19 |
+| R8.5 | desktop 单元 | `test-dialog-layout.mjs` | `dirpicker.ts`、`worktree-dialogs.ts` 里每个对话框只往 `.modal` 里放标题、`.modal-body`、`.modal-footer` 三个直接子元素 | T9（T11、T12、T14 新增的对话框自动被它覆盖） |
 | R8.5 | 浏览器 | R8.5 小窗口和双语 | 新写 `.claude/skills/verify/scripts/shell-layout.mjs`：视口 800×500，中英文各一遍，打开侧边栏（三层加长分支名）、新建会话对话框、新建 worktree 对话框、删除确认框的每种形态、斜杠菜单；对话框整体在窗口内，主按钮在窗口内且 `elementFromPoint` 命中它，没有设省略号的文字 `scrollWidth <= clientWidth`，同一行相邻元素的矩形不相交 | dev-test |
 | R8.6 | desktop 单元 | `test-theme-tokens.mjs › window_background_matches_bg_app` | `desktop/src/main/index.ts` 的 `backgroundColor` 等于 `styles.css` 的 `--bg-app`，值是 `#EFEFF4` | T18 |
 | R8.6 | 浏览器 | R8.6 启动不闪 | 冷启动后第一帧截图的窗口底色是 `#EFEFF4`，没有旧的米色（`#F5F4EF`）或深色 | dev-test |
@@ -372,3 +372,82 @@
   - `cd desktop && npm run build` 之后 `node .claude/skills/verify/scripts/gui-smoke.mjs` 和 `node .claude/skills/verify/scripts/gui-chat-smoke.mjs` 全部 PASS；`git diff HEAD~1 -- .claude/skills/verify/scripts/` 里只有选择器字符串的改动，`grep -c "^test(" .claude/skills/verify/scripts/gui-chat-smoke.mjs` 仍是 26
   - 手动看一眼最小闭环：`make dev-server` 加 `npm run dev`，在一个有 2 个 worktree 的仓库里各开一个会话，侧边栏是 机器 → 项目 → worktree → 会话 三层
 - 依赖：T4、T5
+
+### T7 daemon 和客户端连接层：attach 带 `worktreeName` 新建命名 worktree
+- 状态：待办
+- 文件：
+  - 修改 `vibe-remoted/internal/session/worktree.go`（`ValidateWorktreeName`、`WorktreeDirName`、`WorktreeSpec`、`CreateWorktree` 换成新签名并按 design 6.1 的 8 步重写、4 个错误变量）；新建 `vibe-remoted/internal/session/testdata/worktree-names.json`（名字规则的共用向量，每条 `{name, ok, reason}`，`reason` 取桌面端的 `empty` / `whitespace` / `dotdot` / `leading_dash` / `invalid`）
+  - 修改 `vibe-remoted/internal/session/manager.go`（`CreateOptions.WorktreeName`；按项目 id 取的互斥锁，锁的先后照 6.1；`AddWorktree` 挪到 6.1 第 8 步；会话启动失败时回滚并删记录）、`vibe-remoted/internal/session/chat_manager.go`（`ChatCreateOptions.WorktreeName`，同样的锁和回滚）、`vibe-remoted/internal/config/config.go`（`ResolveAllowedNewPath`）、`vibe-remoted/internal/server/ws.go` 和 `ws_chat.go`（把 `frame.WorktreeName` 传下去；`ValidateWorkdir` 改传 `cfg.ResolveAllowedNewPath`；4 个错误映射成 fatal 的 error 帧；带 `handoffFrom` 时忽略 `worktreeName`）
+  - 修改 `vibe-remoted/internal/protocol/protocol.go`（`AttachFrame.WorktreeName`，错误码常量 `invalid_worktree_name`、`worktree_branch_exists`、`worktree_path_exists`、`worktree_path_not_allowed`）、`desktop/src/shared/protocol.ts`（`AttachFrame.worktreeName?`）、`desktop/src/renderer/client.ts`（`AttachOptions.worktreeName`，存进 `AttachIntent`，`sendAttach` 原样带上）、`docs/protocol.md`（attach 帧的字段表、error 帧的代码表、版本表第 4 行补 `attach.worktreeName` 和 4 个错误码）
+  - 测试：`vibe-remoted/internal/session/worktree_test.go`、`manager_test.go`、`idempotent_test.go`、`vibe-remoted/internal/config/config_test.go`、`vibe-remoted/internal/server/worktree_test.go`、`desktop/scripts/test-attach-replay.mjs`。直接调用 `CreateWorktree` 的现有测试（`worktree_test.go` 9 处、`manager_test.go` 1 处）只改调用写法，断言不动
+- 接口：
+  - 使用：`ResolveHome`、`gitAt`、`RollbackWorktree`（现有和 T2）；`ProjectStore.AddWorktree` / `RemoveWorktree`（T3）；`Manager.beginCreate`（现有，同 id 的幂等）
+  - 提供：`ValidateWorktreeName(repoDir, name string) error`；`WorktreeDirName(name string) string`；`type WorktreeSpec struct { Source, SessionID, Name string; AllowPath func(string) error }`；`CreateWorktree(spec WorktreeSpec) (meta WorktreeMetadata, workdir string, home Home, err error)`；`ErrInvalidWorktreeName`、`ErrWorktreeBranchExists`、`ErrWorktreePathExists`、`ErrWorktreePathNotAllowed`；`CreateOptions.WorktreeName`、`ChatCreateOptions.WorktreeName`；`(c *Config) ResolveAllowedNewPath(path string) (string, error)`；TS 的 `AttachOptions.worktreeName?: string`
+  - `Name` 为空时保持旧行为：分支 `vibe/<会话id>`，目录 `<所在 worktree 根的父目录>/<根目录名>-worktrees/<会话id>`；两条路径都先过 `AllowPath` 再建（6.1 第 3 步）
+- 场景：R3.1、R3.2、R3.3、R3.4、R3.5、R3.6、R3.7、R3.8、R3.10（daemon 一侧）、R9.2（缺省命名）
+- 测试：
+  - `TestValidateWorktreeName`：逐条读 `testdata/worktree-names.json`；向量至少含 `""`、`"a b"`、制表符、`"a..b"`、`"-x"`、`"a~b"`、`"a.lock"`（都不通过）和 `"fix-login"`、`"change/foo"`、`"@"`、`"refs/heads/x"`（都通过）
+  - `TestWorktreeNameNeverReachesShell`：`PATH` 前面放一个把参数逐个记进文件的 git 包装脚本；名字 `-x` → 记录文件是空的（git 一次都没被调用）；名字 `$(touch${IFS}PWNED)` → 仓库和临时目录里都没有文件 `PWNED`，记录里这个名字是完整的一个参数
+  - `TestWorktreeDirName`：`change/foo` → `change-foo`；`a/b/c` → `a-b-c`；`fix-login` 不变
+  - `TestCreateNamedWorktree`、子测试 `slash`、`TestCreateNamedWorktreeBranchExists`、`TestCreateNamedWorktreePathExists`（含 `empty_dir`）、`TestCreateNamedWorktreeExcludesUncommitted`、`TestCreateNamedWorktreePathNotAllowed`、`TestCreateNamedWorktreeGitFailureLeavesNothing`：断言见测试计划 R3.1、R3.2、R3.4、R3.5、R3.6、R3.10、R3.8 各行
+  - `TestCreateNamedWorktreeFromLinkedWorktree`：发起处是链接 worktree `fix-login` → 新 worktree 基于 `fix-login` 的 `HEAD`，目录仍在 `<主目录的父目录>/<主目录名>-worktrees/` 下
+  - `TestCreateNamedWorktreeSubdir`：`Source` 是 `<仓库>/src/app` → 返回的 `workdir` 是 `<新 worktree>/src/app` 且目录存在
+  - `TestResolveAllowedNewPath`：白名单内不存在的路径 → 通过并返回规范路径；白名单外 → 错误；白名单内的符号链接祖先指向白名单外 → 错误；已存在的路径与 `ResolveAllowedWorkdir` 结果相同
+  - `TestConcurrentCreateSameNameOneWins`：两个不同的会话 id 并发 `Create`、`WorktreeName` 都是 `fix-login`，跑 20 轮 → 每轮恰好一个成功，另一个 `errors.Is(err, ErrWorktreeBranchExists)`；成功那个的目录和分支完好
+  - `TestNamedWorktreeReplaySameID`：同一个 `ID` 加 `WorktreeName:"fix-login"` 先后 `Create` 2 次、再并发 2 次 → 返回同一个会话，`git worktree list` 里一个 `fix-login`，没有 `ErrWorktreeBranchExists`
+  - `TestNamedWorktreeRolledBackWhenSessionStartFails`：`claude_cmd` 指向不存在的程序 → `Create` 报错；分支和目录都不存在；`Managed(…)` 为假
+  - `TestWSAttachWorktreeName`、`TestWSAttachWorktreeCreateFailed`、`TestAttachWorktreeWithoutNameKeepsLegacyNaming`（server）：断言见测试计划 R3.1、R3.8、R9.2 各行
+  - `TestWSWorktreeErrorsAreFatal`（server）：名字不合法、分支已存在、目录已存在、目录不在白名单内 4 种 → error 帧的 `code` 分别是 4 个新代码，`fatal` 都是 true，`worktree_path_not_allowed` 的 `message` 含完整路径
+  - `TestHandoffIgnoresWorktreeName`（server）：attach 同时带 `handoffFrom` 和 `worktreeName` → 交接成功，没有新 worktree
+  - `test-attach-replay.mjs › replay_carries_worktree_name`：`attach(…, { worktreeName: 'fix-login' })` 后在 `ready` 前断线 → 自动重连和 `replayIntent()` 发出的 attach 都带同一个 `newSessionId` 和 `worktreeName`；`ready` 之后的重连不再带 `worktreeName`（此时是接入已有会话）
+- 完成定义：
+  - `cd vibe-remoted && TMUX_TMPDIR=$(mktemp -d) go test -race -count=1 ./internal/session ./internal/config ./internal/server -run 'TestValidateWorktreeName|TestWorktreeNameNeverReachesShell|TestWorktreeDirName|TestCreateNamedWorktree|TestResolveAllowedNewPath|TestConcurrentCreateSameName|TestNamedWorktree|TestWSAttachWorktree|TestAttachWorktreeWithoutName|TestWSWorktreeErrorsAreFatal|TestHandoffIgnoresWorktreeName|TestTerminalFramesUnchangedV3|TestWorktree'` 输出三行 `ok`
+  - `cd desktop && npm run typecheck && npm run test:attach-replay` 退出码 0
+  - 按 `/protocol-sync` 核对：`attach.worktreeName` 和 4 个错误码在三处一致
+- 依赖：T2、T3、T4
+
+### T8 协议 4：新建前的只读预检 `GET /api/v1/worktrees/plan`
+- 状态：待办
+- 文件：修改 `vibe-remoted/internal/session/projects.go`（`PlanWorktree`）、`vibe-remoted/internal/server/projects.go`（处理函数）、`vibe-remoted/internal/server/server.go`（路由）、`vibe-remoted/internal/protocol/protocol.go`（`WorktreePlan`、`WorktreeBase`）、`desktop/src/shared/protocol.ts`（`WorktreePlan`）、`desktop/src/renderer/rest.ts`（`planWorktree`）、`docs/protocol.md`（端点说明，版本表第 4 行补这个端点）；测试 `vibe-remoted/internal/session/projects_test.go`、`vibe-remoted/internal/server/projects_test.go`、`desktop/scripts/test-rest-projects.mjs`
+- 接口：
+  - 使用：`ResolveHome`、`ListWorktrees`、`gitAtTimeout`（T2）；`ValidateWorktreeName`、`WorktreeDirName`、4 个错误变量、`cfg.ResolveAllowedNewPath`（T7）；`cfg.ResolveAllowedWorkdir`（现有）
+  - 提供：`(m *Manager) PlanWorktree(workdir, name string, allowPath func(string) error) protocol.WorktreePlan`；TS `planWorktree(workdir: string, name: string): Promise<WorktreePlan>`
+  - 响应和错误照 design 4.4：检查的顺序和结果与 `CreateWorktree` 的第 1–5 步相同，但不创建任何东西；`name` 为空时仍返回 `project`、`projectName`、`base`，`ok:false`、`error:"invalid_worktree_name"`；`workdir` 不在白名单内 → HTTP 403，缺 `workdir` → 400
+- 场景：R3.3、R3.4、R3.5、R3.6、R3.10（对话框的即时校验）
+- 测试：
+  - `TestPlanWorktree`（server，子测试）：`ok` → `ok:true`、`branch:"fix-login"`、`path` 以 `/devflow-worktrees/fix-login` 结尾、`projectName:"devflow"`；`slash` → `branch:"change/foo"`、`path` 以 `/change-foo` 结尾；`invalid_name`、`branch_exists`、`path_exists`、`path_not_allowed`、`not_git` → `ok:false` 和对应的 `error`，`not_git` 时没有 `project` 和 `base`
+  - `TestPlanWorktreeBase`：断言见测试计划 R3.6
+  - `TestPlanWorktreeCreatesNothing`：上面每个子测试之后，`git worktree list` 的行数、`git branch --list` 的输出、`<仓库>-worktrees` 目录是否存在都和调用前相同
+  - `TestPlanMatchesCreate`（session）：对同一组输入（合法、分支已存在、目录已存在、不在白名单内），`PlanWorktree` 的 `error` 与随后 `CreateWorktree` 返回的错误一一对应；`ok:true` 时 `path`、`branch` 与实际建出来的相同
+  - `TestPlanWorktreeHTTPErrors`：`workdir` 在白名单外 → 403；缺 `workdir` → 400；`TestNewEndpointsRequireToken` 加上这个端点 → 401
+  - `test-rest-projects.mjs › plan_encodes_query`：`planWorktree('/r/a b', 'change/foo')` 请求的 URL 里两个参数都经过 URL 编码；HTTP 403 → 抛 `RestError`，`status` 是 403
+- 完成定义：
+  - `cd vibe-remoted && go test -race -count=1 ./internal/session ./internal/server -run 'TestPlan|TestNewEndpointsRequireToken'` 输出两行 `ok`
+  - `cd desktop && npm run typecheck && npm run test:rest-projects` 退出码 0
+  - 按 `/protocol-sync` 核对：`WorktreePlan` 的字段在三处一致
+- 依赖：T7
+
+### T9 桌面端：新建 worktree 对话框，目录选择器的 Worktree 模式加名字
+- 状态：待办
+- 文件：
+  - 新建 `desktop/src/renderer/worktree-name.ts`、`desktop/src/renderer/session-form.ts`、`desktop/src/renderer/worktree-dialogs.ts`（本任务只有 `openNewWorktreeDialog`）；新建测试 `desktop/scripts/test-worktree-name.mjs`、`test-session-form.mjs`、`test-worktree-dialogs.mjs`、`test-dialog-layout.mjs`
+  - 修改 `desktop/src/renderer/dirpicker.ts`（界面卡片和启动选项改用 `session-form.ts` 的两个段，行为不变；Worktree 模式且 `info.proto >= 4` 时在模式卡片下方加名字段，此时不显示 `picker.modeNote`；`PickedSession` 加可缺省的 `worktreeName`、`worktreePath`）、`desktop/src/renderer/index.ts`（给 `SidebarActions` 传 `newWorktree`；新建会话时把 `picked.worktreeName` 放进 `attach` 的 `AttachOptions`；`client.onError` 收到 4 个新错误码时状态栏用 `worktreeErrorText`）、`desktop/src/renderer/styles.css`（追加「名字段」的规则）、`desktop/src/renderer/i18n.ts`（`wt.new.*`、`wt.name.*`、`wt.error.*`）、`desktop/package.json`（4 个 `test:*`）、`.claude/skills/verify/scripts/gui-smoke.mjs` 和 `gui-chat-smoke.mjs`（目录选择器的选择器有变时同步）
+- 接口：
+  - 使用：`planWorktree`、`WorktreePlan`、`RestError`（T8、T4）；`AttachOptions.worktreeName`（T7）；`TreeProject`、`SidebarActions.newWorktree`（T5、T6）；`chatAvailability`、`activateModal`、`openDirPicker`（现有）
+  - 提供（`worktree-name.ts`）：`validateWorktreeName(name)`、`worktreeDirName(name)`、`worktreeErrorText(code, ctx)`，签名见 design 4.10
+  - 提供（`session-form.ts`，三个段都返回 `{ el: HTMLElement, … }`，由调用方放进 `.modal-body`）：
+    - `createUiSection(opts: { onChange(): void }): { el; value(): SessionUI; setAvailability(a: ChatAvailability): void }`：终端和对话两张卡片及置灰原因，保留现有的 `picker-ui-terminal`、`picker-ui-chat`、`picker-ui-chat-reason`
+    - `createFlagsSection(opts: { existingSessions: number }): { el; setFlags(flags: ClaudeFlagInfo[]): void; value(): string[]; setExistingSessions(n: number): void }`：`existingSessions` 在本任务里只存下来、不影响显示，T15 用它显示 `-c` 说明
+    - `createNameSection(opts: { plan(name: string): Promise<WorktreePlan>; onChange(): void }): { el; value(): string; ready(): boolean; confirm(): Promise<WorktreePlan | null> }`：输入停顿 250 ms 后调 `plan`，以最后一次请求的结果为准；`ready()` = 本地校验通过且最近一次 plan 是 `ok`；`confirm()` 立刻再调一次 `plan`，不通过时把原因显示在名字下方并返回 `null`
+  - 提供（`worktree-dialogs.ts`）：`openNewWorktreeDialog(machine, project: TreeProject): Promise<(PickedSession & { worktreeName: string; worktreePath: string }) | null>`：发起处是项目的主目录行；标题和副标题用 `wt.new.title` / `wt.new.subtitle`；确认按钮的文字是 `wt.new.confirm`；`confirm()` 返回 `null` 时对话框保持打开
+- 场景：R3.1–R3.6、R3.9、R3.10（界面一侧）、R9.1（协议 3 时没有名字段）、R8.5（对话框结构）
+- data-testid：`wt-name-input`、`wt-name-error`、`wt-base-info`、`wt-target-path`、`dialog-confirm`、`dialog-cancel`
+- 测试：
+  - `test-worktree-name.mjs`：`shared_vectors` 读 `../vibe-remoted/internal/session/testdata/worktree-names.json`，`ok:false` 且 `reason` 不是 `invalid` 的每一条，`validateWorktreeName` 返回同一个 `reason`；`ok:true` 的每一条返回 `null`；`dir_name` 见测试计划 R3.2；`error_text`：`worktreeErrorText('worktree_branch_exists', {branch:'fix-login'})` 是「分支 fix-login 已存在」，不认识的代码返回 `null`
+  - `test-session-form.mjs`：`invalid_name_disables_confirm`、`base_info_text`、`picker_worktree_mode_name_segment`、`picker_proto3_has_no_name_segment`、`last_plan_wins`：断言见测试计划 R3.3、R3.6、R3.9、R9.1 和「容易出问题的情况」各行；`detached_base_text`：`base.detached` 为真 → 文字是 `wt.new.baseDetached`；`picker_normal_mode_unchanged`：普通模式确认后返回 `{workdir, flags, mode:"normal", ui}`，没有 `worktreeName`
+  - `test-worktree-dialogs.mjs`：`new_worktree_confirm_resolves`、`plan_rejection_keeps_dialog_open`（`worktree_branch_exists`、`worktree_path_exists`、`worktree_path_not_allowed` 三个分支）：断言见测试计划 R3.1、R3.4、R3.10；`new_worktree_cancel`：点 `dialog-cancel` 或按 Esc → 返回 `null`，没有发出 attach
+  - `test-dialog-layout.mjs`：`worktree-dialogs.ts` 和 `dirpicker.ts` 里每个对话框只往 `.modal` 里放标题、`.modal-body`、`.modal-footer`；现有的 `test-picker-layout.mjs` 不改、照常通过
+- 完成定义：
+  - `cd desktop && npm run typecheck && npm run test:worktree-name && npm run test:session-form && npm run test:worktree-dialogs && npm run test:dialog-layout && npm run test:picker-layout && npm run test:i18n-parity` 退出码 0
+  - `cd desktop && npm run build` 之后 `node .claude/skills/verify/scripts/gui-smoke.mjs`、`node .claude/skills/verify/scripts/picker-layout.mjs` 全部 PASS
+- 依赖：T6、T7、T8
