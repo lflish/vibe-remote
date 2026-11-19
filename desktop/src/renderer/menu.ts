@@ -2,6 +2,12 @@
 // and worktree "more" buttons in the sidebar (design 7.4). It opens under the
 // button, or above it when there is no room below. Esc or a click outside
 // closes it; only one menu is open at a time.
+//
+// Keyboard: opening moves the focus to the first item that can be chosen (the
+// menu hangs off <body>, so Tab from the button would never get to it); the
+// arrows, Home and End move between such items; Enter or Space choose; Esc and
+// Tab close the menu, and whenever it closes while the focus is inside, the
+// focus goes back to the button.
 export interface MenuItem {
   label: string;
   testid: string;
@@ -32,11 +38,15 @@ export function moveMenu(anchor: HTMLElement): void {
 
 export function closeMenu(): void {
   if (!current) return;
+  const { el, anchor } = current;
   document.removeEventListener('keydown', current.onKey, true);
   document.removeEventListener('mousedown', current.onDown, true);
-  current.anchor.removeAttribute('aria-expanded');
-  current.el.remove();
+  anchor.removeAttribute('aria-expanded');
+  // The focus does not go down with the menu.
+  const focusInside = el.contains(document.activeElement);
+  el.remove();
   current = null;
+  if (focusInside && anchor.isConnected) anchor.focus({ preventScroll: true });
 }
 
 export function openMenu(anchor: HTMLElement, items: MenuItem[]): void {
@@ -52,8 +62,10 @@ export function openMenu(anchor: HTMLElement, items: MenuItem[]): void {
     if (it.disabled) btn.disabled = true;
     btn.addEventListener('click', () => {
       if (it.disabled) return;
-      it.onClick?.();
+      // Closed first: the focus is back on the button when the action starts
+      // (a dialog it opens remembers where to return the focus to).
       closeMenu();
+      it.onClick?.();
     });
     el.appendChild(btn);
     if (it.note) {
@@ -72,8 +84,24 @@ export function openMenu(anchor: HTMLElement, items: MenuItem[]): void {
   anchor.setAttribute('aria-expanded', 'true');
   placeMenu(el, anchor);
 
+  // The items that can be chosen, in order.
+  const choices = () => [...el.querySelectorAll<HTMLButtonElement>('.menu-item')].filter((b) => !b.disabled);
   const onKey = (e: KeyboardEvent) => {
-    if (e.key === 'Escape') { e.preventDefault(); closeMenu(); }
+    if (e.key === 'Escape') { e.preventDefault(); closeMenu(); return; }
+    // Tab leaves the menu: closed, the focus is on the button again, and the
+    // key then moves it on from there as usual.
+    if (e.key === 'Tab') { closeMenu(); return; }
+    const step = e.key === 'ArrowDown' ? 1 : e.key === 'ArrowUp' ? -1 : 0;
+    if (step === 0 && e.key !== 'Home' && e.key !== 'End') return;
+    e.preventDefault();
+    const list = choices();
+    if (list.length === 0) return;
+    const at = list.indexOf(document.activeElement as HTMLButtonElement);
+    const next = e.key === 'Home' ? 0
+      : e.key === 'End' ? list.length - 1
+      : at < 0 ? (step > 0 ? 0 : list.length - 1)
+      : (at + step + list.length) % list.length;
+    list[next].focus({ preventScroll: true });
   };
   const onDown = (e: Event) => {
     const owner = current && current.el === el ? current.anchor : anchor;
@@ -82,6 +110,7 @@ export function openMenu(anchor: HTMLElement, items: MenuItem[]): void {
   };
   current = { el, anchor, onKey, onDown };
   document.addEventListener('keydown', onKey, true);
+  choices()[0]?.focus({ preventScroll: true });
   // Defer the outside-click listener so the click that opened the menu does not
   // immediately close it.
   setTimeout(() => {

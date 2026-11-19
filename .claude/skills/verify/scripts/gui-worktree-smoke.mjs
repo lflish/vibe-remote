@@ -2754,6 +2754,59 @@ test('X8.menu', 'a row menu opened with the pointer stays at its button when the
   return `opened with the pointer: ${before.gap}px under its button; still there after two rebuilds (pointer on the button, then on the item); the item opens the confirmation`;
 });
 
+test('X3.keys', 'the row menus work from the keyboard alone (exploration X3)', async () => {
+  await managedWorktree(LAB, fx.del, 'x3k');
+  await rowShown(LAB, 'del', 'x3k');
+  const row = wg(LAB, 'del', 'x3k');
+  const focused = () => ev(`(() => { const a = document.activeElement; return { testid: a?.dataset?.testid ?? null, inMenu: !!a?.closest('body > .menu'), row: a?.closest('.worktree-group')?.querySelector('.worktree-label')?.textContent ?? null, tag: a?.tagName ?? null }; })()`);
+  const menuOpen = () => exists(`document.querySelector('body > .menu')`);
+  // Tab from the row's first button reaches the "more" button
+  await ev(`(() => { const g = ${row}; g.scrollIntoView({ block: 'center' }); g.querySelector('${tid('worktree-new-session')}').focus(); return true; })()`);
+  await pressKey('Tab');
+  eq(await focused(), { testid: 'worktree-menu', inMenu: false, row: 'x3k', tag: 'BUTTON' }, 'focus after Tab');
+  // Enter opens the menu with the focus on its first item
+  await pressKey('Enter');
+  await waitFor(menuOpen, 3000, 'the menu after Enter');
+  const inMenu = await waitFor(async () => { const f = await focused(); return f.inMenu ? f : null; }, 2000, 'the focus inside the menu').catch(() => null);
+  assert(inMenu, `the menu opened, but the focus stayed outside it: ${J(await focused())} — its items cannot be reached with the keyboard`);
+  eq(inMenu.testid, 'worktree-delete', 'the item holding the focus');
+  eq(await ev(`${row}.querySelector('${tid('worktree-menu')}').getAttribute('aria-expanded')`), 'true', 'aria-expanded of the button while its menu is open');
+  // the arrows stay inside the menu (one item: it keeps the focus)
+  await pressKey('ArrowDown');
+  await pressKey('ArrowUp');
+  eq((await focused()).testid, 'worktree-delete', 'focus after the arrows');
+  // Esc closes it and gives the focus back to the button
+  await pressKey('Escape');
+  await waitFor(async () => !(await menuOpen()), 3000, 'the menu closed by Esc');
+  eq(await focused(), { testid: 'worktree-menu', inMenu: false, row: 'x3k', tag: 'BUTTON' }, 'focus after Esc');
+  // Tab closes it too, and the focus moves on from the button instead of getting lost
+  await pressKey('Enter');
+  await waitFor(async () => (await focused()).inMenu, 3000, 'the menu again');
+  await pressKey('Tab');
+  await waitFor(async () => !(await menuOpen()), 3000, 'the menu closed by Tab');
+  const next = await focused();
+  assert(next.tag === 'BUTTON' && next.testid !== 'worktree-menu' && !next.inMenu, `focus after Tab out of the menu: ${J(next)}`);
+  // Enter on the item does what a click does
+  await ev(`${row}.querySelector('${tid('worktree-menu')}').focus(), true`);
+  await pressKey('Enter');
+  await waitFor(async () => (await focused()).inMenu, 3000, 'the menu a third time');
+  await pressKey('Enter');
+  await waitDialog('delete-wt-dialog');
+  eq((await deleteDialog()).title, '删除 worktree x3k？', 'the confirmation Enter on the item opened');
+  await pressKey('Escape');
+  await dialogGone();
+  // a project menu whose only item is off: it opens, says why, and Esc closes it
+  const pbtn = `${pg(WT, 'devflow')}.querySelector(':scope > .project-row ${tid('project-menu')}')`;
+  await ev(`(() => { const b = ${pbtn}; b.scrollIntoView({ block: 'center' }); b.focus(); return true; })()`);
+  await pressKey('Enter');
+  await waitFor(menuOpen, 3000, 'the project menu');
+  eq(await ev(`document.querySelector('body > .menu ${tid('project-remove')}').disabled`), true, '"remove from sidebar" while the project has sessions');
+  await pressKey('Escape');
+  await waitFor(async () => !(await menuOpen()), 3000, 'the project menu closed by Esc');
+  eq((await focused()).testid, 'project-menu', 'focus after Esc on the project menu');
+  return 'Tab to "more", Enter: focus on "删除 worktree"; arrows stay; Esc and Tab close it and the focus is on a button; Enter on the item opens the confirmation; Esc closes that';
+});
+
 test('NFR.perf', 'performance: 20 projects × 5 worktrees add at most 200 ms to the lists', async () => {
   const P = join(work, 'p');
   const perf = defineDaemon('perf', { cfg: { default_workdir: P, allowed_roots: [P], claude_cmd: '/bin/bash', claude_reload_cmd: '/bin/bash' } });

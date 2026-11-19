@@ -468,6 +468,79 @@ test('menu_button_is_marked_expanded_while_its_menu_is_open', async () => {
   c.remove();
 });
 
+// The menus from the keyboard: opening one moves the focus to its first item
+// that can be chosen, the arrows move between the items, Esc and Tab close it
+// and the focus is back on the button (gui-worktree-smoke X3.keys does the
+// same with real key events).
+test('row_menu_from_the_keyboard', async () => {
+  const deleted = [];
+  const removed = [];
+  const actions = acts({ newWorktree() {}, newSession() {}, deleteWorktree: (m, p, wt) => deleted.push(wt.path), removeProject: (m, p) => removed.push(p.id) });
+  const c = document.createElement('div');
+  document.body.appendChild(c);
+  const draw = (projects, sessions) => renderSidebar(c, model([machineEntry(buildTree(sessions, projects))]), actions);
+  draw(DEVFLOW_TWO, twoSessions());
+  const menuButton = () => tid([...c.querySelectorAll('.worktree-group')].find((g) => g.dataset.path === '/r/devflow-worktrees/fix-login'), 'worktree-menu');
+  const key = (k) => document.activeElement.dispatchEvent(new KeyboardEvent('keydown', { key: k, bubbles: true, cancelable: true }));
+  const openMenus = () => document.querySelectorAll('body > .menu').length;
+
+  menuButton().focus();
+  click(menuButton());
+  assert.equal(document.activeElement, menuItem('worktree-delete'), 'opening the menu puts the focus on its item');
+  key('ArrowDown');
+  key('ArrowUp');
+  assert.equal(document.activeElement, menuItem('worktree-delete'), 'the arrows stay inside the menu');
+  key('Escape');
+  assert.equal(openMenus(), 0);
+  assert.equal(document.activeElement, menuButton(), 'Esc gives the focus back to the button');
+
+  click(menuButton());
+  assert.equal(document.activeElement, menuItem('worktree-delete'));
+  key('Tab');
+  assert.equal(openMenus(), 0, 'Tab closes the menu');
+  assert.equal(document.activeElement, menuButton(), 'and the focus moves on from the button');
+
+  // Choosing an item: the menu is closed (focus back on the button) before the action runs.
+  click(menuButton());
+  let focusWhenRun = null;
+  actions.deleteWorktree = (m, p, wt) => { focusWhenRun = document.activeElement; deleted.push(wt.path); };
+  click(menuItem('worktree-delete'));
+  assert.deepEqual(deleted, ['/r/devflow-worktrees/fix-login']);
+  assert.equal(openMenus(), 0);
+  assert.equal(focusWhenRun, menuButton(), 'the action starts with the focus on the button, not on an item that is about to go');
+
+  // The sidebar is rebuilt while the focus is in the menu: it stays there.
+  click(menuButton());
+  await new Promise((r) => setTimeout(r, 5));
+  const item = menuItem('worktree-delete');
+  draw(DEVFLOW_TWO, twoSessions());
+  assert.equal(document.activeElement, item, 'a rebuild leaves the focus on the menu item');
+  key('Escape');
+  assert.equal(document.activeElement, menuButton(), 'Esc after a rebuild: the button of the rebuilt row');
+
+  // Several items: the arrows go round, skipping what is off.
+  const { openMenu } = await load('src/renderer/menu.ts', { platform: 'browser' });
+  const anchor = document.createElement('button');
+  document.body.appendChild(anchor);
+  anchor.focus();
+  openMenu(anchor, [{ label: 'a', testid: 'm-a' }, { label: 'b', testid: 'm-b', disabled: true, note: 'off' }, { label: 'c', testid: 'm-c' }]);
+  const order = [];
+  assert.equal(document.activeElement, menuItem('m-a'));
+  for (const k of ['ArrowDown', 'ArrowDown', 'ArrowUp', 'ArrowUp', 'End', 'Home']) { key(k); order.push(document.activeElement.dataset.testid); }
+  assert.deepEqual(order, ['m-c', 'm-a', 'm-c', 'm-a', 'm-c', 'm-a']);
+  key('Escape');
+  assert.equal(document.activeElement, anchor);
+  // Nothing to choose: the focus stays on the button, Esc still closes.
+  openMenu(anchor, [{ label: 'b', testid: 'm-b', disabled: true, note: 'off' }]);
+  assert.equal(document.activeElement, anchor, 'a menu with no item to choose leaves the focus on its button');
+  key('ArrowDown');
+  assert.equal(document.activeElement, anchor);
+  key('Escape');
+  assert.equal(openMenus(), 0);
+  anchor.remove();
+  c.remove();
+});
+
 // A row menu that is open during a rebuild stays with its row and keeps
 // working; when the row is gone the menu goes too.
 test('open_menu_follows_its_row_through_a_rebuild', async () => {
