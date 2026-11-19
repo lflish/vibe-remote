@@ -949,7 +949,7 @@ spec「推迟到以后」的条目：
 - （T19 已处理：选中 = 紫色描边加浅紫底，键盘焦点 = 离开卡片 3px 的深色环，`test-theme-tokens › selected_and_focused_cards_differ` 守着）界面卡片（终端 / 对话）的键盘焦点环和「已选中」的描边是同一种样子（都是 `--accent` 的 2px 框）：对话框打开时焦点在「终端」上，用键盘或脚本选了「对话」之后两张卡片看起来都被选中。目录选择器原来就是这样，新对话框沿用了同一个段。T19 换形态时把两种状态做出区别。
 - 扁平的 git 项目行上点「新建会话」，对话框标题用的是分支名（「在 dev 新建会话」），项目名在副标题里；可以考虑这种情况标题用项目名。
 - 查 `internal/chat` 的 `TestStopAccountsForEveryQueuedMessage/restart` 偶发失败的原因（T10 时 `make check` 里出现 1 次：`claude exited during startup (code 139)`，假 claude 在重启后以 SIGSEGV 退出；单独跑 3 次和重跑 `make check` 都通过，decisions #60）。
-- `UnmergedCommits`（T1 写的）走的是不带超时的 `gitAt`：查状态和删除前重查时，这一条 `git rev-list` 卡住会让请求一直不返回（其余几条都有 5 秒超时）。可以改走 `gitAtTimeout`，超时按 `git_failed` 处理。
+- （评审修复已处理：每个 git 调用都带时限，`rev-list --count` 是 30 秒，decisions #93）`UnmergedCommits`（T1 写的）走的是不带超时的 `gitAt`：查状态和删除前重查时，这一条 `git rev-list` 卡住会让请求一直不返回（其余几条都有 5 秒超时）。可以改走 `gitAtTimeout`，超时按 `git_failed` 处理。
 - 并发用例 `TestConcurrentRemoveAndCreateOneWins` 发现不了「去掉删除与新建的互斥」这种改动（窗口太窄，12 轮撞不上），那一条现在靠两个卡时序的用例守着（decisions #67）。可以给它加一个只在测试里生效的让步点，把窗口撑开。
 - 当前打开的会话被删除（删会话或删它所在的 worktree）而又没有别的已打开会话时，主区域是空白的，没有回到机器概览或空状态（`closeSession` 原来就是这样，T14 的收尾沿用了它）。
 - 「删到一半失败」的说明框里，daemon 的 `message` 已经写了「目录还剩一部分、分支没删」，下面 `wt.delete.partial` 又说了一遍。可以让 daemon 的 `message` 只带 git 的输出，或在界面上合成一段。
@@ -961,3 +961,16 @@ spec「推迟到以后」的条目：
 - 效果页 M1 上有、这次没有做的几处外观（T19）：终端会话底部的一行状态（「机器 · 工作目录」和「终端 · tmux 保活」，要在终端容器里再分出一块，改终端的挂载和尺寸计算）；工具行左侧按工具类型的图标（现在是运行 / 完成 / 失败的状态点）和增删行数的分色；新建 worktree 名字输入框里的分支图标；标题里分支和会话名之间用的是「·」，效果页是「/」；权限卡片的「Esc 中断」在卡片底部，效果页在标题右侧。
 - 红绿灯的位置改成了 (18, 19)（T19），CDP 截图里看不到原生窗口控件，没有肉眼核对过它与「vibe-remote」字样是否对齐；打包后看一眼。
 - 查 `gui-smoke.mjs` 第 9 步「state dots on the two background sessions」偶发超时的原因（T19 开发中 6 次里出现 1 次，decisions #78）：脚本打开会话后立刻切走再发 hook 事件，事件可能早于那条连接接入。
+
+代码评审（daemon 侧 + 横切面，评审对象 e278f87）之后留下的：
+
+- 评审的可维护性意见 4：`RemoveWorktree`（`vibe-remoted/internal/session/projects.go`，评审修复后约 200 行）拆成四个包内函数——动手前的拦截、与请求比对、结束会话并复核 HEAD、git 删除失败后的分类，主函数只留顺序。这次不拆：刚评审过的删除路径会整体变动（decisions #91）。
+- G9 的新向量还没进共用的 `vibe-remoted/internal/session/testdata/worktree-names.json`（桌面端的两个测试直接读它，这个分支上的 `worktree-name.ts` 还没有这两条规则，加了 `make check` 会失败，decisions #87）。合并桌面端的修复之后，把 `review_fixes_test.go` 的 `reviewNameVectors` 那 15 条加进共用文件（拒绝的 12 条 `local: true`、`reason: "invalid"`），Go 那张表可以随后删掉。
+- `.devflow.yml` 和 CLAUDE.md 里要由主会话跟着改的几句（评审修复改变了它们描述的事实）：新增规则「daemon 的只读 git 调用不执行仓库配置指定的程序」（d45）；「以 - 开头的在调用 git 前被拒」那条的检查加上两个从完整入口走的用例（d47）；「未经同意不丢文件和提交」那条的拦截从三种变成四种（d44）；CLAUDE.md「动手之前先拦三种」「git 的环境固定 `LC_ALL=C`…」「每个项目只跑一次 `git worktree list`（8 路并发、5 秒超时）」三处的周边说明（四种拦截、`core.fsmonitor` 统一关闭、每个 git 都带时限）。
+- `POST /api/v1/sessions/{id}/rename` 和 `POST /api/v1/events` 共用的 `decodeJSONBody` 只解析第一个 JSON 值：合法对象后面再跟内容时不报错，超过 64 KiB 的尾部也不保证 413。基准上就是这样（评审 X2 只计了新端点，decisions #86）；可以让它们也改用 `decodeSingleJSONBody`。
+- 工作目录名以 `;` 结尾时终端会话建不起来（`tmux session … did not become ready`）：评审（桌面端待验证项 3）提出，在基准 `6d88e45` 和当前各试了一次，结果相同（`a;`、`<u>proj&amp;` 失败；`a;b`、`;a`、`a&`、`a&b`、`a b`、`a'b`、`a$b`、`a#b` 正常），是原有问题：tmux 把以 `;` 结尾的参数当成命令分隔符。可以在 `runner.go` 交给 tmux 的 `-c <目录>` 上把结尾的 `;` 转义成 `\;`。
+- `WorktreeStatus` 里与 tmux 的对账同样不看有没有被应用（`RemoveWorktree` 已改，decisions #92）：daemon 刚重启、第一次对账又没成时，确认框上可能少列会话。删除时会被拦住（409 带上完整的会话，或 500），所以不丢东西；可以让 status 也重试一次。
+- 里面有没被跟踪的独立 git 仓库的 worktree 现在不能从界面删除（d44），和被锁定、有子模块、嵌着别的 worktree 一样要点了删除才知道；让 status 带上这几个标志时把这一种也带上。
+- `git worktree add` / `git worktree remove` 的时限是 5 分钟（decisions #93）。检出比这更久的超大仓库、或 `post-checkout` 钩子很慢的仓库，新建 worktree 会失败并撤销；真遇到时把时限做成配置项。
+- 预检和新建在「目录和名字都有问题」时先报的原因不同（非 git 目录 + 名字 `-x`：新建报 `invalid_worktree_name`，预检报 `not_git`，d47）。要统一得让预检也先查名字，同时保住「空名字只取 `base`」和「名字不合法时仍给出 `project`、`base`」这两个约定。
+- 评审修复期间在机器负载高时（另一组 GUI 冒烟同时在跑，load average 4–7）各出现过一次、单独重跑都通过的三个用例，都不是这次改动引入的，没有改断言：`TestProjectsOneGitCallPerProject/unresolved_session`（三轮的 git 进程数 `[21 23 23]`，要求三轮相同）；`TestProjectStoreRemoveWorktreeIfSame`（先删再加同一条记录，两次 `CreatedAt` 落在同一个时间戳里，替换后的记录和旧的逐字段相等）；`TestWorktreeStatus/ignored_timeout`（用例把 `gitTimeout` 调成 1 秒，一次普通的 `rev-parse` 超过了 1 秒）。第二个同时说明 `RemoveWorktreeIfSame` 靠时间戳区分新旧记录不严格，可以给记录加一个递增的序号。
