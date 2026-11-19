@@ -269,15 +269,6 @@ func (m *Manager) Create(opts CreateOptions) (*Runner, error) {
 	return m.createTerminalLocked(id, opts)
 }
 
-// createTerminalLocked starts terminal session id. The caller holds id's
-// creating placeholder (or generated id), so it must not call beginCreate
-// again — a handoff, which already holds the placeholder, would wait for
-// itself.
-//
-// A command that continues the latest conversation (-c) gets a fixed identity
-// first (design 6.9, c4): the conversation is resolved and claimed, and -c is
-// replaced by --resume U (or --session-id U for a new one), so the process
-// that runs is exactly the one the claim table knows about.
 // resolveSessionHome computes the attribution to record for a new session
 // (design 5.1). A handoff supplies it directly; a session in a worktree this
 // call created takes what CreateWorktree returned; otherwise it is
@@ -299,6 +290,15 @@ func resolveSessionHome(handoff, own *Home, workdir string) (project, home strin
 	return h.Project, h.Path, h.Git
 }
 
+// createTerminalLocked starts terminal session id. The caller holds id's
+// creating placeholder (or generated id), so it must not call beginCreate
+// again — a handoff, which already holds the placeholder, would wait for
+// itself.
+//
+// A command that continues the latest conversation (-c) gets a fixed identity
+// first (design 6.9, c4): the conversation is resolved and claimed, and -c is
+// replaced by --resume U (or --session-id U for a new one), so the process
+// that runs is exactly the one the claim table knows about.
 func (m *Manager) createTerminalLocked(id string, opts CreateOptions) (*Runner, error) {
 	mode := opts.Mode
 	if mode == "" {

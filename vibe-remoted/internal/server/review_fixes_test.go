@@ -147,3 +147,13 @@ func TestAttachRefusesBadWorktreeNameBeforeAnyGit(t *testing.T) {
 		}
 	})
 }
+
+// workdir has to be a directory: a file is a malformed request, not a git
+// failure.
+func TestPlanWorktreeWorkdirIsAFile(t *testing.T) {
+	f := newPlanFixture(t)
+	w := getPlanRaw(t, f.s, filepath.Join(f.repo, "README"), "fix-login")
+	if w.Code != http.StatusBadRequest || !strings.Contains(w.Body.String(), `"invalid_request"`) {
+		t.Fatalf("status = %d: %s; want 400 invalid_request", w.Code, w.Body.String())
+	}
+}

@@ -41,10 +41,14 @@ type Config struct {
 	LoginShell *bool `json:"login_shell,omitempty"`
 	// Shell to use for login-shell launch (default: $SHELL, else /bin/bash).
 	Shell string `json:"shell,omitempty"`
-	// Directory for daemon state (the chat session table). Empty =
-	// "vibe-remoted-state" next to the config file; a relative path is taken
-	// relative to the config file. Created 0700 on start; if it cannot be
-	// written the chat UI is unavailable and terminals work as before.
+	// Directory for daemon state: the chat session table (chat-sessions.json)
+	// and the project list with the worktrees vibe-remote created
+	// (projects.json). Empty = "vibe-remoted-state" next to the config file; a
+	// relative path is taken relative to the config file. Created 0700 on
+	// start. If it cannot be written, the chat UI is unavailable and terminals
+	// work as before; the project list is then kept in memory only, so after a
+	// restart the worktrees vibe-remote created count as external (their
+	// directory can still be removed from the desktop, their branch cannot).
 	StateDir string `json:"state_dir,omitempty"`
 	// Escape hatch: allow binding to a public (non-private) address. Off by
 	// default so a misconfig can't silently expose the daemon to the internet.

@@ -24,9 +24,12 @@ type WorktreeMetadata struct {
 	Branch        string
 }
 
-// gitTimeout bounds the git calls used for read-only discovery (ListWorktrees,
-// ResolveHome, worktree pre-checks). Tests may lower it. gitAt (the creation
-// and cleanup path) is not time-bounded.
+// gitTimeout bounds the git calls made through gitAtTimeout: read-only
+// discovery (ListWorktrees, ResolveHome, the worktree pre-checks) and the file
+// counts of a status. Tests may lower it. gitAt is not time-bounded; it runs
+// what creates and undoes a worktree, `git worktree remove` and the deletion
+// of its branch, and UnmergedCommits (a rev-list, used by the status and by
+// the re-check of a removal).
 var gitTimeout = 5 * time.Second
 
 // gitStrippedEnv are environment variables that would redirect git at another

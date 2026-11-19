@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"os"
 
 	"github.com/lflish/vibe-remote/vibe-remoted/internal/protocol"
 	"github.com/lflish/vibe-remote/vibe-remoted/internal/session"
@@ -62,6 +63,10 @@ func (s *Server) handleWorktreePlan(w http.ResponseWriter, r *http.Request) {
 	canonical, err := s.cfg.ResolveAllowedWorkdir(workdir)
 	if err != nil {
 		writeJSON(w, http.StatusForbidden, map[string]string{"error": "path not in allowed roots"})
+		return
+	}
+	if info, statErr := os.Stat(canonical); statErr != nil || !info.IsDir() {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid_request", "message": "workdir is not a directory"})
 		return
 	}
 	plan, err := s.mgr.PlanWorktree(canonical, r.URL.Query().Get("name"), func(path string) error {

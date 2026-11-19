@@ -455,7 +455,7 @@ v3 对话会话的条目另带（终端条目一律省略）：
 | `base` | object | ✓ | 新 worktree 将基于什么：`{branch?, head, detached?}`，`workdir` 所在 worktree 当前的分支和提交前 7 位；不在任何分支上时没有 `branch`、`detached:true`。`not_git` 时没有；`no_commits` 时 `head` 是 `0000000` |
 | `branch`、`path` | string | ✓ | 将要创建的分支和目录；名字通过了规则才有（`not_git`、`unsupported_repo`、`no_commits`、`invalid_worktree_name` 时没有） |
 
-HTTP 错误：缺 `workdir` → 400 `{"error":"invalid_request"}`；`workdir` 不在 `allowed_roots` 内 → 403（响应体同 `/api/v1/fs`）；`workdir` 在 git 仓库里但 git 执行失败或超时 → 500 `{"error":"git_failed","message"}`。旧 daemon 没有此路径，返回 404。
+HTTP 错误：缺 `workdir`，或 `workdir` 不是目录 → 400 `{"error":"invalid_request"}`；`workdir` 不在 `allowed_roots` 内 → 403（响应体同 `/api/v1/fs`）；`workdir` 在 git 仓库里但 git 执行失败或超时 → 500 `{"error":"git_failed","message"}`。旧 daemon 没有此路径，返回 404。
 
 ### `/api/v1/worktrees/status` 和 `/api/v1/worktrees/remove`（v4）
 
