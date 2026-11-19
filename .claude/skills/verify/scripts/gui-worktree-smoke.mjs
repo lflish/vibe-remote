@@ -2807,6 +2807,29 @@ test('X3.keys', 'the row menus work from the keyboard alone (exploration X3)', a
   return 'Tab to "more", Enter: focus on "删除 worktree"; arrows stay; Esc and Tab close it and the focus is on a button; Enter on the item opens the confirmation; Esc closes that';
 });
 
+test('X6.scroll', 'switching with the keys scrolls the session\'s row into view (exploration X6)', async () => {
+  await openSession(fx.mainChat);
+  const r = await atWindowSize(cdp, MIN_WINDOW, async () => {
+    const order = await visibleIds();
+    const box = () => ev(`(() => { const l = document.getElementById('machine-list'); const s = l.querySelector('.session-item.active'); if (!s) return null; const a = l.getBoundingClientRect(); const b = s.getBoundingClientRect(); return { inView: b.top >= a.top - 1 && b.bottom <= a.bottom + 1, top: Math.round(b.top - a.top), height: Math.round(a.height), overflow: l.scrollHeight - l.clientHeight }; })()`);
+    assert((await box()).overflow > 200, `the sidebar does not scroll in an 800×500 window: ${J(await box())}`);
+    await switchesTo(1, order[0]);
+    await ev(`document.getElementById('machine-list').scrollTop = 0, true`);
+    // ⌘⇧[ from the first session wraps to the last one, far below the fold
+    await switchesTo('prev', order[order.length - 1]);
+    const last = await waitFor(async () => { const b = await box(); return b?.inView ? b : null; }, 2000, 'the last session\'s row in view').catch(() => null);
+    assert(last, `⌘⇧[ opened the last session, but its row is out of sight: ${J(await box())}`);
+    // and back up: ⌘1 with the list scrolled to its end
+    await ev(`(() => { const l = document.getElementById('machine-list'); l.scrollTop = l.scrollHeight; return true; })()`);
+    await switchesTo(1, order[0]);
+    const first = await waitFor(async () => { const b = await box(); return b?.inView ? b : null; }, 2000, 'the first session\'s row in view').catch(() => null);
+    assert(first, `⌘1 opened the first session, but its row is out of sight: ${J(await box())}`);
+    return { n: order.length, overflow: last.overflow };
+  });
+  assert(r && !r.problems, `the 800×500 window: ${J(r?.problems)}`);
+  return `${r.n} sessions in a sidebar that scrolls ${r.overflow}px: ⌘⇧[ to the last and ⌘1 to the first both bring the row into view`;
+});
+
 test('NFR.perf', 'performance: 20 projects × 5 worktrees add at most 200 ms to the lists', async () => {
   const P = join(work, 'p');
   const perf = defineDaemon('perf', { cfg: { default_workdir: P, allowed_roots: [P], claude_cmd: '/bin/bash', claude_reload_cmd: '/bin/bash' } });

@@ -231,6 +231,31 @@ test('opens_by_position_via_index', async () => {
   dom.dom.window.close();
 });
 
+// In a long sidebar the row of the session switched to can be far outside the
+// part that shows. jsdom has no layout: what is checked is that the row of the
+// session now shown is asked to come into view, each time the session shown
+// changes and not on a refresh (gui-worktree-smoke X6.scroll measures it).
+test('switching_reveals_the_row_via_index', async () => {
+  const { dom, app } = await setupApp([{ machine: M, sessions: TWO_PROJECTS }]);
+  const revealed = [];
+  window.HTMLElement.prototype.scrollIntoView = function (opts) { revealed.push([this.dataset.sessionId ?? this.className, opts?.block]); };
+  press(document.body, 'Digit3', CMD);
+  assert.deepEqual(revealed, [['b1', 'nearest']], 'the row of the session ⌘3 opened');
+  press(document.body, 'BracketLeft', CMD_SHIFT);
+  assert.deepEqual(revealed.at(-1), ['a2', 'nearest']);
+  const n = revealed.length;
+  app.renderSidebar();
+  await app.pollMachines();
+  assert.equal(revealed.length, n, 'a refresh does not move the list: the user may be reading another part of it');
+  // The session is in a folded project: it unfolds, and the row revealed is the one drawn after that.
+  click(document.querySelector('.project-group[data-project-id="/r/beta"] .project-toggle'));
+  app.setActive(`${MK}::b2`);
+  assert.deepEqual(revealed.at(-1), ['b2', 'nearest']);
+  assert.ok(document.querySelector('.session-item.active[data-session-id="b2"]'), 'the row is there and marked as the one shown');
+  delete window.HTMLElement.prototype.scrollIntoView;
+  dom.dom.window.close();
+});
+
 test('skips_collapsed_via_index', async () => {
   const { dom, app } = await setupApp([{ machine: M, sessions: TWO_PROJECTS }]);
   app.setActive(`${MK}::b2`);

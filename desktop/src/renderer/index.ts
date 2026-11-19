@@ -1237,6 +1237,11 @@ function setActive(key: string) {
     });
   }
   renderSidebar();
+  // In a long sidebar the row of the session now shown can be outside the part
+  // that shows (switched to with ⌘1–9 / ⌘⇧[ / ⌘⇧], or just created). Only here,
+  // when the session shown changes: a refresh must not move the list while the
+  // user is reading another part of it.
+  document.querySelector<HTMLElement>('#machine-list .session-item.active')?.scrollIntoView?.({ block: 'nearest' });
   updateStatusBar();
 }
 
