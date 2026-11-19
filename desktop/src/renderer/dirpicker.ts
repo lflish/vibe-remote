@@ -4,6 +4,11 @@ import { PROTOCOL_VERSION } from '../shared/protocol';
 import { t } from './i18n';
 import { activateModal } from './modal';
 import { chatAvailability } from './chat/availability';
+import { createFlagsSection, createNameSection, createUiSection } from './session-form';
+
+// Naming a new worktree (attach.worktreeName, GET /api/v1/worktrees/plan) needs
+// a protocol 4 daemon; an older one ignores the name and picks its own.
+const WORKTREE_NAME_MIN_PROTO = 4;
 
 export interface PickedSession {
   workdir: string;
@@ -11,6 +16,9 @@ export interface PickedSession {
   mode: SessionMode;
   /** Session kind (R1); terminal unless the user picked the chat card. */
   ui: SessionUI;
+  /** Worktree mode on a protocol 4 daemon: the new branch, and the directory the daemon planned for it. */
+  worktreeName?: string;
+  worktreePath?: string;
 }
 
 /**
@@ -29,16 +37,13 @@ export function openDirPicker(
     const rest = new VibeRemoteRest(machine);
     let currentPath = '';
     let mode: SessionMode = initialMode;
-    // Interface (R1.1, d4): terminal by default; chat only when the machine
-    // and the listed folder allow it (R1.3, R1.4, c3).
-    let ui: SessionUI = 'terminal';
     let info: MachineInfo | undefined;
     let infoError: unknown;
     let trust: ChatTrust | undefined;
     let listingReady = false;
+    let confirming = false;
     let closed = false;
     let loadGeneration = 0;
-    const flagChecks: Array<{ id: string; input: HTMLInputElement }> = [];
 
     // --- Build modal DOM ---
     const overlay = el('div', 'modal-overlay');
@@ -54,25 +59,10 @@ export function openDirPicker(
     const pathBar = el('div', 'modal-path');
     body.appendChild(pathBar);
 
-    const uiBox = el('div', 'modal-modes modal-ui');
-    const uiTitle = el('div', 'modal-flags-title');
-    uiTitle.textContent = t('picker.ui.title');
-    const uiCards = el('div', 'modal-ui-cards');
-    const termCard = uiCard('terminal', t('picker.ui.terminal.title'), t('picker.ui.terminal.desc'));
-    const chatCard = uiCard('chat', t('picker.ui.chat.title'), t('picker.ui.chat.desc'), t('picker.ui.chat.only'));
-    const chatReason = el('span', 'modal-ui-reason');
-    chatReason.dataset.testid = 'picker-ui-chat-reason';
-    chatCard.appendChild(chatReason);
-    uiCards.append(termCard, chatCard);
-    const uiNote = el('div', 'modal-mode-note');
-    const uiFixed = el('div', 'modal-mode-note');
-    uiFixed.textContent = t('picker.ui.note.fixed');
-    uiBox.append(uiTitle, uiCards, uiNote, uiFixed);
-    body.appendChild(uiBox);
-    termCard.addEventListener('click', () => setUI('terminal'));
-    chatCard.addEventListener('click', () => {
-      if (!chatCard.disabled) setUI('chat');
-    });
+    // Interface (R1.1, d4): terminal by default; chat only when the machine
+    // and the listed folder allow it (R1.3, R1.4, c3).
+    const uiSection = createUiSection({ onChange: refreshUI });
+    body.appendChild(uiSection.el);
 
     const modesBox = el('div', 'modal-modes');
     const modesTitle = el('div', 'modal-flags-title');
@@ -96,7 +86,7 @@ export function openDirPicker(
       button.addEventListener('click', () => {
         mode = card.value;
         modeButtons.forEach((b, i) => b.setAttribute('aria-pressed', String(modeCards[i].value === mode)));
-        modeNote.hidden = mode !== 'worktree';
+        refreshMode();
       });
       modeButtons.push(button);
       modesBox.appendChild(button);
@@ -106,16 +96,20 @@ export function openDirPicker(
     modeNote.hidden = mode !== 'worktree';
     modesBox.appendChild(modeNote);
     body.appendChild(modesBox);
+    // Worktree mode on a protocol 4 daemon: the new worktree gets a name (R3.9).
+    // It is in the dialog only while that applies; an older daemon keeps the
+    // mode note and names the worktree itself (R9.1).
+    const nameSection = createNameSection({
+      plan: (name) => rest.planWorktree(currentPath, name),
+      onChange: refreshUI,
+    });
 
     const list = el('div', 'modal-list');
     list.setAttribute('aria-live', 'polite');
     body.appendChild(list);
 
-    const flagsBox = el('div', 'modal-flags');
-    body.appendChild(flagsBox);
-    // How -c / bypass behave in the chat interface (prototype scene 4).
-    const flagNote = el('div', 'modal-mode-note modal-ui-flag-note');
-    flagNote.textContent = t('picker.ui.flagNote');
+    const flagsSection = createFlagsSection({ existingSessions: 0 });
+    body.appendChild(flagsSection.el);
 
     // Load selectable launch flags from the machine's info endpoint. Rendered as
     // checkboxes below the directory list; the picker still works (workdir only)
@@ -125,7 +119,7 @@ export function openDirPicker(
       .then((loaded) => {
         if (closed) return;
         info = loaded;
-        refreshUI();
+        refreshMode();
         // Warn before the user commits to a session on an older daemon: it
         // accepts the attach and quietly ignores what it doesn't understand.
         const proto = loaded.proto ?? 1;
@@ -135,24 +129,7 @@ export function openDirPicker(
           warn.textContent = t('picker.oldDaemon', { proto, want: PROTOCOL_VERSION, version: loaded.version ?? '?' });
           body.insertBefore(warn, modesBox);
         }
-        const flags = loaded.claude_flags || [];
-        if (flags.length === 0) return;
-        const title = el('div', 'modal-flags-title');
-        title.textContent = t('picker.launchOptions');
-        flagsBox.appendChild(title);
-        for (const f of flags) {
-          const row = el('label', 'modal-flag');
-          const input = document.createElement('input');
-          input.type = 'checkbox';
-          input.name = `claude-flag-${f.id}`;
-          input.checked = f.default === true;
-          const span = document.createElement('span');
-          span.textContent = f.label; // safe: textContent, not innerHTML
-          row.append(input, span);
-          flagsBox.appendChild(row);
-          flagChecks.push({ id: f.id, input });
-        }
-        flagsBox.appendChild(flagNote);
+        flagsSection.setFlags(loaded.claude_flags || []);
       })
       .catch((e: unknown) => {
         // info failed: no flags shown, workdir selection still works (terminal).
@@ -164,9 +141,11 @@ export function openDirPicker(
     const footer = el('div', 'modal-footer');
     const cancelBtn = el('button', 'btn-secondary');
     (cancelBtn as HTMLButtonElement).type = 'button';
+    cancelBtn.dataset.testid = 'dialog-cancel';
     cancelBtn.textContent = t('picker.cancel');
     const selectBtn = el('button', 'btn-primary');
     (selectBtn as HTMLButtonElement).type = 'button';
+    selectBtn.dataset.testid = 'dialog-confirm';
     (selectBtn as HTMLButtonElement).disabled = true;
     selectBtn.textContent = t('picker.openHere');
     footer.append(cancelBtn, selectBtn);
@@ -176,26 +155,33 @@ export function openDirPicker(
     document.body.appendChild(overlay);
 
     // --- Behavior ---
-    function setUI(next: SessionUI) {
-      ui = next;
+    const naming = () => mode === 'worktree' && (info?.proto ?? 1) >= WORKTREE_NAME_MIN_PROTO;
+
+    // Re-evaluated whenever the mode or the machine info changes.
+    function refreshMode() {
+      const named = naming();
+      modeNote.hidden = mode !== 'worktree' || named;
+      if (named && !nameSection.el.isConnected) {
+        modesBox.appendChild(nameSection.el);
+        if (listingReady) nameSection.refresh();
+      } else if (!named) {
+        nameSection.el.remove();
+      }
       refreshUI();
     }
 
-    // Re-evaluated whenever the machine info or the listed folder changes.
+    // Re-evaluated whenever the machine info, the listed folder, the chosen
+    // interface or the worktree name changes.
     function refreshUI() {
       const a = chatAvailability(info, infoError, trust);
-      chatCard.disabled = !a.enabled;
-      chatCard.setAttribute('aria-disabled', String(!a.enabled));
-      chatCard.classList.toggle('unavailable', !a.enabled);
-      chatReason.hidden = a.enabled;
-      chatReason.textContent = a.enabled || !a.reasonKey ? '' : t(a.reasonKey, a.params);
-      termCard.setAttribute('aria-pressed', String(ui === 'terminal'));
-      chatCard.setAttribute('aria-pressed', String(ui === 'chat'));
-      uiNote.textContent = ui === 'chat' ? t('picker.ui.note.chat') : t('picker.ui.note.terminal');
-      flagNote.hidden = ui !== 'chat';
+      const ui = uiSection.value();
+      uiSection.setAvailability(a);
+      flagsSection.setUI(ui);
       // Chat stays chosen if the user browses into a folder it can't use, but
       // nothing is created until they pick another folder or the terminal.
-      (selectBtn as HTMLButtonElement).disabled = !listingReady || (ui === 'chat' && !a.enabled);
+      (selectBtn as HTMLButtonElement).disabled = !listingReady || confirming
+        || (ui === 'chat' && !a.enabled)
+        || (naming() && !nameSection.ready());
     }
 
     let deactivateModal = () => {};
@@ -224,6 +210,8 @@ export function openDirPicker(
         renderPath(listing.path);
         renderEntries(listing, listing.entries);
         listingReady = true;
+        // The base commit and the target directory depend on the listed folder.
+        if (naming()) nameSection.refresh();
         refreshUI();
       } catch (e) {
         if (closed || generation !== loadGeneration) return;
@@ -287,38 +275,34 @@ export function openDirPicker(
     }
 
     cancelBtn.addEventListener('click', () => close(null));
-    selectBtn.addEventListener('click', () => {
-      const flags = flagChecks.filter((c) => c.input.checked).map((c) => c.id);
-      close({ workdir: currentPath, flags, mode, ui });
+    selectBtn.addEventListener('click', async () => {
+      const picked: PickedSession = { workdir: currentPath, flags: flagsSection.value(), mode, ui: uiSection.value() };
+      if (!naming()) {
+        close(picked);
+        return;
+      }
+      // Ask once more: the name may have been taken since it was typed.
+      confirming = true;
+      refreshUI();
+      const plan = await nameSection.confirm();
+      confirming = false;
+      if (closed) return;
+      if (!plan || !plan.branch || !plan.path || picked.workdir !== currentPath) {
+        refreshUI();
+        return;
+      }
+      close({ ...picked, worktreeName: plan.branch, worktreePath: plan.path });
     });
     overlay.addEventListener('click', (e) => {
       if (e.target === overlay) close(null);
     });
+    const termCard = uiSection.el.querySelector<HTMLElement>('[data-testid="picker-ui-terminal"]')!;
     deactivateModal = activateModal(overlay, modal, header, termCard, () => close(null));
 
-    refreshUI();
+    refreshMode();
     // Start at default workdir
     load();
   });
-}
-
-function uiCard(value: SessionUI, title: string, description: string, tag?: string): HTMLButtonElement {
-  const button = document.createElement('button');
-  button.type = 'button';
-  button.className = 'modal-mode-card modal-ui-card';
-  button.dataset.testid = `picker-ui-${value}`;
-  button.dataset.ui = value;
-  const head = el('span', 'modal-mode-title');
-  head.textContent = title;
-  if (tag) {
-    const only = el('span', 'modal-ui-only');
-    only.textContent = tag;
-    head.appendChild(only);
-  }
-  const desc = el('span', 'modal-mode-description');
-  desc.textContent = description;
-  button.append(head, desc);
-  return button;
 }
 
 function folderIcon(): SVGSVGElement {

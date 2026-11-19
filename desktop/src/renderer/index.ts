@@ -5,7 +5,9 @@ import type { MachineConfig, Project, SessionInfo, SessionMode } from '../shared
 import { PROTOCOL_VERSION } from '../shared/protocol';
 import { VibeRemoteClient, ConnectionState, type AttachOptions } from './client';
 import { VibeRemoteRest, DeleteSessionError, ReloadSessionError, RestError } from './rest';
-import { openDirPicker } from './dirpicker';
+import { openDirPicker, type PickedSession } from './dirpicker';
+import { openNewWorktreeDialog } from './worktree-dialogs';
+import { worktreeErrorText } from './worktree-name';
 import { openMachineManager } from './machines';
 import { t, toggleLocale, getLocale, onLocaleChange } from './i18n';
 import { fitWhenVisible, dimensionsWhenVisible } from './terminal-layout';
@@ -693,9 +695,35 @@ function isLoopbackAddress(address: string): boolean {
 
 async function startNewSession(machine: MachineConfig, initialMode?: SessionMode) {
   const picked = await openDirPicker(machine, initialMode);
-  if (!picked) return;
-  if (picked.ui === 'chat') openChatSession(machine, '', picked.workdir, picked.flags, picked.mode);
-  else openSession(machine, '', picked.workdir, picked.flags, picked.mode);
+  if (picked) startPicked(machine, picked);
+}
+
+// startNewWorktree is "New worktree" on a project row (R3): the dialog asks for
+// the name, then the session is created like any other, with the name on the
+// attach so the daemon creates the branch and the directory.
+async function startNewWorktree(machine: MachineConfig, project: TreeProject) {
+  const picked = await openNewWorktreeDialog(machine, project);
+  if (picked) startPicked(machine, picked);
+}
+
+// What a create asked the daemon to name its new worktree, kept to word an
+// error frame that refuses it.
+type NamedWorktree = { name: string; path?: string };
+
+// startPicked creates the session a new-session dialog was confirmed with.
+function startPicked(machine: MachineConfig, picked: PickedSession) {
+  const named = picked.worktreeName ? { name: picked.worktreeName, path: picked.worktreePath } : undefined;
+  if (picked.ui === 'chat') openChatSession(machine, '', picked.workdir, picked.flags, picked.mode, named);
+  else openSession(machine, '', picked.workdir, picked.flags, picked.mode, undefined, named);
+}
+
+// attachErrorText words an attach error frame for the user. The worktree codes
+// read the way they do in the dialog (the frame has no `conflict`, so a
+// directory/file clash shows as "branch … already exists"); anything else
+// keeps the daemon's message.
+function attachErrorText(msg: string, code: string | undefined, named: NamedWorktree | undefined): string {
+  if (!code || !named) return msg;
+  return worktreeErrorText(code, { branch: named.name, path: named.path }) ?? msg;
 }
 
 function showMachineOverview(machine: MachineConfig) {
@@ -749,7 +777,7 @@ function openExisting(machine: MachineConfig, session: SessionInfo): AnyView {
 
 // openChatSession creates a ChatView (its own WS + transcript) and attaches
 // with ui:'chat'. sessionId '' means create a brand-new chat session.
-function openChatSession(machine: MachineConfig, sessionId: string, workdir?: string, flags?: string[], mode: SessionMode = 'normal'): AnyView {
+function openChatSession(machine: MachineConfig, sessionId: string, workdir?: string, flags?: string[], mode: SessionMode = 'normal', named?: NamedWorktree): AnyView {
   const key = sessionId ? viewKey(machine, sessionId) : creatingKey(machine);
   const existing = views.get(key);
   if (existing) {
@@ -807,8 +835,9 @@ function openChatSession(machine: MachineConfig, sessionId: string, workdir?: st
     updateStatusBar(t('status.sessionExited', { code }));
     refreshAllMachines();
   };
-  client.onError = (msg, fatal) => {
-    console.error(`[${machine.name}]`, msg);
+  client.onError = (raw, fatal, code) => {
+    console.error(`[${machine.name}]`, raw);
+    const msg = attachErrorText(raw, code, named);
     if (fatal && dropFailedCreate(view, msg)) return;
     if (fatal) {
       view.banner.style.display = 'none';
@@ -819,7 +848,7 @@ function openChatSession(machine: MachineConfig, sessionId: string, workdir?: st
   };
 
   client.connect();
-  client.attach(sessionId, 80, 24, workdir, flags, sessionId ? undefined : mode, { ui: 'chat' });
+  client.attach(sessionId, 80, 24, workdir, flags, sessionId ? undefined : mode, { ui: 'chat', worktreeName: named?.name });
   setActive(view.key);
   return view;
 }
@@ -827,7 +856,7 @@ function openChatSession(machine: MachineConfig, sessionId: string, workdir?: st
 // openSession creates a new SessionView (its own WS + xterm) and attaches.
 // sessionId '' means create a brand-new session with the given workdir.
 // `opts.handoffFrom` creates the terminal session that takes over a chat session (R14).
-function openSession(machine: MachineConfig, sessionId: string, workdir?: string, flags?: string[], mode: SessionMode = 'normal', opts?: AttachOptions): AnyView {
+function openSession(machine: MachineConfig, sessionId: string, workdir?: string, flags?: string[], mode: SessionMode = 'normal', opts?: AttachOptions, named?: NamedWorktree): AnyView {
   const key = sessionId ? viewKey(machine, sessionId) : creatingKey(machine);
   const existing = views.get(key);
   if (existing) {
@@ -940,8 +969,9 @@ function openSession(machine: MachineConfig, sessionId: string, workdir?: string
     updateStatusBar(t('status.sessionExited', { code }));
     refreshAllMachines();
   };
-  client.onError = (msg, fatal) => {
-    console.error(`[${machine.name}]`, msg);
+  client.onError = (raw, fatal, code) => {
+    console.error(`[${machine.name}]`, raw);
+    const msg = attachErrorText(raw, code, named);
     if (fatal && dropFailedCreate(view, msg)) return;
     // Show the error to the user instead of leaving a blank terminal.
     if (view.terminal) view.terminal.write(`\r\n\x1b[31m[${t('terminal.error', { msg })}]\x1b[0m\r\n`);
@@ -970,7 +1000,7 @@ function openSession(machine: MachineConfig, sessionId: string, workdir?: string
 
   client.connect();
   const dims = dimensionsWhenVisible(container, () => fit.proposeDimensions());
-  client.attach(sessionId, dims?.cols || 80, dims?.rows || 24, workdir, flags, sessionId ? undefined : mode, opts);
+  client.attach(sessionId, dims?.cols || 80, dims?.rows || 24, workdir, flags, sessionId ? undefined : mode, named ? { ...opts, worktreeName: named.name } : opts);
 
   setActive(view.key);
   return view;
@@ -1241,7 +1271,10 @@ const sidebarActions: SidebarActions = {
   removeProject: (machine, project) => {
     void handleRemoveProject(machine, project.id);
   },
-  // newSession / newWorktree / deleteWorktree are wired in T11 / T9 / T14.
+  newWorktree: (machine, project) => {
+    void startNewWorktree(machine, project);
+  },
+  // newSession / deleteWorktree are wired in T11 / T14.
 };
 
 // handleRemoveProject drops a project from the sidebar (disk untouched). A 409
