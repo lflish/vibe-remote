@@ -407,7 +407,7 @@
 - 依赖：T4
 
 ### T6a 桌面端：侧边栏渲染原样搬到 `sidebar.ts`（只搬不改）
-- 状态：待办
+- 状态：完成
 - 文件：
   - 新建 `desktop/src/renderer/sidebar.ts`：从 `index.ts` 原样搬来 `renderSidebar` 的函数体（现 1100–1282 行）、`startInlineRename`（1288–1334 行）、`rendererIcon`（98 行起）。新建 `desktop/scripts/test-sidebar.mjs`、`desktop/scripts/fixtures/sidebar-flat.html`（搬之前生成的 DOM 快照）
   - 修改 `desktop/src/renderer/index.ts`：`renderSidebar()` 变成薄函数（`renamingActive` 为真时直接返回，否则用模块状态拼出 `SidebarModel`、把现有的处理逻辑包成 `SidebarActions`，调 `sidebar.ts`）；其余用到 `rendererIcon` 的地方改为从 `sidebar.ts` 导入。修改 `desktop/package.json`（`test:sidebar`）
@@ -868,6 +868,7 @@
 | T3 | 2026-11-19 11:52 | 37336f8 | `go test -race ./internal/session -run 'TestProjectStore\|TestManaged\|TestOpenProjectStore\|TestMemoryProjectStore'` `ok`；`grep ValidSessionID` 无输出；`make check` exit 0 |
 | T4 | 2026-11-19 12:40 | b60351d | 三组完成命令全绿（Go `-race` 三包 `ok`、`test:chat-availability`+`test:rest-projects` 退出 0、golden/IsAllowedWorkdir 核对通过）；`make check` exit 0 |
 | T5 | 2026-11-19 14:35 | 28f6d19 | `npm run typecheck` 退出 0；`npm run test:tree` 18 个用例 `ok`；`TMUX_TMPDIR=… make check` exit 0 |
+| T6a | 2026-11-19 15:40 | 57413e3（快照）、b746d2b（搬家） | `npm run typecheck`+`npm test` 退出 0（`test:sidebar` 4 用例 `ok`，快照逐字节不变）；`gui-smoke.mjs`、`gui-chat-smoke.mjs` 全绿、无 FAIL（两脚本 vs merge-base 无 diff）；`TMUX_TMPDIR=… make check` exit 0。`index.ts` 净减少 155 行（完成定义估计 ≥200，见 decisions #45） |
 
 ## 后续
 
