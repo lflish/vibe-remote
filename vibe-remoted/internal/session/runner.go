@@ -5,9 +5,11 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"log"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -34,6 +36,20 @@ func tmuxCmd(args ...string) *exec.Cmd {
 	cmd := exec.Command("tmux", append([]string{"-L", tmuxSocket}, args...)...)
 	cmd.Env = utf8Env()
 	return cmd
+}
+
+// tmuxSocketPath is where `tmux -L vibe-remote` puts its socket for this
+// process: <dir>/tmux-<uid>/vibe-remote, where <dir> is TMUX_TMPDIR when that
+// is set and not empty, and /tmp otherwise (tmux's TMUX_SOCK search path,
+// "$TMUX_TMPDIR:/tmp/"). tmuxCmd passes the daemon's own TMUX_TMPDIR on, so
+// this is the path its tmux commands use. It is only ever looked at (os.Stat),
+// never created, removed or connected to from here.
+func tmuxSocketPath() string {
+	dir := os.Getenv("TMUX_TMPDIR")
+	if dir == "" {
+		dir = "/tmp"
+	}
+	return filepath.Join(dir, fmt.Sprintf("tmux-%d", os.Getuid()), tmuxSocket)
 }
 
 // utf8Env returns the process environment with a UTF-8 locale guaranteed.
@@ -128,33 +144,60 @@ func parseTmuxSessionLine(line string) (tmuxSessionInfo, bool) {
 	return info, true
 }
 
-// liveTmuxSessions returns the vibe-remote session IDs that currently have a live
-// tmux session, mapped to each session's working directory (from tmux's
-// pane_current_path) and user-set name (@vibe_remote_name). The bool return is
-// false if the query itself failed (server not running or command error) so
-// callers can distinguish "no sessions" from "couldn't tell" and avoid wrongly
-// discarding live sessions on a transient failure. Pulling name here (rather
-// than a per-session show-options) keeps Manager.List to a single tmux exec.
 // isNoTmuxServer reports whether tmux's stderr means "there is nothing running"
 // (an honest empty set) rather than "the query failed". tmux prints
 // "no server running on <socket>" for the former and "error connecting to
-// <socket> (...)" for the latter, both with a non-zero exit.
+// <socket> (...)" for the latter, both with a non-zero exit. A socket that was
+// never created also gets the second message; noTmuxServerPossible tells that
+// case apart without reading the message.
 func isNoTmuxServer(stderr []byte) bool {
 	msg := strings.ToLower(string(stderr))
 	return strings.Contains(msg, "no server running") ||
 		strings.Contains(msg, "no sessions")
 }
 
+// noTmuxServerPossible reports whether a failed tmux query (err) failed for a
+// reason that rules out any vibe-remote tmux session: there is no tmux program
+// to run, or the socket of the vibe-remote server does not exist — no server
+// was started since the socket directory was last cleared (a reboot, or a
+// daemon that has only ever run chat sessions). Both are decided from the
+// error value and the file system, not from tmux's words. A socket that is
+// there and does not answer is not this: sessions may be behind it.
+func noTmuxServerPossible(err error) bool {
+	if errors.Is(err, exec.ErrNotFound) {
+		return true
+	}
+	var exitErr *exec.ExitError
+	if !errors.As(err, &exitErr) {
+		return false // tmux could not be run for some other reason
+	}
+	_, statErr := os.Stat(tmuxSocketPath())
+	return errors.Is(statErr, fs.ErrNotExist)
+}
+
+// liveTmuxSessions returns the vibe-remote session IDs that currently have a live
+// tmux session, mapped to each session's working directory (from tmux's
+// pane_current_path) and user-set name (@vibe_remote_name). The bool return is
+// false if the query itself failed (a server is there and could not be asked,
+// or tmux could not be run) so callers can distinguish "no sessions" from
+// "couldn't tell" and avoid wrongly discarding live sessions on a transient
+// failure. No server running, no socket and no tmux program are all an honest
+// empty set. Pulling name here (rather than a per-session show-options) keeps
+// Manager.List to a single tmux exec.
 func liveTmuxSessions() (map[string]tmuxSessionInfo, bool) {
 	out, err := tmuxCmd("list-sessions", "-F", "#{session_name}\t#{pane_current_path}\t#{@vibe_remote_name}\t#{@vibe_remote_mode}\t#{@vibe_remote_source_workdir}\t#{@vibe_remote_source_repo}\t#{@vibe_remote_worktree_root}\t#{@vibe_remote_branch}\t#{@vibe_remote_claude_u}\t#{@vibe_remote_project}\t#{@vibe_remote_home}\t#{@vibe_remote_created}\t#{session_created}").Output()
 	if err != nil {
 		// tmux exits non-zero both when there genuinely are no sessions and when
-		// the query could not run at all, and only stderr tells them apart.
-		// Treating every non-zero exit as an empty set would let a transient
-		// failure (unreachable socket, permission problem) wipe every session
-		// from the in-memory table via reconcile.
+		// the query could not run at all. Treating every non-zero exit as an
+		// empty set would let a transient failure (unreachable socket,
+		// permission problem) wipe every session from the in-memory table via
+		// reconcile; treating every one as a failure would leave a daemon that
+		// never started a tmux server unable to say "no terminal sessions".
 		var exitErr *exec.ExitError
 		if errors.As(err, &exitErr) && isNoTmuxServer(exitErr.Stderr) {
+			return map[string]tmuxSessionInfo{}, true
+		}
+		if noTmuxServerPossible(err) {
 			return map[string]tmuxSessionInfo{}, true
 		}
 		if errors.As(err, &exitErr) {
