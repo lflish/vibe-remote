@@ -1,5 +1,7 @@
 // session-form.ts (T9): the name field shared by the new-worktree dialog and the
 // directory picker's Worktree mode, and the picker built on the shared sections.
+// T15: the note under the launch options that says what -c does when the
+// directory already has a session.
 import { strict as assert } from 'node:assert';
 import { readFileSync } from 'node:fs';
 import { indexDom, load, runner } from './chat-test-util.mjs';
@@ -7,7 +9,7 @@ import { INFO_V4, afterDebounce, click, fakeDaemon, overlay, planFor, settle, ti
 
 await indexDom();
 localStorage.setItem('vibe-remote.locale', 'zh');
-const { createNameSection } = await load('src/renderer/session-form.ts', { platform: 'browser' });
+const { createNameSection, createFlagsSection } = await load('src/renderer/session-form.ts', { platform: 'browser' });
 const { openDirPicker } = await load('src/renderer/dirpicker.ts', { platform: 'browser' });
 const { t } = await load('src/renderer/i18n.ts', { platform: 'browser' });
 
@@ -22,9 +24,9 @@ function mountSection(plan) {
   return { section, input: tid('wt-name-input', section.el), error: tid('wt-name-error', section.el), changes: () => changes, remove: () => section.el.remove() };
 }
 
-async function openPicker(mode, routes) {
+async function openPicker(mode, routes, opts) {
   const daemon = fakeDaemon(routes);
-  const result = openDirPicker(M, mode);
+  const result = openDirPicker(M, mode, opts);
   await settle(8);
   return { daemon, result, root: overlay(), confirm: tid('dialog-confirm', overlay()), cancel: tid('dialog-cancel', overlay()) };
 }
@@ -225,6 +227,127 @@ test('picker_normal_mode_unchanged', async () => {
   assert.deepEqual(picked, { workdir: '/r/devflow', flags: ['continue', 'skip'], mode: 'normal', ui: 'chat' });
   assert.ok(!('worktreeName' in picked));
   p.daemon.restore();
+});
+
+// --- T15: what -c does when the directory already has a session (R6) ---
+
+const flagBox = (root, id) => root.querySelector(`.modal-flag input[name="claude-flag-${id}"]`);
+const DEFAULT_CONTINUE = {
+  ...INFO_V4,
+  claude_flags: [{ id: 'continue', label: '续上次会话 (-c)', default: true }, { id: 'skip', label: '跳过权限确认' }],
+};
+
+test('continue_note_shown', async () => {
+  const asked = [];
+  const p = await openPicker('normal', {}, { sessionCountAt: (dir) => { asked.push(dir); return 1; } });
+  assert.ok(asked.includes('/r/devflow'), 'the count is asked for the listed folder');
+  assert.equal(tid('continue-note', p.root), null, 'nothing to say until -c is checked');
+  click(flagBox(p.root, 'continue'));
+  const note = tid('continue-note', p.root);
+  assert.ok(note, 'the note appears');
+  assert.notEqual(t('wt.session.continueNote'), 'wt.session.continueNote', 'the text exists');
+  assert.equal(note.textContent, t('wt.session.continueNote'));
+  assert.ok(p.root.querySelector('.modal-body').contains(note), 'the note is in the scrolling body, not in the footer');
+  assert.equal(p.confirm.disabled, false, 'the note only informs: the confirm button stays usable');
+  click(flagBox(p.root, 'continue'));
+  assert.equal(tid('continue-note', p.root), null, 'unchecking takes it away');
+  // Checked again, the dialog still confirms with the flag.
+  click(flagBox(p.root, 'continue'));
+  assert.ok(tid('continue-note', p.root));
+  click(p.confirm);
+  assert.deepEqual(await p.result, { workdir: '/r/devflow', flags: ['continue', 'skip'], mode: 'normal', ui: 'terminal' });
+  p.daemon.restore();
+});
+
+test('continue_note_hidden_without_sessions', async () => {
+  const p = await openPicker('normal', {}, { sessionCountAt: () => 0 });
+  click(flagBox(p.root, 'continue'));
+  assert.equal(flagBox(p.root, 'continue').checked, true);
+  assert.equal(tid('continue-note', p.root), null, 'no session in the folder: no note in the DOM');
+  await closePicker(p);
+  // A caller that passes no count gets no note either.
+  const q = await openPicker('normal', {});
+  click(flagBox(q.root, 'continue'));
+  assert.equal(tid('continue-note', q.root), null);
+  await closePicker(q);
+});
+
+test('continue_note_default_checked', async () => {
+  const p = await openPicker('normal', { info: DEFAULT_CONTINUE }, { sessionCountAt: () => 2 });
+  assert.equal(flagBox(p.root, 'continue').checked, true);
+  assert.ok(tid('continue-note', p.root), 'shown as soon as the dialog is up');
+  assert.equal(p.confirm.disabled, false);
+  await closePicker(p);
+});
+
+test('continue_note_other_flag', async () => {
+  const p = await openPicker('normal', {}, { sessionCountAt: () => 1 });
+  assert.equal(flagBox(p.root, 'skip').checked, true, 'another option is on');
+  assert.equal(tid('continue-note', p.root), null);
+  click(flagBox(p.root, 'skip'));
+  click(flagBox(p.root, 'skip'));
+  assert.equal(tid('continue-note', p.root), null, 'toggling another option does not bring it up');
+  await closePicker(p);
+  // A machine whose options have no `continue` id never shows it.
+  const q = await openPicker('normal', {
+    info: { ...INFO_V4, claude_flags: [{ id: 'resume-last', label: '续上次会话 (-c)', default: true }] },
+  }, { sessionCountAt: () => 3 });
+  assert.equal(flagBox(q.root, 'resume-last').checked, true);
+  assert.equal(tid('continue-note', q.root), null);
+  await closePicker(q);
+});
+
+test('picker_count_follows_directory', async () => {
+  const p = await openPicker('normal', {
+    plan: (workdir, name) => planFor(name),
+    fs: (path) => (path === '/r/devflow/src'
+      ? { path, entries: [], parent: '/r/devflow', chatTrust: 'trusted' }
+      : { path: '/r/devflow', entries: [{ name: 'src', path: '/r/devflow/src' }], parent: '/r', chatTrust: 'trusted' }),
+  }, { sessionCountAt: (dir) => (dir === '/r/devflow' ? 1 : 0) });
+  click(flagBox(p.root, 'continue'));
+  assert.ok(tid('continue-note', p.root), 'the listed folder has a session');
+  // Into a subfolder with no session of its own.
+  click([...p.root.querySelectorAll('.modal-item')].find((b) => b.textContent.includes('src')));
+  await settle(8);
+  assert.equal(p.root.querySelector('.modal-path').textContent, '/r/devflow/src');
+  assert.equal(flagBox(p.root, 'continue').checked, true, 'the option stays checked');
+  assert.equal(tid('continue-note', p.root), null, 'sessions of the parent folder do not count');
+  // Back up: the note returns.
+  click(p.root.querySelector('.modal-item-up'));
+  await settle(8);
+  assert.equal(p.root.querySelector('.modal-path').textContent, '/r/devflow');
+  assert.ok(tid('continue-note', p.root));
+  // Worktree mode starts in a new worktree: nothing is running there.
+  const cards = [...p.root.querySelectorAll('.modal-mode-card:not(.modal-ui-card)')];
+  click(cards[1]);
+  await settle();
+  assert.equal(tid('continue-note', p.root), null, 'no note in Worktree mode');
+  click(cards[0]);
+  await settle();
+  assert.ok(tid('continue-note', p.root), 'back in normal mode it applies again');
+  await closePicker(p);
+
+  // A protocol 3 daemon's Worktree mode (no name field) is a new worktree as well.
+  const q = await openPicker('worktree', { info: { ...INFO_V4, proto: 3 } }, { sessionCountAt: () => 1 });
+  click(flagBox(q.root, 'continue'));
+  assert.equal(tid('continue-note', q.root), null);
+  await closePicker(q);
+});
+
+test('flags_section_note_follows_count', () => {
+  const section = createFlagsSection({ existingSessions: 0 });
+  document.body.appendChild(section.el);
+  section.setFlags(DEFAULT_CONTINUE.claude_flags);
+  assert.equal(tid('continue-note', section.el), null);
+  section.setExistingSessions(1);
+  assert.ok(tid('continue-note', section.el));
+  assert.equal(tid('continue-note', section.el).getAttribute('role'), 'note');
+  // Loading the options again (same dialog) keeps a single note.
+  section.setFlags(DEFAULT_CONTINUE.claude_flags);
+  assert.equal(section.el.querySelectorAll('[data-testid="continue-note"]').length, 1);
+  section.setExistingSessions(0);
+  assert.equal(tid('continue-note', section.el), null);
+  section.el.remove();
 });
 
 await run();

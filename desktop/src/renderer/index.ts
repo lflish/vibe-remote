@@ -16,7 +16,7 @@ import { ChatView } from './chat/view';
 import { nextDot, type ActivityEvent, type Dot, type RestSnapshot } from './chat/activity';
 import type { Prompt } from './chat/types';
 import { renderSidebar as renderSidebarView, renderToolbarTitle, rendererIcon, type SidebarModel, type SidebarActions } from './sidebar';
-import { buildTree, nextCapability, sessionContext, notificationTitle, type Capability, type TreeProject, type TreeWorktree } from './tree';
+import { buildTree, countActiveSessionsAt, nextCapability, sessionContext, notificationTitle, type Capability, type TreeProject, type TreeWorktree } from './tree';
 
 // Declared by preload
 
@@ -693,8 +693,14 @@ function isLoopbackAddress(address: string): boolean {
   return normalized === 'localhost' || normalized === '::1' || normalized.startsWith('127.');
 }
 
+// sessionCountAt answers the new-session dialogs' "is a session already running
+// in this directory" for one machine (the -c note, d24).
+function sessionCountAt(machine: MachineConfig): (workdir: string) => number {
+  return (workdir) => countActiveSessionsAt(machineSessions.get(machineKey(machine)) ?? [], workdir);
+}
+
 async function startNewSession(machine: MachineConfig, initialMode?: SessionMode) {
-  const picked = await openDirPicker(machine, initialMode);
+  const picked = await openDirPicker(machine, initialMode, { sessionCountAt: sessionCountAt(machine) });
   if (picked) startPicked(machine, picked);
 }
 
@@ -709,7 +715,7 @@ async function startNewWorktree(machine: MachineConfig, project: TreeProject) {
 // startSessionInWorktree is "New session" on a worktree row, or on the row of a
 // project that has only one directory (R4.1).
 async function startSessionInWorktree(machine: MachineConfig, project: TreeProject, worktree: TreeWorktree) {
-  const picked = await openWorktreeSessionDialog(machine, project, worktree);
+  const picked = await openWorktreeSessionDialog(machine, project, worktree, { sessionCountAt: sessionCountAt(machine) });
   if (picked) startPicked(machine, picked);
 }
 

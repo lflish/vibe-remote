@@ -339,6 +339,55 @@ test('worktree_session_waits_for_launch_options', async () => {
   e.daemon.restore();
 });
 
+// --- T15: what -c does when the worktree's directory already has a session (R6) ---
+
+test('continue_note_counts', async () => {
+  const flagBox = (root, id) => root.querySelector(`.modal-flag input[name="claude-flag-${id}"]`);
+  const sessionAt = (id, workdir, over = {}) => ({ id, name: id, gone: false, info: { id, title: id, workdir, created: '2026-01-01T00:00:00Z', mode: 'normal', ...over } });
+  const base = DEVFLOW.worktrees[1];
+  // The worktree node holds two sessions that do not count: one in a subfolder, one that has ended.
+  const target = { ...base, sessions: [sessionAt('sub', `${base.path}/src`), sessionAt('old', base.path, { ui: 'chat', state: 'ended' })] };
+  const project = { ...DEVFLOW, worktrees: [DEVFLOW.worktrees[0], target, DEVFLOW.worktrees[2]] };
+
+  // One live session in the worktree's own directory.
+  const asked = [];
+  const a = await openSessionDialog({ fs: fsTrust('trusted') }, project, target, { sessionCountAt: (dir) => { asked.push(dir); return 1; } });
+  assert.deepEqual([...new Set(asked)], [target.path], 'the count is asked for the worktree root');
+  assert.equal(tid('continue-note', a.root), null, 'not before -c is checked');
+  click(flagBox(a.root, 'continue'));
+  assert.equal(tid('continue-note', a.root).textContent, t('wt.session.continueNote'));
+  assert.equal(a.confirm.disabled, false, 'the confirm button is not greyed out');
+  click(a.confirm);
+  assert.deepEqual(await a.result, { mode: 'normal', workdir: target.path, ui: 'terminal', flags: ['continue', 'skip'] });
+  a.daemon.restore();
+
+  // None there, whatever the worktree node holds.
+  const b = await openSessionDialog({ fs: fsTrust('trusted') }, project, target, { sessionCountAt: () => 0 });
+  assert.equal(target.sessions.length, 2);
+  click(flagBox(b.root, 'continue'));
+  assert.equal(tid('continue-note', b.root), null);
+  click(b.cancel);
+  await b.result;
+  b.daemon.restore();
+
+  // No count passed.
+  const c = await openSessionDialog({ fs: fsTrust('trusted') }, project, target);
+  click(flagBox(c.root, 'continue'));
+  assert.equal(tid('continue-note', c.root), null);
+  click(c.cancel);
+  await c.result;
+  c.daemon.restore();
+
+  // A new worktree has no session yet.
+  const d = await openNew({ plan: (workdir, name) => planFor(name) }, project);
+  click(flagBox(d.root, 'continue'));
+  assert.equal(flagBox(d.root, 'continue').checked, true);
+  assert.equal(tid('continue-note', d.root), null);
+  click(d.cancel);
+  await d.result;
+  d.daemon.restore();
+});
+
 // --- T12: delete-session confirmation ---
 
 /** Opens a confirmation and lets its initial focus land. */

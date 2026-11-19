@@ -66,10 +66,17 @@ export function createUiSection(opts: { onChange(): void }): {
   };
 }
 
+// The launch option that continues the directory's latest conversation. The
+// daemon does not say which option that is; its own reload logic and the
+// example config use this id for it.
+const CONTINUE_FLAG_ID = 'continue';
+
 /**
  * The launch-flag checkboxes. Empty until setFlags is called with at least one
  * flag. `existingSessions` is the number of live sessions already running in
- * the directory the new one will start in.
+ * the directory the new one will start in: with the continue option checked
+ * and at least one such session, a note says what will happen (R6). It only
+ * informs — whether that conversation is really in use is not known here.
  */
 export function createFlagsSection(opts: { existingSessions: number }): {
   el: HTMLElement;
@@ -79,12 +86,23 @@ export function createFlagsSection(opts: { existingSessions: number }): {
   setUI(ui: SessionUI): void;
 } {
   let existingSessions = opts.existingSessions;
-  const checks: Array<{ id: string; input: HTMLInputElement }> = [];
+  const checks: Array<{ id: string; input: HTMLInputElement; row: HTMLElement }> = [];
   const box = el('div', 'modal-flags');
   // How -c / bypass behave in the chat interface.
   const chatNote = el('div', 'modal-mode-note modal-ui-flag-note');
   chatNote.textContent = t('picker.ui.flagNote');
   chatNote.hidden = true;
+  const continueNote = el('div', 'modal-continue-note');
+  continueNote.dataset.testid = 'continue-note';
+  continueNote.setAttribute('role', 'note');
+  continueNote.textContent = t('wt.session.continueNote');
+
+  // In the DOM only while it applies, right under the option it is about.
+  function syncContinueNote() {
+    const check = checks.find((c) => c.id === CONTINUE_FLAG_ID);
+    if (check && check.input.checked && existingSessions > 0) check.row.after(continueNote);
+    else continueNote.remove();
+  }
 
   return {
     el: box,
@@ -101,17 +119,20 @@ export function createFlagsSection(opts: { existingSessions: number }): {
         input.type = 'checkbox';
         input.name = `claude-flag-${f.id}`;
         input.checked = f.default === true;
+        input.addEventListener('change', syncContinueNote);
         const span = document.createElement('span');
         span.textContent = f.label;
         row.append(input, span);
         box.appendChild(row);
-        checks.push({ id: f.id, input });
+        checks.push({ id: f.id, input, row });
       }
       box.appendChild(chatNote);
+      syncContinueNote();
     },
     value: () => checks.filter((c) => c.input.checked).map((c) => c.id),
     setExistingSessions(n) {
       existingSessions = n;
+      syncContinueNote();
     },
     setUI(ui) {
       chatNote.hidden = ui !== 'chat';

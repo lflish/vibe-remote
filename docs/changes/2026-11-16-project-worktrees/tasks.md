@@ -757,7 +757,7 @@
 - 依赖：T6b、T12、T13
 
 ### T15 新建对话框里写明 `-c` 的后果
-- 状态：待办
+- 状态：完成
 - 文件：修改 `desktop/src/renderer/session-form.ts`（`createFlagsSection` 按 `existingSessions` 显示说明）、`desktop/src/renderer/dirpicker.ts`（`openDirPicker` 加第 3 个可缺省参数 `opts?: { sessionCountAt?(workdir: string): number }`，每次列出目录后把结果传给启动选项段；Worktree 模式下传 0）、`desktop/src/renderer/worktree-dialogs.ts`（`openWorktreeSessionDialog` 用 `opts.sessionCountAt(worktree.path)` 的结果，没传时是 0；`openNewWorktreeDialog` 传 0）、`desktop/src/renderer/index.ts`（调 `openDirPicker` 和 `openWorktreeSessionDialog` 时传同一个 `sessionCountAt`：`(dir) => countActiveSessionsAt(这台机器的会话, dir)`）、`desktop/src/renderer/styles.css`（追加说明条的规则）、`desktop/src/renderer/i18n.ts`（`wt.session.continueNote`）；测试 `desktop/scripts/test-session-form.mjs`、`test-worktree-dialogs.mjs`
 - 接口：
   - 使用：`createFlagsSection`、`setExistingSessions`（T9）；`openWorktreeSessionDialog` 的第 4 个参数 `opts.sessionCountAt`（T11）；`countActiveSessionsAt`（T5）；`machineSessions`（`index.ts` 现有）

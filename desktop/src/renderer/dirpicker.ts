@@ -28,10 +28,14 @@ export interface PickedSession {
  *
  * Uses safe DOM construction (textContent / createElement) — never innerHTML
  * with server-provided names.
+ *
+ * `opts.sessionCountAt(workdir)` is the number of live sessions already running
+ * in that directory.
  */
 export function openDirPicker(
   machine: MachineConfig,
   initialMode: SessionMode = 'normal',
+  opts?: { sessionCountAt?(workdir: string): number },
 ): Promise<PickedSession | null> {
   return new Promise((resolve) => {
     const rest = new VibeRemoteRest(machine);
@@ -157,9 +161,17 @@ export function openDirPicker(
     // --- Behavior ---
     const naming = () => mode === 'worktree' && (info?.proto ?? 1) >= WORKTREE_NAME_MIN_PROTO;
 
+    // The sessions the new one would share its directory with. Worktree mode
+    // starts in a worktree that does not exist yet.
+    function syncExistingSessions() {
+      const here = mode === 'worktree' || !currentPath ? 0 : opts?.sessionCountAt?.(currentPath) ?? 0;
+      flagsSection.setExistingSessions(here);
+    }
+
     // Re-evaluated whenever the mode or the machine info changes.
     function refreshMode() {
       const named = naming();
+      syncExistingSessions();
       modeNote.hidden = mode !== 'worktree' || named;
       if (named && !nameSection.el.isConnected) {
         modesBox.appendChild(nameSection.el);
@@ -210,6 +222,7 @@ export function openDirPicker(
         renderPath(listing.path);
         renderEntries(listing, listing.entries);
         listingReady = true;
+        syncExistingSessions();
         // The base commit and the target directory depend on the listed folder.
         if (naming()) nameSection.refresh();
         refreshUI();
@@ -217,6 +230,7 @@ export function openDirPicker(
         if (closed || generation !== loadGeneration) return;
         currentPath = '';
         trust = undefined;
+        syncExistingSessions();
         refreshUI();
         list.textContent = '';
         const err = el('div', 'modal-error');

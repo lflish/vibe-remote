@@ -512,4 +512,71 @@ test('remove_result_closes_views', async () => {
   dom.dom.window.close();
 });
 
+// --- T15: the -c note counts sessions by working directory (d24) ---
+
+test('new_session_count_uses_workdir', async () => {
+  const dom = await indexDom();
+  localStorage.setItem('vibe-remote.locale', 'zh');
+  localStorage.removeItem('vibe-remote.collapsed-machines');
+  localStorage.removeItem('vibe-remote.collapsed-projects');
+  const ROOT = '/r/devflow-worktrees/fix-login';
+  const live = { id: 'a', title: 'fix-login', workdir: ROOT, created: '2026-01-01T00:00:02Z', mode: 'normal' };
+  const ended = { id: 'e', title: 'fix-login', workdir: ROOT, created: '2026-01-01T00:00:03Z', mode: 'normal', ui: 'chat', state: 'ended', endReason: 'exited' };
+  let sessions = [live, ended];
+  const json = (body) => new Response(JSON.stringify(body), { status: 200, headers: { 'Content-Type': 'application/json' } });
+  globalThis.fetch = async (url) => {
+    const u = new URL(String(url));
+    if (u.pathname === '/api/v1/sessions') return json({ list: sessions });
+    if (u.pathname === '/api/v1/projects') {
+      return json({ proto: 4, projects: [{
+        id: '/r/devflow', name: 'devflow', git: true, sessions: [], worktrees: [
+          { path: '/r/devflow', branch: 'main', head: 'a1b2c3d', main: true, sessions: [] },
+          { path: ROOT, branch: 'fix-login', head: '9f8e7d6', managed: true, sessions: sessions.map((s) => s.id) },
+        ],
+      }] });
+    }
+    if (u.pathname === '/api/v1/info') {
+      return json({ hostname: 'h', tmux_enabled: true, default_workdir: '/r', allowed_roots: ['/r'], proto: 4, version: 'test',
+        chat: { supported: true, claudeVersion: '2.1.210', minClaudeVersion: '2.1.210' },
+        claude_flags: [{ id: 'continue', label: '续上次会话 (-c)' }] });
+    }
+    if (u.pathname === '/api/v1/fs') return json({ path: u.searchParams.get('path'), entries: [], parent: '/r', chatTrust: 'trusted' });
+    return new Response(null, { status: 204 });
+  };
+  const app = await loadIndex();
+  app.setMachines([M]);
+  app.rebuildRests();
+  const settle = async (n = 12) => { for (let i = 0; i < n; i++) await new Promise((r) => setTimeout(r, 0)); };
+
+  const openDialog = async () => {
+    await app.refreshAllMachines(true, MK);
+    app.renderSidebar();
+    const row = [...document.querySelectorAll('[data-testid="worktree-row"]')].find((r) => r.querySelector('.worktree-label').textContent === 'fix-login');
+    click(row.querySelector('[data-testid="worktree-new-session"]'));
+    await settle();
+    const dialog = document.querySelector('.modal-overlay [data-testid="worktree-session-dialog"]');
+    assert.ok(dialog, 'the new-session dialog opened');
+    click(dialog.querySelector('.modal-flag input[name="claude-flag-continue"]'));
+    return dialog;
+  };
+  const cancel = async (dialog) => {
+    click(dialog.querySelector('[data-testid="dialog-cancel"]'));
+    await settle();
+    assert.equal(document.querySelector('.modal-overlay'), null);
+  };
+
+  // A running session whose workdir is the worktree root, next to an ended chat session.
+  let dialog = await openDialog();
+  assert.ok(dialog.querySelector('[data-testid="continue-note"]'), 'the running session counts');
+  await cancel(dialog);
+
+  // Only the ended one is left: the worktree node still has a session, the note does not show.
+  sessions = [ended];
+  dialog = await openDialog();
+  assert.equal(document.querySelectorAll('[data-testid="session-row"]').length, 1, 'the ended session is still listed under the worktree');
+  assert.equal(dialog.querySelector('[data-testid="continue-note"]'), null);
+  await cancel(dialog);
+  dom.dom.window.close();
+});
+
 await run();
