@@ -1,0 +1,20 @@
+[1] exit=0 42s cached=0 notests=0 :: cd desktop && npm test
+[2] SKIP (manual): /protocol-sync skill
+[3] exit=0 3s cached=0 notests=0 :: cd vibe-remoted && go test -race ./internal/server -run TestTerminalFramesUnchangedV3
+[4] exit=0 16s cached=0 notests=0 :: cd vibe-remoted && go test -race ./internal/chat -run 'TestSingleProcess|TestOrphanCleanup' && go test -race .
+[5] exit=0 5s cached=0 notests=0 :: cd vibe-remoted && go test -race ./internal/server -run TestChatDisconnectKeepsProcess
+[6] exit=0 2s cached=0 notests=0 :: cd vibe-remoted && go test -race ./internal/chat -run TestPendingSurvivesRingEviction
+[7] exit=0 3s cached=0 notests=0 :: cd vibe-remoted && go test -race ./internal/chat -run TestRespondRejectsForeignRule
+[8] exit=0 3s cached=0 notests=0 :: cd vibe-remoted && go test ./internal/chat -run TestCommandFromConfigOnly && go test ./internal/server -run Te
+[9] exit=0 2s cached=0 notests=0 :: cd desktop && npm run test:chat-markdown && npm run test:chat-render-guard
+[10] exit=0 3s cached=0 notests=0 :: cd vibe-remoted && go test ./internal/session -run TestChatEnvHookTokenOnly
+[11] exit=0 0s cached=0 notests=0 :: cd vibe-remoted && go test ./internal/chat -run TestNoCredentialAccess
+[12] exit=0 5s cached=0 notests=0 :: cd vibe-remoted && TMUX_TMPDIR=$(mktemp -d) go test -race -timeout 10m ./internal/session ./internal/server -r
+[13] exit=0 11s cached=0 notests=1 :: cd vibe-remoted && TMUX_TMPDIR=$(mktemp -d) go test -race -timeout 10m ./internal/session ./internal/server -r
+[14] exit=0 5s cached=0 notests=0 :: cd vibe-remoted && TMUX_TMPDIR=$(mktemp -d) go test -race -timeout 10m ./internal/session -run 'TestRemoveExte
+[15] exit=0 78s cached=0 notests=0 :: cd vibe-remoted && TMUX_TMPDIR=$(mktemp -d) go test -race -timeout 10m ./internal/session -run 'TestRemoveDirt
+[16] exit=0 5s cached=0 notests=0 :: cd vibe-remoted && TMUX_TMPDIR=$(mktemp -d) go test -race -timeout 10m ./internal/session ./internal/server -r
+[17] exit=0 5s cached=0 notests=0 :: cd vibe-remoted && TMUX_TMPDIR=$(mktemp -d) go test -race -timeout 10m ./internal/session -run TestChatTrust
+[18] exit=0 25s cached=0 notests=0 :: cd vibe-remoted && TMUX_TMPDIR=$(mktemp -d) go test -race -timeout 10m ./internal/session -run 'TestGitNeverGe
+[19] exit=0 12s cached=0 notests=0 :: cd vibe-remoted && TMUX_TMPDIR=$(mktemp -d) go test -race -timeout 10m ./internal/session -run 'TestReadOnlyGi
+DONE

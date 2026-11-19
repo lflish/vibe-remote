@@ -1,0 +1,60 @@
+=== RUN   TestV2NoSessionsLineFromPath
+    v2_probe_test.go:241: isNoTmuxServer("error connecting to /private/tmp/vr-a\nno sessions\nb/tmux-501/vibe-remote (No such file or directory)\n") = true
+    v2_probe_test.go:266: tmux says: "error connecting to /private/tmp/vr-a\nno sessions\nb-4110743969/tmux-501/vibe-remote (No such file or directory)\n"
+    v2_probe_test.go:268: liveTmux count=0 ok=true while the server is alive and its socket file is gone
+    v2_probe_test.go:272: removal={Removed:true BranchDeleted:false BranchError: EndedSessions:[]} error=<nil> directoryExists=false sessionAlive=true
+    v2_probe_test.go:274: a socket path with a line 'no sessions' in it was read as an empty set
+--- FAIL: TestV2NoSessionsLineFromPath (0.80s)
+=== RUN   TestV2BranchChangesWhileEnding
+=== RUN   TestV2BranchChangesWhileEnding/new_branch_same_commit
+    v2_probe_test.go:302: new_branch_same_commit: result={Removed:false BranchDeleted:false BranchError: EndedSessions:[]} err=*session.WorktreeChangedError worktree /private/tmp/TestV2BranchChangesWhileEndingnew_branch_same_commit3284848949/001/devflow-worktrees/fix-login changed since it was confirmed; dir=true fix-login=a7c2b03
+=== RUN   TestV2BranchChangesWhileEnding/renamed_branch
+    v2_probe_test.go:302: renamed_branch: result={Removed:false BranchDeleted:false BranchError: EndedSessions:[]} err=*session.WorktreeChangedError worktree /private/tmp/TestV2BranchChangesWhileEndingrenamed_branch1692676295/001/devflow-worktrees/fix-login changed since it was confirmed; dir=true fix-login=
+=== RUN   TestV2BranchChangesWhileEnding/away_and_back
+    v2_probe_test.go:302: away_and_back: result={Removed:true BranchDeleted:true BranchError: EndedSessions:[1795129254386-37fe8179]} err=<nil> <nil>; dir=false fix-login=
+=== RUN   TestV2BranchChangesWhileEnding/branch_ref_moved_from_outside
+    v2_probe_test.go:302: branch_ref_moved_from_outside: result={Removed:false BranchDeleted:false BranchError: EndedSessions:[]} err=*session.WorktreeChangedError worktree /private/tmp/TestV2BranchChangesWhileEndingbranch_ref_moved_from_outside2127366388/001/devflow-worktrees/fix-login changed since it was confirmed; dir=true fix-login=b369f01
+--- PASS: TestV2BranchChangesWhileEnding (3.77s)
+    --- PASS: TestV2BranchChangesWhileEnding/new_branch_same_commit (0.92s)
+    --- PASS: TestV2BranchChangesWhileEnding/renamed_branch (0.87s)
+    --- PASS: TestV2BranchChangesWhileEnding/away_and_back (1.00s)
+    --- PASS: TestV2BranchChangesWhileEnding/branch_ref_moved_from_outside (0.98s)
+=== RUN   TestV2OwnAddFails
+=== RUN   TestV2OwnAddFails/smudge_filter_fails
+    v2_probe_test.go:346: attempt 1: err=create worktree: git worktree add --detach /private/tmp/TestV2OwnAddFailssmudge_filter_fails2808475040/001/devflow-worktrees/fix-login c203fa23333e74c906381683035f3aee490f7049: exit status 128: Preparing worktree (detached HEAD c203fa2)
+        error: external filter 'false' failed 1
+        error: external filter 'false' failed
+        fatal: x.bin: smudge filter boom failed
+    v2_probe_test.go:347: attempt 1: dir exists=false entries=[] listed=false branch=""
+    v2_probe_test.go:346: attempt 2: err=create worktree: git worktree add --detach /private/tmp/TestV2OwnAddFailssmudge_filter_fails2808475040/001/devflow-worktrees/fix-login c203fa23333e74c906381683035f3aee490f7049: exit status 128: Preparing worktree (detached HEAD c203fa2)
+        error: external filter 'false' failed 1
+        error: external filter 'false' failed
+        fatal: x.bin: smudge filter boom failed
+    v2_probe_test.go:347: attempt 2: dir exists=false entries=[] listed=false branch=""
+    v2_probe_test.go:350: git worktree list:
+        worktree /private/tmp/TestV2OwnAddFailssmudge_filter_fails2808475040/001/devflow
+        HEAD c203fa23333e74c906381683035f3aee490f7049
+        branch refs/heads/main
+        
+=== RUN   TestV2OwnAddFails/post_checkout_hook_fails
+    v2_probe_test.go:346: attempt 1: err=create worktree: git worktree add --detach /private/tmp/TestV2OwnAddFailspost_checkout_hook_fails2953767294/001/devflow-worktrees/fix-login a5000b55972025cdf488d9753519068d235ec02d: exit status 2: Preparing worktree (detached HEAD a5000b5)
+        HEAD is now at a5000b5 initial
+        git-lfs was not found on your path; cleanup: directory /private/tmp/TestV2OwnAddFailspost_checkout_hook_fails2953767294/001/devflow-worktrees/fix-login not removed: git lists a worktree in it, and this create, whose own git worktree add did not go through, cannot take it for its own
+    v2_probe_test.go:347: attempt 1: dir exists=true entries=[.git README] listed=true branch=""
+    v2_probe_test.go:346: attempt 2: err=worktree directory already exists: /private/tmp/TestV2OwnAddFailspost_checkout_hook_fails2953767294/001/devflow-worktrees/fix-login
+    v2_probe_test.go:347: attempt 2: dir exists=true entries=[.git README] listed=true branch=""
+    v2_probe_test.go:350: git worktree list:
+        worktree /private/tmp/TestV2OwnAddFailspost_checkout_hook_fails2953767294/001/devflow
+        HEAD a5000b55972025cdf488d9753519068d235ec02d
+        branch refs/heads/main
+        
+        worktree /private/tmp/TestV2OwnAddFailspost_checkout_hook_fails2953767294/001/devflow-worktrees/fix-login
+        HEAD a5000b55972025cdf488d9753519068d235ec02d
+        detached
+        
+--- PASS: TestV2OwnAddFails (1.77s)
+    --- PASS: TestV2OwnAddFails/smudge_filter_fails (0.76s)
+    --- PASS: TestV2OwnAddFails/post_checkout_hook_fails (1.01s)
+FAIL
+FAIL	github.com/lflish/vibe-remote/vibe-remoted/internal/session	6.726s
+FAIL

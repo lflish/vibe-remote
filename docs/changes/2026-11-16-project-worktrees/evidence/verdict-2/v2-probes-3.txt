@@ -1,0 +1,78 @@
+=== RUN   TestV2EndConfirmUnderLoad
+2026/11/20 07:01:54 tmux list-sessions failed: exit status 1 (stderr="server exited unexpectedly\n")
+2026/11/20 07:01:56 tmux list-sessions failed: exit status 1 (stderr="server exited unexpectedly\n")
+2026/11/20 07:01:59 tmux list-sessions failed: exit status 1 (stderr="server exited unexpectedly\n")
+2026/11/20 07:02:02 tmux list-sessions failed: exit status 1 (stderr="server exited unexpectedly\n")
+2026/11/20 07:02:04 tmux list-sessions failed: exit status 1 (stderr="server exited unexpectedly\n")
+2026/11/20 07:02:07 tmux list-sessions failed: exit status 1 (stderr="server exited unexpectedly\n")
+2026/11/20 07:02:09 tmux list-sessions failed: exit status 1 (stderr="server exited unexpectedly\n")
+2026/11/20 07:02:14 tmux list-sessions failed: exit status 1 (stderr="server exited unexpectedly\n")
+2026/11/20 07:02:17 tmux list-sessions failed: exit status 1 (stderr="server exited unexpectedly\n")
+2026/11/20 07:02:19 tmux list-sessions failed: exit status 1 (stderr="server exited unexpectedly\n")
+2026/11/20 07:02:22 tmux list-sessions failed: exit status 1 (stderr="server exited unexpectedly\n")
+2026/11/20 07:02:24 tmux list-sessions failed: exit status 1 (stderr="server exited unexpectedly\n")
+2026/11/20 07:02:27 tmux list-sessions failed: exit status 1 (stderr="server exited unexpectedly\n")
+2026/11/20 07:02:30 tmux list-sessions failed: exit status 1 (stderr="server exited unexpectedly\n")
+2026/11/20 07:02:32 tmux list-sessions failed: exit status 1 (stderr="server exited unexpectedly\n")
+2026/11/20 07:02:35 tmux list-sessions failed: exit status 1 (stderr="server exited unexpectedly\n")
+2026/11/20 07:02:37 tmux list-sessions failed: exit status 1 (stderr="server exited unexpectedly\n")
+2026/11/20 07:02:40 tmux list-sessions failed: exit status 1 (stderr="server exited unexpectedly\n")
+2026/11/20 07:02:43 tmux list-sessions failed: exit status 1 (stderr="server exited unexpectedly\n")
+2026/11/20 07:02:45 tmux list-sessions failed: exit status 1 (stderr="server exited unexpectedly\n")
+2026/11/20 07:02:47 tmux list-sessions failed: exit status 1 (stderr="server exited unexpectedly\n")
+2026/11/20 07:02:49 tmux list-sessions failed: exit status 1 (stderr="server exited unexpectedly\n")
+2026/11/20 07:02:54 tmux list-sessions failed: exit status 1 (stderr="server exited unexpectedly\n")
+    v2_probe_test.go:230: 25 rounds (2 sessions each, the last kill makes the tmux server exit), 24 busy processes: 0 failed; slowest removal 1.820168708s
+2026/11/20 07:02:54 warning: failed to kill tmux session vibe-remote-1795129372334-d8beb2e8: exit status 1
+2026/11/20 07:02:54 warning: failed to kill tmux session vibe-remote-1795129372100-3346505e: exit status 1
+2026/11/20 07:02:54 warning: failed to kill tmux session vibe-remote-1795129370445-3b239f44: exit status 1
+2026/11/20 07:02:54 warning: failed to kill tmux session vibe-remote-1795129370204-b5df0838: exit status 1
+2026/11/20 07:02:54 warning: failed to kill tmux session vibe-remote-1795129368431-2cf7290c: exit status 1
+2026/11/20 07:02:54 warning: failed to kill tmux session vibe-remote-1795129368168-78e6f940: exit status 1
+2026/11/20 07:02:54 warning: failed to kill tmux session vibe-remote-1795129366449-476d09f4: exit status 1
+2026/11/20 07:02:54 warning: failed to kill tmux session vibe-remote-1795129366233-3da26591: exit status 1
+2026/11/20 07:02:54 warning: failed to kill tmux session vibe-remote-1795129363863-e761f28c: exit status 1
+2026/11/20 07:02:54 warning: failed to kill tmux session vibe-remote-1795129363625-d2924f88: exit status 1
+2026/11/20 07:02:54 warning: failed to kill tmux session vibe-remote-1795129361276-ca1b5af6: exit status 1
+2026/11/20 07:02:54 warning: failed to kill tmux session vibe-remote-1795129361058-d95e889b: exit status 1
+2026/11/20 07:02:54 warning: failed to kill tmux session vibe-remote-1795129358694-9b6341e8: exit status 1
+2026/11/20 07:02:54 warning: failed to kill tmux session vibe-remote-1795129358431-27b2cc4a: exit status 1
+2026/11/20 07:02:54 warning: failed to kill tmux session vibe-remote-1795129355946-819fda0b: exit status 1
+2026/11/20 07:02:54 warning: failed to kill tmux session vibe-remote-1795129355692-b82df0d9: exit status 1
+2026/11/20 07:02:54 warning: failed to kill tmux session vibe-remote-1795129353359-1fc0e451: exit status 1
+2026/11/20 07:02:54 warning: failed to kill tmux session vibe-remote-1795129353055-c67bcac0: exit status 1
+2026/11/20 07:02:54 warning: failed to kill tmux session vibe-remote-1795129350748-62d1409b: exit status 1
+2026/11/20 07:02:54 warning: failed to kill tmux session vibe-remote-1795129350514-bb75c3f4: exit status 1
+2026/11/20 07:02:54 warning: failed to kill tmux session vibe-remote-1795129348114-076bfdaa: exit status 1
+2026/11/20 07:02:54 warning: failed to kill tmux session vibe-remote-1795129347900-37dc9869: exit status 1
+2026/11/20 07:02:54 warning: failed to kill tmux session vibe-remote-1795129345528-534ae935: exit status 1
+2026/11/20 07:02:54 warning: failed to kill tmux session vibe-remote-1795129345319-fe7504aa: exit status 1
+2026/11/20 07:02:54 warning: failed to kill tmux session vibe-remote-1795129342991-b37283bf: exit status 1
+2026/11/20 07:02:54 warning: failed to kill tmux session vibe-remote-1795129342714-b0eb135d: exit status 1
+2026/11/20 07:02:54 warning: failed to kill tmux session vibe-remote-1795129340315-b96ce563: exit status 1
+2026/11/20 07:02:54 warning: failed to kill tmux session vibe-remote-1795129340078-02d35511: exit status 1
+2026/11/20 07:02:54 warning: failed to kill tmux session vibe-remote-1795129337728-376ccfab: exit status 1
+2026/11/20 07:02:54 warning: failed to kill tmux session vibe-remote-1795129337462-69369458: exit status 1
+2026/11/20 07:02:54 warning: failed to kill tmux session vibe-remote-1795129335116-d3abee91: exit status 1
+2026/11/20 07:02:54 warning: failed to kill tmux session vibe-remote-1795129334875-4c16cdf0: exit status 1
+2026/11/20 07:02:54 warning: failed to kill tmux session vibe-remote-1795129332508-dc91d6a8: exit status 1
+2026/11/20 07:02:54 warning: failed to kill tmux session vibe-remote-1795129332223-66644ee5: exit status 1
+2026/11/20 07:02:54 warning: failed to kill tmux session vibe-remote-1795129330591-097d5492: exit status 1
+2026/11/20 07:02:54 warning: failed to kill tmux session vibe-remote-1795129330351-db44f577: exit status 1
+2026/11/20 07:02:54 warning: failed to kill tmux session vibe-remote-1795129327917-b2af8ac9: exit status 1
+2026/11/20 07:02:54 warning: failed to kill tmux session vibe-remote-1795129327672-fac1ecdb: exit status 1
+2026/11/20 07:02:54 warning: failed to kill tmux session vibe-remote-1795129325261-89e3635c: exit status 1
+2026/11/20 07:02:54 warning: failed to kill tmux session vibe-remote-1795129325033-46a17ad4: exit status 1
+2026/11/20 07:02:54 warning: failed to kill tmux session vibe-remote-1795129322655-4726d3a4: exit status 1
+2026/11/20 07:02:54 warning: failed to kill tmux session vibe-remote-1795129322412-035675d5: exit status 1
+2026/11/20 07:02:54 warning: failed to kill tmux session vibe-remote-1795129320048-d502f18a: exit status 1
+2026/11/20 07:02:54 warning: failed to kill tmux session vibe-remote-1795129319790-b7419b9d: exit status 1
+2026/11/20 07:02:54 warning: failed to kill tmux session vibe-remote-1795129317465-4a82637c: exit status 1
+2026/11/20 07:02:54 warning: failed to kill tmux session vibe-remote-1795129317252-5822ed9c: exit status 1
+2026/11/20 07:02:54 warning: failed to kill tmux session vibe-remote-1795129314925-1a1ccd1a: exit status 1
+2026/11/20 07:02:54 warning: failed to kill tmux session vibe-remote-1795129314669-337ca7eb: exit status 1
+2026/11/20 07:02:54 warning: failed to kill tmux session vibe-remote-1795129312278-6f4edf9f: exit status 1
+2026/11/20 07:02:54 warning: failed to kill tmux session vibe-remote-1795129312029-b216c218: exit status 1
+--- PASS: TestV2EndConfirmUnderLoad (63.58s)
+PASS
+ok  	github.com/lflish/vibe-remote/vibe-remoted/internal/session	63.953s

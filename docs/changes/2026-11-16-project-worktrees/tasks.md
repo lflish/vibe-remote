@@ -1128,3 +1128,12 @@ spec「推迟到以后」的条目：
 - N3：英文界面下，默认宽度（284px）的侧边栏里后台终端会话第二行的「Terminal · New messages」被截成「New messa…」；同一位置的「Turn finished」不截，没有重叠。可以缩短英文文案，或让状态文字换一种更短的写法。
 - N4：仓库目录不存在时，项目行显示「仓库目录不存在」，没有 spec R2.7 和效果页画面 3 写的「读取失败」这几个字（其它 git 失败才是「读取失败：<原因>」）。design 7.4 的文案表就是这样定的，用户看得懂；要与 spec 的字面一致的话改成「读取失败：仓库目录不存在」。
 - N2、N5、N6、N7 与已有条目相近，补在那几条上，不另列：N2 →「『删到一半失败』的说明框里……」那条；N5 (1) →「删除 worktree 的确认框只写『会先结束这 N 个会话』……」那条；N5 (2) →「效果页 M1 上有、这次没有做的几处外观（T19）」那条；N6 →「另一台桌面删除了本机正开着的会话所在的 worktree 时……」那条；N7 →「为已存在的分支创建 worktree」那条。
+
+关口 C 第 2 轮独立验证（被测 `482ab63`，结论「通过，有备注」）之后留下的（来源都是 verdict.md 的「问题」一节）：
+
+- N-1、N-2：见 decisions d71、c8，等用户。（N-1：git 低于 2.36 的退回模式下，路径带换行的 worktree 被读成另一个路径上的一项，那个目录会通过对话界面的信任规则，上面「已知限制（X14）」写的「列不出来」不准；N-2：post-checkout 钩子失败时「创建失败」留下一个 worktree，项目不在侧边栏时在界面里看不见，是上面 d70 那一条的代价。）
+- N-3（来源：verdict.md N-3）：`TMUX_TMPDIR` 的目录名里有换行、其中一行正好是 `no sessions` 时，X12 的问题原样重现（`isNoTmuxServer` 改成逐行比较后，socket 路径里的换行能造出这样的一行）：对账被当成「没有会话」，worktree 在会话还活着时被删。启动 daemon 的人自己设的目录，实际不会有人这样起名。可以只看 stderr 的开头（`error connecting to …` 永远以这几个词开头），或 socket 文件不存在时不认「没有 server」这一种。
+- N-4（来源：verdict.md N-4）：daemon 继承了非 UTF-8 的 locale（例如 `LC_ALL=C`）时，tmux 把 `list-sessions` 输出里的非 ASCII 字节、制表符、换行改写成 `_`，非 ASCII 路径下的会话在 daemon 重启后不算在它的 worktree 里，删除 worktree 不会先结束它。`.devflow.yml`「目录名里的制表符和换行不改变读到的归属」只在 UTF-8 环境下成立，没有写这个前提。不是返工引入的（`91e0fab` 上连 ASCII 路径也坏）。可以在读 tmux 时加 `-u`（验证者实测 `LC_ALL=C tmux -u … list-sessions` 原样给出中文路径）。
+- N-5（来源：verdict.md N-5）：预检 `GET /api/v1/worktrees/plan` 的 `workdir` 路径中间是一个普通文件时（`<白名单内>/afile/x`）回答 403「不在白名单内」：`EvalSymlinks` 给的是 ENOTDIR，没走 X15 新加的 400；`docs/protocol.md` 两种都没写到这一种。目录选择器选不出这样的路径。
+- 说明（来源：verdict.md「说明」1）：`TestProjectStoreRemoveWorktreeIfSame` 不带 `-race` 时单独重跑 200 次失败 33 次（带 `-race` 0 次；`make check` 一直带 `-race`）。原因是 `RemoveWorktreeIfSame` 靠微秒时间戳区分新旧记录，先删再加同一条记录的两次时间戳可能相同；上面两处把它记成「偶发」，实际频率高得多。验证者建议提前做（给记录加一个递增的序号，不依赖时钟）。
+- 说明（来源：verdict.md「待验证项」）：其它版本的 tmux 没有实测。返工改了读 tmux 的格式（全部终端会话的入口），验证者只在 3.6a 上跑过；Ubuntu 22.04 的 3.2a、Debian 12 的 3.3a、Ubuntu 24.04 的 3.4 要在目标 Linux 上跑一次 `ws-worktree-smoke.mjs` 和 `go test ./internal/session -run 'OddlyNamed|TmuxReadFails'`。

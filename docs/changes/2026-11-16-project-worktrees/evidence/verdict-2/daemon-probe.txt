@@ -1,0 +1,66 @@
+daemon built from 482ab63df9ec109e0f991834b5e267cd118ffbfb
+
+== X15: GET /api/v1/worktrees/plan
+  missing, in the allowed root: 400 {"error":"invalid_request","message":"workdir does not exist"}
+  missing, inside a repository: 400 {"error":"invalid_request","message":"workdir does not exist"}
+  a file: 400 {"error":"invalid_request","message":"workdir is not a directory"}
+  under a file: 403 {"error":"path not in allowed roots"}
+  outside, existing: 403 {"error":"path not in allowed roots"}
+  outside, missing: 403 {"error":"path not in allowed roots"}
+  dot-dot to outside, existing: 403 {"error":"path not in allowed roots"}
+  dot-dot to outside, missing: 403 {"error":"path not in allowed roots"}
+  dangling link: 403 {"error":"path not in allowed roots"}
+  link out of the roots, existing target: 403 {"error":"path not in allowed roots"}
+  link out of the roots, missing target: 403 {"error":"path not in allowed roots"}
+  relative: 403 {"error":"path not in allowed roots"}
+  existing repository: 200 {"ok":true,"project":"<base>/roots/plain","projectName":"plain","base":{"branch":"main","head":"1f65062"},"branch":"fix-login","path":"<base>/roots/plain-worktr
+  no workdir: 400 {"error":"invalid_request","message":"workdir is required"}
+  no token: 401
+
+== d70: post-checkout hook exits non-zero
+  plan before: 200 {"ok":true,"project":"<base>/roots/hooked","projectName":"hooked","base":{"branch":"main","head":"1f65062"},"branch":"fix-login","path":"<base>/roots/hooked-worktrees/fix-login"}
+  attach #1 → {"type":"error","message":"create session: create worktree: git worktree add --detach <base>/roots/hooked-worktrees/fix-login 1f6506240ee01feb4147931079c89d2a0ffdb8db: exit status 2: Preparing worktree (detached HEAD 1f65062)\nHEAD is now at 1f65062 initial\nThis repository is configured for Git LFS but git-lfs was not found on your path; cleanup: directory <base>/roots/hooked-worktrees/fix-login not removed: git lists a worktree in it, and this create, whose own git worktree add did not go through, cannot take it for its own","code":"create_failed","fatal":true}
+  disk: {"worktrees":["worktree <base>/roots/hooked | HEAD 1f6506240ee01feb4147931079c89d2a0ffdb8db | branch refs/heads/main","worktree <base>/roots/hooked-worktrees/fix-login | HEAD 1f6506240ee01feb4147931079c89d2a0ffdb8db | detached"],"branches":["main 1f65062"]} dir exists: true [ '.git', 'README' ]
+  sessions: {"type":"sessions","list":[]}
+  projects: []
+  plan for the same name again: 200 {"ok":false,"error":"worktree_path_exists","message":"worktree directory already exists: <base>/roots/hooked-worktrees/fix-login","project":"<base>/roots/hooked","projectName":"hooked","base":{"branch":"main","head":"1f65062"},"branch":"fix-login","path":"<base>/roots/hooked-worktrees/fix-login"}
+  replay with the same newSessionId → {"type":"error","message":"create session: worktree directory already exists: <base>/roots/hooked-worktrees/fix-login","code":"worktree_path_exists","fatal":true}
+  attach #2 (new id, same name) → {"type":"error","message":"create session: worktree directory already exists: <base>/roots/hooked-worktrees/fix-login","code":"worktree_path_exists","fatal":true}
+  attach #3 (another name) → {"type":"error","message":"create session: create worktree: git worktree add --detach <base>/roots/hooked-worktrees/second 1f6506240ee01feb4147931079c89d2a0ffdb8db: exit status 2: Preparing worktree (detached HEAD 1f65062)\nHEAD is now at 1f65062 initial\nThis repository is configured for Git LFS bu
+  disk: {"worktrees":["worktree <base>/roots/hooked | HEAD 1f6506240ee01feb4147931079c89d2a0ffdb8db | branch refs/heads/main","worktree <base>/roots/hooked-worktrees/fix-login | HEAD 1f6506240ee01feb4147931079c89d2a0ffdb8db | detached","worktree <base>/roots/hooked-worktrees/second | HEAD 1f6506240ee01feb4147931079c89d2a0ffdb8db | detached"],"branches":["main 1f65062"]}
+  status of leftover fix-login: 200 {"path":"<base>/roots/hooked-worktrees/fix-login","project":"<base>/roots/hooked","head":"1f6506240ee01feb4147931079c89d2a0ffdb8db","detached":true,"main":false,"managed":false,"dirtyFiles":0,"unmergedCommits":0,"ignoredFiles":0,"sessions":[]}
+  remove leftover fix-login: 200 {"removed":true,"branchDeleted":false,"endedSessions":[]} dir exists: false
+  status of leftover second: 200 {"path":"<base>/roots/hooked-worktrees/second","project":"<base>/roots/hooked","head":"1f6506240ee01feb4147931079c89d2a0ffdb8db","detached":true,"main":false,"managed":false,"dirtyFiles":0,"unmergedCommits":0,"ignoredFiles":0,"sessions":[]}
+  remove leftover second: 200 {"removed":true,"branchDeleted":false,"endedSessions":[]} dir exists: false
+  disk after removing the leftovers: {"worktrees":["worktree <base>/roots/hooked | HEAD 1f6506240ee01feb4147931079c89d2a0ffdb8db | branch refs/heads/main"],"branches":["main 1f65062"]}
+  attach with the hook gone → ready  <base>/roots/hooked-worktrees/fix-login
+  disk: {"worktrees":["worktree <base>/roots/hooked | HEAD 1f6506240ee01feb4147931079c89d2a0ffdb8db | branch refs/heads/main","worktree <base>/roots/hooked-worktrees/fix-login | HEAD 1f6506240ee01feb4147931079c89d2a0ffdb8db | branch refs/heads/fix-login"],"branches":["fix-login 1f65062","main 1f65062"]}
+
+== ws-smoke.mjs against the throwaway daemon
+PASS /healthz
+PASS /api/v1/info version=dev
+PASS session A ready id=1795129702818-acf0b8cb
+PASS A sees its own VIBE_REMOTE_SESSION_ID
+PASS A got a hook token distinct from the main token
+PASS hook token → events 204
+PASS notify frame delivered to session A
+PASS hook token rejected for another sessionId
+PASS hook token rejected on /api/v1/info
+PASS B sees its own VIBE_REMOTE_SESSION_ID (no env bleed from A)
+PASS deleted 1795129702818-acf0b8cb
+PASS deleted 1795129703025-78b2fceb
+
+all checks passed
+  ws-smoke exit=0
+
+== git without `worktree list -z` + a worktree path with a newline, through the daemon
+  [real git 2.50.1 (-z)] project tree rows: [{"path":"<base>/roots/trusted","branch":"main","main":true},{"path":"<base>/roots/trusted-worktrees/a\nfoo","branch":"nl"}]
+  [real git 2.50.1 (-z)] GET /api/v1/fs?path=<…/trusted-worktrees/a> (NOT a worktree): 200 chatTrust="untrusted"
+  [real git 2.50.1 (-z)] worktrees/status of that directory: 404 {"error":"worktree_not_found","message":"not a worktree this daemon can see"}
+  [real git 2.50.1 (-z)] worktrees/status of the real worktree (path with a newline): 200 {"path":"<base>/roots/trusted-worktrees/a\nfoo","project":"<base>/roots/trusted","branch":"nl","head":"052f786f9e95ca56cf69fa1ee1a067bf25583c33","main":false,"managed":false,"dirtyFiles":0,"unmergedCo
+  [git without -z (fallback)] project tree rows: [{"path":"<base>/roots/trusted","branch":"main","main":true},{"path":"<base>/roots/trusted-worktrees/a","branch":"nl"}]
+  [git without -z (fallback)] GET /api/v1/fs?path=<…/trusted-worktrees/a> (NOT a worktree): 200 chatTrust="trusted"
+  [git without -z (fallback)] worktrees/status of that directory: 200 {"path":"<base>/roots/trusted-worktrees/a","project":"<base>/roots/trusted","branch":"nl","head":"052f786f9e95ca56cf69fa1ee1a067bf25583c33","main":false,"managed":false,"dirtyFiles":2,"unmergedCommits":0,"ignoredFiles":0,"sessions":[]}
+  [git without -z (fallback)] worktrees/status of the real worktree (path with a newline): 404 {"error":"worktree_not_found","message":"not a worktree this daemon can see"}
+
+cleanup: daemons stopped, tmux servers of their own socket dirs killed, /tmp/vr-v2e-3FmioP removed

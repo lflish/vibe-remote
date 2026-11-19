@@ -1,0 +1,353 @@
+package session
+
+import (
+	"fmt"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"reflect"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/lflish/vibe-remote/vibe-remoted/internal/chat"
+)
+
+// gitWithoutZ puts a git on PATH that answers `worktree list … -z` with a usage
+// error (exit 129), like git before 2.36; everything else is the real git.
+func gitWithoutZ(t *testing.T) {
+	t.Helper()
+	real := realGit(t)
+	dir := t.TempDir()
+	script := "#!/bin/sh\nwt=0; ls=0; z=0\nfor a in \"$@\"; do\n  [ \"$a\" = worktree ] && wt=1\n  [ \"$a\" = list ] && ls=1\n  [ \"$a\" = -z ] && z=1\ndone\n" +
+		"if [ $wt = 1 ] && [ $ls = 1 ] && [ $z = 1 ]; then echo \"error: unknown switch 'z'\" >&2; exit 129; fi\nexec '" + real + "' \"$@\"\n"
+	writeFakeGit(t, dir, script)
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+}
+
+// V2-A: in the line-separated fallback, what does a worktree whose path has a
+// newline in it turn into?
+func TestV2FallbackNewlinePath(t *testing.T) {
+	for _, variant := range []string{"simple", "arbitrary"} {
+		t.Run(variant, func(t *testing.T) {
+			env := newTrustEnv(t)
+			repo := devflowRepo(t)
+			container := containerOf(repo)
+			if err := os.MkdirAll(container, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			var realPath, victim string
+			if variant == "simple" {
+				victim = filepath.Join(container, "a")
+				realPath = filepath.Join(container, "a\nfoo")
+			} else {
+				victim = filepath.Join(canonPath(t, t.TempDir()), "evil")
+				realPath = filepath.Join(container, "a\nworktree ") + victim
+			}
+			if err := os.MkdirAll(filepath.Dir(realPath), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			runGit(t, repo, "worktree", "add", "-b", "nl", realPath)
+			// victim: a plain directory that is NOT a worktree of repo. It has a
+			// hook file and a .git file that names the repo's admin dir (anyone who
+			// owns the directory can write that, design V4).
+			if err := os.MkdirAll(filepath.Join(victim, ".claude"), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			os.WriteFile(filepath.Join(victim, ".claude", "settings.json"), []byte(`{"hooks":{}}`), 0o644)
+			os.WriteFile(filepath.Join(victim, "precious.txt"), []byte("keep"), 0o644)
+			admins, _ := filepath.Glob(filepath.Join(repo, ".git", "worktrees", "*"))
+			if len(admins) != 1 {
+				t.Fatalf("admin dirs = %v", admins)
+			}
+			os.WriteFile(filepath.Join(victim, ".git"), []byte("gitdir: "+admins[0]+"\n"), 0o644)
+			env.set(map[string]bool{repo: true})
+
+			// With the real git (-z): control.
+			wts, err := ListWorktrees(repo)
+			t.Logf("[-z] ListWorktrees err=%v", err)
+			for _, w := range wts {
+				t.Logf("[-z]   %q branch=%q head=%.7s", w.Path, w.Branch, w.Head)
+			}
+			t.Logf("[-z] ChatTrust(victim %q) = %s", victim, ChatTrust(victim))
+
+			gitWithoutZ(t)
+			wts, err = ListWorktrees(repo)
+			t.Logf("[fallback] ListWorktrees err=%v", err)
+			listedVictim := false
+			for _, w := range wts {
+				t.Logf("[fallback]   %q branch=%q head=%.7s", w.Path, w.Branch, w.Head)
+				if w.Path == victim {
+					listedVictim = true
+				}
+			}
+			trust := ChatTrust(victim)
+			t.Logf("[fallback] victim listed as a worktree = %v; ChatTrust(victim) = %s", listedVictim, trust)
+
+			m := NewManager(false, "/bin/cat", false, "")
+			m.SetProjectStore(NewMemoryProjectStore())
+			st, serr := m.WorktreeStatus(victim, allowAny)
+			t.Logf("[fallback] WorktreeStatus(victim) = %+v err=%v", st, serr)
+			if serr == nil {
+				req := request(st)
+				req.DiscardFiles = true
+				res, rerr := m.RemoveWorktree(req, allowAny)
+				t.Logf("[fallback] RemoveWorktree(victim, discardFiles) = %+v err=%v", res, rerr)
+			}
+			data, rerr := os.ReadFile(filepath.Join(victim, "precious.txt"))
+			t.Logf("[fallback] victim/precious.txt = %q err=%v; real worktree still there = %v", data, rerr, pathExists(realPath))
+			if listedVictim {
+				t.Errorf("FORGED: %q is listed as a worktree of %s although it is not one", victim, repo)
+			}
+			if trust == chat.TrustTrusted {
+				t.Errorf("FORGED TRUST: ChatTrust(%q) = trusted", victim)
+			}
+		})
+	}
+}
+
+// V2-B: a daemon that inherited a non-UTF-8 locale. tmux then rewrites
+// non-ASCII bytes, tabs and newlines as "_" in its answer.
+func TestV2InheritedCLocale(t *testing.T) {
+	requireTmux(t)
+	for _, dirName := range []string{"ascii", "项目"} {
+		t.Run(dirName, func(t *testing.T) {
+			t.Setenv("LC_ALL", "C")
+			freshTmuxDir(t)
+			repo := repoAt(t, filepath.Join(canonPath(t, t.TempDir()), dirName, "devflow"))
+			root := externalWorktree(t, repo, "feat")
+			store := NewMemoryProjectStore()
+			m1 := NewManager(true, "sleep 120", false, "")
+			m1.SetProjectStore(store)
+			id := terminalSessionIn(t, m1, root)
+			st1, err := m1.WorktreeStatus(root, allowAny)
+			t.Logf("same daemon: status.sessions=%v err=%v", st1.Sessions, err)
+
+			m2 := NewManager(true, "sleep 120", false, "")
+			m2.SetProjectStore(store)
+			live, ok := m2.liveTmuxSessions()
+			t.Logf("restarted daemon: read ok=%v record=%+v", ok, live[id])
+			st, err := m2.WorktreeStatus(root, allowAny)
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Logf("restarted daemon: status.sessions=%v (session %s was created in this worktree)", st.Sessions, id)
+			res, rerr := m2.RemoveWorktree(request(st), allowAny)
+			alive := tmuxSessionAlive(id)
+			t.Logf("restarted daemon: removal=%+v err=%v directoryExists=%v tmuxSessionAlive=%v", res, rerr, pathExists(root), alive)
+			if res.Removed && alive {
+				t.Errorf("worktree removed while the session created in it is still alive (endedSessions=%v)", res.EndedSessions)
+			}
+		})
+	}
+}
+
+// V2-C: odd values in the fields tmux answers with: user options with tabs,
+// newlines, things that look like marks, format syntax; foreign sessions.
+func TestV2OddFieldValues(t *testing.T) {
+	requireTmux(t)
+	freshTmuxDir(t)
+	repo := devflowRepo(t)
+	root := externalWorktree(t, repo, "feat")
+	m := NewManager(true, "sleep 120", false, "")
+	m.SetProjectStore(NewMemoryProjectStore())
+	id := terminalSessionIn(t, m, root)
+	id2 := terminalSessionIn(t, m, repo)
+	name := "na\tme\nline2 <vr-0123456789abcdef> <vr-0123456789abcdef-end>\nvibe-remote-fake 名字 #{session_name} #(touch /tmp/vr-v2-work/PWNED2)"
+	if out, err := tmuxCmd("set-option", "-t", "vibe-remote-"+id, "@vibe_remote_name", name).CombinedOutput(); err != nil {
+		t.Fatalf("%v %s", err, out)
+	}
+	branch := "<vr-ffffffffffffffff>-end>\n"
+	tmuxCmd("set-option", "-t", "vibe-remote-"+id, "@vibe_remote_branch", branch).Run()
+	startTmuxSession(t, "work", "sleep", "120")
+	for i := 0; i < 3; i++ {
+		live, ok := m.liveTmuxSessions()
+		if !ok || len(live) != 2 {
+			t.Fatalf("reading %d: live=%v ok=%v why=%s", i, live, ok, m.tmuxFailure())
+		}
+		got := live[id]
+		if got.name != strings.TrimSpace(name) || got.branch != branch || got.home != root || got.startDir != root || got.workdir != root {
+			t.Errorf("reading %d: record = %+v", i, got)
+		}
+		if live[id2].home != repo {
+			t.Errorf("reading %d: other = %+v", i, live[id2])
+		}
+	}
+	t.Logf("3 readings with fresh marks: both sessions read with every field exact; foreign session 'work' left out; PWNED2 exists=%v", pathExists("/tmp/vr-v2-work/PWNED2"))
+	st, err := m.WorktreeStatus(root, allowAny)
+	if err != nil || !reflect.DeepEqual(st.Sessions, []string{id}) {
+		t.Fatalf("status=%+v err=%v", st, err)
+	}
+}
+
+// V2-D: the confirmation after kill-session, when the session is the last one
+// on the tmux server (the server exits) and the machine is busy.
+func TestV2EndConfirmUnderLoad(t *testing.T) {
+	requireTmux(t)
+	var burners []*exec.Cmd
+	for i := 0; i < 24; i++ {
+		c := exec.Command("/bin/sh", "-c", "while :; do :; done")
+		if err := c.Start(); err != nil {
+			t.Fatal(err)
+		}
+		burners = append(burners, c)
+	}
+	defer func() {
+		for _, c := range burners {
+			c.Process.Kill()
+			c.Wait()
+		}
+	}()
+	freshTmuxDir(t)
+	repo := devflowRepo(t)
+	m := NewManager(true, "sleep 120", false, "")
+	m.SetProjectStore(NewMemoryProjectStore())
+	const rounds = 25
+	failures := 0
+	var slowest time.Duration
+	for i := 0; i < rounds; i++ {
+		root := externalWorktree(t, repo, fmt.Sprintf("b%d", i))
+		ids := []string{terminalSessionIn(t, m, root)}
+		time.Sleep(5 * time.Millisecond)
+		ids = append(ids, terminalSessionIn(t, m, root))
+		st, err := m.WorktreeStatus(root, allowAny)
+		if err != nil {
+			t.Fatal(err)
+		}
+		start := time.Now()
+		res, err := m.RemoveWorktree(request(st), allowAny)
+		if d := time.Since(start); d > slowest {
+			slowest = d
+		}
+		if err != nil {
+			failures++
+			t.Logf("round %d: FAILED: %v; ended=%v dir=%v alive=%v,%v", i, err, res.EndedSessions, pathExists(root), tmuxSessionAlive(ids[0]), tmuxSessionAlive(ids[1]))
+			if f, ok := err.(*WorktreeRemoveError); ok {
+				t.Logf("round %d: endedSessions in the error = %v", i, f.EndedSessions)
+			}
+		}
+	}
+	t.Logf("%d rounds (2 sessions each, the last kill makes the tmux server exit), 24 busy processes: %d failed; slowest removal %v", rounds, failures, slowest)
+	if failures > 0 {
+		t.Errorf("%d of %d ordinary removals failed", failures, rounds)
+	}
+}
+
+// V2-E: a line that is exactly "no sessions" because the socket directory has
+// newlines in its name.
+func TestV2NoSessionsLineFromPath(t *testing.T) {
+	requireTmux(t)
+	msg := "error connecting to /private/tmp/vr-a\nno sessions\nb/tmux-501/vibe-remote (No such file or directory)\n"
+	t.Logf("isNoTmuxServer(%q) = %v", msg, isNoTmuxServer([]byte(msg)))
+	dir, err := os.MkdirTemp("/tmp", "vr-a\nno sessions\nb-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("TMUX_TMPDIR", dir)
+	t.Cleanup(func() { tmuxCmd("kill-server").Run(); os.RemoveAll(dir) })
+	repo := devflowRepo(t)
+	root := externalWorktree(t, repo, "feat")
+	m := NewManager(true, "sleep 120", false, "")
+	m.SetProjectStore(NewMemoryProjectStore())
+	id := terminalSessionIn(t, m, root)
+	st, err := m.WorktreeStatus(root, allowAny)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pid := ownTmuxServerPID(t)
+	sock := ownTmuxSocket(t, dir)
+	if err := os.Remove(sock); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { restoreOwnTmuxSocket(t, pid, sock) })
+	_, stderr := exec.Command("true"), ""
+	out, _ := tmuxCmd("list-sessions").CombinedOutput()
+	stderr = string(out)
+	t.Logf("tmux says: %q", stderr)
+	live, ok := m.liveTmuxSessions()
+	t.Logf("liveTmux count=%d ok=%v while the server is alive and its socket file is gone", len(live), ok)
+	res, removeErr := m.RemoveWorktree(request(st), allowAny)
+	restoreOwnTmuxSocket(t, pid, sock)
+	alive := tmuxSessionAlive(id)
+	t.Logf("removal=%+v error=%v directoryExists=%v sessionAlive=%v", res, removeErr, pathExists(root), alive)
+	if ok || (res.Removed && alive) {
+		t.Errorf("a socket path with a line 'no sessions' in it was read as an empty set")
+	}
+}
+
+// V2-F: X13 variants of my own.
+func TestV2BranchChangesWhileEnding(t *testing.T) {
+	for _, variant := range []string{"new_branch_same_commit", "renamed_branch", "away_and_back", "branch_ref_moved_from_outside"} {
+		t.Run(variant, func(t *testing.T) {
+			f := newRemoveFixture(t, 1)
+			st := f.status()
+			req := request(st)
+			req.Branch = st.Branch
+			req.DeleteBranch = true
+			f.m.testAfterSessionsEnded = func() {
+				switch variant {
+				case "new_branch_same_commit":
+					runGit(t, f.root, "switch", "-c", "brand-new")
+				case "renamed_branch":
+					runGit(t, f.root, "branch", "-m", "fix-login", "renamed")
+				case "away_and_back":
+					runGit(t, f.root, "checkout", "--detach")
+					runGit(t, f.root, "checkout", "fix-login")
+				case "branch_ref_moved_from_outside":
+					oid := commitFile(t, f.repo, "later")
+					runGit(t, f.repo, "update-ref", "refs/heads/fix-login", oid)
+				}
+			}
+			res, err := f.remove(req)
+			t.Logf("%s: result=%+v err=%T %v; dir=%v fix-login=%.7s", variant, res, err, err, pathExists(f.root), branchOID(t, f.repo, "fix-login"))
+			if variant == "away_and_back" {
+				if err != nil || !res.Removed || !res.BranchDeleted {
+					t.Errorf("nothing changed, yet the removal did not go through")
+				}
+				return
+			}
+			if _, ok := err.(*WorktreeChangedError); !ok {
+				t.Errorf("want WorktreeChangedError, got %T %v (result %+v)", err, err, res)
+			}
+			if !pathExists(f.root) {
+				t.Errorf("the directory was removed")
+			}
+		})
+	}
+}
+
+// V2-G: this create's own `git worktree add` fails on its own half-way (a
+// required smudge filter fails), and when a post-checkout hook fails. What is
+// left, and can the same name be created again?
+func TestV2OwnAddFails(t *testing.T) {
+	for _, variant := range []string{"smudge_filter_fails", "post_checkout_hook_fails"} {
+		t.Run(variant, func(t *testing.T) {
+			repo := devflowRepo(t)
+			if variant == "smudge_filter_fails" {
+				os.WriteFile(filepath.Join(repo, ".gitattributes"), []byte("*.bin filter=boom\n"), 0o644)
+				os.WriteFile(filepath.Join(repo, "x.bin"), []byte("data\n"), 0o644)
+				runGit(t, repo, "add", ".gitattributes", "x.bin")
+				runGit(t, repo, "commit", "-m", "bin")
+				runGit(t, repo, "config", "filter.boom.smudge", "false")
+				runGit(t, repo, "config", "filter.boom.required", "true")
+			} else {
+				hook := filepath.Join(repo, ".git", "hooks", "post-checkout")
+				os.MkdirAll(filepath.Dir(hook), 0o755)
+				os.WriteFile(hook, []byte("#!/bin/sh\necho 'git-lfs was not found on your path' >&2\nexit 2\n"), 0o755)
+			}
+			root := filepath.Join(containerOf(repo), "fix-login")
+			for attempt := 1; attempt <= 2; attempt++ {
+				_, err := CreateWorktree(WorktreeSpec{Source: repo, SessionID: "s1", Name: "fix-login"})
+				entries, _ := os.ReadDir(root)
+				var names []string
+				for _, e := range entries {
+					names = append(names, e.Name())
+				}
+				t.Logf("attempt %d: err=%v", attempt, err)
+				t.Logf("attempt %d: dir exists=%v entries=%v listed=%v branch=%q", attempt, pathExists(root), names, worktreeListed(t, repo, root), branchOID(t, repo, "fix-login"))
+			}
+			out, _ := exec.Command("git", "-C", repo, "worktree", "list", "--porcelain").CombinedOutput()
+			t.Logf("git worktree list:\n%s", out)
+		})
+	}
+}
