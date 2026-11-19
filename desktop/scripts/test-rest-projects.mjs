@@ -66,4 +66,43 @@ test('removeProject: 204 → resolves', async () => {
   await withFetch(async () => new Response(null, { status: 204 }), () => rest.removeProject('/r/x'));
 });
 
+test('plan_encodes_query', async () => {
+  const rest = new VibeRemoteRest(machine);
+  const seen = [];
+  const plan = await withFetch(
+    async (url, init) => {
+      seen.push({ url: String(url), auth: init?.headers?.Authorization, method: init?.method ?? 'GET' });
+      return json(200, { ok: true, project: '/r/a b', projectName: 'a b', base: { branch: 'main', head: 'a1b2c3d' }, branch: 'change/foo', path: '/r/a b-worktrees/change-foo' });
+    },
+    () => rest.planWorktree('/r/a b', 'change/foo'),
+  );
+  assert.equal(seen.length, 1);
+  const raw = seen[0].url;
+  assert.ok(raw.startsWith('http://127.0.0.1:9999/api/v1/worktrees/plan?'), raw);
+  assert.ok(!raw.includes(' ') && !raw.includes('/r/a') && !raw.includes('change/foo'), `parameters are URL-encoded: ${raw}`);
+  const q = new URL(raw).searchParams;
+  assert.equal(q.get('workdir'), '/r/a b');
+  assert.equal(q.get('name'), 'change/foo');
+  assert.equal(seen[0].auth, 'Bearer secret');
+  assert.equal(seen[0].method, 'GET');
+  assert.equal(plan.ok, true);
+  assert.equal(plan.branch, 'change/foo');
+  assert.equal(plan.base.head, 'a1b2c3d');
+
+  // ok:false is a normal answer, not an exception.
+  const rejected = await withFetch(
+    async () => json(200, { ok: false, error: 'worktree_branch_exists', message: 'branch "fix" already exists', conflict: 'fix', branch: 'fix/login' }),
+    () => rest.planWorktree('/r/devflow', 'fix/login'),
+  );
+  assert.equal(rejected.ok, false);
+  assert.equal(rejected.conflict, 'fix');
+
+  let err;
+  await withFetch(async () => json(403, { error: 'path not in allowed roots' }), async () => {
+    try { await rest.planWorktree('/etc', 'x'); } catch (e) { err = e; }
+  });
+  assert.ok(err instanceof RestError, 'HTTP 403 throws a RestError');
+  assert.equal(err.status, 403);
+});
+
 await run();

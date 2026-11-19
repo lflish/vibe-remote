@@ -392,54 +392,67 @@ func BranchConflict(repoDir, name string) (string, error) {
 	return "", nil
 }
 
+// errNotInGit marks a worktree request made from outside any git repository.
+var errNotInGit = errors.New("is not inside a git repository")
+
 func errNotGit(dir string) error {
-	return fmt.Errorf("discover repository: %s is not inside a git repository", dir)
+	return fmt.Errorf("discover repository: %s %w", dir, errNotInGit)
 }
 
-// CreateWorktree creates a worktree on a new branch at Source's current commit
-// (design 6.1). The directory and the branch are each claimed with a
-// create-only-if-absent operation, so a failure can undo exactly what this
-// call made and nothing that was already there. The branch is only ever named
-// to git as refs/heads/<branch>. The caller holds the repository's lock.
-func CreateWorktree(spec WorktreeSpec) (CreatedWorktree, error) {
-	named := spec.Name != ""
+// worktreeChecks is what the checks made before anything is created have
+// established so far; a failed check leaves the fields of the later ones empty.
+type worktreeChecks struct {
+	sourceAbs string
+	home      Home   // of the source directory
+	rel       string // the source directory relative to its worktree root
+	claim     worktreeClaim
+}
+
+// precheckWorktree runs design 6.1 steps 1–5 — everything that can refuse a
+// worktree without creating or changing anything. CreateWorktree continues
+// from its result and the pre-check endpoint reports it, so the two cannot
+// disagree about a name. named=false is the original naming by session id.
+func precheckWorktree(spec WorktreeSpec, named bool) (worktreeChecks, error) {
+	var c worktreeChecks
 	if !named && !safeSessionID.MatchString(spec.SessionID) {
-		return CreatedWorktree{}, fmt.Errorf("invalid session ID")
+		return c, fmt.Errorf("invalid session ID")
 	}
 	sourceAbs, err := filepath.Abs(spec.Source)
 	if err != nil {
-		return CreatedWorktree{}, fmt.Errorf("resolve source workdir: %w", err)
+		return c, fmt.Errorf("resolve source workdir: %w", err)
 	}
+	c.sourceAbs = sourceAbs
 	home, err := ResolveHome(sourceAbs)
 	if err != nil {
-		return CreatedWorktree{}, fmt.Errorf("discover repository: %w", err)
+		return c, fmt.Errorf("discover repository: %w", err)
 	}
 	if !home.Git {
-		return CreatedWorktree{}, errNotGit(sourceAbs)
+		return c, errNotGit(sourceAbs)
 	}
+	c.home = home
 	if named && home.Single {
-		return CreatedWorktree{}, ErrUnsupportedRepo
+		return c, ErrUnsupportedRepo
 	}
-	// Every git command below runs in the worktree Source sits in: it is a
-	// usable work tree, and branches and worktrees are shared repository-wide.
+	// Every git command from here on runs in the worktree Source sits in: it is
+	// a usable work tree, and branches and worktrees are shared repository-wide.
 	w := home.Path
 	canonicalAbs, err := filepath.EvalSymlinks(sourceAbs)
 	if err != nil {
-		return CreatedWorktree{}, fmt.Errorf("resolve source workdir links: %w", err)
+		return c, fmt.Errorf("resolve source workdir links: %w", err)
 	}
 	canonicalRepo, err := filepath.EvalSymlinks(w)
 	if err != nil {
-		return CreatedWorktree{}, fmt.Errorf("resolve repository links: %w", err)
+		return c, fmt.Errorf("resolve repository links: %w", err)
 	}
-	rel, err := filepath.Rel(canonicalRepo, canonicalAbs)
-	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
-		return CreatedWorktree{}, fmt.Errorf("source workdir escapes repository")
+	c.rel, err = filepath.Rel(canonicalRepo, canonicalAbs)
+	if err != nil || c.rel == ".." || strings.HasPrefix(c.rel, ".."+string(filepath.Separator)) {
+		return c, fmt.Errorf("source workdir escapes repository")
 	}
 
 	claim := worktreeClaim{w: w}
 	if named {
 		if err := ValidateWorktreeName(w, spec.Name); err != nil {
-			return CreatedWorktree{}, err
+			return c, err
 		}
 		claim.branch = spec.Name
 		claim.container = filepath.Join(filepath.Dir(home.Project), filepath.Base(home.Project)+"-worktrees")
@@ -449,33 +462,51 @@ func CreateWorktree(spec WorktreeSpec) (CreatedWorktree, error) {
 		claim.container = filepath.Join(filepath.Dir(w), filepath.Base(w)+"-worktrees")
 		claim.root = filepath.Join(claim.container, spec.SessionID)
 	}
-	allow := func(path string) error {
-		if spec.AllowPath == nil {
-			return nil
-		}
-		if err := spec.AllowPath(path); err != nil {
-			return fmt.Errorf("%w: %s: %v", ErrWorktreePathNotAllowed, path, err)
-		}
-		return nil
+	c.claim = claim
+	if err := allowWorktreePath(spec, claim.root); err != nil {
+		return c, err
 	}
-	if err := allow(claim.root); err != nil {
-		return CreatedWorktree{}, err
-	}
-	// The next two checks only fix the order errors are reported in (the same
-	// as the pre-check endpoint); what actually protects existing things is the
-	// create-if-absent claims further down.
+	// The next two checks only fix the order errors are reported in; what
+	// actually protects existing things is CreateWorktree's create-if-absent
+	// claims.
 	conflict, err := BranchConflict(w, claim.branch)
 	if err != nil {
-		return CreatedWorktree{}, fmt.Errorf("check existing branches: %w", err)
+		return c, fmt.Errorf("check existing branches: %w", err)
 	}
 	if conflict != "" {
-		return CreatedWorktree{}, &BranchExistsError{Branch: claim.branch, Conflict: conflict}
+		return c, &BranchExistsError{Branch: claim.branch, Conflict: conflict}
 	}
 	if _, err := os.Lstat(claim.root); err == nil {
-		return CreatedWorktree{}, fmt.Errorf("%w: %s", ErrWorktreePathExists, claim.root)
+		return c, fmt.Errorf("%w: %s", ErrWorktreePathExists, claim.root)
 	} else if !os.IsNotExist(err) {
-		return CreatedWorktree{}, fmt.Errorf("check worktree directory: %w", err)
+		return c, fmt.Errorf("check worktree directory: %w", err)
 	}
+	return c, nil
+}
+
+func allowWorktreePath(spec WorktreeSpec, path string) error {
+	if spec.AllowPath == nil {
+		return nil
+	}
+	if err := spec.AllowPath(path); err != nil {
+		return fmt.Errorf("%w: %s: %v", ErrWorktreePathNotAllowed, path, err)
+	}
+	return nil
+}
+
+// CreateWorktree creates a worktree on a new branch at Source's current commit
+// (design 6.1). The directory and the branch are each claimed with a
+// create-only-if-absent operation, so a failure can undo exactly what this
+// call made and nothing that was already there. The branch is only ever named
+// to git as refs/heads/<branch>. The caller holds the repository's lock.
+func CreateWorktree(spec WorktreeSpec) (CreatedWorktree, error) {
+	checks, err := precheckWorktree(spec, spec.Name != "")
+	if err != nil {
+		return CreatedWorktree{}, err
+	}
+	sourceAbs, home, rel, claim := checks.sourceAbs, checks.home, checks.rel, checks.claim
+	w := claim.w
+	allow := func(path string) error { return allowWorktreePath(spec, path) }
 	out, err := gitAt(w, "rev-parse", "--verify", "HEAD^{commit}")
 	if err != nil {
 		return CreatedWorktree{}, fmt.Errorf("resolve source commit: %w", err)

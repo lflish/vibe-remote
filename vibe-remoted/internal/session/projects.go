@@ -2,6 +2,7 @@ package session
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"sort"
 	"strings"
@@ -360,6 +361,70 @@ func (m *Manager) RemoveProject(id string) error {
 		return ErrProjectNotFound
 	}
 	return nil
+}
+
+// PlanWorktree is the read-only pre-check for creating a worktree named name
+// from workdir (design 4.4): the same checks, in the same order, that
+// CreateWorktree makes before it creates anything. A git failure or timeout is
+// returned as an error; every other outcome is a plan.
+func (m *Manager) PlanWorktree(workdir, name string, allowPath func(string) error) (protocol.WorktreePlan, error) {
+	checks, err := precheckWorktree(WorktreeSpec{Source: workdir, Name: name, AllowPath: allowPath}, true)
+	if errors.Is(err, errNotInGit) {
+		return protocol.WorktreePlan{Error: "not_git", Message: err.Error()}, nil
+	}
+	if !checks.home.Git {
+		return protocol.WorktreePlan{}, err // the repository could not be read
+	}
+	plan := protocol.WorktreePlan{
+		Project: checks.home.Project, ProjectName: baseName(checks.home.Project),
+		Branch: checks.claim.branch, Path: checks.claim.root,
+	}
+	base, baseErr := worktreeBase(checks.home.Path)
+	if baseErr != nil {
+		return protocol.WorktreePlan{}, baseErr
+	}
+	plan.Base = &base
+	var exists *BranchExistsError
+	switch {
+	case err == nil:
+		plan.OK = true
+		return plan, nil
+	case errors.Is(err, ErrUnsupportedRepo):
+		plan.Error = "unsupported_repo"
+	case errors.Is(err, ErrInvalidWorktreeName):
+		plan.Error = protocol.ErrCodeInvalidWorktreeName
+	case errors.Is(err, ErrWorktreePathNotAllowed):
+		plan.Error = protocol.ErrCodeWorktreePathNotAllowed
+	case errors.As(err, &exists):
+		plan.Error = protocol.ErrCodeWorktreeBranchExists
+		plan.Conflict = exists.Conflict
+	case errors.Is(err, ErrWorktreePathExists):
+		plan.Error = protocol.ErrCodeWorktreePathExists
+	default:
+		return protocol.WorktreePlan{}, err
+	}
+	plan.Message = err.Error()
+	return plan, nil
+}
+
+// worktreeBase reads what is checked out in the worktree rooted at root from
+// the repository's worktree list.
+func worktreeBase(root string) (protocol.WorktreeBase, error) {
+	wts, err := ListWorktrees(root)
+	if err != nil {
+		return protocol.WorktreeBase{}, err
+	}
+	if len(wts) == 0 {
+		return protocol.WorktreeBase{}, fmt.Errorf("git lists no worktree for %s", root)
+	}
+	cur := wts[0]
+	for _, wt := range wts {
+		if wt.Path == root {
+			cur = wt
+			break
+		}
+	}
+	return protocol.WorktreeBase{Branch: cur.Branch, Head: shortHead(cur.Head), Detached: cur.Detached}, nil
 }
 
 func baseName(id string) string {

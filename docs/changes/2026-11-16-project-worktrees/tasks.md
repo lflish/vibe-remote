@@ -532,8 +532,8 @@
 - 依赖：T2、T3、T4
 
 ### T8 协议 4：新建前的只读预检 `GET /api/v1/worktrees/plan`
-- 状态：待办
-- 文件：修改 `vibe-remoted/internal/session/projects.go`（`PlanWorktree`）、`vibe-remoted/internal/server/projects.go`（处理函数）、`vibe-remoted/internal/server/server.go`（路由）、`vibe-remoted/internal/protocol/protocol.go`（`WorktreePlan`，含可缺省的 `conflict`；`WorktreeBase`）、`desktop/src/shared/protocol.ts`（`WorktreePlan`）、`desktop/src/renderer/rest.ts`（`planWorktree`）、`docs/protocol.md`（端点说明，版本表第 4 行补这个端点）；测试 `vibe-remoted/internal/session/projects_test.go`、`vibe-remoted/internal/server/projects_test.go`、`desktop/scripts/test-rest-projects.mjs`
+- 状态：完成
+- 文件：修改 `vibe-remoted/internal/session/projects.go`（`PlanWorktree`）、`vibe-remoted/internal/session/worktree.go`（把 `CreateWorktree` 的第 1–5 步提成包内函数 `precheckWorktree`，预检和新建共用，decisions #56）、`vibe-remoted/internal/server/projects.go`（处理函数）、`vibe-remoted/internal/server/server.go`（路由）、`vibe-remoted/internal/protocol/protocol.go`（`WorktreePlan`，含可缺省的 `conflict`；`WorktreeBase`）、`desktop/src/shared/protocol.ts`（`WorktreePlan`）、`desktop/src/renderer/rest.ts`（`planWorktree`）、`docs/protocol.md`（端点说明，版本表第 4 行补这个端点）；测试 `vibe-remoted/internal/session/projects_test.go`、`vibe-remoted/internal/server/projects_test.go`、`desktop/scripts/test-rest-projects.mjs`
 - 接口：
   - 使用：`ResolveHome`、`Home.Single`、`ListWorktrees`、`gitAtTimeout`（T2）；`ValidateWorktreeName`、`WorktreeDirName`、`BranchConflict`、5 个错误变量、`cfg.ResolveAllowedNewPath`（T7）；`cfg.ResolveAllowedWorkdir`（现有）
   - 提供：`(m *Manager) PlanWorktree(workdir, name string, allowPath func(string) error) (protocol.WorktreePlan, error)`；TS `planWorktree(workdir: string, name: string): Promise<WorktreePlan>`
@@ -891,6 +891,7 @@
 | T6b | 2026-11-19 16:30 | fac25a9 | `typecheck`+`test:sidebar`(19)+`test:i18n-parity`(266)+`test:chat-activity`(6)+`test:chat-render-guard`(15) 全退出 0；`npm test` 退出 0；`TMUX_TMPDIR=… make check` exit 0；`gui-smoke.mjs`、`gui-chat-smoke.mjs` 全绿无 FAIL（两脚本未改、`^test(`=26、`check(`=14） |
 | T6c | 2026-11-19 14:38 | 81dab8d | 修复前 `gui-smoke.mjs` 新检查 FAIL（`session "fix": name has no visible width`、`session "new-api": name shows only 8px of 47px`、对话行 `name shows only 26px of 56px`）；修复后 `gui-smoke.mjs` 33 行 PASS、0 FAIL，`gui-chat-smoke.mjs` 29 行 PASS、0 FAIL；`typecheck`+`test:sidebar`(19) 退出 0；`TMUX_TMPDIR=… make check` exit 0（第一次在 `internal/chat` 卡住超时，重跑通过，decisions #50）；`check(`=17、`^test(`=26；截图 `.devflow-tmp/build-shots/t6c-sidebar*.png` |
 | T7 | 2026-11-19 15:20 | da251b7（失败的测试和接口骨架）、4657f4b（实现）、e35aa2c（协议三处、桌面端连接层、记录） | 完成定义的 `go test -race -count=1 ./internal/session ./internal/config ./internal/server -run '…'` 三行 `ok`（49 个用例和子用例 PASS，无 SKIP；并发用例各 20 轮）；`go test -race ./...` 全包 `ok`；`npm run typecheck`+`test:attach-replay` 退出 0；两条 grep 无输出；`attach.worktreeName` 和 4 个错误码在 protocol.go / protocol.ts / protocol.md 三处一致；`TMUX_TMPDIR=… make check` exit 0 |
+| T8 | 2026-11-19 15:28 | 见下一个提交 | 完成定义的 `go test -race -count=1 ./internal/session ./internal/server -run 'TestPlan\|TestNewEndpointsRequireToken'` 两行 `ok`；`npm run typecheck`+`test:rest-projects`(6) 退出 0；`WorktreePlan` / `WorktreeBase` 的字段和可缺省性在 protocol.go / protocol.ts / protocol.md 三处一致，路由、`rest.ts`、端点表一致；`TMUX_TMPDIR=… make check` exit 0；`gui-smoke.mjs` 33 行 PASS、`gui-chat-smoke.mjs` 29 行 PASS，都无 FAIL |
 
 更正：T5 实际完成于 2026-11-19 12:39，T6a 13:11，T6b 14:04（以提交时间为准）。此后各行的时间用 `date '+%F %H:%M'` 取。
 

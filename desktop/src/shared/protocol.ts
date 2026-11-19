@@ -11,7 +11,8 @@
  *      claude_session_busy (fatal), shutting_down (transient: retry))
  *   4: attach.worktreeName, errors invalid_worktree_name/worktree_branch_exists/
  *      worktree_path_exists/worktree_path_not_allowed (fatal),
- *      GET /api/v1/projects, POST /api/v1/projects/remove (S→C frames unchanged)
+ *      GET /api/v1/projects, POST /api/v1/projects/remove,
+ *      GET /api/v1/worktrees/plan (S→C frames unchanged)
  */
 export const PROTOCOL_VERSION = 4;
 
@@ -31,6 +32,32 @@ export interface ProjectWorktree {
   main?: boolean;
   managed?: boolean;
   sessions: string[];
+}
+
+// v4, GET /api/v1/worktrees/plan: what creating a worktree named `branch` from
+// a directory would do, without doing it. `ok` = every check made before
+// anything is created passes right now.
+export interface WorktreePlan {
+  ok: boolean;
+  // not_git | unsupported_repo | invalid_worktree_name | worktree_branch_exists |
+  // worktree_path_exists | worktree_path_not_allowed
+  error?: string;
+  message?: string;
+  // worktree_branch_exists only: the existing branch in the way — equal to
+  // `branch`, or one git cannot keep next to it (fix blocks fix/login).
+  conflict?: string;
+  project?: string; // absent for not_git
+  projectName?: string; // absent for not_git
+  base?: WorktreeBase; // absent for not_git
+  branch?: string; // present once the name is valid
+  path?: string; // present once the name is valid
+}
+
+// The branch and commit a new worktree would be based on.
+export interface WorktreeBase {
+  branch?: string; // omitted when detached
+  head: string; // first 7 of the commit
+  detached?: boolean;
 }
 
 /** One project in the tree (GET /api/v1/projects). */

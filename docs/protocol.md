@@ -17,7 +17,7 @@ PTY 字节数据使用 base64 编码传输（`data` 帧）。
 | 1 | 初始版本（隐式） |
 | 2 | `attach.newSessionId`（新建会话幂等）、`error.code` / `error.fatal`、`proto` 字段本身、服务端 WebSocket 心跳 |
 | 3 | 对话界面：`attach.ui` / `epoch` / `since` / `handoffFrom`，`chat` / `chat_sync` / `chat_state` / `chat_ack`（含 send 的 `duplicate` / `completed`）/ `chat_send` / `chat_respond` / `chat_interrupt` / `chat_set_mode` 帧，`ready.ui` / `claudeSessionId` / `existing` / `handoffFrom`，`sessions[].ui` / `state` / `activitySeq` / `epoch` / `endReason`，`/api/v1/info.chat`（含 `?recheck=1`），`/api/v1/fs` 的 `chatTrust`，对话会话 reload 返回 202，错误码 `ui_mismatch` / `chat_unsupported` / `claude_session_busy` / `shutting_down`。终端会话的 `ready` / `sessions` / `data` / `exit` / `error` 帧除 `proto` 值外与 v2 逐字节相同 |
-| 4 | `attach.worktreeName`，错误码 `invalid_worktree_name` / `worktree_branch_exists` / `worktree_path_exists` / `worktree_path_not_allowed`；`GET /api/v1/projects`、`POST /api/v1/projects/remove`。所有 S→C 帧的字段与 v3 相同 |
+| 4 | `attach.worktreeName`，错误码 `invalid_worktree_name` / `worktree_branch_exists` / `worktree_path_exists` / `worktree_path_not_allowed`；`GET /api/v1/projects`、`POST /api/v1/projects/remove`、`GET /api/v1/worktrees/plan`。所有 S→C 帧的字段与 v3 相同 |
 
 兼容规则：新增字段在接收端一律可选；未知帧类型、未知 `notify.kind`、未知 `error.code` 均忽略（未知 code 只按 `fatal` 处理）。客户端发现 `proto` 低于自身版本时应提示用户更新 daemon——旧 daemon 会接受请求但**静默忽略**不认识的字段。
 
@@ -360,6 +360,7 @@ v3 对话会话的条目另带（终端条目一律省略）：
 | GET | `/api/v1/sessions` | 会话列表（条目字段同 `sessions` 帧，含 v3 对话字段） |
 | GET | `/api/v1/projects` | （v4）本机项目树：`{proto, projects:[{id, name, git, error?, errorMessage?, worktrees:[{path, branch?, head, detached?, main?, managed?, sessions:[id]}], sessions:[id]}]}`。数组字段恒为 `[]`。旧 daemon 没有此路径，返回 404（客户端据此回退到按会话分组） |
 | POST | `/api/v1/projects/remove` | （v4）从项目清单移除一个项目，body `{"id":"..."}`，不碰磁盘。成功 204；清单里没有该 id → 404 `{"error":"project_not_found"}`；仍有会话归属它 → 409 `{"error":"project_has_sessions"}` |
+| GET | `/api/v1/worktrees/plan?workdir=<目录>&name=<名字>` | （v4）新建 worktree 之前的只读预检，不创建任何东西；检查的内容和先后与 attach 带 `worktreeName` 新建时在动手之前做的相同。见下文「`/api/v1/worktrees/plan`」 |
 | DELETE | `/api/v1/sessions/{id}` | 关闭指定会话，成功 204，不存在 404。对话会话：停进程、按 worktree 规则清理、删记录，claude 的 JSONL 对话记录保留。worktree 模式的会话在 worktree 有未提交改动时保留 worktree 与分支，返回 409 `{"error":"worktree_preserved","message","worktreeRoot","branch"}`（会话本身已关闭） |
 | POST | `/api/v1/sessions/{id}/rename` | 重命名会话，body `{"name":"..."}`，终端会话名字存 tmux 用户选项，对话会话存 daemon 的 `chat-sessions.json` |
 | POST | `/api/v1/sessions/{id}/reload` | 终端会话：在原 tmux 会话和工作目录中重启 CLI，并继续最近的对话，成功 204。对话会话（v3）：立即返回 **202**，在后台停进程后以同一 claude 会话重新启动，进度与结果经 `chat_state` 广播（重载中再调用也是 202）；该 claude 会话正被别的会话持有 → 409 `{"error":"claude_session_busy","owner":"<会话 id>","message":"…"}`；会话不存在 → 404。持有 claude 会话的终端会话（交接创建或带 continue 启动）在其被别人持有时同样 409；daemon 未启用 tmux 时终端会话 reload 返回 409 `{"error":"…"}` |
@@ -380,6 +381,30 @@ v3 对话会话的条目另带（终端条目一律省略）：
 - `minClaudeVersion`：对话界面要求的最低 claude 版本
 
 旧 daemon 没有 `chat` 字段且 `proto < 3`：客户端提示升级 vibe-remoted。
+
+### `/api/v1/worktrees/plan`（v4）
+
+`workdir` 是发起处（项目行上发起时是项目主目录，目录选择器的 Worktree 模式里是当前目录），必填，受 `allowed_roots` 约束；`name` 是想用的名字，可以为空（只取 `base`）。两个参数都要 URL 编码。
+
+```json
+{ "ok": true,
+  "project": "/Users/mac/github/devflow", "projectName": "devflow",
+  "base": { "branch": "main", "head": "a1b2c3d" },
+  "branch": "fix-login",
+  "path": "/Users/mac/github/devflow-worktrees/fix-login" }
+```
+
+| 字段 | 类型 | 可缺省 | 说明 |
+|------|------|--------|------|
+| `ok` | bool | | 以当前状态用这个名字新建，动手之前的检查是否都能通过。之后才会出现的失败（磁盘满、发起处还没有提交）预检不覆盖 |
+| `error` | string | ✓ | `ok:false` 时的原因：`not_git`（`workdir` 不在 git 仓库里）、`unsupported_repo`（仓库是子模块或用了独立的 git 目录，不能在其中新建命名 worktree）、`invalid_worktree_name`（含名字为空）、`worktree_branch_exists`、`worktree_path_exists`、`worktree_path_not_allowed`。后四个与 attach 的 error 帧代码同名同义 |
+| `message` | string | ✓ | `ok:false` 时给人看的说明；`worktree_path_not_allowed` 时含完整路径，`worktree_branch_exists` 时写明与哪个分支冲突 |
+| `conflict` | string | ✓ | 只在 `worktree_branch_exists` 时有：挡住这个名字的已有分支。等于 `branch` 是同名分支已存在；不等是两个名字不能并存（名字 `fix/login` 被已有的 `fix` 挡住，名字 `change` 被已有的 `change/foo` 挡住） |
+| `project`、`projectName` | string | ✓ | 项目 id（主目录）和名字；`not_git` 时没有 |
+| `base` | object | ✓ | 新 worktree 将基于什么：`{branch?, head, detached?}`，`workdir` 所在 worktree 当前的分支和提交前 7 位；不在任何分支上时没有 `branch`、`detached:true`。`not_git` 时没有 |
+| `branch`、`path` | string | ✓ | 将要创建的分支和目录；名字通过了规则才有（`not_git`、`unsupported_repo`、`invalid_worktree_name` 时没有） |
+
+HTTP 错误：缺 `workdir` → 400 `{"error":"invalid_request"}`；`workdir` 不在 `allowed_roots` 内 → 403（响应体同 `/api/v1/fs`）；`workdir` 在 git 仓库里但 git 执行失败或超时 → 500 `{"error":"git_failed","message"}`。旧 daemon 没有此路径，返回 404。
 
 ### `/api/v1/events` 鉴权与限制
 

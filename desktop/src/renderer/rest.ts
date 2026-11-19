@@ -1,4 +1,4 @@
-import type { MachineConfig, Project, SessionInfo } from '../shared/protocol';
+import type { MachineConfig, Project, SessionInfo, WorktreePlan } from '../shared/protocol';
 import { t } from './i18n';
 
 // Every REST call gets a deadline. Without one, a black-holed host (daemon
@@ -102,6 +102,20 @@ export class VibeRemoteRest {
       } catch { /* non-JSON response */ }
       throw new ReloadSessionError(res.status, message, owner);
     }
+  }
+
+  /**
+   * Read-only pre-check for a new worktree named `name` created from `workdir`
+   * (v4). A name that cannot be used is a normal answer (`ok: false` with the
+   * reason); only an HTTP failure throws (RestError).
+   */
+  async planWorktree(workdir: string, name: string): Promise<WorktreePlan> {
+    const url = new URL(`${this.base()}/api/v1/worktrees/plan`);
+    url.searchParams.set('workdir', workdir);
+    url.searchParams.set('name', name);
+    const res = await timedFetch(url.toString(), { headers: this.headers() });
+    if (!res.ok) throw await RestError.from(res);
+    return res.json();
   }
 
   /** List directory entries (directories only) for the remote picker. */

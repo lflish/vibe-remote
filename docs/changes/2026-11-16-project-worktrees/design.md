@@ -935,6 +935,7 @@ CSS 变量：保留现有变量名（`styles.css` 里到处在用），换成 M1
 - T7：名字的本地规则按固定顺序给出原因：空 → 空白 → `..` → 以 `-` 开头 → 含 `@{` → 其它控制字符，后两种的原因都是 `invalid`；共用向量 `testdata/worktree-names.json` 按这个顺序写，T9 的桌面端预检照此实现（decisions #53）。
 - T7：会话启动失败后撤销 worktree 时，返回的错误以原来的失败原因为主体（`errors.Is` 仍能认出 `claude_session_busy`、`shutting_down`），撤销没清掉的东西附在后面；此前是反过来包的。`ValidateWorkdir` 现在会被调两次（建之前查根、建之后查最终工作目录），现有测试 `TestShutdownWaitsForInFlightChatCreate` 用来卡住创建的回调相应改成只在路径已存在的那一次卡住（decisions #51）。
 - T7：不带名字的旧 Worktree 模式也走新的创建序列，所以它在 `git worktree add` 失败时同样不留分支（旧做法 `-b` 会留下 `vibe/<会话id>`，V3）；非 git 目录的 `message` 从 git 的原始报错变成 `discover repository: <目录> is not inside a git repository`（错误码不变，仍是 fatal 的 `create_failed`）。
+- T8：`CreateWorktree` 的第 1–5 步提成包内函数 `precheckWorktree`，`PlanWorktree` 直接调用它，所以预检和新建对同一个名字不会给出不同的结论（decisions #56）。`TestPlanWorktreeHTTPErrors` 里「git 失败 → 500 `git_failed`」用一个立刻失败的假 git 测；超时那一种放在 session 包的 `TestPlanWorktreeGitTimeout`（`gitTimeout` 是包内变量，server 包调不到，decisions #55）。
 
 ## 11. 方案验证（机器关口 B）
 

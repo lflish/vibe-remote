@@ -18,8 +18,8 @@ import "encoding/json"
 //	   errors ui_mismatch/chat_unsupported/claude_session_busy)
 //	4: attach.worktreeName, errors invalid_worktree_name/
 //	   worktree_branch_exists/worktree_path_exists/worktree_path_not_allowed,
-//	   GET /api/v1/projects, POST /api/v1/projects/remove (all S→C frames
-//	   unchanged from v3)
+//	   GET /api/v1/projects, POST /api/v1/projects/remove,
+//	   GET /api/v1/worktrees/plan (all S→C frames unchanged from v3)
 const Version = 4
 
 // Frame types exchanged between client and server.
@@ -443,4 +443,29 @@ type ProjectWorktree struct {
 	Main     bool     `json:"main,omitempty"`
 	Managed  bool     `json:"managed,omitempty"`
 	Sessions []string `json:"sessions"`
+}
+
+// WorktreePlan is GET /api/v1/worktrees/plan (v4, design 4.4): what creating a
+// worktree named Branch from a directory would do, without doing it. OK means
+// every check made before anything is created passes right now.
+type WorktreePlan struct {
+	OK      bool   `json:"ok"`
+	Error   string `json:"error,omitempty"`   // not_git | unsupported_repo | invalid_worktree_name | worktree_branch_exists | worktree_path_exists | worktree_path_not_allowed
+	Message string `json:"message,omitempty"` // human-readable reason when !OK
+	// Conflict (worktree_branch_exists only) is the existing branch in the way:
+	// equal to Branch, or one git cannot keep next to it.
+	Conflict    string        `json:"conflict,omitempty"`
+	Project     string        `json:"project,omitempty"`     // absent for not_git
+	ProjectName string        `json:"projectName,omitempty"` // absent for not_git
+	Base        *WorktreeBase `json:"base,omitempty"`        // absent for not_git
+	Branch      string        `json:"branch,omitempty"`      // present once the name is valid
+	Path        string        `json:"path,omitempty"`        // present once the name is valid
+}
+
+// WorktreeBase is what a new worktree would be based on: the branch and commit
+// currently checked out where the request comes from.
+type WorktreeBase struct {
+	Branch   string `json:"branch,omitempty"` // omitted when detached
+	Head     string `json:"head"`             // first 7 of the commit
+	Detached bool   `json:"detached,omitempty"`
 }
