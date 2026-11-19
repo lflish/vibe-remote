@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -291,4 +292,92 @@ func TestEveryGitCallTurnsFsmonitorOff(t *testing.T) {
 			t.Fatalf("git was run as %q, want it to start with -c core.fsmonitor=false -C <dir>", call)
 		}
 	}
+}
+
+// readBackFailures makes git fail the worktree list calls that follow a
+// create's symbolic-ref — the read-back and whatever the undo reads — `fails`
+// times; with removeFails, `git worktree remove` fails as well. It returns the
+// func that takes the wrapper off PATH again, for the test's own look at the
+// repository.
+func readBackFailures(t *testing.T, fails int, removeFails bool) (restore func()) {
+	t.Helper()
+	dir := t.TempDir()
+	flag, count := filepath.Join(dir, "after-symbolic-ref"), filepath.Join(dir, "count")
+	body := `if [ "$GIT_SUB" = symbolic-ref ]; then : > '` + flag + `'; fi
+if [ -e '` + flag + `' ] && [ "$GIT_SUB $GIT_SUB2" = "worktree list" ]; then
+  n=$(cat '` + count + `' 2>/dev/null || echo 0); n=$((n+1)); echo $n > '` + count + `'
+  if [ $n -le ` + fmt.Sprint(fails) + ` ]; then echo "fatal: simulated" >&2; exit 128; fi
+fi`
+	if removeFails {
+		body += `
+if [ "$GIT_SUB $GIT_SUB2" = "worktree remove" ]; then echo "fatal: simulated" >&2; exit 128; fi`
+	}
+	orig := os.Getenv("PATH")
+	installGitWrapper(t, body)
+	return func() { t.Setenv("PATH", orig) }
+}
+
+// Reading the new worktree back from git's list is one more thing that can
+// fail after the worktree itself was created. One failed reading is tried
+// again; and an undo that could not make sure the worktree is gone leaves its
+// branch alone, because a worktree whose branch was deleted under it reads as
+// "no commits yet" and the next commit in it would start a new history.
+func TestCreateWorktreeReadBackFails(t *testing.T) {
+	t.Run("once", func(t *testing.T) {
+		repo := devflowRepo(t)
+		restore := readBackFailures(t, 1, false)
+		created, err := CreateWorktree(WorktreeSpec{Source: repo, SessionID: "s1", Name: "feat"})
+		restore()
+		if err != nil {
+			t.Fatalf("CreateWorktree = %v, want the read-back tried again", err)
+		}
+		if listed := listedWorktreeOnBranch(t, repo, "feat"); listed != created.Meta.WorktreeRoot || created.Meta.Branch != "feat" {
+			t.Fatalf("created %+v, git lists feat at %q", created.Meta, listed)
+		}
+	})
+
+	// left checks what a failed create left behind when its undo could not
+	// confirm the worktree removed: the worktree as it was created, on its
+	// branch, and an error that says both are still there.
+	left := func(t *testing.T, repo string, err error) {
+		t.Helper()
+		oid := runGit(t, repo, "rev-parse", "HEAD")
+		root := listedWorktreeOnBranch(t, repo, "feat")
+		if root == "" || !pathExists(root) {
+			t.Fatalf("git lists no worktree on feat (create error: %v)", err)
+		}
+		if got := branchOID(t, repo, "feat"); got != oid {
+			t.Fatalf("branch feat is at %q, want it kept at %s: its worktree is still there (create error: %v)", got, oid, err)
+		}
+		if got := runGit(t, root, "rev-parse", "HEAD"); got != oid {
+			t.Fatalf("HEAD in the worktree that was left = %q, want %s", got, oid)
+		}
+		for _, want := range []string{root, "branch feat kept"} {
+			if !strings.Contains(err.Error(), want) {
+				t.Fatalf("error %q does not say %q", err, want)
+			}
+		}
+	}
+
+	t.Run("list_keeps_failing", func(t *testing.T) {
+		repo := devflowRepo(t)
+		restore := readBackFailures(t, 1000, false)
+		_, err := CreateWorktree(WorktreeSpec{Source: repo, SessionID: "s1", Name: "feat"})
+		restore()
+		if err == nil {
+			t.Fatal("CreateWorktree succeeded without ever reading the worktree back")
+		}
+		left(t, repo, err)
+	})
+
+	t.Run("worktree_remove_fails_in_undo", func(t *testing.T) {
+		repo := devflowRepo(t)
+		restore := readBackFailures(t, 2, true) // the read-back and its retry
+		_, err := CreateWorktree(WorktreeSpec{Source: repo, SessionID: "s1", Name: "feat"})
+		restore()
+		if err == nil {
+			t.Fatal("CreateWorktree succeeded without reading the worktree back")
+		}
+		left(t, repo, err)
+	})
 }

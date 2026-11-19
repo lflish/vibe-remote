@@ -763,6 +763,12 @@ func CreateWorktree(spec WorktreeSpec) (CreatedWorktree, error) {
 	// container, and on macOS it precomposes a decomposed Unicode name.
 	registered, err := claim.registered()
 	if err != nil {
+		// Once more: the worktree itself is made by now, and one list that did
+		// not come back (a busy disk right after a large checkout) should not
+		// cost it.
+		registered, err = claim.registered()
+	}
+	if err != nil {
 		return CreatedWorktree{}, withCleanup(fmt.Errorf("read the new worktree back: %w", err), claim.undo())
 	}
 	claim.root, claim.branch = registered.Path, registered.Branch
@@ -857,9 +863,16 @@ func (c worktreeClaim) registered() (Worktree, error) {
 
 func (c worktreeClaim) undo() error {
 	var problems []string
+	// worktreeLeft: a worktree of this claim may still be in c.root — git's
+	// list could not be read and the directory is still there, or git would not
+	// remove it. Its branch then stays too: a worktree whose branch was deleted
+	// under it reads as "no commits yet", and the next commit made in it would
+	// start a history of its own.
+	worktreeLeft := false
 	if c.dir {
 		wts, err := ListWorktrees(c.w)
-		if err != nil {
+		listed := err == nil
+		if !listed {
 			problems = append(problems, fmt.Sprintf("registration of %s not checked: %v", c.root, err))
 		}
 		removeDir := true
@@ -875,6 +888,7 @@ func (c worktreeClaim) undo() error {
 			// put into the claimed, still empty directory by someone else (V20).
 			if wt.Branch == c.branch || (wt.Detached && wt.Head == c.oid) {
 				if _, err := gitWithin(gitTreeTimeout, c.w, "worktree", "remove", "--force", wt.Path); err != nil {
+					worktreeLeft = true
 					problems = append(problems, fmt.Sprintf("worktree %s not removed: %v", c.root, err))
 				}
 			} else {
@@ -888,8 +902,17 @@ func (c worktreeClaim) undo() error {
 				problems = append(problems, fmt.Sprintf("directory %s not removed: %v", c.root, err))
 			}
 		}
+		if !listed {
+			// Without the list, the directory being gone is what shows that no
+			// worktree is in it.
+			if _, statErr := os.Lstat(c.root); !os.IsNotExist(statErr) {
+				worktreeLeft = true
+			}
+		}
 	}
-	if c.branchRef {
+	if c.branchRef && worktreeLeft {
+		problems = append(problems, fmt.Sprintf("branch %s kept: the worktree in %s could not be confirmed removed, so the directory and the branch are both still there", c.branch, c.root))
+	} else if c.branchRef {
 		// Deletes only while the branch still points at the commit it was created at.
 		if _, err := gitAtTimeout(c.w, "update-ref", "-d", "refs/heads/"+c.branch, c.oid); err != nil {
 			if exists, serr := branchRefExists(c.w, c.branch); serr != nil {
@@ -915,8 +938,9 @@ func (c worktreeClaim) undo() error {
 
 // Undo removes what CreateWorktree made and only that (design 6.1): the
 // worktree if it is still this one, the directory if empty, the branch if it
-// has not moved, the container if this call created it and it is empty. What
-// is left in place is named in the returned error. Safe to call again.
+// has not moved and its worktree is known to be gone, the container if this
+// call created it and it is empty. What is left in place is named in the
+// returned error. Safe to call again.
 func (c CreatedWorktree) Undo() error {
 	return worktreeClaim{
 		w: c.Meta.SourceRepo, root: c.Meta.WorktreeRoot, branch: c.Meta.Branch, oid: c.OID,
