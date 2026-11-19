@@ -86,3 +86,20 @@ round 2 exec 0: 697ms   round 2 exec 1: 6ms    round 2 exec 2: 7ms
 ```
 
 用例的时限是 50 ms，假 git 是用例刚写出来的脚本：时限总是在脚本写出 pid 之前到。原用例 `-count=8`：8 次 SKIP。改成先把假 git 运行一次之后，`-race -count=5`：5 次 PASS，没有 SKIP。
+
+## 5. 全部修完之后的一轮（代码在 `3c9cff8`）
+
+环境同上（git 2.50.1、tmux 3.6a）；每条命令各带一个独立的 `TMUX_TMPDIR`，临时 daemon 的 `allowed_roots` 只有自己在 `/tmp` 下建的目录。
+
+| 检查 | 结果 |
+|------|------|
+| `TMUX_TMPDIR=<临时目录> make check` | 退出码 0。Go：`internal/chat` 17 s、`config`、`protocol`、`server` 66 s、`session` 319 s 五行 `ok`（`-race -count=1`）；桌面端 `tsc --noEmit` 通过，`npm test` 311 行 `ok`、没有 `not ok` |
+| `ws-smoke.mjs`（自己起的临时 daemon：随机端口、`/bin/bash`、独立的 `state_dir` 和 tmux 目录） | 退出码 0，12 PASS、0 FAIL |
+| `ws-chat-smoke.mjs` | 退出码 0，9 PASS、0 FAIL |
+| `ws-worktree-smoke.mjs` | 退出码 0，9 PASS、0 FAIL |
+| `.devflow.yml` 的 18 条命令型规则（第 1、3–19 条），原样交给 zsh | 18 条都是退出码 0（其中第 4 条的 chat 部分和第 6、7、8、13、18、19 条有 `(cached)`：同一份代码上同一条命令刚跑过，Go 直接用了那次的结果） |
+| 第 2 条 `/protocol-sync` | 这一轮没有改 `protocol.go`、`protocol.ts`、`rest.ts`（`git diff 91e0fab..HEAD` 里没有这三个文件），字段仍是验证者在 `91e0fab` 上逐项核对过的样子；`docs/protocol.md` 改了三处说明（预检的 400、删除的 409 和 500），都对着实现和用例改的 |
+
+三份 GUI 冒烟（`gui-smoke.mjs`、`gui-chat-smoke.mjs`、`gui-worktree-smoke.mjs`）这一步没有跑：另一名验证者同时在别的副本里做界面验证，由主会话在它结束后安排。
+
+已知偶发的用例这一轮的情况：`make check` 和各次整包运行里都没有出现；只在旧版 git 的两次整包运行里（基准和返工后各一次）出现了 `TestProjectStoreRemoveWorktreeIfSame`。

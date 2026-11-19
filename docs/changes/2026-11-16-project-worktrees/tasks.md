@@ -1009,6 +1009,8 @@
 | T27 | 2026-11-20 05:46 | 本行所在的提交 | 修复前 `TestPlanMissingWorkdirIs400` FAIL（`missing directory in the allowed root: status 403 body {"error":"path not in allowed roots"}`）；修复后 `-run TestPlan` `ok`、`go test -race -count=1 -timeout 10m ./internal/server` `ok`（63 s）；`docs/protocol.md` 该端点的三种 400 的 `message` 与实现逐字相同；变异核对：去掉「落在白名单之内」的判断 → `missing directory outside the allowed roots: status 400 …; want 403` |
 | T28 | 2026-11-20 05:47 | 本行所在的提交 | 改之前 `go test -count=8 -v -run TestGitTimeoutKillsProcess`：8 次 SKIP；改之后完成定义的 `go test -race -count=3 -timeout 10m -v ./internal/session -run 'TestGitTimeoutKillsProcess\|TestGitEnvKeepsInheritedConfig'` 12 行 PASS、没有 SKIP（本机 git 2.50.1）；git 2.30.2 上 `GIT_CONFIG_COUNT` 子用例 SKIP（探测输出 `not-read`）、其余 PASS，2.34.1 上全部 PASS；`.devflow.yml` 第 19 条原样执行 exit 0；变异核对：超时后的 SIGKILL 换成信号 0 → `gitAtTimeout took 1.06s, want < 1s` |
 
+关口 C 第 1 轮返工各行写「本行所在的提交」的，提交分别是：T22 `6282332`，T23 `44c049d`，T21 `f86be13`，T25 `f94ea31`，T24 `465945a`，T26 `771dcc6`，T27 `694e3f5`，T28 `3c9cff8`。全部修完后的一轮检查（`make check`、三份 ws 冒烟、18 条命令型规则）在 `3c9cff8` 上，结果见 evidence/gate-c-1-rework.md 第 5 节；三份 GUI 冒烟没有跑，等主会话安排。
+
 更正：T5 实际完成于 2026-11-19 12:39，T6a 13:11，T6b 14:04（以提交时间为准）。此后各行的时间用 `date '+%F %H:%M'` 取。
 
 ## 后续
