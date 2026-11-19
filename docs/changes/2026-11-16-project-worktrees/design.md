@@ -640,7 +640,7 @@ function terminalTheme(): ITheme     // 底色、前景、光标、选区读 CSS
 | 主 token 不进 claude 环境 | 不受影响 | 现有命令 |
 | 不读取 claude 凭据 | 不受影响；信任规则仍只读 `hasTrustDialogAccepted` 一个字段 | 现有命令 |
 
-本次新增 7 条（第 7 条是工程评审之后加的，#16）。检查随对应任务写好；加进 `.devflow.yml` 的 `invariants` 属于改规则文件，用户已同意（c3，2026-11-19），由 T20 加。
+本次新增 7 条（第 7 条是工程评审之后加的，#16）。表里的命令实际执行和写进 `.devflow.yml` 时，前面都带独立的 `TMUX_TMPDIR=$(mktemp -d)`（tasks.md 的约定），不和本机正在用的 tmux 会话共用 socket。检查随对应任务写好；加进 `.devflow.yml` 的 `invariants` 属于改规则文件，用户已同意（c3，2026-11-19），由 T20 加。
 
 | 规则 | 自动检查（命令） | 写在哪个任务 |
 |------|------------------|--------------|
@@ -652,7 +652,7 @@ function terminalTheme(): ITheme     // 底色、前景、光标、选区读 CSS
 | 对话界面的信任只认：目录本身，或「仓库自己列出的 worktree 根 + 主目录这一个路径被信任」 | `cd vibe-remoted && go test -race ./internal/session -run TestChatTrust` | T10 |
 | daemon 交给 git 的分支只写成完整引用名 `refs/heads/<名字>`，不调用 `git branch`、不用 `-b` / `-B`；撤销创建只清本次建出来的目录和分支 | `cd vibe-remoted && go test -race ./internal/session -run 'TestGitNeverGetsShortBranchName\|TestValidateWorktreeNameRejectsExpansion\|TestUndoOnlyRemovesOwnArtifacts\|TestRemoveDeletesBranchByFullRef'` | T7、T13 |
 
-会话工作目录的白名单是 CLAUDE.md 安全模型里的现有规则（不在 `.devflow.yml` 的 11 条里）。本次改了 worktree 模式下检查的时机，所以单独写明它由什么守着：建之前查 worktree 根（`TestCreateNamedWorktreePathNotAllowed`）；建好之后查映射出的最终工作目录（`TestCreateWorktreeMappedWorkdirEscapesViaSymlink`，T7；现有的 `TestManagerCreateWorktreeRollsBackWhenWorkdirRejected` 测不出只查根和两处都查的差别）。命令：`cd vibe-remoted && go test -race ./internal/session -run 'TestCreateNamedWorktreePathNotAllowed|TestCreateWorktreeMappedWorkdirEscapesViaSymlink|TestManagerCreateWorktreeRollsBackWhenWorkdirRejected'`。
+会话工作目录的白名单是 CLAUDE.md 安全模型里的现有规则（不在 `.devflow.yml` 的 11 条里）。本次改了 worktree 模式下检查的时机，所以单独写明它由什么守着：建之前查 worktree 根（`TestCreateNamedWorktreePathNotAllowed`）；建好之后查映射出的最终工作目录（`TestCreateWorktreeMappedWorkdirEscapesViaSymlink`，T7；现有的 `TestManagerCreateWorktreeRollsBackWhenWorkdirRejected` 测不出只查根和两处都查的差别）。命令：`cd vibe-remoted && TMUX_TMPDIR=$(mktemp -d) go test -race ./internal/session -run 'TestCreateNamedWorktreePathNotAllowed|TestCreateWorktreeMappedWorkdirEscapesViaSymlink|TestManagerCreateWorktreeRollsBackWhenWorkdirRejected'`。
 
 按 spec 改写断言的现有测试（#11，不是放松）：
 
