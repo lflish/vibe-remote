@@ -964,7 +964,7 @@
 - 依赖：无
 
 ### T28 测试修正（两条备注）
-- 状态：待办
+- 状态：完成
 - 来源：验证结论「放松检查」一节的两条备注。备注 1：`TestGitTimeoutKillsProcess` 在本机每次都 SKIP（假 git 没记下 PID），等于没有断言；备注 2（c6）：`TestGitEnvKeepsInheritedConfig` 的跳过条件比「git 低于 2.31」宽，探测命令本身失败也会跳过
 - 文件：只改测试：`vibe-remoted/internal/session/` 里这两个用例所在的文件
 - 场景：无（不改产品行为）
@@ -1007,6 +1007,7 @@
 | T24 | 2026-11-20 05:14 | 本行所在的提交 | 修复前 `TestIsNoTmuxServerGoesByTheWholeLine` FAIL（5 行，如 `isNoTmuxServer("error connecting to /private/tmp/vr-no sessions-1/… (No such file or directory)") = true, want false`）、`TestSocketPathSayingNoSessionsIsNotAnEmptySet` FAIL（`liveTmuxSessions() = map[], true`）；修复后连同 `TestMissingSocket…`、`TestNoTmuxProgram…`、`TestSocketFileGone…`、`TestTmuxSocketPath…` `ok`；`go test -race -count=1 -timeout 15m ./internal/session ./internal/server` 两行 `ok`（304 s、69 s）；`.devflow.yml` 第 15 条原样执行 exit 0；变异核对：「整行等于」改回「包含」→ 两个用例 FAIL |
 | T26 | 2026-11-20 05:44 | 本行所在的提交 | 修复前 `TestListWorktreesPathWithNewline` 的 `newline`、`newline_at_end`、`nul_like` FAIL（路径被拆成两个条目）、`TestListWorktreesFallsBackWithoutZ` FAIL（`-z was tried 0 times`）；修复后连同 `TestParseWorktreeList`、`TestSessionCreatedInAnOddlyNamedDirectoryIsStillRead`（5 种目录名）`ok`；`go test -race -count=1 -timeout 15m ./internal/session ./internal/server` 两行 `ok`（323 s、66 s）；`.devflow.yml` 第 13、15、18 条原样执行 exit 0；旧版 git 实测见 evidence/gate-c-1-rework.md 第 3 节（2.34.1 和 2.30.2 上失败的用例与基准 `91e0fab` 相同，新增跳过只有路径带换行的 5 个子用例）；变异核对 4 种各有用例 FAIL |
 | T27 | 2026-11-20 05:46 | 本行所在的提交 | 修复前 `TestPlanMissingWorkdirIs400` FAIL（`missing directory in the allowed root: status 403 body {"error":"path not in allowed roots"}`）；修复后 `-run TestPlan` `ok`、`go test -race -count=1 -timeout 10m ./internal/server` `ok`（63 s）；`docs/protocol.md` 该端点的三种 400 的 `message` 与实现逐字相同；变异核对：去掉「落在白名单之内」的判断 → `missing directory outside the allowed roots: status 400 …; want 403` |
+| T28 | 2026-11-20 05:47 | 本行所在的提交 | 改之前 `go test -count=8 -v -run TestGitTimeoutKillsProcess`：8 次 SKIP；改之后完成定义的 `go test -race -count=3 -timeout 10m -v ./internal/session -run 'TestGitTimeoutKillsProcess\|TestGitEnvKeepsInheritedConfig'` 12 行 PASS、没有 SKIP（本机 git 2.50.1）；git 2.30.2 上 `GIT_CONFIG_COUNT` 子用例 SKIP（探测输出 `not-read`）、其余 PASS，2.34.1 上全部 PASS；`.devflow.yml` 第 19 条原样执行 exit 0；变异核对：超时后的 SIGKILL 换成信号 0 → `gitAtTimeout took 1.06s, want < 1s` |
 
 更正：T5 实际完成于 2026-11-19 12:39，T6a 13:11，T6b 14:04（以提交时间为准）。此后各行的时间用 `date '+%F %H:%M'` 取。
 

@@ -731,8 +731,21 @@ func TestGitEnvKeepsInheritedConfig(t *testing.T) {
 		t.Setenv("GIT_CONFIG_VALUE_0", "kept")
 		t.Setenv("GIT_CONFIG_KEY_1", "core.fsmonitor")
 		t.Setenv("GIT_CONFIG_VALUE_1", "/nonexistent/fsmonitor")
-		if out, _ := exec.Command("git", "-C", repo, "config", "--get", "vibe.inherited").Output(); strings.TrimSpace(string(out)) != "kept" {
+		// Whether this git reads GIT_CONFIG_COUNT at all (2.31 and later do) is
+		// asked of git itself, with a command that succeeds either way: it prints
+		// the value, or the default when the key is not set. Only that second
+		// answer skips the case; a probe that fails, or says anything else, is a
+		// failed test.
+		out, err := exec.Command("git", "-C", repo, "config", "--get", "--default", "not-read", "vibe.inherited").Output()
+		if err != nil {
+			t.Fatalf("probe: git config --get --default not-read vibe.inherited: %v (%q)", err, out)
+		}
+		switch got := strings.TrimSpace(string(out)); got {
+		case "kept":
+		case "not-read":
 			t.Skip("this git does not read GIT_CONFIG_COUNT (it is older than 2.31): there is nothing of this form to keep")
+		default:
+			t.Fatalf("probe: git config --get --default not-read vibe.inherited = %q, want kept or not-read", got)
 		}
 		check(t)
 	})

@@ -486,26 +486,43 @@ func TestGitEnvIsFixed(t *testing.T) {
 	}
 }
 
+// A git call that runs into its time limit is killed, not waited for, and the
+// process is gone afterwards.
 func TestGitTimeoutKillsProcess(t *testing.T) {
 	dir := t.TempDir()
 	pidFile := filepath.Join(dir, "pid")
-	writeFakeGit(t, dir, "#!/bin/sh\necho $$ > '"+pidFile+"'\nexec sleep 5\n")
+	fake := filepath.Join(dir, "git")
+	writeFakeGit(t, dir, "#!/bin/sh\n[ \"$1\" = warm ] && exit 0\necho $$ > '"+pidFile+"'\nexec sleep 5\n")
 	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	// The first run of a program file that was just written can take several
+	// hundred milliseconds before its first line runs (macOS checks a new
+	// executable once), far longer than the limit below: without this run the
+	// fake git was always killed before it had written its pid, and the check
+	// that the process is gone never ran.
+	if out, err := exec.Command(fake, "warm").CombinedOutput(); err != nil {
+		t.Fatalf("run the fake git once: %v: %s", err, out)
+	}
 	old := gitTimeout
 	gitTimeout = 50 * time.Millisecond
 	defer func() { gitTimeout = old }()
 
-	start := time.Now()
-	if _, err := gitAtTimeout(t.TempDir(), "rev-parse", "HEAD"); err == nil {
-		t.Fatal("expected timeout error")
+	// Even so, a loaded machine may take longer than the limit to get the
+	// script to its first line now and then: the call is made again until the
+	// pid was written (every call is held to the same checks).
+	pid := 0
+	for attempt := 0; attempt < 20 && pid <= 0; attempt++ {
+		start := time.Now()
+		if _, err := gitAtTimeout(t.TempDir(), "rev-parse", "HEAD"); err == nil {
+			t.Fatal("expected timeout error")
+		}
+		if elapsed := time.Since(start); elapsed > time.Second {
+			t.Fatalf("gitAtTimeout took %v, want < 1s", elapsed)
+		}
+		data, _ := os.ReadFile(pidFile)
+		pid, _ = strconv.Atoi(strings.TrimSpace(string(data)))
 	}
-	if elapsed := time.Since(start); elapsed > time.Second {
-		t.Fatalf("gitAtTimeout took %v, want < 1s", elapsed)
-	}
-	data, _ := os.ReadFile(pidFile)
-	pid, _ := strconv.Atoi(strings.TrimSpace(string(data)))
 	if pid <= 0 {
-		t.Skip("fake git did not record a pid")
+		t.Fatal("the fake git never got to write its pid within the time limit, in 20 calls: the check that the process is killed did not run")
 	}
 	deadline := time.Now().Add(2 * time.Second)
 	for time.Now().Before(deadline) {
