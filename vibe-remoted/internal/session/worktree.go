@@ -236,6 +236,10 @@ var (
 	ErrWorktreePathExists     = errors.New("worktree directory already exists")
 	ErrWorktreePathNotAllowed = errors.New("worktree path not allowed")
 	ErrUnsupportedRepo        = errors.New("this repository is a submodule or uses a separate git directory; named worktrees are not supported here")
+	// ErrSourceNoCommits: the directory the worktree would be created from has
+	// nothing committed yet (a fresh repository, a worktree on an unborn
+	// branch), so there is no commit to create a branch at.
+	ErrSourceNoCommits = errors.New("nothing is committed here yet; a worktree is created from a commit")
 )
 
 // Errors of looking at or removing a worktree (design 4.5, 4.6).
@@ -270,6 +274,12 @@ type WorktreeRemoveError struct {
 }
 
 func (e *WorktreeRemoveError) Error() string { return e.Message }
+
+// isZeroOID reports whether oid is git's null object name, which is what the
+// worktree list gives as HEAD for a branch that has no commit yet.
+func isZeroOID(oid string) bool {
+	return oid != "" && strings.Trim(oid, "0") == ""
+}
 
 // nonEmptyLines counts the non-empty lines of a git listing.
 func nonEmptyLines(out []byte) int {
@@ -530,6 +540,16 @@ func precheckWorktree(spec WorktreeSpec, named bool) (worktreeChecks, error) {
 	// Every git command from here on runs in the worktree Source sits in: it is
 	// a usable work tree, and branches and worktrees are shared repository-wide.
 	w := home.Path
+	// The commit the new branch starts at. With --quiet, exit status 1 is "HEAD
+	// names no commit": nothing is committed here yet.
+	out, err := gitAtTimeout(w, "rev-parse", "--verify", "--quiet", "HEAD^{commit}")
+	if err != nil {
+		if code, exited := gitExitCode(err); exited && code == 1 {
+			return c, ErrSourceNoCommits
+		}
+		return c, fmt.Errorf("resolve source commit: %w", err)
+	}
+	oid := strings.TrimSpace(string(out))
 	canonicalAbs, err := filepath.EvalSymlinks(sourceAbs)
 	if err != nil {
 		return c, fmt.Errorf("resolve source workdir links: %w", err)
@@ -543,7 +563,7 @@ func precheckWorktree(spec WorktreeSpec, named bool) (worktreeChecks, error) {
 		return c, fmt.Errorf("source workdir escapes repository")
 	}
 
-	claim := worktreeClaim{w: w}
+	claim := worktreeClaim{w: w, oid: oid}
 	if named {
 		if err := ValidateWorktreeName(w, spec.Name); err != nil {
 			return c, err
@@ -601,11 +621,6 @@ func CreateWorktree(spec WorktreeSpec) (CreatedWorktree, error) {
 	sourceAbs, home, rel, claim := checks.sourceAbs, checks.home, checks.rel, checks.claim
 	w := claim.w
 	allow := func(path string) error { return allowWorktreePath(spec, path) }
-	out, err := gitAt(w, "rev-parse", "--verify", "HEAD^{commit}")
-	if err != nil {
-		return CreatedWorktree{}, fmt.Errorf("resolve source commit: %w", err)
-	}
-	claim.oid = strings.TrimSpace(string(out))
 	if testAfterCreateChecks != nil {
 		testAfterCreateChecks()
 	}

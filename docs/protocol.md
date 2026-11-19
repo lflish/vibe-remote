@@ -257,7 +257,7 @@ v3 对话会话的条目另带（终端条目一律省略）：
 | `invalid_workdir` | ✓ | workdir 不在 `allowed_roots` 内 |
 | `invalid_mode` | ✓ | 未知的 `mode` |
 | `invalid_session_id` | ✓ | `newSessionId` 格式非法 |
-| `create_failed` | ✓ | 新建失败（如 worktree 模式选了非 Git 目录；git 执行失败，`message` 含 git 的错误输出；带 `worktreeName` 而仓库是子模块或用了独立的 git 目录；v4：工作目录所在的 worktree 正在被删除，或工作目录已不存在） |
+| `create_failed` | ✓ | 新建失败（如 worktree 模式选了非 Git 目录；git 执行失败，`message` 含 git 的错误输出；带 `worktreeName` 而仓库是子模块或用了独立的 git 目录；worktree 模式的发起处还没有任何提交；v4：工作目录所在的 worktree 正在被删除，或工作目录已不存在） |
 | `session_not_found` | ✓ | 要恢复的会话已不存在（被删除、tmux 被杀，或 daemon 未启用 tmux） |
 | `attach_failed` | | 会话存在但接入失败（PTY/tmux 暂时故障） |
 | `ui_mismatch` | ✓ | v3：接入的会话类型与 `attach.ui` 不符（含旧桌面接入对话会话）；`attach.ui` 不是 `terminal` / `chat`；交接（`handoffFrom`）却带 `ui:"chat"` |
@@ -430,13 +430,13 @@ v3 对话会话的条目另带（终端条目一律省略）：
 
 | 字段 | 类型 | 可缺省 | 说明 |
 |------|------|--------|------|
-| `ok` | bool | | 以当前状态用这个名字新建，动手之前的检查是否都能通过。之后才会出现的失败（磁盘满、发起处还没有提交）预检不覆盖 |
-| `error` | string | ✓ | `ok:false` 时的原因：`not_git`（`workdir` 不在 git 仓库里）、`unsupported_repo`（仓库是子模块或用了独立的 git 目录，不能在其中新建命名 worktree）、`invalid_worktree_name`（含名字为空）、`worktree_branch_exists`、`worktree_path_exists`、`worktree_path_not_allowed`。后四个与 attach 的 error 帧代码同名同义 |
+| `ok` | bool | | 以当前状态用这个名字新建，动手之前的检查是否都能通过。之后才会出现的失败（例如磁盘满）预检不覆盖 |
+| `error` | string | ✓ | `ok:false` 时的原因，按这个先后只给出第一个：`not_git`（`workdir` 不在 git 仓库里）、`unsupported_repo`（仓库是子模块或用了独立的 git 目录，不能在其中新建命名 worktree）、`no_commits`（`workdir` 所在的 worktree 还没有任何提交——刚 `git init` 的仓库，或分支还没有提交的 worktree；新 worktree 要基于一个提交）、`invalid_worktree_name`（含名字为空）、`worktree_path_not_allowed`、`worktree_branch_exists`、`worktree_path_exists`。前三个与名字无关，换什么名字都一样；后四个与 attach 的 error 帧代码同名同义（attach 遇到前三种情况是 `create_failed`） |
 | `message` | string | ✓ | `ok:false` 时给人看的说明；`worktree_path_not_allowed` 时含完整路径，`worktree_branch_exists` 时写明与哪个分支冲突 |
 | `conflict` | string | ✓ | 只在 `worktree_branch_exists` 时有：挡住这个名字的已有分支。等于 `branch` 是同名分支已存在；不等是两个名字不能并存（名字 `fix/login` 被已有的 `fix` 挡住，名字 `change` 被已有的 `change/foo` 挡住） |
 | `project`、`projectName` | string | ✓ | 项目 id（主目录）和名字；`not_git` 时没有 |
-| `base` | object | ✓ | 新 worktree 将基于什么：`{branch?, head, detached?}`，`workdir` 所在 worktree 当前的分支和提交前 7 位；不在任何分支上时没有 `branch`、`detached:true`。`not_git` 时没有 |
-| `branch`、`path` | string | ✓ | 将要创建的分支和目录；名字通过了规则才有（`not_git`、`unsupported_repo`、`invalid_worktree_name` 时没有） |
+| `base` | object | ✓ | 新 worktree 将基于什么：`{branch?, head, detached?}`，`workdir` 所在 worktree 当前的分支和提交前 7 位；不在任何分支上时没有 `branch`、`detached:true`。`not_git` 时没有；`no_commits` 时 `head` 是 `0000000` |
+| `branch`、`path` | string | ✓ | 将要创建的分支和目录；名字通过了规则才有（`not_git`、`unsupported_repo`、`no_commits`、`invalid_worktree_name` 时没有） |
 
 HTTP 错误：缺 `workdir` → 400 `{"error":"invalid_request"}`；`workdir` 不在 `allowed_roots` 内 → 403（响应体同 `/api/v1/fs`）；`workdir` 在 git 仓库里但 git 执行失败或超时 → 500 `{"error":"git_failed","message"}`。旧 daemon 没有此路径，返回 404。
 
@@ -461,7 +461,7 @@ HTTP 错误：缺 `workdir` → 400 `{"error":"invalid_request"}`；`workdir` �
 |------|------|--------|------|
 | `path`、`project` | string | | worktree 根目录；所属项目的 id |
 | `branch` | string | ✓ | 检出的分支；不在任何分支上时没有 |
-| `head` | string | | 完整的 40 位提交哈希，删除时原样带回 |
+| `head` | string | | 完整的 40 位提交哈希，删除时原样带回。分支还没有任何提交时是全 0（此时 `unmergedCommits` 为 0，照常可以删除） |
 | `detached` | bool | ✓ | 不在任何分支上 |
 | `main` | bool | | 是主目录（主目录可以查状态，不能删） |
 | `managed` | bool | | 由 vibe-remote 创建。只有这种 worktree 的分支可以随它一起删 |

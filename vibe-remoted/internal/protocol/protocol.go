@@ -454,7 +454,7 @@ type ProjectWorktree struct {
 // every check made before anything is created passes right now.
 type WorktreePlan struct {
 	OK      bool   `json:"ok"`
-	Error   string `json:"error,omitempty"`   // not_git | unsupported_repo | invalid_worktree_name | worktree_branch_exists | worktree_path_exists | worktree_path_not_allowed
+	Error   string `json:"error,omitempty"`   // not_git | unsupported_repo | no_commits | invalid_worktree_name | worktree_branch_exists | worktree_path_exists | worktree_path_not_allowed
 	Message string `json:"message,omitempty"` // human-readable reason when !OK
 	// Conflict (worktree_branch_exists only) is the existing branch in the way:
 	// equal to Branch, or one git cannot keep next to it.
@@ -462,8 +462,8 @@ type WorktreePlan struct {
 	Project     string        `json:"project,omitempty"`     // absent for not_git
 	ProjectName string        `json:"projectName,omitempty"` // absent for not_git
 	Base        *WorktreeBase `json:"base,omitempty"`        // absent for not_git
-	Branch      string        `json:"branch,omitempty"`      // present once the name is valid
-	Path        string        `json:"path,omitempty"`        // present once the name is valid
+	Branch      string        `json:"branch,omitempty"`      // present once the name is valid (and not for unsupported_repo, no_commits)
+	Path        string        `json:"path,omitempty"`        // present once the name is valid (and not for unsupported_repo, no_commits)
 }
 
 // WorktreeBase is what a new worktree would be based on: the branch and commit
@@ -482,7 +482,7 @@ type WorktreeStatus struct {
 	Path            string   `json:"path"`
 	Project         string   `json:"project"`
 	Branch          string   `json:"branch,omitempty"` // omitted when detached
-	Head            string   `json:"head"`
+	Head            string   `json:"head"`             // all zeros when the branch has no commit yet
 	Detached        bool     `json:"detached,omitempty"`
 	Main            bool     `json:"main"`
 	Managed         bool     `json:"managed"`

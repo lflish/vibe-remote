@@ -3,6 +3,7 @@ package session
 import (
 	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"reflect"
 	"strings"
@@ -298,5 +299,98 @@ func TestProjectsKeepsRecordOfExistingWorktree(t *testing.T) {
 			t.Fatalf("a worktree outside the allowed roots is listed: %+v", row)
 		}
 		managedRow(t, f.m, f.root)
+	})
+}
+
+// unbornWorktree adds a worktree on a branch that has no commit yet and
+// returns its path; the test is skipped where git has no --orphan for it.
+func unbornWorktree(t *testing.T, repo string) string {
+	t.Helper()
+	path := filepath.Join(filepath.Dir(repo), "unborn-wt")
+	if out, err := exec.Command("git", "-C", repo, "worktree", "add", "--orphan", "-b", "unborn", path).CombinedOutput(); err != nil {
+		t.Skipf("this git cannot add a worktree on an unborn branch: %v: %s", err, out)
+	}
+	return path
+}
+
+// A worktree whose branch has no commit yet can be looked at and removed like
+// any other; there is no commit to lose.
+func TestStatusAndRemoveUnbornWorktree(t *testing.T) {
+	repo := devflowRepo(t)
+	path := unbornWorktree(t, repo)
+	m := NewManager(false, "/bin/cat", false, "")
+	m.SetProjectStore(NewMemoryProjectStore())
+
+	st, err := m.WorktreeStatus(path, allowAny)
+	if err != nil {
+		t.Fatalf("WorktreeStatus = %v, want the status of a worktree with no commits", err)
+	}
+	if st.Branch != "unborn" || st.UnmergedCommits != 0 || st.DirtyFiles != 0 || st.Managed || strings.Trim(st.Head, "0") != "" {
+		t.Fatalf("status = %+v, want branch unborn, an all-zero head and nothing to lose", st)
+	}
+
+	t.Run("commit_after_confirmation_is_noticed", func(t *testing.T) {
+		repo := devflowRepo(t)
+		path := unbornWorktree(t, repo)
+		m := NewManager(false, "/bin/cat", false, "")
+		st, err := m.WorktreeStatus(path, allowAny)
+		if err != nil {
+			t.Fatal(err)
+		}
+		tip := emptyCommits(t, path, 1)
+		_, err = m.RemoveWorktree(request(st), allowAny)
+		if changed := wantChanged(t, err); changed.Status.Head != tip || changed.Status.UnmergedCommits != 1 {
+			t.Fatalf("changed = %+v, want the new commit %s reported", changed.Status, tip)
+		}
+		if !pathExists(path) {
+			t.Fatal("the worktree was removed")
+		}
+	})
+
+	res, err := m.RemoveWorktree(request(st), allowAny)
+	if err != nil || !res.Removed {
+		t.Fatalf("RemoveWorktree = %+v, %v", res, err)
+	}
+	if pathExists(path) || worktreeListed(t, repo, path) {
+		t.Fatal("the worktree is still there")
+	}
+}
+
+// A worktree is created from a commit: where the source has none, the
+// pre-check says so (and no name can work), and creating fails the same way
+// without leaving anything.
+func TestPlanRefusesSourceWithoutCommits(t *testing.T) {
+	check := func(t *testing.T, repo, source string) {
+		t.Helper()
+		m := NewManager(false, "/bin/cat", false, "")
+		for _, name := range []string{"q", ""} {
+			plan, err := m.PlanWorktree(source, name, nil)
+			if err != nil {
+				t.Fatalf("PlanWorktree(%q) = %v", name, err)
+			}
+			if plan.OK || plan.Error != "no_commits" || plan.Message == "" || plan.Project != repo || plan.Base == nil {
+				t.Fatalf("plan(%q) = %+v, want no_commits with the project and base filled in", name, plan)
+			}
+		}
+		_, err := CreateWorktree(WorktreeSpec{Source: source, SessionID: "s1", Name: "q"})
+		if !errors.Is(err, ErrSourceNoCommits) {
+			t.Fatalf("create err = %v, want ErrSourceNoCommits", err)
+		}
+		if branchOID(t, repo, "q") != "" || pathExists(filepath.Join(containerOf(repo), "q")) {
+			t.Fatal("the refused create left a branch or a directory")
+		}
+	}
+	t.Run("unborn_worktree", func(t *testing.T) {
+		repo := devflowRepo(t)
+		check(t, repo, unbornWorktree(t, repo))
+	})
+	t.Run("fresh_repository", func(t *testing.T) {
+		dir := filepath.Join(t.TempDir(), "fresh")
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		runGit(t, dir, "init", "-b", "main")
+		repo := runGit(t, dir, "rev-parse", "--show-toplevel")
+		check(t, repo, repo)
 	})
 }

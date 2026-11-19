@@ -25,6 +25,8 @@ func planErrorOf(err error) string {
 		return "worktree_path_not_allowed"
 	case errors.Is(err, ErrUnsupportedRepo):
 		return "unsupported_repo"
+	case errors.Is(err, ErrSourceNoCommits):
+		return "no_commits"
 	}
 	return "other: " + err.Error()
 }

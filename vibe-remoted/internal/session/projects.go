@@ -523,9 +523,13 @@ func (m *Manager) worktreeState(home Home, wt Worktree, main bool) (protocol.Wor
 	if st.DirtyFiles, err = DirtyFiles(wt.Path); err != nil {
 		return protocol.WorktreeStatus{}, err
 	}
-	if wt.Branch != "" {
+	switch {
+	case isZeroOID(wt.Head):
+		// A branch with no commit yet: there is nothing to count, and rev-list
+		// cannot name a branch that does not exist.
+	case wt.Branch != "":
 		st.UnmergedCommits, err = UnmergedCommits(home.Repo, wt.Branch)
-	} else {
+	default:
 		st.UnmergedCommits, err = UnmergedCommits(wt.Path, "")
 	}
 	if err != nil {
@@ -740,11 +744,11 @@ func (m *Manager) RemoveWorktree(req protocol.WorktreeRemoveRequest, allow Allow
 	// The sessions were still running when the state was read, and they are
 	// the likeliest thing to have committed since. On a detached worktree such
 	// a commit would be on no branch and go unnoticed with the directory.
-	out, err := gitAtTimeout(wt.Path, "rev-parse", "HEAD")
+	headNow, out, err := headAgain(wt.Path, req.Head)
 	if err != nil {
 		return none, &WorktreeRemoveError{EndedSessions: ended, Message: "could not read HEAD again: " + gitOutput(out, err)}
 	}
-	if strings.TrimSpace(string(out)) != req.Head {
+	if headNow != req.Head {
 		cur, listed, err := current()
 		if err != nil || !listed {
 			return none, &WorktreeRemoveError{EndedSessions: ended, Message: "HEAD moved while the sessions were being ended, and the worktree could not be read again"}
@@ -789,6 +793,23 @@ func (m *Manager) RemoveWorktree(req protocol.WorktreeRemoveRequest, allow Allow
 		_ = os.Remove(container) // stays unless empty
 	}
 	return res, nil
+}
+
+// headAgain re-reads HEAD of the worktree at dir, to compare with the head the
+// user confirmed. A worktree confirmed with no commit yet (the null object
+// name) that still has none reads as confirmed.
+func headAgain(dir, confirmed string) (head string, out []byte, err error) {
+	if !isZeroOID(confirmed) {
+		out, err = gitAtTimeout(dir, "rev-parse", "HEAD")
+		return strings.TrimSpace(string(out)), out, err
+	}
+	// `rev-parse HEAD` cannot tell "no commit yet" from a failure; the quiet
+	// form exits with status 1 for it.
+	out, err = gitAtTimeout(dir, "rev-parse", "--verify", "--quiet", "HEAD^{commit}")
+	if code, exited := gitExitCode(err); exited && code == 1 {
+		return confirmed, nil, nil
+	}
+	return strings.TrimSpace(string(out)), out, err
 }
 
 // deleteWorktreeBranch deletes refs/heads/<branch> after its worktree is gone,
@@ -841,6 +862,8 @@ func (m *Manager) PlanWorktree(workdir, name string, allowPath func(string) erro
 		return plan, nil
 	case errors.Is(err, ErrUnsupportedRepo):
 		plan.Error = "unsupported_repo"
+	case errors.Is(err, ErrSourceNoCommits):
+		plan.Error = "no_commits"
 	case errors.Is(err, ErrInvalidWorktreeName):
 		plan.Error = protocol.ErrCodeInvalidWorktreeName
 	case errors.Is(err, ErrWorktreePathNotAllowed):
