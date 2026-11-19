@@ -42,3 +42,10 @@ func startTmuxSession(t *testing.T, sessionName string, command ...string) {
 	}
 	t.Fatalf("create tmux session %s: %v: %s", sessionName, lastErr, lastOut)
 }
+
+// liveTmuxSessions is the reading of tmux of a caller whose session table has
+// no terminal session: only what tmux and its socket file say counts.
+func liveTmuxSessions() (map[string]tmuxSessionInfo, bool) {
+	live, ok, _ := readTmuxSessions(func() bool { return false })
+	return live, ok
+}

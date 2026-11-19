@@ -8,6 +8,7 @@ import (
 	"log"
 	"strconv"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/lflish/vibe-remote/vibe-remoted/internal/chat"
@@ -74,6 +75,9 @@ type Manager struct {
 	// mainToken is held only to derive per-session hook tokens; it is never
 	// injected into a session's environment.
 	mainToken string
+	// tmuxWhy is what the last reading of tmux by readTmux had to say about
+	// its failure ("" when it worked, or failed with nothing to add).
+	tmuxWhy atomic.Pointer[string]
 
 	chatCfg      ChatConfig
 	store        *chat.Store
@@ -100,23 +104,47 @@ type Manager struct {
 // NewManager creates a session manager.
 func NewManager(useTmux bool, claudeCmd string, loginShell bool, shell string) *Manager {
 	m := &Manager{
-		sessions:         make(map[string]*Runner),
-		chats:            make(map[string]*chatEntry),
-		claudeOwners:     make(map[string]string),
-		orphans:          make(map[string]chat.Orphan),
-		orphanCleanup:    chat.CleanupOrphans,
-		subs:             make(map[string][]chan protocol.NotifyFrame),
-		creating:         make(map[string]chan struct{}),
-		useTmux:          useTmux,
-		claudeCmd:        claudeCmd,
-		loginShell:       loginShell,
-		shell:            shell,
-		liveTmuxSessions: liveTmuxSessions,
+		sessions:      make(map[string]*Runner),
+		chats:         make(map[string]*chatEntry),
+		claudeOwners:  make(map[string]string),
+		orphans:       make(map[string]chat.Orphan),
+		orphanCleanup: chat.CleanupOrphans,
+		subs:          make(map[string][]chan protocol.NotifyFrame),
+		creating:      make(map[string]chan struct{}),
+		useTmux:       useTmux,
+		claudeCmd:     claudeCmd,
+		loginShell:    loginShell,
+		shell:         shell,
 	}
+	m.liveTmuxSessions = m.readTmux
 	if useTmux {
 		scrubTmuxMainToken()
 	}
 	return m
+}
+
+// readTmux is the reading of tmux the session table is reconciled from. It
+// tells tmux's reader whether the table has a terminal session: a socket file
+// that is gone only means "no sessions" to a daemon that remembers none. Call
+// it without mu held.
+func (m *Manager) readTmux() (map[string]tmuxSessionInfo, bool) {
+	live, ok, why := readTmuxSessions(m.hasTerminalSessions)
+	m.tmuxWhy.Store(&why)
+	return live, ok
+}
+
+func (m *Manager) hasTerminalSessions() bool {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return len(m.sessions) > 0
+}
+
+// tmuxFailure is what the last reading of tmux said about its failure, or "".
+func (m *Manager) tmuxFailure() string {
+	if why := m.tmuxWhy.Load(); why != nil {
+		return *why
+	}
+	return ""
 }
 
 // scrubTmuxMainToken removes the daemon's main token variable from the global

@@ -155,44 +155,50 @@ func parseTmuxSessionLine(line string) (tmuxSessionInfo, bool) {
 // isNoTmuxServer reports whether tmux's stderr means "there is nothing running"
 // (an honest empty set) rather than "the query failed". tmux prints
 // "no server running on <socket>" for the former and "error connecting to
-// <socket> (...)" for the latter, both with a non-zero exit. A socket that was
-// never created also gets the second message; noTmuxServerPossible tells that
-// case apart without reading the message.
+// <socket> (...)" for the latter, both with a non-zero exit. A socket file that
+// is not there also gets the second message, whether no server was ever started
+// or a running server lost its file; readTmuxSessions tells those apart without
+// reading the message.
 func isNoTmuxServer(stderr []byte) bool {
 	msg := strings.ToLower(string(stderr))
 	return strings.Contains(msg, "no server running") ||
 		strings.Contains(msg, "no sessions")
 }
 
-// noTmuxServerPossible reports whether a failed tmux query (err) failed for a
-// reason that rules out any vibe-remote tmux session: there is no tmux program
-// to run, or the socket of the vibe-remote server does not exist — no server
-// was started since the socket directory was last cleared (a reboot, or a
-// daemon that has only ever run chat sessions). Both are decided from the
-// error value and the file system, not from tmux's words. A socket that is
-// there and does not answer is not this: sessions may be behind it.
-func noTmuxServerPossible(err error) bool {
-	if errors.Is(err, exec.ErrNotFound) {
-		return true
-	}
-	var exitErr *exec.ExitError
-	if !errors.As(err, &exitErr) {
-		return false // tmux could not be run for some other reason
-	}
-	_, statErr := os.Stat(tmuxSocketPath())
-	return errors.Is(statErr, fs.ErrNotExist)
+// tmuxSocketGone reports whether the socket file of the vibe-remote tmux
+// server does not exist. A file that is there, and one that could not be
+// looked at, are both "not gone".
+func tmuxSocketGone() bool {
+	_, err := os.Stat(tmuxSocketPath())
+	return errors.Is(err, fs.ErrNotExist)
 }
 
-// liveTmuxSessions returns the vibe-remote session IDs that currently have a live
-// tmux session, mapped to each session's working directory (from tmux's
-// pane_current_path) and user-set name (@vibe_remote_name). The bool return is
-// false if the query itself failed (a server is there and could not be asked,
-// or tmux could not be run) so callers can distinguish "no sessions" from
-// "couldn't tell" and avoid wrongly discarding live sessions on a transient
-// failure. No server running, no socket and no tmux program are all an honest
-// empty set. Pulling name here (rather than a per-session show-options) keeps
-// Manager.List to a single tmux exec.
-func liveTmuxSessions() (map[string]tmuxSessionInfo, bool) {
+// readTmuxSessions returns the vibe-remote session IDs that currently have a
+// live tmux session, mapped to each session's working directory (from tmux's
+// pane_current_path), user-set name (@vibe_remote_name) and the other options.
+// ok is false when it could not be told which sessions there are, so callers
+// can distinguish "no sessions" from "couldn't tell" and avoid wrongly
+// discarding live sessions; why then says what is known about the failure, for
+// the log and for the user ("" when there is nothing to add). Pulling the name
+// here (rather than a per-session show-options) keeps Manager.List to a single
+// tmux exec.
+//
+// haveTerminal reports whether the caller's own session table has a terminal
+// session. The rule, whenever it is not certain that there is no tmux session,
+// is that the reading failed:
+//
+//  1. tmux answered: its answer is the set.
+//  2. tmux said that no server is running (isNoTmuxServer): no sessions.
+//  3. The query failed, the socket file does not exist and haveTerminal is
+//     false: no sessions. No server was started since the socket directory was
+//     last cleared (a reboot, or a daemon that has only ever run chat
+//     sessions). Decided from the error value and the file system, not from
+//     tmux's words.
+//  4. Everything else is a failed reading. That includes a socket file that is
+//     gone while haveTerminal is true: a tmux server outlives its socket file
+//     (someone cleared /tmp) and creates it again on SIGUSR1, so the sessions
+//     the table remembers may well be running.
+func readTmuxSessions(haveTerminal func() bool) (sessions map[string]tmuxSessionInfo, ok bool, why string) {
 	out, err := tmuxCmd("list-sessions", "-F", "#{session_name}\t#{pane_current_path}\t#{@vibe_remote_name}\t#{@vibe_remote_mode}\t#{@vibe_remote_source_workdir}\t#{@vibe_remote_source_repo}\t#{@vibe_remote_worktree_root}\t#{@vibe_remote_branch}\t#{@vibe_remote_claude_u}\t#{@vibe_remote_project}\t#{@vibe_remote_home}\t#{@vibe_remote_created}\t#{session_created}\t#{@vibe_remote_workdir}").Output()
 	if err != nil {
 		// tmux exits non-zero both when there genuinely are no sessions and when
@@ -202,20 +208,31 @@ func liveTmuxSessions() (map[string]tmuxSessionInfo, bool) {
 		// reconcile; treating every one as a failure would leave a daemon that
 		// never started a tmux server unable to say "no terminal sessions".
 		var exitErr *exec.ExitError
-		if errors.As(err, &exitErr) && isNoTmuxServer(exitErr.Stderr) {
-			return map[string]tmuxSessionInfo{}, true
+		ran := errors.As(err, &exitErr)
+		if ran && isNoTmuxServer(exitErr.Stderr) {
+			return map[string]tmuxSessionInfo{}, true, ""
 		}
-		if noTmuxServerPossible(err) {
-			return map[string]tmuxSessionInfo{}, true
+		if errors.Is(err, exec.ErrNotFound) {
+			return map[string]tmuxSessionInfo{}, true, ""
 		}
-		if errors.As(err, &exitErr) {
-			log.Printf("tmux list-sessions failed: %v (stderr=%q)", err, exitErr.Stderr)
+		if ran && tmuxSocketGone() {
+			if !haveTerminal() {
+				return map[string]tmuxSessionInfo{}, true, ""
+			}
+			why = fmt.Sprintf("tmux's socket file %s is gone while the daemon remembers terminal sessions. If tmux is still running, sending SIGUSR1 to the tmux server process makes it create the socket again; otherwise restart the daemon", tmuxSocketPath())
+		}
+		detail := ""
+		if why != "" {
+			detail = ": " + why
+		}
+		if ran {
+			log.Printf("tmux list-sessions failed: %v (stderr=%q)%s", err, exitErr.Stderr, detail)
 		} else {
-			log.Printf("tmux list-sessions failed: %v", err)
+			log.Printf("tmux list-sessions failed: %v%s", err, detail)
 		}
-		return nil, false
+		return nil, false, why
 	}
-	sessions := make(map[string]tmuxSessionInfo)
+	sessions = make(map[string]tmuxSessionInfo)
 	for _, line := range strings.Split(strings.TrimRight(string(out), "\r\n"), "\n") {
 		info, ok := parseTmuxSessionLine(line)
 		if !ok {
@@ -228,7 +245,7 @@ func liveTmuxSessions() (map[string]tmuxSessionInfo, bool) {
 		id := strings.TrimPrefix(strings.SplitN(line, "\t", 2)[0], "vibe-remote-")
 		sessions[id] = info
 	}
-	return sessions, true
+	return sessions, true, ""
 }
 
 // Runner manages a single PTY session connected to tmux→claude (or bare claude).

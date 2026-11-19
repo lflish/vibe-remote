@@ -695,8 +695,11 @@ func (m *Manager) RemoveWorktree(req protocol.WorktreeRemoveRequest, allow Allow
 	// reading that was not applied (the query failed, or the table changed
 	// under it) is tried once more; without one, nothing is removed.
 	if !m.sessionTableCurrent() {
-		return none, &WorktreeRemoveError{EndedSessions: []string{},
-			Message: "could not read the running sessions from tmux, so the sessions in this worktree are not known; nothing was removed. Try again"}
+		msg := "could not read the running sessions from tmux, so the sessions in this worktree are not known; nothing was removed. Try again"
+		if why := m.tmuxFailure(); why != "" {
+			msg = "could not read the running sessions from tmux, so the sessions in this worktree are not known; nothing was removed: " + why
+		}
+		return none, &WorktreeRemoveError{EndedSessions: []string{}, Message: msg}
 	}
 	st, err := m.worktreeState(home, wt, false)
 	if err != nil {
