@@ -20,7 +20,7 @@
     "build": "tsc && vite build && electron-builder",
     "start": "electron dist/main/index.js",
     "typecheck": "tsc --noEmit",
-    "test": "npm run test:preserved-notice && npm run test:attach-replay && npm run test:terminal-layout && npm run test:picker-layout && npm run test:slash-menu-layout && npm run test:terminal-clipboard && npm run test:terminal-selection && npm run test:client-reconnect && npm run test:client-liveness && npm run test:machine-store && npm run test:i18n-parity && npm run test:chat-client && npm run test:chat-parser && npm run test:chat-session && npm run test:chat-permission && npm run test:chat-diff && npm run test:chat-queue && npm run test:chat-markdown && npm run test:chat-render-guard && npm run test:chat-window && npm run test:chat-view && npm run test:chat-availability && npm run test:chat-activity && npm run test:rest-projects && npm run test:tree",
+    "test": "npm run test:preserved-notice && npm run test:attach-replay && npm run test:terminal-layout && npm run test:picker-layout && npm run test:slash-menu-layout && npm run test:terminal-clipboard && npm run test:terminal-selection && npm run test:client-reconnect && npm run test:client-liveness && npm run test:machine-store && npm run test:i18n-parity && npm run test:chat-client && npm run test:chat-parser && npm run test:chat-session && npm run test:chat-permission && npm run test:chat-diff && npm run test:chat-queue && npm run test:chat-markdown && npm run test:chat-render-guard && npm run test:chat-window && npm run test:chat-view && npm run test:chat-availability && npm run test:chat-activity && npm run test:rest-projects && npm run test:tree && npm run test:sidebar",
     "test:preserved-notice": "node -e \"const fs=require('fs');const s=fs.readFileSync('src/renderer/index.ts','utf8');const f=s.slice(s.indexOf('async function closeSession'),s.indexOf('function renderEmptyState'));const preserved=f.indexOf(\\\"e.code === 'worktree_preserved'\\\");const refresh=f.indexOf('await refreshAllMachines()',preserved);const notice=f.indexOf(\\\"t('session.worktreePreserved'\\\",preserved);if(!(preserved>=0&&refresh>preserved&&notice>refresh))throw new Error('Worktree-preserved notice must be applied after awaited refresh');\"",
     "test:attach-replay": "node scripts/test-attach-replay.mjs",
     "test:terminal-layout": "node scripts/test-terminal-layout.mjs",
@@ -45,7 +45,8 @@
     "test:chat-availability": "node scripts/test-chat-availability.mjs",
     "test:chat-activity": "node scripts/test-chat-activity.mjs",
     "test:rest-projects": "node scripts/test-rest-projects.mjs",
-    "test:tree": "node scripts/test-tree.mjs"
+    "test:tree": "node scripts/test-tree.mjs",
+    "test:sidebar": "node scripts/test-sidebar.mjs"
   },
   "dependencies": {
     "@xterm/addon-fit": "0.12.0-beta.299",
