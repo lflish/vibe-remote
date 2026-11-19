@@ -438,8 +438,10 @@ func gitExitCode(err error) (int, bool) {
 }
 
 // worktreeNameProblem applies the name rules that need no git (design 4.1,
-// rule 1) and returns the reason code of the first one broken, or "". The
-// desktop applies the same rules in the same order; both sides are held to
+// rule 1) and returns the reason code of the first one broken, or "": empty,
+// white space, "..", a leading "-", then (all "invalid") "@{", control and
+// invisible characters, more than maxWorktreeNameBytes. The desktop applies
+// the same rules in the same order; both sides are held to
 // testdata/worktree-names.json.
 func worktreeNameProblem(name string) string {
 	if name == "" {
@@ -461,12 +463,26 @@ func worktreeNameProblem(name string) string {
 		return "invalid"
 	}
 	for _, r := range name {
-		if unicode.IsControl(r) {
+		// Control characters, and the ones that are not shown at all (format
+		// characters such as a zero width space or a right-to-left override,
+		// and the line and paragraph separators): with those a branch can look
+		// exactly like another one, or read in another order.
+		if unicode.IsControl(r) || unicode.In(r, unicode.Cf, unicode.Zl, unicode.Zp) {
 			return "invalid"
 		}
 	}
+	if len(name) > maxWorktreeNameBytes {
+		return "invalid"
+	}
 	return ""
 }
+
+// maxWorktreeNameBytes bounds a worktree name (UTF-8 bytes). The whole name
+// becomes one directory name (WorktreeDirName), and each "/" part of it a ref
+// file that git writes as "<part>.lock" first; file systems stop at 255 bytes
+// per name. git itself has no limit, so without this one the pre-check would
+// accept a name that then cannot be created.
+const maxWorktreeNameBytes = 250
 
 // checkRefFormatBranch is rule 2: git accepts the name as a branch name and
 // prints it back unchanged. Exit status alone is not enough: for "@{-1}" git
@@ -646,6 +662,11 @@ func allowWorktreePath(spec WorktreeSpec, path string) error {
 		return nil
 	}
 	if err := spec.AllowPath(path); err != nil {
+		// A path the file system refuses for its length was not judged against
+		// the allowed roots at all.
+		if errors.Is(err, syscall.ENAMETOOLONG) {
+			return fmt.Errorf("check worktree directory: %w", err)
+		}
 		return fmt.Errorf("%w: %s: %v", ErrWorktreePathNotAllowed, path, err)
 	}
 	return nil

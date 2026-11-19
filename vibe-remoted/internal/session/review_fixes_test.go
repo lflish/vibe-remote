@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"strings"
+	"syscall"
 	"testing"
 
 	"github.com/lflish/vibe-remote/vibe-remoted/internal/protocol"
@@ -716,5 +717,85 @@ func TestGitEnvKeepsInheritedConfig(t *testing.T) {
 		if err != nil || strings.TrimSpace(string(out)) != want {
 			t.Fatalf("git config %s = %q, %v; want %q", key, out, err, want)
 		}
+	}
+}
+
+// reviewNameVectors are the names the two rules added after the review decide,
+// in the form of testdata/worktree-names.json (local: the desktop reaches the
+// same reason without asking the daemon).
+var reviewNameVectors = []struct {
+	label, name string
+	ok          bool
+}{
+	// The name becomes one directory name (slashes turn into hyphens) and each
+	// part of it a ref file with ".lock" appended while it is written: more
+	// than 250 bytes cannot be created.
+	{"250 bytes", strings.Repeat("x", 250), true},
+	{"251 bytes", strings.Repeat("x", 251), false},
+	{"252 bytes", strings.Repeat("x", 252), false},
+	{"300 bytes", strings.Repeat("x", 300), false},
+	{"251 bytes in two parts", strings.Repeat("a", 125) + "/" + strings.Repeat("b", 125), false},
+	{"250 bytes in two parts", strings.Repeat("a", 125) + "/" + strings.Repeat("b", 124), true},
+	{"84 CJK characters = 252 bytes", strings.Repeat("功", 84), false},
+	{"83 CJK characters = 249 bytes", strings.Repeat("功", 83), true},
+	// Characters that are not shown (Unicode Cf): a name that looks exactly
+	// like another branch, or reads in another order.
+	{"zero width space", "a\u200bb", false},
+	{"zero width joiner", "a\u200db", false},
+	{"right-to-left override", "a\u202eb", false},
+	{"left-to-right mark", "a\u200eb", false},
+	{"byte order mark", "a\ufeffb", false},
+	{"soft hyphen", "a\u00adb", false},
+	{"word joiner", "a\u2060b", false},
+	{"tag character", "a\U000e0041b", false},
+}
+
+func TestWorktreeNameLengthAndInvisibleCharacters(t *testing.T) {
+	repo := devflowRepo(t)
+	m := NewManager(false, "/bin/cat", false, "")
+	for _, v := range reviewNameVectors {
+		t.Run(v.label, func(t *testing.T) {
+			problem := worktreeNameProblem(v.name)
+			plan, err := m.PlanWorktree(repo, v.name, nil)
+			if err != nil {
+				t.Fatalf("PlanWorktree: %v", err)
+			}
+			if !v.ok {
+				if problem != "invalid" {
+					t.Errorf("local rules report %q, want invalid", problem)
+				}
+				if plan.OK || plan.Error != "invalid_worktree_name" {
+					t.Errorf("plan = {ok:%v error:%q}, want invalid_worktree_name", plan.OK, plan.Error)
+				}
+				return
+			}
+			if problem != "" || !plan.OK {
+				t.Fatalf("local rules report %q, plan = {ok:%v error:%q %s}; want the name accepted", problem, plan.OK, plan.Error, plan.Message)
+			}
+			// What the pre-check accepts can be created.
+			created, err := CreateWorktree(WorktreeSpec{Source: repo, SessionID: "s1", Name: v.name})
+			if err != nil {
+				t.Fatalf("the pre-check accepted the name, creating it failed: %v", err)
+			}
+			if err := created.Undo(); err != nil {
+				t.Fatal(err)
+			}
+		})
+	}
+}
+
+// A path the file system refuses for its length is not "outside the allowed
+// roots".
+func TestTooLongPathIsNotReportedAsNotAllowed(t *testing.T) {
+	spec := WorktreeSpec{AllowPath: func(path string) error {
+		return &os.PathError{Op: "lstat", Path: path, Err: syscall.ENAMETOOLONG}
+	}}
+	err := allowWorktreePath(spec, "/somewhere/long")
+	if err == nil || errors.Is(err, ErrWorktreePathNotAllowed) {
+		t.Fatalf("err = %v, want an error that is not ErrWorktreePathNotAllowed", err)
+	}
+	spec.AllowPath = func(string) error { return errors.New("workdir not in allowed roots") }
+	if err := allowWorktreePath(spec, "/elsewhere"); !errors.Is(err, ErrWorktreePathNotAllowed) {
+		t.Fatalf("err = %v, want ErrWorktreePathNotAllowed", err)
 	}
 }
