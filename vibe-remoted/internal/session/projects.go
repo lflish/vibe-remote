@@ -39,7 +39,11 @@ type sessAttr struct {
 	project string
 	home    string
 	workdir string
-	created time.Time
+	// startDir is the directory the session was created in; "" when that is
+	// not known (a terminal session recovered from before it was recorded).
+	// workdir is, for a recovered terminal session, where its process is now.
+	startDir string
+	created  time.Time
 }
 
 // Projects returns this machine's project tree (design 4.2). It reconciles with
@@ -290,7 +294,7 @@ func (m *Manager) collectSessions() []sessAttr {
 		if p == "" && h == "" {
 			p, h = m.backfillTerminal(r)
 		}
-		out = append(out, sessAttr{id: r.ID, project: p, home: h, workdir: r.CurrentWorkdir(), created: r.Created})
+		out = append(out, sessAttr{id: r.ID, project: p, home: h, workdir: r.CurrentWorkdir(), startDir: r.StartDir(), created: r.Created})
 	}
 	for _, rec := range recs {
 		p, h := rec.project, rec.home
@@ -300,7 +304,9 @@ func (m *Manager) collectSessions() []sessAttr {
 				m.backfillChatHome(rec.id, np, nh)
 			}
 		}
-		out = append(out, sessAttr{id: rec.id, project: p, home: h, workdir: rec.workdir, created: parseCreated(rec.createdAt)})
+		// A chat record's workdir is the directory it was created in: it is
+		// written once and the process is started there every time.
+		out = append(out, sessAttr{id: rec.id, project: p, home: h, workdir: rec.workdir, startDir: rec.workdir, created: parseCreated(rec.createdAt)})
 	}
 	return out
 }
@@ -513,13 +519,18 @@ func listedWorktree(home Home, path string) ([]Worktree, int, error) {
 
 // sessionsIn returns the ids of the sessions that lose their directory when
 // the worktree at root goes (design 6.2 step 3): those attributed to it, and
-// those whose workdir is in it whatever they are attributed to — no
-// attribution yet, or a repository of its own nested in the worktree. The
-// workdir test is the one beginStart and markRemoving apply. Oldest first.
+// those that were started in it whatever they are attributed to — no
+// attribution yet, or a repository of its own nested in the worktree. Both go
+// by where the session was created and neither follows its process (spec
+// H19), so a daemon restart does not change the answer: the start directory
+// is the one beginStart registered, kept in @vibe_remote_workdir, and not a
+// recovered session's Workdir, which is where its process is now. A terminal
+// session recovered from before that option existed has no start directory
+// and counts by its attribution alone. Oldest first.
 func (m *Manager) sessionsIn(root string) []string {
 	var in []sessAttr
 	for _, s := range m.collectSessions() {
-		if (s.home != "" && within(root, s.home)) || within(root, s.workdir) {
+		if (s.home != "" && within(root, s.home)) || (s.startDir != "" && within(root, s.startDir)) {
 			in = append(in, s)
 		}
 	}

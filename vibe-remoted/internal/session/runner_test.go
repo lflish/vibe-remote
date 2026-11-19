@@ -293,8 +293,9 @@ func TestReconnectReapsRetiredAttachProcesses(t *testing.T) {
 }
 
 // TestParseTmuxSessionLineColumns pins the accepted column counts: 8 (pre
-// claude_u), 9 (claude_u), 13 (project/home/created/session_created). Counts in
-// between are rejected rather than silently mis-parsed.
+// claude_u), 9 (claude_u), 13 (project/home/created/session_created), 14 (the
+// start directory, which is what list-sessions asks for now). Counts in between
+// are rejected rather than silently mis-parsed.
 func TestParseTmuxSessionLineColumns(t *testing.T) {
 	mk := func(n int) string {
 		parts := make([]string, n)
@@ -304,7 +305,7 @@ func TestParseTmuxSessionLineColumns(t *testing.T) {
 		}
 		return strings.Join(parts, "\t")
 	}
-	for _, n := range []int{8, 9, 13} {
+	for _, n := range []int{8, 9, 13, 14} {
 		if _, ok := parseTmuxSessionLine(mk(n)); !ok {
 			t.Fatalf("%d columns should parse", n)
 		}
@@ -320,7 +321,13 @@ func TestParseTmuxSessionLineColumns(t *testing.T) {
 	}, "\t")
 	info, ok := parseTmuxSessionLine(line)
 	if !ok || info.project != "/proj" || info.home != "/home" ||
-		info.created != "2026-01-02T03:04:05Z" || info.sessionCreated != "1700000000" {
+		info.created != "2026-01-02T03:04:05Z" || info.sessionCreated != "1700000000" || info.startDir != "" {
 		t.Fatalf("info=%+v ok=%v", info, ok)
+	}
+	// The fourteenth column is the start directory; the working directory in
+	// the second one is where the process is now.
+	info, ok = parseTmuxSessionLine(line + "\t/started here")
+	if !ok || info.startDir != "/started here" || info.workdir != "/w" || info.sessionCreated != "1700000000" {
+		t.Fatalf("14 columns: info=%+v ok=%v", info, ok)
 	}
 }

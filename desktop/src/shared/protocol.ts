@@ -81,7 +81,9 @@ export interface WorktreeStatus {
   // be counted; a removal never compares it.
   ignoredFiles: number;
   // The sessions that end with this worktree: those attributed to it, and
-  // those whose directory is inside it wherever the tree lists them.
+  // those that were started in a directory inside it wherever the tree lists
+  // them. Both go by where the session was created, not by where its process
+  // is now.
   sessions: string[];
 }
 

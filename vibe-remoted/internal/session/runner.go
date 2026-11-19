@@ -101,13 +101,18 @@ type tmuxSessionInfo struct {
 	home           string
 	created        string
 	sessionCreated string
+	// startDir is @vibe_remote_workdir: the directory the session was started
+	// in. workdir above is where its process is now (pane_current_path). Empty
+	// for a session started before the option existed.
+	startDir string
 }
 
 func parseTmuxSessionLine(line string) (tmuxSessionInfo, bool) {
 	// Eight columns is the format before @vibe_remote_claude_u was added; nine
-	// adds it; thirteen adds project/home/created/session_created (design 5.1).
-	parts := strings.SplitN(line, "\t", 13)
-	if (len(parts) != 8 && len(parts) != 9 && len(parts) != 13) || !strings.HasPrefix(parts[0], "vibe-remote-") || strings.TrimPrefix(parts[0], "vibe-remote-") == "" {
+	// adds it; thirteen adds project/home/created/session_created (design 5.1);
+	// fourteen adds the start directory (@vibe_remote_workdir).
+	parts := strings.SplitN(line, "\t", 14)
+	if (len(parts) != 8 && len(parts) != 9 && len(parts) != 13 && len(parts) != 14) || !strings.HasPrefix(parts[0], "vibe-remote-") || strings.TrimPrefix(parts[0], "vibe-remote-") == "" {
 		return tmuxSessionInfo{}, false
 	}
 	info := tmuxSessionInfo{}
@@ -140,6 +145,9 @@ func parseTmuxSessionLine(line string) (tmuxSessionInfo, bool) {
 		info.home = parts[10]
 		info.created = strings.TrimSpace(parts[11])
 		info.sessionCreated = strings.TrimSpace(parts[12])
+	}
+	if len(parts) > 13 {
+		info.startDir = parts[13]
 	}
 	return info, true
 }
@@ -185,7 +193,7 @@ func noTmuxServerPossible(err error) bool {
 // empty set. Pulling name here (rather than a per-session show-options) keeps
 // Manager.List to a single tmux exec.
 func liveTmuxSessions() (map[string]tmuxSessionInfo, bool) {
-	out, err := tmuxCmd("list-sessions", "-F", "#{session_name}\t#{pane_current_path}\t#{@vibe_remote_name}\t#{@vibe_remote_mode}\t#{@vibe_remote_source_workdir}\t#{@vibe_remote_source_repo}\t#{@vibe_remote_worktree_root}\t#{@vibe_remote_branch}\t#{@vibe_remote_claude_u}\t#{@vibe_remote_project}\t#{@vibe_remote_home}\t#{@vibe_remote_created}\t#{session_created}").Output()
+	out, err := tmuxCmd("list-sessions", "-F", "#{session_name}\t#{pane_current_path}\t#{@vibe_remote_name}\t#{@vibe_remote_mode}\t#{@vibe_remote_source_workdir}\t#{@vibe_remote_source_repo}\t#{@vibe_remote_worktree_root}\t#{@vibe_remote_branch}\t#{@vibe_remote_claude_u}\t#{@vibe_remote_project}\t#{@vibe_remote_home}\t#{@vibe_remote_created}\t#{session_created}\t#{@vibe_remote_workdir}").Output()
 	if err != nil {
 		// tmux exits non-zero both when there genuinely are no sessions and when
 		// the query could not run at all. Treating every non-zero exit as an
@@ -248,6 +256,11 @@ type Runner struct {
 	// following a later cd. Read them through Home().
 	project string
 	home    string
+	// startDir (guarded by metaMu) is the directory the session was started
+	// in: Workdir at creation, @vibe_remote_workdir for a recovered session,
+	// "" for one recovered from before that option existed. Unlike a recovered
+	// session's Workdir it never follows the process. Read it through StartDir().
+	startDir string
 
 	ptmx    *os.File // PTY master (guarded by mu)
 	cmd     *exec.Cmd
@@ -320,6 +333,7 @@ func NewRunner(cfg RunnerConfig) (*Runner, error) {
 		claudeU:       cfg.ClaudeU,
 		project:       cfg.Project,
 		home:          cfg.Home,
+		startDir:      cfg.Workdir,
 		extraEnv:      cfg.ExtraEnv,
 	}
 	if r.Created.IsZero() {
@@ -361,6 +375,14 @@ func (r *Runner) Home() (project, home string) {
 	r.metaMu.Lock()
 	defer r.metaMu.Unlock()
 	return r.project, r.home
+}
+
+// StartDir returns the directory the session was started in, or "" when that
+// is not known (a session recovered from before @vibe_remote_workdir existed).
+func (r *Runner) StartDir() string {
+	r.metaMu.Lock()
+	defer r.metaMu.Unlock()
+	return r.startDir
 }
 
 // backfillHome records attribution resolved after creation (design 5.4): it
@@ -516,6 +538,7 @@ func (r *Runner) start(cols, rows uint16) error {
 			{"@vibe_remote_project", project},
 			{"@vibe_remote_home", home},
 			{"@vibe_remote_created", r.Created.UTC().Format(time.RFC3339Nano)},
+			{"@vibe_remote_workdir", workdir},
 		}
 		for _, option := range options {
 			if err := setTmuxOption(tmuxSessionName, option.key, option.value); err != nil {

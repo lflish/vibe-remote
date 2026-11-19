@@ -167,6 +167,7 @@ func (m *Manager) recoveredRunner(id string, info tmuxSessionInfo, now time.Time
 		claudeU:       info.claudeU,
 		project:       info.project,
 		home:          info.home,
+		startDir:      info.startDir,
 		extraEnv:      m.chatCfg.Env,
 	}
 }
@@ -775,6 +776,9 @@ func applyTmuxSessionMetadata(r *Runner, info tmuxSessionInfo) {
 	defer r.metaMu.Unlock()
 	if r.Workdir == "" {
 		r.Workdir = info.workdir
+	}
+	if r.startDir == "" {
+		r.startDir = info.startDir
 	}
 	// A complete Worktree snapshot is authoritative for a recovered runner whose
 	// zero/default mode was already normalized to "normal". Apply the metadata as

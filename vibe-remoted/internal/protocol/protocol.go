@@ -481,17 +481,20 @@ type WorktreeBase struct {
 // with the removal. IgnoredFiles only informs: -1 means it could not be
 // counted, and a removal never compares it.
 type WorktreeStatus struct {
-	Path            string   `json:"path"`
-	Project         string   `json:"project"`
-	Branch          string   `json:"branch,omitempty"` // omitted when detached
-	Head            string   `json:"head"`             // all zeros when the branch has no commit yet
-	Detached        bool     `json:"detached,omitempty"`
-	Main            bool     `json:"main"`
-	Managed         bool     `json:"managed"`
-	DirtyFiles      int      `json:"dirtyFiles"`      // uncommitted or untracked, ignored files excluded
-	UnmergedCommits int      `json:"unmergedCommits"` // on no other local branch or remote-tracking ref
-	IgnoredFiles    int      `json:"ignoredFiles"`    // ignored by git, removed with the directory
-	Sessions        []string `json:"sessions"`
+	Path            string `json:"path"`
+	Project         string `json:"project"`
+	Branch          string `json:"branch,omitempty"` // omitted when detached
+	Head            string `json:"head"`             // all zeros when the branch has no commit yet
+	Detached        bool   `json:"detached,omitempty"`
+	Main            bool   `json:"main"`
+	Managed         bool   `json:"managed"`
+	DirtyFiles      int    `json:"dirtyFiles"`      // uncommitted or untracked, ignored files excluded
+	UnmergedCommits int    `json:"unmergedCommits"` // on no other local branch or remote-tracking ref
+	IgnoredFiles    int    `json:"ignoredFiles"`    // ignored by git, removed with the directory
+	// Sessions end with the worktree: those attributed to it, and those that
+	// were started in a directory inside it. Both go by where the session was
+	// created, not by where its process is now.
+	Sessions []string `json:"sessions"`
 }
 
 // WorktreeRemoveRequest is the body of POST /api/v1/worktrees/remove (v4,

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -454,4 +455,178 @@ func TestWorktreeAddKilledDuringCheckoutIsUndone(t *testing.T) {
 		t.Fatalf("b.txt in the new worktree = %q", data)
 	}
 	f.intact()
+}
+
+// waitPaneDir waits until the process of terminal session id has dir as its
+// current directory, which is what tmux reports as pane_current_path.
+func waitPaneDir(t *testing.T, id, dir string) {
+	t.Helper()
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		out, _ := tmuxCmd("display-message", "-p", "-t", "vibe-remote-"+id, "#{pane_current_path}").Output()
+		if strings.TrimSpace(string(out)) == dir {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("the process of session %s is in %q, want %s", id, strings.TrimSpace(string(out)), dir)
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+}
+
+// Which sessions a worktree's removal ends goes by where each session was
+// created (spec H19), and a daemon restart does not change the answer. A
+// recovered session's Workdir is the directory its process is in now; what is
+// compared is the directory it was started in, kept in @vibe_remote_workdir.
+func TestSessionsOfAWorktreeGoByWhereTheyWereCreatedAcrossRestart(t *testing.T) {
+	requireTmux(t)
+
+	// A session created in the main directory whose process has since changed
+	// into the worktree (a shell, or any agent that does): it is a session of
+	// the main directory before and after the restart, and removing the
+	// worktree does not end it.
+	changedInto := func(t *testing.T, dropOption bool) {
+		freshTmuxDir(t)
+		repo := devflowRepo(t)
+		feat := externalWorktree(t, repo, "feat")
+		store := NewMemoryProjectStore()
+		m1 := NewManager(true, "cd '"+feat+"' && exec sleep 60", false, "")
+		m1.SetProjectStore(store)
+		r, err := m1.Create(CreateOptions{Workdir: repo, Cols: 80, Rows: 24})
+		if err != nil {
+			t.Fatal(err)
+		}
+		id := r.ID
+		t.Cleanup(func() { m1.Delete(id) })
+		waitPaneDir(t, id, feat)
+		if dropOption {
+			// A session started by a daemon from before the option existed.
+			if err := tmuxCmd("set-option", "-t", "vibe-remote-"+id, "-u", "@vibe_remote_workdir").Run(); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if st, err := m1.WorktreeStatus(feat, allowAny); err != nil || len(st.Sessions) != 0 {
+			t.Fatalf("same daemon: status = %+v, %v; want no session in the worktree", st, err)
+		}
+
+		m2 := NewManager(true, "sleep 60", false, "") // the restarted daemon
+		m2.SetProjectStore(store)
+		st, err := m2.WorktreeStatus(feat, allowAny)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(st.Sessions) != 0 {
+			t.Fatalf("after a restart: sessions = %v, want none: session %s was created in %s and only its process is in the worktree now", st.Sessions, id, repo)
+		}
+		r2, ok := m2.Get(id)
+		if !ok {
+			t.Fatalf("session %s was not recovered", id)
+		}
+		if got := r2.CurrentWorkdir(); got != feat {
+			t.Fatalf("recovered workdir = %q, want the process's directory %s", got, feat)
+		}
+		wantStart := repo
+		if dropOption {
+			wantStart = ""
+		}
+		if got := r2.StartDir(); got != wantStart {
+			t.Fatalf("recovered start directory = %q, want %q", got, wantStart)
+		}
+		if p := findProject(m2.Projects(allowAny), repo); p == nil || !reflect.DeepEqual(mainWorktreeSessions([]protocol.Project{*p}, repo), []string{id}) {
+			t.Fatalf("project = %+v, want session %s under the main directory", p, id)
+		}
+		res, err := m2.RemoveWorktree(request(st), allowAny)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !res.Removed || len(res.EndedSessions) != 0 {
+			t.Fatalf("result = %+v, want the worktree removed and nobody ended", res)
+		}
+		if tmuxCmd("has-session", "-t", "vibe-remote-"+id).Run() != nil {
+			t.Fatal("the session of the main directory was ended with the worktree")
+		}
+	}
+	t.Run("changed_into_the_worktree", func(t *testing.T) { changedInto(t, false) })
+	t.Run("changed_into_the_worktree_session_from_before_the_option", func(t *testing.T) { changedInto(t, true) })
+
+	// A session created in a repository of its own inside the worktree (in an
+	// ignored directory, so it is attributed to that repository): it loses its
+	// directory with the worktree, before and after the restart.
+	nested := func(t *testing.T, dropOption bool) {
+		freshTmuxDir(t)
+		repo := devflowRepo(t)
+		if err := os.WriteFile(filepath.Join(repo, ".gitignore"), []byte("vendor/\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		runGit(t, repo, "add", ".gitignore")
+		runGit(t, repo, "commit", "-m", "ignore")
+		feat := externalWorktree(t, repo, "feat")
+		dep := repoAt(t, filepath.Join(feat, "vendor", "dep"))
+		store := NewMemoryProjectStore()
+		m1 := NewManager(true, "sleep 60", false, "")
+		m1.SetProjectStore(store)
+		r, err := m1.Create(CreateOptions{Workdir: dep, Cols: 80, Rows: 24})
+		if err != nil {
+			t.Fatal(err)
+		}
+		id := r.ID
+		t.Cleanup(func() { m1.Delete(id) })
+		if _, home := r.Home(); home != dep {
+			t.Fatalf("home = %q, want the nested repository %s", home, dep)
+		}
+		if dropOption {
+			if err := tmuxCmd("set-option", "-t", "vibe-remote-"+id, "-u", "@vibe_remote_workdir").Run(); err != nil {
+				t.Fatal(err)
+			}
+		}
+
+		m2 := NewManager(true, "sleep 60", false, "")
+		m2.SetProjectStore(store)
+		st, err := m2.WorktreeStatus(feat, allowAny)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !reflect.DeepEqual(st.Sessions, []string{id}) {
+			t.Fatalf("after a restart: sessions = %v, want %s: it was created inside the worktree", st.Sessions, id)
+		}
+		req := request(st)
+		req.DiscardFiles = st.DirtyFiles > 0
+		res, err := m2.RemoveWorktree(req, allowAny)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !res.Removed || !reflect.DeepEqual(res.EndedSessions, []string{id}) {
+			t.Fatalf("result = %+v, want session %s ended and the worktree removed", res, id)
+		}
+	}
+	t.Run("created_in_a_nested_repository", func(t *testing.T) { nested(t, false) })
+	t.Run("created_in_a_nested_repository_session_from_before_the_option", func(t *testing.T) { nested(t, true) })
+}
+
+// The directory a session was started in is written to tmux with the other
+// options and read back by the next daemon.
+func TestStartDirSurvivesRestartTmux(t *testing.T) {
+	requireTmux(t)
+	freshTmuxDir(t)
+	repo := tempRepo(t)
+	canon := runGit(t, repo, "rev-parse", "--show-toplevel")
+	m1 := NewManager(true, "sleep 60", false, "")
+	r, err := m1.Create(CreateOptions{Workdir: canon, Cols: 80, Rows: 24})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { m1.Delete(r.ID) })
+	if got := r.StartDir(); got != canon {
+		t.Fatalf("start directory = %q, want %s", got, canon)
+	}
+	out, err := tmuxCmd("show-options", "-t", "vibe-remote-"+r.ID, "-qv", "@vibe_remote_workdir").Output()
+	if err != nil || strings.TrimSuffix(string(out), "\n") != canon {
+		t.Fatalf("@vibe_remote_workdir = %q, %v; want %s", out, err, canon)
+	}
+	m2 := NewManager(true, "sleep 60", false, "")
+	m2.List()
+	r2, ok := m2.Get(r.ID)
+	if !ok || r2.StartDir() != canon {
+		t.Fatalf("recovered = %v, start directory %q; want %s", ok, r2.StartDir(), canon)
+	}
 }
