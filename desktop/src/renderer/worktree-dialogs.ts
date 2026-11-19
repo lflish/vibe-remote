@@ -316,9 +316,11 @@ function showConfirm(shell: DialogShell, initial: () => HTMLButtonElement, cance
  * directory: the dialog then says the worktree and its branch stay.
  * `legacyWorktree` is for a worktree-mode session on a daemon older than
  * protocol 4, which removes a clean worktree and its branch with the session
- * (R9.1); that note replaces the other one.
+ * (R9.1); that note replaces the other one. `unknownWorktree` is for such a
+ * session on a daemon whose version is not known yet: the note then says both
+ * things can happen, instead of promising either.
  */
-export function confirmDeleteSession(opts: { name: string; worktreeLabel?: string; legacyWorktree: boolean }): Promise<boolean> {
+export function confirmDeleteSession(opts: { name: string; worktreeLabel?: string; legacyWorktree: boolean; unknownWorktree?: boolean }): Promise<boolean> {
   return new Promise((resolve) => {
     const shell = dialogShell('delete-session-dialog', t('session.delete.title', { name: opts.name }), '', t('session.delete.confirm'));
     shell.confirm.classList.add('btn-danger');
@@ -326,9 +328,11 @@ export function confirmDeleteSession(opts: { name: string; worktreeLabel?: strin
     text.appendChild(paragraph(t('session.delete.body')));
     const note = opts.legacyWorktree
       ? t('session.delete.legacyWorktree')
-      : opts.worktreeLabel
-        ? t('session.delete.keepsWorktree', { worktree: opts.worktreeLabel })
-        : '';
+      : opts.unknownWorktree
+        ? t('session.delete.unknownWorktree')
+        : opts.worktreeLabel
+          ? t('session.delete.keepsWorktree', { worktree: opts.worktreeLabel })
+          : '';
     if (note) text.appendChild(paragraph(note, 'delete-session-note'));
     shell.body.appendChild(text);
 

@@ -1382,7 +1382,9 @@ async function handleDeleteWorktree(machine: MachineConfig, worktree: TreeWorktr
 
 // confirmAndDeleteSession asks before deleting a session. The dialog says what
 // happens to the worktree the session sits in: kept (protocol 4), or removed
-// with the session when clean (an older daemon, R9.1).
+// with the session when clean (an older daemon, R9.1). While the daemon's
+// version is not known (its project list has not been read once) it says that
+// either can happen.
 async function confirmAndDeleteSession(machine: MachineConfig, session: SessionInfo) {
   const mk = machineKey(machine);
   const ctx = sessionContext(treeFor(mk), session.id);
@@ -1392,8 +1394,10 @@ async function confirmAndDeleteSession(machine: MachineConfig, session: SessionI
     const wt = p.worktrees.find((w) => !w.main && w.sessions.some((s) => s.id === session.id));
     if (wt) worktreeLabel = wt.label;
   }
-  const legacyWorktree = machineCaps.get(mk) !== 'v4' && session.mode === 'worktree';
-  if (!(await confirmDeleteSession({ name, worktreeLabel, legacyWorktree }))) return;
+  const cap = machineCaps.get(mk) ?? 'unknown';
+  const legacyWorktree = cap === 'legacy' && session.mode === 'worktree';
+  const unknownWorktree = cap === 'unknown' && session.mode === 'worktree';
+  if (!(await confirmDeleteSession({ name, worktreeLabel, legacyWorktree, unknownWorktree }))) return;
   void closeSession(machine, session.id);
 }
 

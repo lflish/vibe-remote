@@ -36,6 +36,7 @@ const zh: Dict = {
   'sidebar.session.gone': '目录已不存在',
   'sidebar.legacy.note': 'vibe-remoted 版本较旧：不能新建或删除 worktree，没有会话的 worktree 不会列出。升级 vibe-remoted 后可用。',
   'sidebar.legacy.needUpgrade': '需要升级这台机器的 vibe-remoted',
+  'sidebar.unknown.notRead': '还没读到这台机器的项目列表，暂时不能操作 worktree',
   // new worktree dialog and the name field (design 7.4)
   'wt.new.title': '在 {project} 新建 worktree',
   'wt.new.subtitle': '{machine} · 从 {branch} 发起',
@@ -135,6 +136,7 @@ const zh: Dict = {
   'session.delete.body': '会话会结束，远程进程会被终止，无法撤销。',
   'session.delete.keepsWorktree': 'worktree {worktree} 的目录和分支都会保留，之后可以在侧边栏继续使用，或者单独删除。',
   'session.delete.legacyWorktree': '这台机器的 vibe-remoted 是旧版：工作区干净时，worktree 的目录和分支会被一并删除；有未提交改动时会保留。',
+  'session.delete.unknownWorktree': '还没读到这台机器的 vibe-remoted 版本：新版本会保留 worktree 的目录和分支；旧版本在工作区干净时会把它们一并删除。',
   'session.reloadTitle': '重新加载会话',
   'session.reloadConfirm': '重新加载会话“{name}”？当前 Claude 进程会被停止，并从原工作目录继续最近的对话。正在生成的回复和未发送的终端输入会中断。',
   'session.reloadSuccess': '会话已重新加载：{name}',
@@ -385,6 +387,7 @@ const en: Dict = {
   'sidebar.session.gone': 'Directory no longer exists',
   'sidebar.legacy.note': 'This vibe-remoted is older: you cannot create or delete worktrees, and worktrees with no sessions are not listed. Upgrade vibe-remoted to enable them.',
   'sidebar.legacy.needUpgrade': "Upgrade this machine's vibe-remoted",
+  'sidebar.unknown.notRead': "This machine's project list has not been read yet, so worktrees cannot be changed for now",
   // new worktree dialog and the name field (design 7.4)
   'wt.new.title': 'New worktree in {project}',
   'wt.new.subtitle': '{machine} · from {branch}',
@@ -481,6 +484,7 @@ const en: Dict = {
   'session.delete.body': 'The session ends and its remote process is killed. This cannot be undone.',
   'session.delete.keepsWorktree': 'The directory and branch of worktree {worktree} are kept. You can keep using it from the sidebar, or delete it separately.',
   'session.delete.legacyWorktree': 'This machine runs an older vibe-remoted: if the working tree is clean, the worktree directory and its branch are deleted with the session; with uncommitted changes they are kept.',
+  'session.delete.unknownWorktree': "This machine's vibe-remoted version has not been read yet: a current one keeps the worktree directory and its branch; an older one deletes them with the session when the working tree is clean.",
   'session.reloadTitle': 'Reload session',
   'session.reloadConfirm': 'Reload session "{name}"? The current Claude process will stop and resume the latest conversation from the same working directory. An in-progress response and unsent terminal input will be interrupted.',
   'session.reloadSuccess': 'Session reloaded: {name}',

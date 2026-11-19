@@ -315,6 +315,14 @@ test('legacy_note_and_disabled_entries', () => {
   const unknown = render([machineEntry(tree, { cap: 'unknown' })], legacyActs);
   assert.equal(tid(unknown, 'machine-legacy-note'), null);
   assert.equal(tid(unknown, 'project-new-worktree').disabled, true);
+  // Unknown is not old: the reason does not ask for an upgrade.
+  assert.equal(tid(unknown, 'project-new-worktree').title, t('sidebar.unknown.notRead'));
+  assert.notEqual(t('sidebar.unknown.notRead'), t('sidebar.legacy.needUpgrade'));
+  click([...unknown.querySelectorAll('[data-testid="worktree-menu"]')][0]);
+  const delUnknown = menuItem('worktree-delete');
+  assert.equal(delUnknown.disabled, true);
+  assert.equal(delUnknown.parentElement.querySelector('.menu-note').textContent, t('sidebar.unknown.notRead'));
+  document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
 });
 
 test('project_tag_hue_via_css_var', () => {

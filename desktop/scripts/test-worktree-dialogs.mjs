@@ -427,6 +427,23 @@ test('delete_session_legacy_note', async () => {
   }
 });
 
+test('delete_session_unknown_daemon_note', async () => {
+  const unknown = t('session.delete.unknownWorktree');
+  assert.ok(!unknown.includes('是旧版'), unknown);
+  for (const worktreeLabel of [undefined, 'vibe/1794824025040-12b763ac']) {
+    const d = openConfirm(confirmDeleteSession({ name: '接口限流', worktreeLabel, legacyWorktree: false, unknownWorktree: true }));
+    assert.equal(tid('delete-session-note', d.root).textContent, unknown, 'neither promise is made while the version is not known');
+    assert.equal(d.root.querySelectorAll('[data-testid="delete-session-note"]').length, 1);
+    click(d.cancel);
+    assert.equal(await d.result, false);
+  }
+  // A daemon known to be old keeps its own text.
+  const e = openConfirm(confirmDeleteSession({ name: '接口限流', legacyWorktree: true, unknownWorktree: false }));
+  assert.equal(tid('delete-session-note', e.root).textContent, t('session.delete.legacyWorktree'));
+  click(e.cancel);
+  await e.result;
+});
+
 test('delete_session_plain', async () => {
   const d = openConfirm(confirmDeleteSession({ name: 'notes', legacyWorktree: false }));
   assert.equal(tid('delete-session-note', d.root), null);

@@ -70,6 +70,16 @@ export function rendererIcon(name: 'machine' | 'terminal' | 'chat' | 'branch' | 
   return svg;
 }
 
+// capReason says why the worktree entries are off on this machine, or '' when
+// they are not. Only a daemon known to be old is asked to upgrade: `unknown`
+// means its project list has not been read yet (slow, or the request failed),
+// which says nothing about its version.
+function capReason(cap: Capability): string {
+  if (cap === 'legacy') return t('sidebar.legacy.needUpgrade');
+  if (cap === 'unknown') return t('sidebar.unknown.notRead');
+  return '';
+}
+
 function countSessions(project: TreeProject): number {
   let n = project.sessions.length;
   for (const w of project.worktrees) n += w.sessions.length;
@@ -213,7 +223,7 @@ function renderProject(list: HTMLElement, m: SidebarMachine, project: TreeProjec
   const rowActions = document.createElement('div');
   rowActions.className = 'row-actions';
   const hasMain = project.worktrees.some((w) => w.main);
-  const upgradeTitle = m.cap !== 'v4' ? t('sidebar.legacy.needUpgrade') : '';
+  const upgradeTitle = capReason(m.cap);
 
   if (project.flat && !project.error && actions.newSession) {
     const btn = iconButton('project-new-session', 'plus', t('sidebar.project.newSession'));
@@ -315,7 +325,7 @@ function renderWorktree(pg: HTMLElement, m: SidebarMachine, project: TreeProject
         label: t('sidebar.worktree.delete'),
         testid: 'worktree-delete',
         disabled: m.cap !== 'v4' || removing,
-        note: m.cap !== 'v4' ? t('sidebar.legacy.needUpgrade') : undefined,
+        note: capReason(m.cap) || undefined,
         onClick: () => actions.deleteWorktree!(m.machine, project, wt),
       }]);
     });
