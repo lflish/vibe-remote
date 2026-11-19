@@ -995,6 +995,12 @@ spec「推迟到以后」的条目：
 - 新建后读回登记项两次都失败、撤销又没能确认 worktree 已删时，worktree 和分支都留着但没有创建记录，按「外部」显示（decisions #116）。可以改成退回 `filepath.EvalSymlinks` 得到的路径加原分支名、不判创建失败。
 - daemon 重启后找回的终端会话，`sessions[].workdir`、默认标题和重载用的目录仍是进程现在的目录（`pane_current_path`），重启前是创建时的目录；这次只让「算不算在某个 worktree 里」不随重启变（decisions #118）。可以让找回的 `Workdir` 也取 `@vibe_remote_workdir`。
 - 没有 `@vibe_remote_workdir` 的旧终端会话（这个选项出现之前建的）只按归属算在不在某个 worktree 里；其中还没有归属的会话，在 `Projects()` 补归属之前不会被算进去。升级后重开一次会话即有该选项。
-- tmux 的 socket 文件被外部删掉而 server 还活着（清理 `/tmp` 的定时任务、手动 `rm`）时，tmux 查询失败、socket 不存在，现在按「没有终端会话」处理（decisions #114）：会话表里的终端会话会被对账清掉，删除 worktree 也不会先结束里面的会话。这些会话此时本来就接不上（tmux 客户端同样连不上，要 `pkill -USR1 tmux` 让 server 重建 socket，之后对账会把它们找回来）。没有见到实际发生，没有加处理；可以在「内存表里还有本 daemon 启动过的终端会话、socket 却不见了」时仍按查询失败处理。
-- `tmuxSocketPath` 按 tmux 的默认查找顺序（`$TMUX_TMPDIR`，否则 `/tmp`）拼路径；改过编译期 `TMUX_SOCK` 的 tmux 会用别的目录。那种机器上只有 tmux 查询本身失败时才会走到这一步，结果是把一次失败的查询当成「没有会话」（decisions #114）。
+- **已知限制（第三轮核对后改写，decisions #121、d62）**：tmux 的 socket 文件被外部删掉而 server 还活着（清理 `/tmp` 的定时任务、手动 `rm`）。同一个 daemon 运行期间已经挡住：会话表里还有终端会话时按查询失败处理，不清表、不释放占用，删除 worktree 返回 500 并提示对 tmux server 发 SIGUSR1。**没有挡住的是 daemon 重启之后**：会话表是空的，这时 socket 文件不在而 server 活着，仍被当成「没有终端会话」，删除 worktree 不会先结束里面的会话（对 server 发 SIGUSR1 之后对账会把它们找回来）。没有见到实际发生。要挡住它得持久化 tmux server 的 pid：起会话时把 `#{pid}` 记进 `state_dir`，socket 不存在而该 pid 仍是 tmux 进程时按查询失败处理。
+- `tmuxSocketPath` 按 tmux 的默认查找顺序（`$TMUX_TMPDIR`，否则 `/tmp`）拼路径；改过编译期 `TMUX_SOCK` 的 tmux 会用别的目录。那种机器上只有 tmux 查询本身失败、会话表里又没有终端会话时才会走到这一步，结果是把一次失败的查询当成「没有会话」（decisions #114、#121）。`TMUX_TMPDIR` 指向不存在的目录时 tmux 退到 `/tmp`，`tmuxSocketPath` 现在照此计算（decisions #123），依据是 tmux 3.6a 的源码，没有在默认目录上实跑。
 - `TestProjectStoreRemoveWorktreeIfSame` 这次又在与其它用例同跑时连续失败两次、单独跑 6 次和再同跑一次都通过：`nowStamp()` 的精度是微秒，先删再加同一条记录的两次时间戳可能相同（上面「评审修复期间……三个用例」那条已有记录）。可以让替换后的记录带一个递增的序号，不依赖时钟。
+
+第三轮核对（评审对象 c74e715..3b01cf3）之后留下的：
+
+- 反方向的一种：会话表里有终端会话，而 tmux server 和它的 socket 文件都已经没了（server 退出后 socket 文件又被清掉，期间没有任何客户端轮询过）。现在每次对账都算失败（decisions #121）：这些会话一直留在列表里，所在 worktree 的删除一直返回 500，要重启 daemon 或把这些会话逐个删掉。本机 tmux 3.6a 的 server 退出时不删 socket 文件，所以要另有东西去删它才会出现。可以在这种状态持续一段时间后提示用户，或核对 server 进程是否还在（同样需要记下 pid）。
+- `Manager.Delete` 不看 `tmux kill-session` 有没有成功（`Runner.Kill` 只记一条警告）：socket 文件被删而 server 还活着时删除终端会话，会话从表里去掉、tmux 里还在运行；表因此变空，之后的对账又会把「socket 不存在」当成没有会话。原有写法，这次没有改；可以让删除在连不上 tmux 时返回失败。
+- 500 的 `message` 里「对 tmux server 进程发 SIGUSR1」没有给出 pid：daemon 不记 server 的 pid，用户要自己找（`pgrep -u $USER tmux` 可能列出不止一个 server）。

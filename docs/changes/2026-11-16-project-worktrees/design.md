@@ -978,6 +978,7 @@ CSS 变量：保留现有变量名（`styles.css` 里到处在用），换成 M1
   - 5.2：上面 G1 那条括号里的「（或已是 `prunable`）」不再成立：创建记录只在 git 的列表里完全没有这个路径时才清（d59，推翻 #82 的那半句）。
   - 6.4、7.4：worktree 行「正在删除…」的标记在删除成功后留到机器刷新结束才清；`deleteWorktreeFlow` 的回调多一个参数说明 worktree 是不是已经没了（#119、d60）。
   - 4.1：名字的两条本地规则各有原因码，不再是 `invalid`：不显示的字符是 `invisible`，超过 250 字节是 `too_long`；新增文案键 `wt.name.invisible`、`wt.name.too_long`（d61，改上面 G9 那条的「原因都是 `invalid`」）。
+- 第三轮核对修复（评审对象 c74e715..3b01cf3；decisions #121–#124、d62）：4.9 与 tmux 的对账，上一条第一项的「socket 文件不存在、或机器上没有 tmux 程序，都算没有任何 tmux 会话」收窄为：tmux 运行失败或找不到 tmux 程序，并且 socket 文件不存在，并且会话表里没有终端会话，才算没有会话；socket 文件不见了而表里有终端会话（server 可能还活着，SIGUSR1 能让它重建 socket）、找不到 tmux 程序而 socket 文件在，都按对账失败处理，500 的 `message` 写明是哪一种（#121、#122）。`tmuxSocketPath` 先解析 `TMUX_TMPDIR`，解析不了用 `/tmp`（#123）。已知限制：daemon 重启后（表为空）socket 文件被外部删掉而 server 还活着，仍算没有会话（d62）。
 
 ## 11. 方案验证（机器关口 B）
 
