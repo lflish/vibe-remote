@@ -6,7 +6,7 @@ import { PROTOCOL_VERSION } from '../shared/protocol';
 import { VibeRemoteClient, ConnectionState, type AttachOptions } from './client';
 import { VibeRemoteRest, DeleteSessionError, ReloadSessionError, RestError } from './rest';
 import { openDirPicker, type PickedSession } from './dirpicker';
-import { openNewWorktreeDialog } from './worktree-dialogs';
+import { openNewWorktreeDialog, openWorktreeSessionDialog } from './worktree-dialogs';
 import { worktreeErrorText } from './worktree-name';
 import { openMachineManager } from './machines';
 import { t, toggleLocale, getLocale, onLocaleChange } from './i18n';
@@ -16,7 +16,7 @@ import { ChatView } from './chat/view';
 import { nextDot, type ActivityEvent, type Dot, type RestSnapshot } from './chat/activity';
 import type { Prompt } from './chat/types';
 import { renderSidebar as renderSidebarView, renderToolbarTitle, rendererIcon, type SidebarModel, type SidebarActions } from './sidebar';
-import { buildTree, nextCapability, sessionContext, notificationTitle, type Capability, type TreeProject } from './tree';
+import { buildTree, nextCapability, sessionContext, notificationTitle, type Capability, type TreeProject, type TreeWorktree } from './tree';
 
 // Declared by preload
 
@@ -706,6 +706,13 @@ async function startNewWorktree(machine: MachineConfig, project: TreeProject) {
   if (picked) startPicked(machine, picked);
 }
 
+// startSessionInWorktree is "New session" on a worktree row, or on the row of a
+// project that has only one directory (R4.1).
+async function startSessionInWorktree(machine: MachineConfig, project: TreeProject, worktree: TreeWorktree) {
+  const picked = await openWorktreeSessionDialog(machine, project, worktree);
+  if (picked) startPicked(machine, picked);
+}
+
 // What a create asked the daemon to name its new worktree, kept to word an
 // error frame that refuses it.
 type NamedWorktree = { name: string; path?: string };
@@ -1274,7 +1281,10 @@ const sidebarActions: SidebarActions = {
   newWorktree: (machine, project) => {
     void startNewWorktree(machine, project);
   },
-  // newSession / deleteWorktree are wired in T11 / T14.
+  newSession: (machine, project, worktree) => {
+    void startSessionInWorktree(machine, project, worktree);
+  },
+  // deleteWorktree is wired in T14.
 };
 
 // handleRemoveProject drops a project from the sidebar (disk untouched). A 409

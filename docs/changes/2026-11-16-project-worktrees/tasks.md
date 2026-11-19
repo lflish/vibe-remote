@@ -613,7 +613,7 @@
 - 依赖：T2
 
 ### T11 桌面端：在已有 worktree 里新建会话
-- 状态：待办
+- 状态：进行中
 - 文件：修改 `desktop/src/renderer/worktree-dialogs.ts`（加 `openWorktreeSessionDialog`）、`desktop/src/renderer/chat/availability.ts`（`chatAvailability` 加第 4 个可缺省参数 `opts?: { mainPath?: string }`）、`desktop/src/renderer/index.ts`（给 `SidebarActions` 传 `newSession`：打开对话框，确认后走现有的新建会话流程）、`desktop/src/renderer/styles.css`（追加对话框副标题里路径一行的规则）、`desktop/src/renderer/i18n.ts`（`wt.session.title` / `subtitle` / `confirm`、`picker.ui.chat.reason.worktree_untrusted`、`label.dir`、`label.branch`）；测试 `desktop/scripts/test-worktree-dialogs.mjs`、`test-chat-availability.mjs`
 - 接口：
   - 使用：`createUiSection`、`createFlagsSection`（T9）；`rest.info()`、`rest.listDir(path)` 的 `chatTrust`（现有；规则由 T10 放宽）；`TreeProject`、`TreeWorktree`、`Capability`、`SidebarActions.newSession`（T5、T6b）

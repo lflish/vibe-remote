@@ -28,8 +28,18 @@ const DAEMON_REASONS = new Set([
  * `info` undefined and no `error` = still loading. `trust` is the listed
  * directory's chatTrust; only 'trusted' allows a chat session (c3: untrusted
  * and unknown alike, as the daemon decides).
+ *
+ * `opts.mainPath` is for a worktree that is not its project's main directory,
+ * on a daemon that accepts worktree roots of a trusted main directory (v4):
+ * the reason then names the main directory as the place to open claude once
+ * (R4.4). Callers leave it out for everything else.
  */
-export function chatAvailability(info?: MachineInfo, error?: unknown, trust?: ChatTrust): ChatAvailability {
+export function chatAvailability(
+  info?: MachineInfo,
+  error?: unknown,
+  trust?: ChatTrust,
+  opts?: { mainPath?: string },
+): ChatAvailability {
   if (!info) {
     if (error !== undefined) {
       const msg = error instanceof Error ? error.message : String(error);
@@ -59,6 +69,9 @@ export function chatAvailability(info?: MachineInfo, error?: unknown, trust?: Ch
     }
     if (DAEMON_REASONS.has(reason)) return { enabled: false, reasonKey: `picker.ui.chat.reason.${reason}` };
     return { enabled: false, reasonKey: 'picker.ui.chat.reason.other', params: { reason: reason || '?' } };
+  }
+  if (trust === 'untrusted' && opts?.mainPath) {
+    return { enabled: false, reasonKey: 'picker.ui.chat.reason.worktree_untrusted', params: { path: opts.mainPath } };
   }
   if (trust !== 'trusted') return { enabled: false, reasonKey: 'picker.ui.chat.reason.workdir_untrusted' };
   return { enabled: true };

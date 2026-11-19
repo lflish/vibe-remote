@@ -1299,3 +1299,7 @@ html, body {
   color: var(--text-primary);
   overflow-wrap: anywhere;
 }
+
+/* The session dialog's subtitle carries a full path: let it break anywhere and
+   be selectable (T11). */
+.modal-subtitle-path { word-break: break-all; user-select: text; -webkit-user-select: text; }

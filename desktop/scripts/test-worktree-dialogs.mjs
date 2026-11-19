@@ -1,14 +1,15 @@
-// worktree-dialogs.ts: the new-worktree dialog (T9). Driven through the real
-// REST client against a fake daemon behind fetch.
+// worktree-dialogs.ts: the new-worktree dialog (T9) and the new-session dialog
+// for an existing worktree (T11). Driven through the real REST client against a
+// fake daemon behind fetch.
 import { strict as assert } from 'node:assert';
 import { indexDom, load, runner } from './chat-test-util.mjs';
-import { afterDebounce, click, fakeDaemon, overlay, planFor, pressKey, settle, tid, typeInto } from './dialog-test-util.mjs';
+import { INFO_V4, afterDebounce, click, fakeDaemon, overlay, planFor, pressKey, settle, tid, typeInto } from './dialog-test-util.mjs';
 
 await indexDom();
 localStorage.setItem('vibe-remote.locale', 'zh');
 let sockets = 0;
 globalThis.WebSocket = class { constructor() { sockets++; } };
-const { openNewWorktreeDialog } = await load('src/renderer/worktree-dialogs.ts', { platform: 'browser' });
+const { openNewWorktreeDialog, openWorktreeSessionDialog } = await load('src/renderer/worktree-dialogs.ts', { platform: 'browser' });
 const { t } = await load('src/renderer/i18n.ts', { platform: 'browser' });
 
 const { test, run } = runner('test-worktree-dialogs');
@@ -178,6 +179,160 @@ test('new_worktree_chat_follows_main_trust', async () => {
   const picked = await d.result;
   assert.equal(picked.ui, 'terminal');
   d.daemon.restore();
+});
+
+// --- T11: new session in an existing worktree ---
+
+const HIDDEN = '/Users/mac/github/devflow/.devflow-tmp/worktrees/general-skills';
+const DEVFLOW = {
+  id: '/Users/mac/github/devflow', name: 'devflow', git: true, flat: false, sessions: [],
+  worktrees: [
+    wt({ path: '/Users/mac/github/devflow', main: true }),
+    wt({ path: '/Users/mac/github/devflow-worktrees/fix-login', label: 'fix-login', branch: 'fix-login', managed: true }),
+    wt({ path: HIDDEN, label: 'change/general-skills', branch: 'change/general-skills' }),
+  ],
+};
+
+async function openSessionDialog(routes, project, worktree, opts) {
+  const daemon = fakeDaemon(routes);
+  let settled = false;
+  const result = openWorktreeSessionDialog(M, project, worktree, opts).then((v) => { settled = true; return v; });
+  await settle(8);
+  const root = overlay();
+  return { daemon, result, root, settled: () => settled, confirm: tid('dialog-confirm', root), cancel: tid('dialog-cancel', root) };
+}
+
+const fsTrust = (chatTrust) => (path) => ({ path, entries: [{ name: 'src', path: `${path}/src` }], parent: '/Users/mac', chatTrust });
+
+test('worktree_session_dialog_shape', async () => {
+  const target = DEVFLOW.worktrees[1];
+  const d = await openSessionDialog({ fs: fsTrust('trusted') }, DEVFLOW, target);
+  assertShell(d.root);
+  assert.ok(d.root.querySelector('.modal-title').textContent.includes('fix-login'));
+  assert.equal(d.root.querySelector('.modal-title').textContent, '在 fix-login 新建会话');
+  const path = tid('session-dialog-path', d.root);
+  assert.ok(path.textContent.includes('devflow') && path.textContent.includes(target.path), path.textContent);
+  assert.equal(d.confirm.textContent, '新建会话');
+  // Only the interface and the launch options: no directory list, no session mode, no name.
+  assert.equal(d.root.querySelector('.modal-list'), null);
+  assert.equal(d.root.querySelector('.modal-path'), null);
+  assert.equal(d.root.querySelectorAll('.modal-mode-card:not(.modal-ui-card)').length, 0);
+  assert.equal(tid('wt-name-input', d.root), null);
+  assert.ok(tid('picker-ui-terminal', d.root) && tid('picker-ui-chat', d.root));
+  assert.equal(d.root.querySelectorAll('.modal-flag input').length, 2);
+  // The trust of the worktree itself is asked for, once.
+  assert.deepEqual(d.daemon.calls.filter((c) => c.path === '/api/v1/fs').map((c) => c.query.path), [target.path]);
+  assert.equal(tid('picker-ui-chat', d.root).disabled, false);
+  assert.equal(d.confirm.disabled, false);
+  click(d.confirm);
+  assert.deepEqual(await d.result, { mode: 'normal', workdir: target.path, ui: 'terminal', flags: ['skip'] });
+  assert.equal(overlay(), null);
+  assert.equal(sockets, 0);
+  d.daemon.restore();
+
+  // Chat picked, flags changed; cancel returns null.
+  const e = await openSessionDialog({ fs: fsTrust('trusted') }, DEVFLOW, target);
+  click(tid('picker-ui-chat', e.root));
+  const boxes = [...e.root.querySelectorAll('.modal-flag input')];
+  boxes[0].checked = true;
+  boxes[1].checked = false;
+  click(e.confirm);
+  assert.deepEqual(await e.result, { mode: 'normal', workdir: target.path, ui: 'chat', flags: ['continue'] });
+  e.daemon.restore();
+  const f = await openSessionDialog({ fs: fsTrust('trusted') }, DEVFLOW, target);
+  pressKey(f.confirm, 'Escape');
+  assert.equal(await f.result, null);
+  f.daemon.restore();
+});
+
+test('worktree_session_hidden_dir', async () => {
+  const d = await openSessionDialog({ fs: fsTrust('trusted') }, DEVFLOW, DEVFLOW.worktrees[2]);
+  assert.ok(tid('session-dialog-path', d.root).textContent.includes(HIDDEN));
+  assert.ok(d.root.querySelector('.modal-title').textContent.includes('change/general-skills'));
+  click(d.confirm);
+  const picked = await d.result;
+  assert.equal(picked.workdir, HIDDEN);
+  assert.equal(picked.mode, 'normal');
+  d.daemon.restore();
+});
+
+test('worktree_session_chat_disabled_reason', async () => {
+  const d = await openSessionDialog({ fs: fsTrust('untrusted') }, DEVFLOW, DEVFLOW.worktrees[2]);
+  const chat = tid('picker-ui-chat', d.root);
+  assert.equal(chat.disabled, true);
+  const reason = tid('picker-ui-chat-reason', d.root);
+  assert.equal(reason.hidden, false);
+  assert.equal(reason.textContent, t('picker.ui.chat.reason.worktree_untrusted', { path: '/Users/mac/github/devflow' }));
+  assert.ok(reason.textContent.includes('/Users/mac/github/devflow') && reason.textContent.includes('项目主目录'), reason.textContent);
+  assert.ok(!reason.textContent.includes(HIDDEN), 'the path named is the main directory, not the worktree');
+  const term = tid('picker-ui-terminal', d.root);
+  assert.equal(term.disabled, false);
+  assert.equal(term.getAttribute('aria-pressed'), 'true');
+  assert.equal(d.confirm.disabled, false, 'the terminal interface can still be used');
+  click(chat);
+  assert.equal(term.getAttribute('aria-pressed'), 'true', 'a disabled card cannot be chosen');
+  click(d.confirm);
+  assert.equal((await d.result).ui, 'terminal');
+  d.daemon.restore();
+});
+
+test('worktree_session_main_row_uses_existing_reason', async () => {
+  const existing = t('picker.ui.chat.reason.workdir_untrusted');
+  // The main directory row.
+  const a = await openSessionDialog({ fs: fsTrust('untrusted') }, DEVFLOW, DEVFLOW.worktrees[0]);
+  assert.equal(tid('picker-ui-chat', a.root).disabled, true);
+  assert.equal(tid('picker-ui-chat-reason', a.root).textContent, existing);
+  click(a.cancel);
+  await a.result;
+  a.daemon.restore();
+  // An older daemon only looks at the directory itself: sending the user to the main directory would not help.
+  const b = await openSessionDialog({ fs: fsTrust('untrusted'), info: { ...INFO_V4, proto: 3 } }, DEVFLOW, DEVFLOW.worktrees[2]);
+  assert.equal(tid('picker-ui-chat', b.root).disabled, true);
+  assert.equal(tid('picker-ui-chat-reason', b.root).textContent, existing);
+  click(b.cancel);
+  await b.result;
+  b.daemon.restore();
+  // The project's main directory is not listed (outside the allowed roots): nothing to point at.
+  const noMain = { ...DEVFLOW, worktrees: DEVFLOW.worktrees.slice(1) };
+  const c = await openSessionDialog({ fs: fsTrust('untrusted') }, noMain, noMain.worktrees[1]);
+  assert.equal(tid('picker-ui-chat-reason', c.root).textContent, existing);
+  click(c.cancel);
+  await c.result;
+  c.daemon.restore();
+});
+
+test('flat_project_new_session', async () => {
+  // A non-git project: the sidebar passes a node made from the project itself.
+  const notes = { id: '/Users/mac/notes', name: 'notes', git: false, flat: true, worktrees: [], sessions: [] };
+  const node = { path: notes.id, label: notes.name, detached: false, main: true, managed: false, sessions: [] };
+  const d = await openSessionDialog({ fs: fsTrust('untrusted') }, notes, node);
+  assert.equal(d.root.querySelector('.modal-title').textContent, '在 notes 新建会话');
+  assert.ok(tid('session-dialog-path', d.root).textContent.includes('/Users/mac/notes'));
+  assert.equal(tid('picker-ui-chat-reason', d.root).textContent, t('picker.ui.chat.reason.workdir_untrusted'));
+  click(d.confirm);
+  assert.deepEqual(await d.result, { mode: 'normal', workdir: '/Users/mac/notes', ui: 'terminal', flags: ['skip'] });
+  d.daemon.restore();
+});
+
+test('worktree_session_waits_for_launch_options', async () => {
+  // Default-checked launch options must not be dropped by a quick confirm.
+  let release;
+  const gate = new Promise((r) => { release = r; });
+  const d = await openSessionDialog({ fs: fsTrust('trusted'), info: async () => { await gate; return INFO_V4; } }, DEVFLOW, DEVFLOW.worktrees[1]);
+  assert.equal(d.confirm.disabled, true, 'not confirmable before the machine info has arrived');
+  release();
+  await settle(8);
+  assert.equal(d.confirm.disabled, false);
+  click(d.confirm);
+  assert.deepEqual((await d.result).flags, ['skip']);
+  d.daemon.restore();
+  // The info request failing leaves the terminal usable, without options.
+  const e = await openSessionDialog({ fs: fsTrust('trusted'), info: new Error('offline') }, DEVFLOW, DEVFLOW.worktrees[1]);
+  assert.equal(e.confirm.disabled, false);
+  assert.equal(tid('picker-ui-chat', e.root).disabled, true);
+  click(e.confirm);
+  assert.deepEqual(await e.result, { mode: 'normal', workdir: DEVFLOW.worktrees[1].path, ui: 'terminal', flags: [] });
+  e.daemon.restore();
 });
 
 await run();

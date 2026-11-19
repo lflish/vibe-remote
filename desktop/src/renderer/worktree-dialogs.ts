@@ -6,7 +6,7 @@
 import type { MachineConfig } from '../shared/protocol';
 import { VibeRemoteRest, type ChatTrust, type MachineInfo } from './rest';
 import type { PickedSession } from './dirpicker';
-import type { TreeProject } from './tree';
+import type { TreeProject, TreeWorktree } from './tree';
 import { t } from './i18n';
 import { activateModal } from './modal';
 import { chatAvailability } from './chat/availability';
@@ -83,7 +83,10 @@ export function openNewWorktreeDialog(
       const ui = uiSection.value();
       uiSection.setAvailability(a);
       flagsSection.setUI(ui);
-      shell.confirm.disabled = confirming || !nameSection.ready() || (ui === 'chat' && !a.enabled);
+      // The machine info has to be in (or have failed) first: confirming
+      // earlier would drop the launch options that are on by default.
+      const settled = info !== undefined || infoError !== undefined;
+      shell.confirm.disabled = confirming || !settled || !nameSection.ready() || (ui === 'chat' && !a.enabled);
     }
 
     let deactivate = () => {};
@@ -126,7 +129,7 @@ export function openNewWorktreeDialog(
       },
       (e: unknown) => {
         if (closed) return;
-        infoError = e;
+        infoError = e ?? new Error('info failed');
         refresh();
       },
     );
@@ -157,6 +160,113 @@ export function openNewWorktreeDialog(
     deactivate = activateModal(shell.overlay, shell.modal, shell.heading, nameSection.input, () => close(null));
     refresh();
     nameSection.refresh();
+  });
+}
+
+// A worktree root counts as trusted when its project's main directory is, from
+// protocol 4 on (design 7.3). An older daemon only looks at the directory itself.
+const WORKTREE_TRUST_MIN_PROTO = 4;
+
+/**
+ * "New session" on a worktree row (R4): the directory is fixed, so the dialog
+ * only asks for the interface and the launch options. A flat project passes
+ * its one worktree, or a node made from the project itself when it is not a
+ * git repository. Resolves with what to attach, or null when cancelled.
+ *
+ * `opts.sessionCountAt(workdir)` is the number of live sessions already running
+ * in that directory.
+ */
+export function openWorktreeSessionDialog(
+  machine: MachineConfig,
+  project: TreeProject,
+  worktree: TreeWorktree,
+  opts?: { sessionCountAt?(workdir: string): number },
+): Promise<PickedSession | null> {
+  return new Promise((resolve) => {
+    const rest = new VibeRemoteRest(machine);
+    const shell = dialogShell(
+      'worktree-session-dialog',
+      t('wt.session.title', { worktree: worktree.label }),
+      t('wt.session.subtitle', { project: project.name, path: worktree.path }),
+      t('wt.session.confirm'),
+    );
+    shell.subtitle.dataset.testid = 'session-dialog-path';
+    shell.subtitle.classList.add('modal-subtitle-path');
+    shell.subtitle.title = worktree.branch
+      ? `${t('label.dir')}: ${worktree.path}\n${t('label.branch')}: ${worktree.branch}`
+      : `${t('label.dir')}: ${worktree.path}`;
+    let info: MachineInfo | undefined;
+    let infoError: unknown;
+    let trust: ChatTrust | undefined;
+    let closed = false;
+
+    const uiSection = createUiSection({ onChange: refresh });
+    const flagsSection = createFlagsSection({ existingSessions: opts?.sessionCountAt?.(worktree.path) ?? 0 });
+    shell.body.append(uiSection.el, flagsSection.el);
+
+    // Where to send the user when the chat card is off for lack of trust: the
+    // project's main directory, if this is another worktree of it and the
+    // daemon applies the worktree rule.
+    function mainPath(): string | undefined {
+      if (!project.git || worktree.main || (info?.proto ?? 1) < WORKTREE_TRUST_MIN_PROTO) return undefined;
+      return project.worktrees.find((w) => w.main)?.path;
+    }
+
+    function refresh() {
+      const a = chatAvailability(info, infoError, trust, { mainPath: mainPath() });
+      const ui = uiSection.value();
+      uiSection.setAvailability(a);
+      flagsSection.setUI(ui);
+      // Wait for the machine info (or its failure): confirming earlier would
+      // drop the launch options that are on by default.
+      const settled = info !== undefined || infoError !== undefined;
+      shell.confirm.disabled = !settled || (ui === 'chat' && !a.enabled);
+    }
+
+    let deactivate = () => {};
+    function close(result: PickedSession | null) {
+      if (closed) return;
+      closed = true;
+      deactivate();
+      shell.overlay.remove();
+      resolve(result);
+    }
+
+    rest.info().then(
+      (loaded) => {
+        if (closed) return;
+        info = loaded;
+        flagsSection.setFlags(loaded.claude_flags || []);
+        refresh();
+      },
+      (e: unknown) => {
+        if (closed) return;
+        infoError = e ?? new Error('info failed');
+        refresh();
+      },
+    );
+    rest.listDir(worktree.path).then(
+      (listing) => {
+        if (closed) return;
+        trust = listing.chatTrust;
+        refresh();
+      },
+      () => { /* trust stays unknown: the chat card keeps its reason */ },
+    );
+
+    shell.cancel.addEventListener('click', () => close(null));
+    shell.confirm.addEventListener('click', () => {
+      if (shell.confirm.disabled) return;
+      close({ mode: 'normal', workdir: worktree.path, ui: uiSection.value(), flags: flagsSection.value() });
+    });
+    shell.overlay.addEventListener('click', (e) => {
+      if (e.target === shell.overlay) close(null);
+    });
+
+    document.body.appendChild(shell.overlay);
+    const termCard = uiSection.el.querySelector<HTMLElement>('[data-testid="picker-ui-terminal"]')!;
+    deactivate = activateModal(shell.overlay, shell.modal, shell.heading, termCard, () => close(null));
+    refresh();
   });
 }
 

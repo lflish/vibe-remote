@@ -118,4 +118,30 @@ test('proto2_reason_still_says_3', () => {
   assert.match(text(a), /需要协议 3/);
 });
 
+test('worktree_untrusted_reason', () => {
+  const main = '/Users/mac/github/devflow';
+  // A worktree of a project whose main directory is not trusted either: the
+  // reason sends the user to the main directory (R4.4).
+  const a = chatAvailability(info(ok, 4), undefined, 'untrusted', { mainPath: main });
+  assert.equal(a.enabled, false);
+  assert.equal(a.reasonKey, 'picker.ui.chat.reason.worktree_untrusted');
+  assert.equal(a.params.path, main);
+  assert.ok(text(a).includes(main), text(a));
+  assert.match(text(a), /项目主目录/);
+  assert.ok(text(a, 'en').includes(main), text(a, 'en'));
+  // Without a main path the existing wording stays.
+  for (const opts of [undefined, {}, { mainPath: undefined }, { mainPath: '' }]) {
+    const b = chatAvailability(info(ok, 4), undefined, 'untrusted', opts);
+    assert.equal(b.reasonKey, 'picker.ui.chat.reason.workdir_untrusted');
+  }
+  // The trust file could not be read: opening claude in the main directory is
+  // not known to help, so the existing wording stays as well.
+  assert.equal(chatAvailability(info(ok, 4), undefined, 'unknown', { mainPath: main }).reasonKey, 'picker.ui.chat.reason.workdir_untrusted');
+  assert.equal(chatAvailability(info(ok, 4), undefined, undefined, { mainPath: main }).reasonKey, 'picker.ui.chat.reason.workdir_untrusted');
+  // Trusted, or blocked for a machine-level reason: mainPath changes nothing.
+  assert.equal(chatAvailability(info(ok, 4), undefined, 'trusted', { mainPath: main }).enabled, true);
+  const old = chatAvailability(info({ supported: false, reason: 'not_claude', minClaudeVersion: '2.1.210' }, 4), undefined, 'untrusted', { mainPath: main });
+  assert.equal(old.reasonKey, 'picker.ui.chat.reason.not_claude');
+});
+
 await run();
