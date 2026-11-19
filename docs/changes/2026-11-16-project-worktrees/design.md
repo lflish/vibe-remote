@@ -945,6 +945,7 @@ CSS 变量：保留现有变量名（`styles.css` 里到处在用），换成 M1
 - T13（T14 验证时发现并修）：删除删到一半后剩下的目录（`.git` 文件指向已被 git 删掉的管理目录），`WorktreeStatus` / `RemoveWorktree` 对它返回 `ErrWorktreeNotFound`（404），不是 git 失败；判断只看文件系统（decisions #68）。6.2 末尾那张表里「500 之后再查状态得到 404 → 失败说明」因此才走得到。
 - T14：确认框底部多一个「目录 / 分支」小表；有未提交文件且分支会被一并删除时多一句 `wt.delete.branchToo`（d36）。`commits` 形态里改选「目录和分支都删」后回车 = 取消（d37）。`data-variant` 的 `detached` 指「不在分支上且有不属于任何分支的提交」；不在分支上、没有这种提交的是 `external`（daemon 下发的 detached worktree 都不是 `managed`）或 `clean`。不在分支上的提交那一段警告用的也是 `delete-wt-commits` 这个 testid。警告形态的按钮顺序是「回车 = 取消」提示、「仍然删除」（`delete-wt-force`，描边）、「取消」（默认，深色实心）；此时没有 `dialog-confirm`。其余细节见 decisions #69。
 - T15：`-c` 说明的文案开头从「这个 worktree」改成「这个目录」（d38）。说明条只在适用时才在 DOM 里，插在 `continue` 那一个选项的正下方（`role="note"`，样式 `.modal-continue-note`）。目录选择器里的会话数随「当前所列目录」和「会话模式」两样变化：列目录成功后、切换模式后各算一次，列目录失败时按 0；正在加载下一个目录的那一瞬间保留上一个目录的结果，免得说明条闪一下。任务清单之外加了一个用例 `test-session-form.mjs › flags_section_note_follows_count`（直接驱动启动选项段：会话数变化、重新装入选项后说明只有一条）。
+- T16：**真实键盘待人工确认**（V7 留下的风险）。开发时没有用 `osascript` 向前台应用发按键（decisions #70），改为 `gui-smoke.mjs` 第 11 步经 CDP 向临时实例发键：⌘3、⌘⇧]、⌘⇧[ 按侧边栏顺序切换并在两端循环；焦点在对话输入框里时照常切换、草稿不变；折叠的项目被跳过、⌘9 在不足 9 个会话时不动；删除确认框开着时不切换；全部终端会话打开之后在聚焦的终端里连按 5 个快捷键，发往 daemon 的 `data` 帧为 0 字节，随后普通输入照常到达。`gui-smoke.mjs` 的 `check(` 从 17 处增加到 24 处。另外：用快捷键切换时会关掉开着的行菜单；带 ⇧ 的数字键不匹配；没有可见会话时按键同样被拦截（decisions #71）。
 
 ## 11. 方案验证（机器关口 B）
 

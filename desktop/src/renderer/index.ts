@@ -16,7 +16,9 @@ import { ChatView } from './chat/view';
 import { nextDot, type ActivityEvent, type Dot, type RestSnapshot } from './chat/activity';
 import type { Prompt } from './chat/types';
 import { renderSidebar as renderSidebarView, renderToolbarTitle, rendererIcon, type SidebarModel, type SidebarActions } from './sidebar';
-import { buildTree, countActiveSessionsAt, nextCapability, sessionContext, notificationTitle, type Capability, type TreeProject, type TreeWorktree } from './tree';
+import { buildTree, countActiveSessionsAt, nextCapability, sessionContext, notificationTitle, visibleSessions, type Capability, type TreeProject, type TreeWorktree } from './tree';
+import { installShortcuts } from './shortcuts';
+import { closeMenu } from './menu';
 
 // Declared by preload
 
@@ -186,6 +188,34 @@ window.vibeRemote?.onNotificationClick?.((tag) => {
       return;
     }
   }
+});
+
+// Session-switching keys (R7): ⌘1–9 by position, ⌘⇧[ / ⌘⇧] to cycle. Positions
+// are the sessions the sidebar shows, top to bottom across machines; folded
+// machines and projects are left out. Wired once at load.
+function shortcutSessions(): { machineKey: string; id: string }[] {
+  return visibleSessions(
+    machines.map((m) => {
+      const key = machineKey(m);
+      return { key, collapsed: collapsedMachines.has(key), tree: treeFor(key) };
+    }),
+    collapsedProjects,
+  );
+}
+installShortcuts(window, {
+  blocked: () => renamingActive || document.querySelector('.modal-overlay') !== null,
+  count: () => shortcutSessions().length,
+  activeIndex: () => shortcutSessions().findIndex((s) => `${s.machineKey}::${s.id}` === activeKey),
+  open: (index) => {
+    const target = shortcutSessions()[index];
+    if (!target) return;
+    const machine = machines.find((m) => machineKey(m) === target.machineKey);
+    const session = machineSessions.get(target.machineKey)?.find((s) => s.id === target.id);
+    if (!machine || !session) return;
+    // A row menu left open would point at a row the switch is about to redraw.
+    closeMenu();
+    openExisting(machine, session);
+  },
 });
 
 // wireLanguageToggle wires the sidebar language button and re-renders all

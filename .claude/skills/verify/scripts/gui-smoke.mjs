@@ -13,6 +13,8 @@
 //   every row's name, badge, state text and dot are readable at the default width
 //   chat (second daemon, fake claude): new chat session via the picker →
 //   reply rendered → permission prompt allowed once → turn resumes
+//   session-switching keys (⌘1–9, ⌘⇧[, ⌘⇧]) with the focus in the terminal and
+//   in the chat input: the session changes, nothing is typed into either
 //
 // It launches the *built* app (dist/) with the stock Electron binary against a
 // throwaway daemon and a throwaway userData dir, so the developer's real
@@ -411,6 +413,9 @@ async function main() {
   check(withChat.problems.length === 0, 'sidebar rows stay readable with a chat session listed', withChat.problems.join('; '));
   if (process.env.VR_SIDEBAR_SHOT) await sidebarShot(process.env.VR_SIDEBAR_SHOT);
 
+  // 11. Session-switching keys.
+  await shortcutCase(sessionId);
+
   const exceptions = cdp.events.filter((e) => e.method === 'Runtime.exceptionThrown')
     .map((e) => e.params.exceptionDetails.exception?.description || e.params.exceptionDetails.text);
   check(exceptions.length === 0, 'no uncaught renderer exceptions', exceptions.join(' | '));
@@ -418,6 +423,7 @@ async function main() {
 
   if (args.has('--keep')) {
     console.log('--keep: app left running; press Ctrl+C to clean up');
+    console.log(`--keep: Electron pid ${electron.pid}`);
     await new Promise((r) => process.once('SIGINT', r));
   }
 }
@@ -552,6 +558,153 @@ async function chatCases() {
     ok('permission allow once resumes');
   } catch (e) {
     fail(`permission allow once resumes — ${e.message}`);
+  }
+}
+
+// ⌘1–9 / ⌘⇧[ / ⌘⇧] sent as key events to this app's page (never to the system):
+// the session shown changes, in sidebar order, and the keys reach neither the
+// PTY nor the chat input. Runs last: every session of the run is listed by now.
+const SHORTCUT_KEYS = {
+  next: ['}', 'BracketRight', 221, MOD.meta | MOD.shift],
+  prev: ['{', 'BracketLeft', 219, MOD.meta | MOD.shift],
+};
+for (let n = 1; n <= 9; n++) SHORTCUT_KEYS[n] = [String(n), `Digit${n}`, 48 + n, MOD.meta];
+
+async function pressShortcut(name) {
+  const [key, code, vk, modifiers] = SHORTCUT_KEYS[name];
+  const base = { key, code, windowsVirtualKeyCode: vk, nativeVirtualKeyCode: vk, modifiers };
+  await cdp.send('Input.dispatchKeyEvent', { type: 'rawKeyDown', ...base });
+  await cdp.send('Input.dispatchKeyEvent', { type: 'keyUp', ...base });
+}
+
+async function shortcutCase(firstSessionId) {
+  try {
+    const order = () => cdp.evaluate(`[...document.querySelectorAll('#machine-list .session-item')].filter((r) => r.getClientRects().length > 0).map((r) => r.dataset.sessionId)`);
+    const active = () => cdp.evaluate(`document.querySelector('#machine-list .session-item.active')?.dataset.sessionId ?? null`);
+    const focusKind = () => cdp.evaluate(`(() => { const a = document.activeElement; return !a ? 'none' : a.classList.contains('xterm-helper-textarea') ? 'terminal' : a.dataset.testid === 'chat-input' ? 'chat-input' : a.tagName.toLowerCase(); })()`);
+    // Presses the key and reports whether `want` became the session shown.
+    const switchTo = async (name, want) => {
+      await pressShortcut(name);
+      return waitFor(async () => (await active()) === want, 8000, `${name} → ${want}`).then(() => true, () => false);
+    };
+    // Presses the key and reports whether the session shown stayed `want`.
+    const stays = async (name, want) => {
+      await pressShortcut(name);
+      await sleep(400);
+      return (await active()) === want;
+    };
+    const openRow = async (id) => {
+      await cdp.evaluate(`document.querySelector('.session-item[data-session-id="${id}"] .session-label').click(), true`);
+      await waitFor(async () => (await active()) === id, 15000, `session ${id} open`);
+    };
+    const focusTerminal = async () => {
+      await cdp.evaluate(`document.querySelector('.term-instance:not([style*="none"]) .xterm-helper-textarea')?.focus(), true`);
+      return (await focusKind()) === 'terminal';
+    };
+
+    const all = await order();
+    const n = all.length;
+    const chatId = await cdp.evaluate(`document.querySelector('#machine-list .session-item[data-ui="chat"]')?.dataset.sessionId ?? null`);
+    if (n < 5 || !chatId || all[n - 1] !== chatId) throw new Error(`unexpected sidebar: ${n} sessions, chat session ${chatId} at ${all.indexOf(chatId)}`);
+
+    // By position, then previous / next, from a focused terminal (R7.1, R7.2, R7.3).
+    await openRow(firstSessionId);
+    const inTerminal = await focusTerminal();
+    const third = await switchTo(3, all[2]);
+    const next = await switchTo('next', all[3]);
+    const prev = await switchTo('prev', all[2]);
+    check(inTerminal && third && next && prev, '⌘3 opens the third session in the sidebar; ⌘⇧] and ⌘⇧[ step to its neighbours',
+      `focus in terminal ${inTerminal}, ⌘3 ${third}, ⌘⇧] ${next}, ⌘⇧[ ${prev}`);
+
+    // Wrapping at both ends; the last session is the chat one.
+    const first = await switchTo(1, all[0]);
+    const wrapBack = await switchTo('prev', all[n - 1]);
+    const wrapOn = await switchTo('next', all[0]);
+    check(first && wrapBack && wrapOn, '⌘⇧[ on the first session goes to the last one and ⌘⇧] comes back', `⌘1 ${first}, ⌘⇧[ ${wrapBack}, ⌘⇧] ${wrapOn}`);
+
+    // From the chat input: the keys switch and the draft is left alone (R7.3).
+    await openRow(chatId);
+    await cdp.evaluate(`${visibleChat}.querySelector('[data-testid="chat-input"]').focus(), true`);
+    await cdp.send('Input.insertText', { text: 'draft stays' });
+    const inChat = (await focusKind()) === 'chat-input';
+    const away = await switchTo('prev', all[n - 2]);
+    const back = await switchTo('next', chatId);
+    const draft = await cdp.evaluate(`${visibleChat}.querySelector('[data-testid="chat-input"]').value`);
+    check(inChat && away && back && draft === 'draft stays', 'with the focus in the chat input the keys switch sessions and type nothing into it',
+      `focus in chat input ${inChat}, ⌘⇧[ ${away}, ⌘⇧] back ${back}, input ${JSON.stringify(draft)}`);
+    await cdp.evaluate(`(() => { const i = ${visibleChat}.querySelector('[data-testid="chat-input"]'); i.value = ''; i.dispatchEvent(new Event('input', { bubbles: true })); return true; })()`);
+
+    // A folded project is skipped, and a position past the end does nothing (R7.5, R7.1).
+    const folded = await cdp.evaluate(`(() => {
+      const group = [...document.querySelectorAll('#machine-list .project-group')].find((g) => g.querySelectorAll('.session-item').length >= 3 && !g.querySelector('.session-item.active'));
+      if (!group) return null;
+      const ids = [...group.querySelectorAll('.session-item')].map((r) => r.dataset.sessionId);
+      group.querySelector('.project-toggle').click();
+      return { project: group.dataset.projectId, ids };
+    })()`);
+    if (!folded) throw new Error('no project with three sessions to fold');
+    const visible = await waitFor(async () => { const o = await order(); return o.length === n - folded.ids.length ? o : null; }, 5000, 'project folded');
+    const start = visible.indexOf(chatId);
+    const seen = [];
+    for (let i = 1; i <= visible.length; i++) {
+      const want = visible[(start + i) % visible.length];
+      if (!(await switchTo('next', want))) { seen.push(`${await active()} (wanted ${want})`); break; }
+      seen.push(want);
+    }
+    const fullCircle = seen.length === visible.length && seen[seen.length - 1] === chatId && !seen.some((id) => folded.ids.includes(id));
+    const pastEnd = visible.length < 9 ? await stays(9, chatId) : true;
+    check(fullCircle && pastEnd, 'a folded project is skipped by ⌘⇧], and ⌘9 with fewer than nine sessions showing does nothing',
+      `${visible.length} showing, a full circle visited ${seen.length}: ${seen.join(', ')}; ⌘9 stayed ${pastEnd}`);
+    await cdp.evaluate(`document.querySelector('#machine-list .project-group[data-project-id=${JSON.stringify(folded.project)}] .project-toggle').click(), true`);
+    await waitFor(async () => (await order()).length === n, 5000, 'project unfolded');
+
+    // With a dialog open the keys do nothing (R7.4).
+    await openRow(all[1]);
+    await cdp.evaluate(`document.querySelector('.session-item[data-session-id="${all[2]}"] .session-close').click(), true`);
+    await waitFor(() => cdp.evaluate(`!!document.querySelector('.modal-overlay [data-testid="delete-session-dialog"]')`), 5000, 'delete confirmation');
+    const blockedIndex = await stays(4, all[1]);
+    const blockedNext = await stays('next', all[1]);
+    await cdp.evaluate(`document.querySelector('.modal-overlay [data-testid="dialog-cancel"]').click(), true`);
+    await waitFor(() => cdp.evaluate(`!document.querySelector('.modal-overlay')`), 5000, 'confirmation closed');
+    check(blockedIndex && blockedNext && (await order()).length === n, 'with a dialog open ⌘4 and ⌘⇧] leave the session shown alone', `⌘4 stayed ${blockedIndex}, ⌘⇧] stayed ${blockedNext}`);
+
+    // Nothing goes to a PTY for these keys. Every terminal session is opened
+    // first, so that a first attach (xterm answering the remote's terminal
+    // queries) cannot be mistaken for a typed key.
+    for (const id of all) if (id !== chatId) await openRow(id);
+    await sleep(1500);
+    await cdp.evaluate(`(() => {
+      window.__vrSent = [];
+      if (!window.__vrSendHooked) {
+        window.__vrSendHooked = true;
+        const send = WebSocket.prototype.send;
+        WebSocket.prototype.send = function (d) {
+          try { const f = JSON.parse(d); if (f.type === 'data') window.__vrSent.push(atob(f.payload)); } catch { /* not a frame */ }
+          return send.call(this, d);
+        };
+      }
+      return true;
+    })()`);
+    const sent = () => cdp.evaluate(`JSON.stringify(window.__vrSent)`);
+    await openRow(all[0]);
+    const focused = [await focusTerminal()];
+    const steps = [[2, all[1]], ['next', all[2]], [5, all[4]], ['prev', all[3]], [1, all[0]]];
+    const moved = [];
+    for (const [name, want] of steps) {
+      moved.push(await switchTo(name, want));
+      // The session just shown takes the focus itself; the next key goes to its terminal.
+      focused.push(await waitFor(async () => (await focusKind()) === 'terminal', 3000, 'terminal focused').then(() => true, () => false));
+    }
+    const stayed = n < 9 ? await stays(9, all[0]) : true;
+    const typed = await sent();
+    check(moved.every(Boolean) && focused.every(Boolean) && stayed && typed === '[]', 'the switching keys pressed in a focused terminal send no bytes to the remote',
+      `switched ${JSON.stringify(moved)}, terminal focused ${JSON.stringify(focused)}, bytes sent ${typed}`);
+    // The same recorder does see ordinary typing.
+    await typeLine(`echo KEYS_$((3+4))_OK`);
+    await waitFor(async () => (await screenText()).includes('KEYS_7_OK'), 10000, 'echo after the shortcuts');
+    check((await sent()).includes('KEYS_'), 'ordinary keys typed afterwards still reach the remote shell');
+  } catch (e) {
+    fail(`session-switching keys — ${e.message}`);
   }
 }
 

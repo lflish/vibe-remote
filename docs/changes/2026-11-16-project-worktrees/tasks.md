@@ -776,7 +776,7 @@
 - 依赖：T5、T9、T11
 
 ### T16 切换会话的快捷键（⌘1–9、⌘⇧[、⌘⇧]）
-- 状态：待办
+- 状态：完成（真实键盘待人工确认，见下面的「执行记录」）
 - 文件：新建 `desktop/src/renderer/shortcuts.ts`、`desktop/scripts/test-shortcuts.mjs`；修改 `desktop/src/renderer/index.ts`（启动时 `installShortcuts(window, …)`：`blocked` = 页面上有 `.modal-overlay` 或正在内联重命名；`count` 和 `activeIndex` 来自 `visibleSessions(…)`；`open` 调 `openExisting`）、`desktop/package.json`（`test:shortcuts`）、`.claude/skills/verify/scripts/gui-smoke.mjs`（只在 `--keep` 分支多打印一行 `--keep: Electron pid <pid>`，值是脚本自己 `spawn` 的 Electron 子进程的 pid，供下面的真实键盘确认核对前台应用。这一行不是断言，不改任何检查）
 - 接口：
   - 使用：`visibleSessions`（T5）；`machineTrees`、`collapsedProjects`、折叠的机器集合、`renamingActive`、`openExisting`（`index.ts`，T6b 和现有）
@@ -791,6 +791,7 @@
 - 完成定义：
   - `cd desktop && npm run typecheck && npm run test:shortcuts && npm run test:tree && npm run test:terminal-clipboard` 退出码 0
   - 真实键盘确认一次（design V7 留下的风险：CDP 注入的按键不经过 macOS 的原生菜单分发）：在仓库根执行 `TMUX_TMPDIR=$(mktemp -d /tmp/vr-XXXXXX) node .claude/skills/verify/scripts/gui-smoke.mjs --keep`，用它留下的临时实例（临时 daemon、临时 userData、`--use-mock-keychain`、独立的 tmux；不另起应用，不连本机真实的 daemon），结束后对脚本按 Ctrl+C 让它清理。发按键之前必须确认最前面的应用就是这个临时实例，按 pid 比，不按进程名比（用户自己用 `npm run dev` 开着的 vibe-remote 进程名同样是 `Electron`，按键会发给他真实的应用）：`osascript -e 'tell application "System Events" to get unix id of first process whose frontmost is true'` 的输出必须等于脚本打印的 `--keep: Electron pid <pid>` 里的 pid。相等才执行 `osascript -e 'tell application "System Events" to keystroke "2" using command down'` 和 `osascript -e 'tell application "System Events" to key code 30 using {command down, shift down}'`，每条之前都重新比一次 pid；期望会话切换、终端里没有多出字符。结果写进 design.md 第 10 节「变更」。pid 不相等（最前面的不是它），或 `osascript` 因为没有辅助功能权限报错时，不发按键，在第 10 节记「真实键盘待人工确认」并交给 dev-test 的测试报告，不算本任务未完成
+- 执行记录（2026-11-19，decisions #70、#71）：完成定义里的「真实键盘确认」**没有做**。开发时用户可能正在用这台机器，`osascript` 发出的按键进的是系统最前面的应用，协调者要求不向前台应用发按键。代替它的是 `gui-smoke.mjs` 第 11 步（7 个 `check(`）：经 CDP 的 `Input.dispatchKeyEvent` 只向脚本自己起的临时实例发带 ⌘ 的按键，焦点分别在 xterm 和对话输入框里，断言会话按侧边栏顺序切换、循环、跳过折叠的项目、对话框打开时不切换，以及发往 daemon 的 `data` 帧为 0 字节。CDP 的按键不经过 macOS 的原生菜单分发（design V7 的剩余风险原样还在），所以**待人工确认**：在打包后的 app 里用真实键盘按一遍 ⌘1–⌘9、⌘⇧[、⌘⇧]，焦点分别在终端和对话输入框里，确认会话切换、终端和输入框里没有多出字符（已记进「后续」交给 dev-test）。`--keep` 多打印的那一行 `--keep: Electron pid <pid>` 照任务加了，供人工确认时核对前台应用。
 - 依赖：T5、T6b
 
 ### T17 新旧版本互连：整体核对（R9）
@@ -941,4 +942,5 @@ spec「推迟到以后」的条目：
 - 当前打开的会话被删除（删会话或删它所在的 worktree）而又没有别的已打开会话时，主区域是空白的，没有回到机器概览或空状态（`closeSession` 原来就是这样，T14 的收尾沿用了它）。
 - 「删到一半失败」的说明框里，daemon 的 `message` 已经写了「目录还剩一部分、分支没删」，下面 `wt.delete.partial` 又说了一遍。可以让 daemon 的 `message` 只带 git 的输出，或在界面上合成一段。
 - 删除 worktree 的确认框只写「会先结束这 N 个会话」，没有列出是哪几个（效果页上列了名字和类型）。可以把会话名列出来。
+- **待人工确认（交给 dev-test，写进测试报告）**：切换会话的快捷键在打包后的 app 里用真实键盘按一遍：⌘1–⌘9、⌘⇧[、⌘⇧]，焦点分别在终端里和对话输入框里；期望会话切换、终端和输入框里没有多出字符，系统菜单没有抢走这些键。T16 只用 CDP 向临时实例发键验证过（`gui-smoke.mjs` 第 11 步），CDP 的按键不经过 macOS 的原生菜单分发（design V7）；开发时没有向系统前台发按键（decisions #70）。
 - 查 `gui-chat-smoke` R7 偶发失败的原因（AskUserQuestion 表单：`answers echoed: on": "Pick a fruit"`；T6b 提交后 3 次里失败 1 次，decisions #47）。
