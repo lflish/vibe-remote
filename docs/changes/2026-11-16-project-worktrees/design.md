@@ -936,6 +936,8 @@ CSS 变量：保留现有变量名（`styles.css` 里到处在用），换成 M1
 - T7：会话启动失败后撤销 worktree 时，返回的错误以原来的失败原因为主体（`errors.Is` 仍能认出 `claude_session_busy`、`shutting_down`），撤销没清掉的东西附在后面；此前是反过来包的。`ValidateWorkdir` 现在会被调两次（建之前查根、建之后查最终工作目录），现有测试 `TestShutdownWaitsForInFlightChatCreate` 用来卡住创建的回调相应改成只在路径已存在的那一次卡住（decisions #51）。
 - T7：不带名字的旧 Worktree 模式也走新的创建序列，所以它在 `git worktree add` 失败时同样不留分支（旧做法 `-b` 会留下 `vibe/<会话id>`，V3）；非 git 目录的 `message` 从 git 的原始报错变成 `discover repository: <目录> is not inside a git repository`（错误码不变，仍是 fatal 的 `create_failed`）。
 - T8：`CreateWorktree` 的第 1–5 步提成包内函数 `precheckWorktree`，`PlanWorktree` 直接调用它，所以预检和新建对同一个名字不会给出不同的结论（decisions #56）。`TestPlanWorktreeHTTPErrors` 里「git 失败 → 500 `git_failed`」用一个立刻失败的假 git 测；超时那一种放在 session 包的 `TestPlanWorktreeGitTimeout`（`gitTimeout` 是包内变量，server 包调不到，decisions #55）。
+- T9：`session-form.ts` 的段比 4.10 / 任务多三个成员：启动选项段 `setUI(ui)`，名字段 `refresh()` 和 `input`（decisions #57）。名字段在目录选择器里只在「Worktree 模式且 `info.proto >= 4`」时挂进对话框，其余时候不在 DOM 里；所列目录不在 git 仓库里（plan 返回 `not_git`）时输入框和确认按钮不可用，换目录后恢复。新增文案键 `wt.error.planFailed`（预检请求本身失败，decisions #58）。空名字在用户输入之前不报错（d32）；名字输入框里回车 = 确认（d33）。新对话框的标题是 `div.modal-header > h2.modal-title + div.modal-subtitle`，仍是 `.modal` 的三个直接子元素之一。
+- T9：`index.ts` 里新建会话的两条路径（目录选择器、新建 worktree 对话框）合到 `startPicked()`；attach 的 error 帧带 `worktreeName` 对应的四个错误码时，状态栏和终端里的报错改用 `worktreeErrorText` 的文案，其它错误码和没带名字的新建不变。
 
 ## 11. 方案验证（机器关口 B）
 

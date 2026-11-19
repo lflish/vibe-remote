@@ -553,7 +553,7 @@
 - 依赖：T7
 
 ### T9 桌面端：新建 worktree 对话框，目录选择器的 Worktree 模式加名字
-- 状态：进行中
+- 状态：完成
 - 文件：
   - 新建 `desktop/src/renderer/worktree-name.ts`、`desktop/src/renderer/session-form.ts`、`desktop/src/renderer/worktree-dialogs.ts`（本任务只有 `openNewWorktreeDialog`）；新建测试 `desktop/scripts/test-worktree-name.mjs`、`test-session-form.mjs`、`test-worktree-dialogs.mjs`、`test-dialog-layout.mjs`
   - 修改 `desktop/src/renderer/dirpicker.ts`（界面卡片和启动选项改用 `session-form.ts` 的两个段，行为不变；Worktree 模式且 `info.proto >= 4` 时在模式卡片下方加名字段，此时不显示 `picker.modeNote`；`PickedSession` 加可缺省的 `worktreeName`、`worktreePath`）、`desktop/src/renderer/index.ts`（给 `SidebarActions` 传 `newWorktree`；新建会话时把 `picked.worktreeName` 放进 `attach` 的 `AttachOptions`；`client.onError` 收到 4 个新错误码时状态栏用 `worktreeErrorText`）、`desktop/src/renderer/styles.css`（追加「名字段」的规则）、`desktop/src/renderer/i18n.ts`（`wt.new.*`、`wt.name.*`、`wt.error.*`）、`desktop/package.json`（4 个 `test:*`）、`.claude/skills/verify/scripts/gui-smoke.mjs` 和 `gui-chat-smoke.mjs`（目录选择器的选择器有变时同步）
@@ -892,6 +892,7 @@
 | T6c | 2026-11-19 14:38 | 81dab8d | 修复前 `gui-smoke.mjs` 新检查 FAIL（`session "fix": name has no visible width`、`session "new-api": name shows only 8px of 47px`、对话行 `name shows only 26px of 56px`）；修复后 `gui-smoke.mjs` 33 行 PASS、0 FAIL，`gui-chat-smoke.mjs` 29 行 PASS、0 FAIL；`typecheck`+`test:sidebar`(19) 退出 0；`TMUX_TMPDIR=… make check` exit 0（第一次在 `internal/chat` 卡住超时，重跑通过，decisions #50）；`check(`=17、`^test(`=26；截图 `.devflow-tmp/build-shots/t6c-sidebar*.png` |
 | T7 | 2026-11-19 15:20 | da251b7（失败的测试和接口骨架）、4657f4b（实现）、e35aa2c（协议三处、桌面端连接层、记录） | 完成定义的 `go test -race -count=1 ./internal/session ./internal/config ./internal/server -run '…'` 三行 `ok`（49 个用例和子用例 PASS，无 SKIP；并发用例各 20 轮）；`go test -race ./...` 全包 `ok`；`npm run typecheck`+`test:attach-replay` 退出 0；两条 grep 无输出；`attach.worktreeName` 和 4 个错误码在 protocol.go / protocol.ts / protocol.md 三处一致；`TMUX_TMPDIR=… make check` exit 0 |
 | T8 | 2026-11-19 15:28 | d378972 | 完成定义的 `go test -race -count=1 ./internal/session ./internal/server -run 'TestPlan\|TestNewEndpointsRequireToken'` 两行 `ok`；`npm run typecheck`+`test:rest-projects`(6) 退出 0；`WorktreePlan` / `WorktreeBase` 的字段和可缺省性在 protocol.go / protocol.ts / protocol.md 三处一致，路由、`rest.ts`、端点表一致；`TMUX_TMPDIR=… make check` exit 0；`gui-smoke.mjs` 33 行 PASS、`gui-chat-smoke.mjs` 29 行 PASS，都无 FAIL |
+| T9 | 2026-11-19 15:54 | df32cea（失败的测试和接口骨架）、0a6ef68（实现）、本行所在的提交（记录） | 完成定义的 `typecheck`+`test:worktree-name`(3)+`test:session-form`(9)+`test:worktree-dialogs`(6)+`test:dialog-layout`+`test:picker-layout`+`test:i18n-parity`(285 键) 全退出 0；`npm test` 退出 0；`TMUX_TMPDIR=… make check` exit 0；`gui-smoke.mjs` 33 行 PASS（含目录选择器 500/700/803 三档、侧边栏布局在每一行悬停时再量一遍：项目行的「新建 worktree」按钮已出现）、`gui-chat-smoke.mjs` 29 行 PASS，都无 FAIL；真实 Electron 临时实例里新建 worktree 对话框（中文正常态、出错态、长冲突文案、英文出错态）和目录选择器的 Worktree 模式在 800×500、800×700、1100×803 下主按钮都在对话框和窗口内且点得到，截图 `.devflow-tmp/build-shots/t9-*.png` |
 
 更正：T5 实际完成于 2026-11-19 12:39，T6a 13:11，T6b 14:04（以提交时间为准）。此后各行的时间用 `date '+%F %H:%M'` 取。
 
