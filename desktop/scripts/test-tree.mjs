@@ -167,6 +167,140 @@ test('keeps_daemon_order', () => {
   assert.deepEqual(tree[0].worktrees[0].sessions.map((s) => s.id), ['s2', 's1']);
 });
 
+// R1.5 at a realistic size: three projects, eight sessions, several worktrees
+// in a project and several sessions in a worktree. The expected order is
+// written out here, not taken from a first run: a wrong order that is merely
+// stable would pass a "same as last time" comparison.
+const flatten = (tree) => {
+  const lines = [];
+  for (const p of tree) {
+    lines.push(`P ${p.name}`);
+    for (const w of p.worktrees) {
+      lines.push(`  W ${w.label}${w.main ? ' (main)' : ''}`);
+      for (const x of w.sessions) lines.push(`    S ${x.id} "${x.name}"`);
+    }
+    for (const x of p.sessions) lines.push(`  S ${x.id} "${x.name}"`);
+  }
+  return lines;
+};
+const shuffles = function* (list, rounds = 40) {
+  let seed = 7;
+  const rand = () => { seed = (seed * 1103515245 + 12345) & 0x7fffffff; return seed / 0x7fffffff; };
+  yield [...list].reverse();
+  for (let i = 0; i < rounds; i++) yield list.map((x) => [rand(), x]).sort((a, b) => a[0] - b[0]).map((x) => x[1]);
+};
+// Session ids sort the opposite way to their creation times, so an order by id
+// cannot pass for an order by creation time.
+const at = (n) => `2026-03-01T10:00:${String(n).padStart(2, '0')}Z`;
+
+test('order_three_projects_eight_sessions_new_daemon', () => {
+  // What the daemon lists (design 4.2): projects by name ignoring case, the main
+  // directory first, the other worktrees by branch, sessions by creation time.
+  const projects = [
+    { id: '/r/alpha', name: 'alpha', git: true, sessions: [], worktrees: [
+      { path: '/r/alpha', branch: 'main', head: 'a000001', main: true, sessions: ['z9', 'y8'] },
+      { path: '/r/alpha-worktrees/fix', branch: 'fix', head: 'a000002', managed: true, sessions: ['x7', 'w6'] },
+      { path: '/r/alpha-worktrees/zeta', branch: 'zeta', head: 'a000003', managed: true, sessions: ['v5'] },
+    ] },
+    { id: '/r/Beta', name: 'Beta', git: true, sessions: [], worktrees: [
+      { path: '/r/Beta', branch: 'main', head: 'b000001', main: true, sessions: [] },
+      { path: '/r/Beta-worktrees/x', branch: 'x', head: 'b000002', sessions: ['u4'] },
+    ] },
+    { id: '/r/gamma', name: 'gamma', git: true, sessions: [], worktrees: [
+      { path: '/r/gamma', branch: 'main', head: 'c000001', main: true, sessions: ['t3'] },
+      { path: '/r/gamma-worktrees/b', branch: 'b', head: 'c000002', managed: true, sessions: ['s2'] },
+    ] },
+  ];
+  const sessions = [
+    { id: 'z9', title: '', workdir: '/r/alpha', created: at(1), mode: 'normal' },
+    { id: 'y8', title: '', workdir: '/r/alpha', created: at(2), mode: 'normal', ui: 'chat', state: 'idle' },
+    { id: 'x7', title: '', workdir: '/r/alpha-worktrees/fix', created: at(3), mode: 'normal' },
+    { id: 'w6', title: '登录', workdir: '/r/alpha-worktrees/fix', created: at(4), mode: 'normal' },
+    { id: 'v5', title: '', workdir: '/r/alpha-worktrees/zeta', created: at(5), mode: 'normal' },
+    { id: 'u4', title: '', workdir: '/r/Beta-worktrees/x', created: at(6), mode: 'normal' },
+    { id: 't3', title: '', workdir: '/r/gamma', created: at(7), mode: 'normal' },
+    { id: 's2', title: '', workdir: '/r/gamma-worktrees/b', created: at(8), mode: 'normal' },
+  ];
+  const expected = [
+    'P alpha',
+    '  W main (main)',
+    '    S z9 "alpha"',
+    '    S y8 "alpha 2"',
+    '  W fix',
+    '    S x7 "fix"',
+    '    S w6 "登录"',
+    '  W zeta',
+    '    S v5 "zeta"',
+    'P Beta',
+    '  W main (main)',
+    '  W x',
+    '    S u4 "x"',
+    'P gamma',
+    '  W main (main)',
+    '    S t3 "gamma"',
+    '  W b',
+    '    S s2 "b"',
+  ];
+  assert.equal(sessions.length, 8);
+  assert.deepEqual(flatten(buildTree(sessions, projects)), expected);
+  // Whatever order /api/v1/sessions lists them in, the tree is the daemon's.
+  for (const shuffled of shuffles(sessions)) {
+    assert.deepEqual(flatten(buildTree(shuffled, projects)), expected, `sessions listed as ${shuffled.map((x) => x.id).join(',')}`);
+  }
+  assert.deepEqual(visibleSessions([{ key: 'm', collapsed: false, tree: buildTree(sessions, projects) }], new Set()).map((x) => x.id),
+    ['z9', 'y8', 'x7', 'w6', 'v5', 'u4', 't3', 's2'], 'the switching keys walk the same order');
+});
+
+test('order_three_projects_eight_sessions_old_daemon', () => {
+  // No project tree: the order is the desktop's own (design 4.2 again), built
+  // from session fields that an old daemon lists in a different order each time.
+  const wt = (id, repo, branch, n, over = {}) => ({
+    id, title: '', workdir: `${repo}-worktrees/${branch}`, created: at(n), mode: 'worktree',
+    sourceWorkdir: repo, sourceRepo: repo, worktreeRoot: `${repo}-worktrees/${branch}`, branch, ...over,
+  });
+  const sessions = [
+    { id: 'z9', title: '', workdir: '/r/alpha', created: at(1), mode: 'normal' },
+    { id: 'y8', title: '', workdir: '/r/alpha/src', created: at(2), mode: 'normal' },
+    wt('x7', '/r/alpha', 'fix', 3),
+    wt('w6', '/r/alpha', 'fix', 4, { workdir: '/r/alpha-worktrees/fix/pkg' }),
+    wt('v5', '/r/alpha', 'zeta', 5),
+    wt('u4', '/r/Beta', 'x', 6),
+    { id: 't3', title: '', workdir: '/r/gamma', created: at(7), mode: 'normal' },
+    wt('s2', '/r/gamma', 'b', 8),
+  ];
+  const expected = [
+    'P alpha',
+    '  W  (main)',
+    '    S z9 "alpha"',
+    '    S y8 "src"',
+    '  W fix',
+    '    S x7 "fix"',
+    '    S w6 "pkg"',
+    '  W zeta',
+    '    S v5 "zeta"',
+    'P Beta',
+    '  W x',
+    '    S u4 "x"',
+    'P gamma',
+    '  W  (main)',
+    '    S t3 "gamma"',
+    '  W b',
+    '    S s2 "b"',
+  ];
+  assert.equal(sessions.length, 8);
+  assert.deepEqual(flatten(buildTree(sessions, null)), expected);
+  let rounds = 0;
+  for (const shuffled of shuffles(sessions)) {
+    rounds++;
+    assert.deepEqual(flatten(buildTree(shuffled, null)), expected, `sessions listed as ${shuffled.map((x) => x.id).join(',')}`);
+  }
+  assert.equal(rounds, 41);
+  // By creation time, not by id and not by listing order: swap two creation times.
+  const swapped = sessions.map((x) => (x.id === 'x7' ? { ...x, created: at(4) } : x.id === 'w6' ? { ...x, created: at(3) } : x));
+  const lines = flatten(buildTree(swapped, null));
+  assert.ok(lines.indexOf('    S w6 "pkg"') < lines.indexOf('    S x7 "fix"'), 'the session created first comes first');
+});
+
 test('legacy_order_sorted', () => {
   const base = [
     sess('b', { mode: 'worktree', sourceRepo: '/r/Beta', worktreeRoot: '/r/Beta-wt/x', branch: 'x', workdir: '/r/Beta-wt/x' }),

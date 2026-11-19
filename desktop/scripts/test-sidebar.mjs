@@ -82,6 +82,47 @@ test('renders_three_levels', () => {
   assert.equal(icon('s2').getAttribute('d'), rendererIcon('terminal').querySelector('path').getAttribute('d'));
 });
 
+// R1.5 on the screen: three projects, eight sessions. The rows are read back
+// from the DOM, top to bottom, and compared with the order written out here.
+test('rows_are_drawn_in_the_daemons_order', () => {
+  const at = (n) => `2026-03-01T10:00:${String(n).padStart(2, '0')}Z`;
+  const projects = [
+    { id: '/r/alpha', name: 'alpha', git: true, sessions: [], worktrees: [
+      { path: '/r/alpha', branch: 'main', head: 'a000001', main: true, sessions: ['z9', 'y8'] },
+      { path: '/r/alpha-worktrees/fix', branch: 'fix', head: 'a000002', managed: true, sessions: ['x7', 'w6'] },
+      { path: '/r/alpha-worktrees/zeta', branch: 'zeta', head: 'a000003', managed: true, sessions: ['v5'] },
+    ] },
+    { id: '/r/Beta', name: 'Beta', git: true, sessions: [], worktrees: [{ path: '/r/Beta', branch: 'dev', head: 'b000001', main: true, sessions: ['u4'] }] },
+    { id: '/r/gamma', name: 'gamma', git: true, sessions: [], worktrees: [
+      { path: '/r/gamma', branch: 'main', head: 'c000001', main: true, sessions: ['t3'] },
+      { path: '/r/gamma-worktrees/b', branch: 'b', head: 'c000002', managed: true, sessions: ['s2'] },
+    ] },
+  ];
+  const list = [
+    ['z9', '/r/alpha', 1], ['y8', '/r/alpha', 2], ['x7', '/r/alpha-worktrees/fix', 3], ['w6', '/r/alpha-worktrees/fix', 4],
+    ['v5', '/r/alpha-worktrees/zeta', 5], ['u4', '/r/Beta', 6], ['t3', '/r/gamma', 7], ['s2', '/r/gamma-worktrees/b', 8],
+  ].map(([id, workdir, n]) => ({ id, title: '', workdir, created: at(n), mode: 'normal' }));
+  const expected = [
+    'project alpha', 'worktree main', 'session z9 alpha', 'session y8 alpha 2', 'worktree fix', 'session x7 fix', 'session w6 fix 2',
+    'worktree zeta', 'session v5 zeta',
+    'project Beta', 'session u4 Beta',
+    'project gamma', 'worktree main', 'session t3 gamma', 'worktree b', 'session s2 b',
+  ];
+  const drawn = (c) => [...c.querySelectorAll('[data-testid="project-row"], [data-testid="worktree-row"], [data-testid="session-row"]')].map((row) => {
+    if (row.dataset.testid === 'project-row') return `project ${row.querySelector('.project-name').textContent}`;
+    if (row.dataset.testid === 'worktree-row') return `worktree ${row.querySelector('.worktree-label').textContent}`;
+    return `session ${row.dataset.sessionId} ${row.querySelector('.session-label-text').textContent}`;
+  });
+  assert.deepEqual(drawn(render([machineEntry(buildTree(list, projects))])), expected);
+  // The same whatever order the session list arrives in, forty times over.
+  let seed = 3;
+  const rand = () => { seed = (seed * 1103515245 + 12345) & 0x7fffffff; return seed / 0x7fffffff; };
+  for (let i = 0; i < 40; i++) {
+    const shuffled = list.map((x) => [rand(), x]).sort((a, b) => a[0] - b[0]).map((x) => x[1]);
+    assert.deepEqual(drawn(render([machineEntry(buildTree(shuffled, projects))])), expected, `sessions listed as ${shuffled.map((x) => x.id).join(',')}`);
+  }
+});
+
 test('flat_project_has_no_worktree_row', () => {
   const projects = [{ id: '/r/new-api', name: 'new-api', git: true, worktrees: [{ path: '/r/new-api', branch: 'dev', head: 'abc1234', main: true, sessions: ['a', 'b'] }], sessions: [] }];
   const tree = buildTree([sess('a', { workdir: '/r/new-api' }), sess('b', { workdir: '/r/new-api' })], projects);
