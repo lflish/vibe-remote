@@ -449,8 +449,16 @@ function renderSession(parent: HTMLElement, m: SidebarMachine, s: TreeSession, m
     label.appendChild(badge);
   }
   label.title = info.workdir || s.id;
+  // Click opens, double click renames. A double click arrives as click, click
+  // (detail 2), dblclick. A session that is not open yet waits a moment before
+  // opening, so the dblclick can still cancel it; one that is open switches at
+  // once — and switching rebuilds the sidebar, so the second click lands on a
+  // new label. That second click must not open again: the rebuild would take
+  // this label out from under the pointer, and the dblclick is never sent to
+  // an element that has left the page.
   let openTimer: number | undefined;
-  label.addEventListener('click', () => {
+  label.addEventListener('click', (e) => {
+    if (e.detail > 1) return;
     if (model.isOpen(key)) {
       actions.open(machine, info);
     } else {

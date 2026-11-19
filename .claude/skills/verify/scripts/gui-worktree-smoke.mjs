@@ -540,7 +540,7 @@ async function quitApp() {
 }
 
 const MOD = { alt: 1, ctrl: 2, meta: 4, shift: 8 };
-const KEYS = { Enter: [13, 'Enter', '\r'], Escape: [27, 'Escape'], Tab: [9, 'Tab'], Backspace: [8, 'Backspace'] };
+const KEYS = { Enter: [13, 'Enter', '\r'], Escape: [27, 'Escape'], Tab: [9, 'Tab'], Backspace: [8, 'Backspace'], ArrowDown: [40, 'ArrowDown'], ArrowUp: [38, 'ArrowUp'] };
 
 async function pressKey(key, modifiers = 0) {
   const [vk, code, txt] = KEYS[key] ?? [key.toUpperCase().charCodeAt(0), `Key${key.toUpperCase()}`, key];
@@ -649,6 +649,33 @@ async function click(expr, what, ms = 8000) {
   await waitFor(() => ev(`(() => { const e = ${expr}; if (!e || e.disabled) return false; e.click(); return true; })()`), ms, `${what} to click`);
 }
 const exists = (expr) => ev(`!!(${expr})`);
+/** Where the element is (scrolled into view first) and whether its centre is the thing under that point. */
+const pointAt = (expr) => ev(`(() => { const e = ${expr}; if (!e) return null; e.scrollIntoView({ block: 'nearest', inline: 'nearest' }); const b = e.getBoundingClientRect(); const x = b.left + b.width / 2, y = b.top + b.height / 2; const hit = document.elementFromPoint(x, y); return { x, y, hit: !!hit && (hit === e || e.contains(hit)), disabled: !!e.disabled }; })()`);
+/** Moves the pointer onto the element `expr` evaluates to, the way a mouse gets there: hover applies, and what hover reveals can be clicked next. */
+async function pointerOver(expr, what) {
+  let p = await waitFor(() => pointAt(expr), 8000, `${what} on screen`);
+  await cdp.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: p.x, y: p.y });
+  await sleep(80);
+  // hovering a row brings its buttons in: the element may only now be where it will be clicked
+  p = await pointAt(expr);
+  await cdp.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: p.x, y: p.y });
+  await sleep(80);
+  return waitFor(async () => { const q = await pointAt(expr); return q && q.hit && !q.disabled ? q : null; }, 3000, `${what} under the pointer`);
+}
+/**
+ * A click made of pointer events (Input.dispatchMouseEvent), unlike `click`,
+ * which calls the element's click(): the pointer moves there first, the button
+ * takes the focus, something lying over the element gets the click instead, and
+ * `count: 2` is a double click as the system sends it (click, click, dblclick).
+ */
+async function pointerClick(expr, what, { count = 1 } = {}) {
+  const p = await pointerOver(expr, what);
+  for (let i = 1; i <= count; i++) {
+    await cdp.send('Input.dispatchMouseEvent', { type: 'mousePressed', x: p.x, y: p.y, button: 'left', clickCount: i });
+    await cdp.send('Input.dispatchMouseEvent', { type: 'mouseReleased', x: p.x, y: p.y, button: 'left', clickCount: i });
+  }
+  return p;
+}
 const text = (expr) => ev(`(${expr})?.textContent ?? null`);
 const statusMessage = () => ev(`document.getElementById('status-bar').hidden ? '' : document.getElementById('status-message').textContent`);
 
@@ -2653,6 +2680,48 @@ test('X11.removing', 'a worktree being deleted says so until its row is gone (re
 });
 
 // ---- 非功能：性能（spec「非功能要求」，tasks.md 测试计划的「性能 / 协议冒烟」一行） ----------------
+
+// ---- Found by using the app with a real pointer and the keyboard (test-report.md, X2 X3 X6 X8) ----
+
+test('X2.rename', 'double-clicking the name of a session that is open here renames it (exploration X2)', async () => {
+  const label = (id) => `${srow(id)}?.querySelector('.session-label')`;
+  const renaming = () => ev(`(() => { const i = document.querySelector('#machine-list .session-rename-input'); return i ? { focused: document.activeElement === i, value: i.value } : null; })()`);
+  const titleOf = async (id) => (await sessions(WT)).find((s) => s.id === id)?.title;
+  // api2 has a view in this window, and another session is the one shown
+  await openSession(fx.api2);
+  await openSession(fx.api1);
+  const before = await titleOf(fx.api2);
+  try {
+    await pointerClick(label(fx.api2), 'the name of a session that is open, not shown', { count: 2 });
+    const r = await waitFor(renaming, 3000, 'the name turned into an input after a double click').catch(() => null);
+    assert(r, `a double click on an open session's name did not start renaming (session shown: ${await activeId()}, focus in ${await focusKind()})`);
+    assert(r.focused, 'the rename input does not have the focus');
+    eq(r.value, before, 'the input starts with the current name');
+    await cdp.send('Input.insertText', { text: '接口 重命名' });
+    await pressKey('Enter');
+    await waitFor(async () => (await titleOf(fx.api2)) === '接口 重命名', 8000, 'the daemon has the new name');
+    await waitFor(async () => (await text(`${srow(fx.api2)}?.querySelector('.session-label-text')`)) === '接口 重命名', 8000, 'the sidebar shows the new name');
+    eq(await renaming(), null, 'the input after Enter');
+    // the session shown now (the first click of the double click opened it): the same gesture, and Esc leaves the name alone
+    eq(await activeId(), fx.api2, 'the session shown after the double click');
+    await pointerClick(label(fx.api2), 'the name of the session shown', { count: 2 });
+    assert(await waitFor(renaming, 3000, 'the input on the session shown').catch(() => null), 'a double click on the name of the session shown did not start renaming');
+    await cdp.send('Input.insertText', { text: 'never saved' });
+    await pressKey('Escape');
+    await waitFor(async () => (await renaming()) === null, 3000, 'Esc closes the input');
+    await sleep(300);
+    eq(await titleOf(fx.api2), '接口 重命名', 'the name after Esc');
+    // the keys work again once the rename is over
+    await ev(`${VT}?.querySelector('.xterm-helper-textarea')?.focus(), true`);
+    const order = await visibleIds();
+    await switchesTo(1, order[0]);
+    return `double click → input with "${before}" → typed a name, Enter: daemon and sidebar have it; on the session shown: input, Esc keeps the name`;
+  } finally {
+    await pressKey('Escape').catch(() => {});
+    await rename(WT, fx.api2, '');
+    await refresh();
+  }
+});
 
 test('NFR.perf', 'performance: 20 projects × 5 worktrees add at most 200 ms to the lists', async () => {
   const P = join(work, 'p');

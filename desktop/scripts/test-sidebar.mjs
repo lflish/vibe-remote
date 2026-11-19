@@ -401,6 +401,40 @@ test('focus_survives_a_rebuild', () => {
 
 // A row menu that is open during a rebuild stays with its row and keeps
 // working; when the row is gone the menu goes too.
+// A double click reaches the page as click, click (detail 2), dblclick. Opening
+// a session rebuilds the sidebar, so each of them goes to the label that is
+// under the pointer at that moment; a label taken out by the second click
+// would leave the browser nothing to send the dblclick to (gui-worktree-smoke
+// X2.rename does this with real pointer events).
+test('double_click_renames_a_session_that_is_open', () => {
+  const tree = buildTree([sess('n1', { workdir: '/tmp/notes', title: 'notes' })], [{ id: '/tmp/notes', name: 'notes', git: false, worktrees: [], sessions: ['n1'] }]);
+  const c = document.createElement('div');
+  document.body.appendChild(c);
+  let opened = 0;
+  let renaming = false;
+  const actions = acts({ open() { opened++; draw(); }, setRenaming(v) { renaming = v; } });
+  const draw = () => renderSidebar(c, model([machineEntry(tree)], { isOpen: () => true }), actions);
+  draw();
+  const label = () => c.querySelector('.session-label');
+  label().dispatchEvent(new MouseEvent('click', { bubbles: true, detail: 1 }));
+  assert.equal(opened, 1, 'the first click opens the session');
+  const second = label();
+  second.dispatchEvent(new MouseEvent('click', { bubbles: true, detail: 2 }));
+  assert.equal(opened, 1, 'the second click of a double click does not open it again');
+  assert.equal(label(), second, 'the label the double click ends on is still in the sidebar');
+  second.dispatchEvent(new MouseEvent('dblclick', { bubbles: true, detail: 2 }));
+  const input = c.querySelector('.session-rename-input');
+  assert.ok(input, 'the name turned into an input');
+  assert.equal(input.value, 'notes');
+  assert.equal(renaming, true);
+  // A click that is not part of a double click (keyboard, a script: detail 0) still opens.
+  input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+  draw();
+  label().dispatchEvent(new MouseEvent('click', { bubbles: true, detail: 0 }));
+  assert.equal(opened, 2);
+  c.remove();
+});
+
 test('open_menu_follows_its_row_through_a_rebuild', async () => {
   const deleted = [];
   const actions = acts({ newWorktree() {}, newSession() {}, deleteWorktree: (m, p, wt) => deleted.push(wt.path) });
