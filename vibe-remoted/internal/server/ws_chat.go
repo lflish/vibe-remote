@@ -44,6 +44,9 @@ func sessionErrorCode(err error) string {
 	case errors.Is(err, session.ErrInvalidSessionID):
 		return protocol.ErrCodeInvalidID
 	}
+	if code := worktreeErrorCode(err); code != "" {
+		return code
+	}
 	return protocol.ErrCodeCreateFailed
 }
 
@@ -86,7 +89,7 @@ func (s *Server) wsCreateChat(ctx context.Context, conn *websocket.Conn, frame p
 	}
 	att, err := s.mgr.CreateChat(session.ChatCreateOptions{
 		ID: frame.NewSessionID, Workdir: workdir, Mode: mode, Flags: frame.Flags, Parsed: parsed,
-		ValidateWorkdir: s.cfg.ResolveAllowedWorkdir,
+		ValidateWorkdir: s.cfg.ResolveAllowedNewPath, WorktreeName: worktreeName(frame, mode),
 	})
 	if err != nil {
 		return failSession(ctx, conn, err, "create session: ")

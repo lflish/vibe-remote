@@ -1335,6 +1335,29 @@ func TestCreateWorktreeMappedWorkdirEscapesViaSymlink(t *testing.T) {
 		})
 	}
 
+	// The source is a directory below the link: nothing may be created at the
+	// link's target on the way to finding out the path is not allowed.
+	t.Run("below_the_link", func(t *testing.T) {
+		base, _ := filepath.EvalSymlinks(t.TempDir())
+		outside, _ := filepath.EvalSymlinks(t.TempDir())
+		repo := linkdirRepo(t, base, outside)
+		source := filepath.Join(repo, "linkdir", "sub", "deeper")
+		if err := os.MkdirAll(source, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		cfg := &config.Config{AllowedRoots: []string{base}}
+		_, err := CreateWorktree(WorktreeSpec{Source: source, SessionID: "s1", Name: "fix-login", AllowPath: allowWith(cfg)})
+		if !errors.Is(err, ErrWorktreePathNotAllowed) {
+			t.Fatalf("err = %v, want ErrWorktreePathNotAllowed", err)
+		}
+		if entries, _ := os.ReadDir(outside); len(entries) != 0 {
+			t.Fatalf("the link target gained %v", entries)
+		}
+		if pathExists(containerOf(repo)) || branchOID(t, repo, "fix-login") != "" {
+			t.Fatal("the worktree or its branch was left behind")
+		}
+	})
+
 	t.Run("link_inside_allowed_roots", func(t *testing.T) {
 		base, _ := filepath.EvalSymlinks(t.TempDir())
 		inside := filepath.Join(base, "shared")

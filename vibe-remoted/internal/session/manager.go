@@ -26,10 +26,12 @@ func sessionNotFound(id string) error {
 // tmux) and chat sessions (chat.Session, a claude process the daemon owns).
 //
 // Lock order, only ever downward (design 2): a creating placeholder (per id)
-// → chat.Session.opMu → Manager.mu → Runner.mu / chat.Session.mu →
-// Runner.metaMu / store. Manager.mu is never acquired while holding a Runner
-// or Session lock, metaMu is a leaf, and no tmux command or file IO runs under
-// Manager.mu (a slow tmux would otherwise stall every handler).
+// → a repository lock (lockRepo) → chat.Session.opMu → Manager.mu →
+// Runner.mu / chat.Session.mu → Runner.metaMu / store / ProjectStore.
+// Manager.mu is never acquired while holding a Runner or Session lock, metaMu
+// is a leaf, and no tmux command or file IO runs under Manager.mu (a slow tmux
+// would otherwise stall every handler). A repository lock is never taken while
+// holding opMu or Manager.mu.
 type Manager struct {
 	mu       sync.RWMutex
 	sessions map[string]*Runner
@@ -49,6 +51,11 @@ type Manager struct {
 	// query started — otherwise reconcile could evict a session created after
 	// the snapshot, or resurrect one deleted after it.
 	gen uint64
+
+	// repoLocks serializes creating (and undoing) worktrees per repository,
+	// keyed by Home.Repo; repoMu guards the map only.
+	repoMu    sync.Mutex
+	repoLocks map[string]*sync.Mutex
 
 	useTmux          bool
 	claudeCmd        string
@@ -257,26 +264,18 @@ func (m *Manager) Create(opts CreateOptions) (*Runner, error) {
 // replaced by --resume U (or --session-id U for a new one), so the process
 // that runs is exactly the one the claim table knows about.
 // resolveSessionHome computes the attribution to record for a new session
-// (design 5.1). A handoff supplies it directly (opts.Home). A worktree session
-// sits in the new worktree root and takes its project from the source repo
-// (itself when the repo has no recognizable main worktree). Otherwise it is
-// ResolveHome(workdir). A git failure leaves both empty for later backfill.
-// git reports whether the project should enter the project list (H18: only git
-// projects, and a handoff's project was already added by its origin).
-func resolveSessionHome(opts CreateOptions, mode protocol.SessionMode, workdir string, meta WorktreeMetadata, ownWorktree bool) (project, home string, git bool) {
-	if opts.Home != nil {
-		return opts.Home.Project, opts.Home.Path, false
+// (design 5.1). A handoff supplies it directly; a session in a worktree this
+// call created takes what CreateWorktree returned; otherwise it is
+// ResolveHome(workdir), and a git failure leaves both empty for later
+// backfill. git reports whether the project should enter the project list
+// (H18: only git projects, and a handoff's project was already added by its
+// origin).
+func resolveSessionHome(handoff, own *Home, workdir string) (project, home string, git bool) {
+	if handoff != nil {
+		return handoff.Project, handoff.Path, false
 	}
-	if ownWorktree {
-		h, err := ResolveHome(meta.SourceRepo)
-		if err != nil {
-			return "", "", false
-		}
-		project = h.Project
-		if h.Single {
-			project = meta.WorktreeRoot
-		}
-		return project, meta.WorktreeRoot, true
+	if own != nil {
+		return own.Project, own.Path, true
 	}
 	h, err := ResolveHome(workdir)
 	if err != nil {
@@ -297,23 +296,18 @@ func (m *Manager) createTerminalLocked(id string, opts CreateOptions) (*Runner, 
 	workdir := opts.Workdir
 	var meta WorktreeMetadata
 	var err error
+	// ownWorktree: this call created the worktree, so a failed start undoes it.
+	ownWorktree := mode == protocol.SessionModeWorktree && opts.Worktree == nil
+	var created CreatedWorktree
+	var ownHome *Home
 	if opts.Worktree != nil {
 		meta = *opts.Worktree
-	} else if mode == protocol.SessionModeWorktree {
-		created, cerr := CreateWorktree(WorktreeSpec{Source: opts.Workdir, SessionID: id, Name: opts.WorktreeName})
-		if cerr != nil {
-			return nil, cerr
+	} else if ownWorktree {
+		created, err = m.createOwnWorktree(opts.Workdir, id, opts.WorktreeName, opts.ValidateWorkdir)
+		if err != nil {
+			return nil, err
 		}
-		meta, workdir = created.Meta, created.Workdir
-		if opts.ValidateWorkdir != nil {
-			if _, err := opts.ValidateWorkdir(workdir); err != nil {
-				err = fmt.Errorf("worktree workdir %q: %w", workdir, err)
-				if rollbackErr := RollbackWorktree(meta); rollbackErr != nil {
-					return nil, fmt.Errorf("%v; rollback worktree: %w", err, rollbackErr)
-				}
-				return nil, err
-			}
-		}
+		meta, workdir, ownHome = created.Meta, created.Workdir, &created.Home
 	}
 
 	claudeCmd := m.claudeCmd
@@ -324,7 +318,6 @@ func (m *Manager) createTerminalLocked(id string, opts CreateOptions) (*Runner, 
 	if len(claudeArgv) > 0 {
 		claudeCmd = chat.ShellJoin(claudeArgv)
 	}
-	ownWorktree := mode == protocol.SessionModeWorktree && opts.Worktree == nil
 	claudeU := opts.ClaudeU
 	claimedHere := false
 	if claudeU == "" {
@@ -338,9 +331,7 @@ func (m *Manager) createTerminalLocked(id string, opts CreateOptions) (*Runner, 
 			}
 			if err := m.claimClaude(u, id); err != nil {
 				if ownWorktree {
-					if rollbackErr := RollbackWorktree(meta); rollbackErr != nil {
-						return nil, fmt.Errorf("%v; rollback worktree: %w", err, rollbackErr)
-					}
+					err = m.undoOwnWorktree(created, err)
 				}
 				return nil, err
 			}
@@ -349,7 +340,7 @@ func (m *Manager) createTerminalLocked(id string, opts CreateOptions) (*Runner, 
 			claudeU, claimedHere = u, true
 		}
 	}
-	project, home, git := resolveSessionHome(opts, mode, workdir, meta, ownWorktree)
+	project, home, git := resolveSessionHome(opts.Home, ownHome, workdir)
 	runner, err := NewRunner(RunnerConfig{
 		ID:            id,
 		Workdir:       workdir,
@@ -377,9 +368,7 @@ func (m *Manager) createTerminalLocked(id string, opts CreateOptions) (*Runner, 
 			m.releaseClaude(claudeU, id)
 		}
 		if ownWorktree {
-			if rollbackErr := RollbackWorktree(meta); rollbackErr != nil {
-				return nil, fmt.Errorf("%v; rollback worktree: %w", err, rollbackErr)
-			}
+			err = m.undoOwnWorktree(created, err)
 		}
 		return nil, err
 	}
@@ -388,23 +377,85 @@ func (m *Manager) createTerminalLocked(id string, opts CreateOptions) (*Runner, 
 	m.sessions[id] = runner
 	m.gen++
 	m.mu.Unlock()
-	m.recordCreated(project, git, ownWorktree, meta)
+	m.recordCreated(project, git)
 	return runner, nil
 }
 
-// recordCreated adds a newly created session's git project to the store and, in
-// worktree mode, records the created worktree (design 5.2). It takes the
-// store's own leaf lock, never Manager.mu.
-func (m *Manager) recordCreated(project string, git, ownWorktree bool, meta WorktreeMetadata) {
-	if m.projectStore == nil {
-		return
-	}
-	if git && project != "" {
+// recordCreated adds a newly created session's git project to the store
+// (design 5.2). It takes the store's own leaf lock, never Manager.mu.
+func (m *Manager) recordCreated(project string, git bool) {
+	if m.projectStore != nil && git && project != "" {
 		m.projectStore.AddProject(project)
 	}
-	if ownWorktree && project != "" {
-		m.projectStore.AddWorktree(project, meta.WorktreeRoot, meta.Branch)
+}
+
+// lockRepo takes the lock that serializes worktree creation in one repository
+// and returns its unlock.
+func (m *Manager) lockRepo(repo string) (unlock func()) {
+	m.repoMu.Lock()
+	if m.repoLocks == nil {
+		m.repoLocks = make(map[string]*sync.Mutex)
 	}
+	l := m.repoLocks[repo]
+	if l == nil {
+		l = &sync.Mutex{}
+		m.repoLocks[repo] = l
+	}
+	m.repoMu.Unlock()
+	l.Lock()
+	return l.Unlock
+}
+
+// createOwnWorktree creates the worktree of a worktree-mode session under the
+// repository's lock and records it as created by vibe-remote (design 6.1).
+// validate is the caller's ValidateWorkdir.
+func (m *Manager) createOwnWorktree(source, id, name string, validate func(string) (string, error)) (CreatedWorktree, error) {
+	spec := WorktreeSpec{Source: source, SessionID: id, Name: name}
+	if validate != nil {
+		spec.AllowPath = func(path string) error {
+			_, err := validate(path)
+			return err
+		}
+	}
+	// Which lock to take depends on the repository, so it is resolved once out
+	// here; CreateWorktree resolves it again under the lock and goes by that.
+	home, err := ResolveHome(source)
+	if err != nil {
+		return CreatedWorktree{}, fmt.Errorf("discover repository: %w", err)
+	}
+	if !home.Git {
+		return CreatedWorktree{}, errNotGit(source)
+	}
+	unlock := m.lockRepo(home.Repo)
+	defer unlock()
+	created, err := CreateWorktree(spec)
+	if err != nil {
+		return CreatedWorktree{}, err
+	}
+	if m.projectStore != nil {
+		m.projectStore.AddWorktree(created.Home.Project, created.Meta.WorktreeRoot, created.Meta.Branch)
+	}
+	return created, nil
+}
+
+// undoOwnWorktree takes back a worktree whose session failed to start, again
+// under the repository's lock: outside it, removing the container this create
+// made could pull it from under another create that has just seen it exist.
+// It returns cause, extended by whatever could not be removed.
+func (m *Manager) undoOwnWorktree(created CreatedWorktree, cause error) error {
+	unlock := m.lockRepo(created.Home.Repo)
+	defer unlock()
+	if m.testUndoLocked != nil {
+		m.testUndoLocked()
+	}
+	undoErr := created.Undo()
+	if m.projectStore != nil {
+		m.projectStore.RemoveWorktree(created.Meta.WorktreeRoot)
+	}
+	if undoErr != nil {
+		return fmt.Errorf("%w; rollback worktree: %v", cause, undoErr)
+	}
+	return cause
 }
 
 // beginCreate claims id for creation. It returns exists=true (and no done

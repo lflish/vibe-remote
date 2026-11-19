@@ -12,6 +12,7 @@ import (
 	"strings"
 	"syscall"
 	"time"
+	"unicode"
 )
 
 type WorktreeMetadata struct {
@@ -237,7 +238,7 @@ var (
 	ErrInvalidWorktreeName    = errors.New("invalid worktree name")
 	ErrWorktreeBranchExists   = errors.New("branch already exists")
 	ErrWorktreePathExists     = errors.New("worktree directory already exists")
-	ErrWorktreePathNotAllowed = errors.New("worktree directory is not in the allowed roots")
+	ErrWorktreePathNotAllowed = errors.New("worktree path not allowed")
 	ErrUnsupportedRepo        = errors.New("this repository is a submodule or uses a separate git directory; named worktrees are not supported here")
 )
 
@@ -279,77 +280,361 @@ var (
 	testBeforeWorktreeAdd func()
 )
 
-func ValidateWorktreeName(repoDir, name string) error { return nil }
-
-func worktreeNameProblem(name string) string { return "" }
-
-func checkRefFormatBranch(repoDir, name string) error { return nil }
-
-func WorktreeDirName(name string) string { return name }
-
-func BranchConflict(repoDir, name string) (string, error) { return "", nil }
-
-func CreateWorktree(spec WorktreeSpec) (CreatedWorktree, error) {
-	if spec.Name != "" {
-		return CreatedWorktree{}, errors.New("named worktrees are not implemented")
+// gitExitCode returns git's exit status when err is a plain non-zero exit, as
+// opposed to a timeout or a failure to run git at all.
+func gitExitCode(err error) (int, bool) {
+	var exit *exec.ExitError
+	if errors.As(err, &exit) && !errors.Is(err, context.DeadlineExceeded) {
+		return exit.ExitCode(), true
 	}
-	meta, mapped, err := createLegacyWorktree(spec.Source, spec.SessionID)
-	return CreatedWorktree{Meta: meta, Workdir: mapped}, err
+	return 0, false
 }
 
-func (c CreatedWorktree) Undo() error { return RollbackWorktree(c.Meta) }
+// worktreeNameProblem applies the name rules that need no git (design 4.1,
+// rule 1) and returns the reason code of the first one broken, or "". The
+// desktop applies the same rules in the same order; both sides are held to
+// testdata/worktree-names.json.
+func worktreeNameProblem(name string) string {
+	if name == "" {
+		return "empty"
+	}
+	for _, r := range name {
+		if unicode.IsSpace(r) {
+			return "whitespace"
+		}
+	}
+	if strings.Contains(name, "..") {
+		return "dotdot"
+	}
+	if strings.HasPrefix(name, "-") {
+		return "leading_dash"
+	}
+	// "@{" is git's syntax for the previous or upstream branch.
+	if strings.Contains(name, "@{") {
+		return "invalid"
+	}
+	for _, r := range name {
+		if unicode.IsControl(r) {
+			return "invalid"
+		}
+	}
+	return ""
+}
 
-func createLegacyWorktree(sourceWorkdir, sessionID string) (WorktreeMetadata, string, error) {
-	if !safeSessionID.MatchString(sessionID) {
-		return WorktreeMetadata{}, "", fmt.Errorf("invalid session ID")
-	}
-	sourceAbs, err := filepath.Abs(sourceWorkdir)
+// checkRefFormatBranch is rule 2: git accepts the name as a branch name and
+// prints it back unchanged. Exit status alone is not enough: for "@{-1}" git
+// exits 0 and prints the previously checked-out branch (V10).
+func checkRefFormatBranch(repoDir, name string) error {
+	out, err := gitAtTimeout(repoDir, "check-ref-format", "--branch", name)
 	if err != nil {
-		return WorktreeMetadata{}, "", fmt.Errorf("resolve source workdir: %w", err)
+		if _, exited := gitExitCode(err); exited {
+			return fmt.Errorf("%w: %q", ErrInvalidWorktreeName, name)
+		}
+		return err
 	}
-	out, err := gitAt(sourceAbs, "rev-parse", "--show-toplevel")
+	if strings.TrimSuffix(string(out), "\n") != name {
+		return fmt.Errorf("%w: %q", ErrInvalidWorktreeName, name)
+	}
+	return nil
+}
+
+// ValidateWorktreeName reports whether name can be the branch of a new
+// worktree in the repository at repoDir (errors.Is ErrInvalidWorktreeName when
+// it cannot). Names that start with "-" or contain "@{" are refused before git
+// is run at all.
+func ValidateWorktreeName(repoDir, name string) error {
+	if problem := worktreeNameProblem(name); problem != "" {
+		return fmt.Errorf("%w: %q (%s)", ErrInvalidWorktreeName, name, problem)
+	}
+	return checkRefFormatBranch(repoDir, name)
+}
+
+// WorktreeDirName is the directory name of a named worktree.
+func WorktreeDirName(name string) string { return strings.ReplaceAll(name, "/", "-") }
+
+func branchRefExists(repoDir, branch string) (bool, error) {
+	_, err := gitAtTimeout(repoDir, "show-ref", "--verify", "--quiet", "refs/heads/"+branch)
+	if err == nil {
+		return true, nil
+	}
+	if code, exited := gitExitCode(err); exited && code == 1 {
+		return false, nil
+	}
+	return false, err
+}
+
+// BranchConflict returns the existing branch that keeps name from being
+// created: name itself, one of its "/" prefixes (fix blocks fix/login), or a
+// branch below it (change/foo blocks change). "" when nothing does. Read-only.
+func BranchConflict(repoDir, name string) (string, error) {
+	candidates := []string{name}
+	for i := range name {
+		if name[i] == '/' && i > 0 {
+			candidates = append(candidates, name[:i])
+		}
+	}
+	for _, c := range candidates {
+		exists, err := branchRefExists(repoDir, c)
+		if err != nil {
+			return "", err
+		}
+		if exists {
+			return c, nil
+		}
+	}
+	out, err := gitAtTimeout(repoDir, "for-each-ref", "--count=1", "--format=%(refname)", "refs/heads/"+name+"/")
 	if err != nil {
-		return WorktreeMetadata{}, "", fmt.Errorf("discover repository: %w", err)
+		return "", err
 	}
-	repoRoot := filepath.Clean(strings.TrimSpace(string(out)))
-	// Git returns the canonical repository root. Use that discovered path for
-	// worktree placement; never derive sibling paths from the caller's spelling.
+	if ref := strings.TrimSpace(string(out)); ref != "" {
+		return strings.TrimPrefix(ref, "refs/heads/"), nil
+	}
+	return "", nil
+}
+
+func errNotGit(dir string) error {
+	return fmt.Errorf("discover repository: %s is not inside a git repository", dir)
+}
+
+// CreateWorktree creates a worktree on a new branch at Source's current commit
+// (design 6.1). The directory and the branch are each claimed with a
+// create-only-if-absent operation, so a failure can undo exactly what this
+// call made and nothing that was already there. The branch is only ever named
+// to git as refs/heads/<branch>. The caller holds the repository's lock.
+func CreateWorktree(spec WorktreeSpec) (CreatedWorktree, error) {
+	named := spec.Name != ""
+	if !named && !safeSessionID.MatchString(spec.SessionID) {
+		return CreatedWorktree{}, fmt.Errorf("invalid session ID")
+	}
+	sourceAbs, err := filepath.Abs(spec.Source)
+	if err != nil {
+		return CreatedWorktree{}, fmt.Errorf("resolve source workdir: %w", err)
+	}
+	home, err := ResolveHome(sourceAbs)
+	if err != nil {
+		return CreatedWorktree{}, fmt.Errorf("discover repository: %w", err)
+	}
+	if !home.Git {
+		return CreatedWorktree{}, errNotGit(sourceAbs)
+	}
+	if named && home.Single {
+		return CreatedWorktree{}, ErrUnsupportedRepo
+	}
+	// Every git command below runs in the worktree Source sits in: it is a
+	// usable work tree, and branches and worktrees are shared repository-wide.
+	w := home.Path
 	canonicalAbs, err := filepath.EvalSymlinks(sourceAbs)
 	if err != nil {
-		return WorktreeMetadata{}, "", fmt.Errorf("resolve source workdir links: %w", err)
+		return CreatedWorktree{}, fmt.Errorf("resolve source workdir links: %w", err)
 	}
-	canonicalRepo, err := filepath.EvalSymlinks(repoRoot)
+	canonicalRepo, err := filepath.EvalSymlinks(w)
 	if err != nil {
-		return WorktreeMetadata{}, "", fmt.Errorf("resolve repository links: %w", err)
+		return CreatedWorktree{}, fmt.Errorf("resolve repository links: %w", err)
 	}
 	rel, err := filepath.Rel(canonicalRepo, canonicalAbs)
 	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
-		return WorktreeMetadata{}, "", fmt.Errorf("source workdir escapes repository")
+		return CreatedWorktree{}, fmt.Errorf("source workdir escapes repository")
 	}
-	sourceRepo := repoRoot
-	container := filepath.Join(filepath.Dir(sourceRepo), filepath.Base(sourceRepo)+"-worktrees")
-	root := filepath.Join(container, sessionID)
-	meta := WorktreeMetadata{SourceWorkdir: sourceAbs, SourceRepo: sourceRepo, WorktreeRoot: root, Branch: "vibe/" + sessionID}
-	if err := os.MkdirAll(container, 0o755); err != nil {
-		return WorktreeMetadata{}, "", fmt.Errorf("create worktree container: %w", err)
+
+	claim := worktreeClaim{w: w}
+	if named {
+		if err := ValidateWorktreeName(w, spec.Name); err != nil {
+			return CreatedWorktree{}, err
+		}
+		claim.branch = spec.Name
+		claim.container = filepath.Join(filepath.Dir(home.Project), filepath.Base(home.Project)+"-worktrees")
+		claim.root = filepath.Join(claim.container, WorktreeDirName(spec.Name))
+	} else {
+		claim.branch = "vibe/" + spec.SessionID
+		claim.container = filepath.Join(filepath.Dir(w), filepath.Base(w)+"-worktrees")
+		claim.root = filepath.Join(claim.container, spec.SessionID)
 	}
-	if _, err := gitAt(sourceRepo, "worktree", "add", "-b", meta.Branch, root, "HEAD"); err != nil {
-		_ = os.Remove(container)
-		return WorktreeMetadata{}, "", fmt.Errorf("create worktree: %w", err)
+	allow := func(path string) error {
+		if spec.AllowPath == nil {
+			return nil
+		}
+		if err := spec.AllowPath(path); err != nil {
+			return fmt.Errorf("%w: %s: %v", ErrWorktreePathNotAllowed, path, err)
+		}
+		return nil
 	}
-	mapped := root
+	if err := allow(claim.root); err != nil {
+		return CreatedWorktree{}, err
+	}
+	// The next two checks only fix the order errors are reported in (the same
+	// as the pre-check endpoint); what actually protects existing things is the
+	// create-if-absent claims further down.
+	conflict, err := BranchConflict(w, claim.branch)
+	if err != nil {
+		return CreatedWorktree{}, fmt.Errorf("check existing branches: %w", err)
+	}
+	if conflict != "" {
+		return CreatedWorktree{}, &BranchExistsError{Branch: claim.branch, Conflict: conflict}
+	}
+	if _, err := os.Lstat(claim.root); err == nil {
+		return CreatedWorktree{}, fmt.Errorf("%w: %s", ErrWorktreePathExists, claim.root)
+	} else if !os.IsNotExist(err) {
+		return CreatedWorktree{}, fmt.Errorf("check worktree directory: %w", err)
+	}
+	out, err := gitAt(w, "rev-parse", "--verify", "HEAD^{commit}")
+	if err != nil {
+		return CreatedWorktree{}, fmt.Errorf("resolve source commit: %w", err)
+	}
+	claim.oid = strings.TrimSpace(string(out))
+	if testAfterCreateChecks != nil {
+		testAfterCreateChecks()
+	}
+
+	if _, err := os.Lstat(claim.container); os.IsNotExist(err) {
+		if err := os.MkdirAll(claim.container, 0o755); err != nil {
+			return CreatedWorktree{}, fmt.Errorf("create worktree container: %w", err)
+		}
+		claim.newContainer = true
+	}
+	if err := os.Mkdir(claim.root, 0o755); err != nil {
+		undoErr := claim.undo()
+		if os.IsExist(err) {
+			return CreatedWorktree{}, withCleanup(fmt.Errorf("%w: %s", ErrWorktreePathExists, claim.root), undoErr)
+		}
+		return CreatedWorktree{}, withCleanup(fmt.Errorf("create worktree directory: %w", err), undoErr)
+	}
+	claim.dir = true
+	// An empty old value makes update-ref create the branch only if it does not
+	// exist. The message is what `git worktree add -b` writes to the reflog.
+	if _, err := gitAt(w, "update-ref", "-m", "branch: Created from HEAD", "refs/heads/"+claim.branch, claim.oid, ""); err != nil {
+		undoErr := claim.undo()
+		if conflict, cerr := BranchConflict(w, claim.branch); cerr == nil && conflict != "" {
+			return CreatedWorktree{}, withCleanup(&BranchExistsError{Branch: claim.branch, Conflict: conflict}, undoErr)
+		}
+		return CreatedWorktree{}, withCleanup(fmt.Errorf("create branch: %w", err), undoErr)
+	}
+	claim.branchRef = true
+	if testBeforeWorktreeAdd != nil {
+		testBeforeWorktreeAdd()
+	}
+	if _, err := gitAt(w, "worktree", "add", "--detach", claim.root, claim.oid); err != nil {
+		return CreatedWorktree{}, withCleanup(fmt.Errorf("create worktree: %w", err), claim.undo())
+	}
+	// Not "checkout: moving from …": git resolves @{-1} from reflog entries of
+	// that form, and a worktree made with -b has no previous branch (V22).
+	if _, err := gitAt(claim.root, "symbolic-ref", "-m", "worktree: attached to refs/heads/"+claim.branch, "HEAD", "refs/heads/"+claim.branch); err != nil {
+		return CreatedWorktree{}, withCleanup(fmt.Errorf("attach worktree to its branch: %w", err), claim.undo())
+	}
+
+	mapped := claim.root
 	if rel != "." {
-		mapped = filepath.Join(root, rel)
+		mapped = filepath.Join(claim.root, rel)
+		// Checked before creating it as well: when a leading part of rel is, in
+		// the commit just checked out, a symlink out of the allowed roots,
+		// MkdirAll would create the rest of the path over there.
+		if err := allow(mapped); err != nil {
+			return CreatedWorktree{}, withCleanup(err, claim.undo())
+		}
 		// Git does not materialize empty/untracked directories. Preserve the
 		// caller's selected directory so Runner always receives a valid cwd.
 		if err := os.MkdirAll(mapped, 0o755); err != nil {
-			if rollbackErr := RollbackWorktree(meta); rollbackErr != nil {
-				return WorktreeMetadata{}, "", fmt.Errorf("create mapped workdir: %v; rollback worktree: %w", err, rollbackErr)
-			}
-			return WorktreeMetadata{}, "", fmt.Errorf("create mapped workdir: %w", err)
+			return CreatedWorktree{}, withCleanup(fmt.Errorf("create mapped workdir: %w", err), claim.undo())
 		}
 	}
-	return meta, mapped, nil
+	// The workdir exists now, so this resolves every symlink on the way to it.
+	if err := allow(mapped); err != nil {
+		return CreatedWorktree{}, withCleanup(err, claim.undo())
+	}
+
+	created := CreatedWorktree{
+		Meta:         WorktreeMetadata{SourceWorkdir: sourceAbs, SourceRepo: w, WorktreeRoot: claim.root, Branch: claim.branch},
+		Workdir:      mapped,
+		Home:         Home{Project: home.Project, Path: claim.root, Repo: home.Repo, Git: true},
+		OID:          claim.oid,
+		NewContainer: claim.newContainer,
+	}
+	if home.Single {
+		// A worktree of a repository with no recognizable main worktree is a
+		// project of its own, as ResolveHome would say of it afterwards.
+		created.Home.Project, created.Home.Single = claim.root, true
+	}
+	return created, nil
+}
+
+func withCleanup(err, cleanupErr error) error {
+	if cleanupErr == nil {
+		return err
+	}
+	return fmt.Errorf("%w; cleanup: %v", err, cleanupErr)
+}
+
+// worktreeClaim is what one CreateWorktree call has taken so far. undo gives
+// back exactly that, deciding each step from the repository's state rather
+// than from git's messages.
+type worktreeClaim struct {
+	w, root, branch, oid, container string
+	dir, branchRef, newContainer    bool
+}
+
+func (c worktreeClaim) undo() error {
+	var problems []string
+	if c.dir {
+		wts, err := ListWorktrees(c.w)
+		if err != nil {
+			problems = append(problems, fmt.Sprintf("registration of %s not checked: %v", c.root, err))
+		}
+		removeDir := true
+		for _, wt := range wts {
+			if wt.Path != c.root {
+				continue
+			}
+			// Ours is on the branch claimed here, or still detached at the
+			// commit (between worktree add and symbolic-ref). Anything else was
+			// put into the claimed, still empty directory by someone else (V20).
+			if wt.Branch == c.branch || (wt.Detached && wt.Head == c.oid) {
+				if _, err := gitAt(c.w, "worktree", "remove", "--force", c.root); err != nil {
+					problems = append(problems, fmt.Sprintf("worktree %s not removed: %v", c.root, err))
+				}
+			} else {
+				removeDir = false
+				problems = append(problems, fmt.Sprintf("directory %s not removed: it now holds another worktree", c.root))
+			}
+		}
+		if removeDir {
+			// Not recursive: a directory that still has content is kept.
+			if err := os.Remove(c.root); err != nil && !os.IsNotExist(err) {
+				problems = append(problems, fmt.Sprintf("directory %s not removed: %v", c.root, err))
+			}
+		}
+	}
+	if c.branchRef {
+		// Deletes only while the branch still points at the commit it was created at.
+		if _, err := gitAt(c.w, "update-ref", "-d", "refs/heads/"+c.branch, c.oid); err != nil {
+			if exists, serr := branchRefExists(c.w, c.branch); serr != nil {
+				problems = append(problems, fmt.Sprintf("branch %s not removed: %v", c.branch, err))
+			} else if exists {
+				at, _ := gitAt(c.w, "rev-parse", "--verify", "refs/heads/"+c.branch+"^{commit}")
+				if cur := strings.TrimSpace(string(at)); cur != "" && cur != c.oid {
+					problems = append(problems, fmt.Sprintf("branch %s kept: it now points at %s", c.branch, cur))
+				} else {
+					problems = append(problems, fmt.Sprintf("branch %s not removed: %v", c.branch, err))
+				}
+			}
+		}
+	}
+	if c.newContainer {
+		_ = os.Remove(c.container) // stays if anything else moved in
+	}
+	if len(problems) > 0 {
+		return errors.New(strings.Join(problems, "; "))
+	}
+	return nil
+}
+
+// Undo removes what CreateWorktree made and only that (design 6.1): the
+// worktree if it is still this one, the directory if empty, the branch if it
+// has not moved, the container if this call created it and it is empty. What
+// is left in place is named in the returned error. Safe to call again.
+func (c CreatedWorktree) Undo() error {
+	return worktreeClaim{
+		w: c.Meta.SourceRepo, root: c.Meta.WorktreeRoot, branch: c.Meta.Branch, oid: c.OID,
+		container: filepath.Dir(c.Meta.WorktreeRoot), dir: true, branchRef: true, newContainer: c.NewContainer,
+	}.undo()
 }
 
 func isMissingBranchError(err error) bool {

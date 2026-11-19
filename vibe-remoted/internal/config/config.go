@@ -266,6 +266,43 @@ func (c *Config) ResolveAllowedWorkdir(dir string) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	return c.withinAllowedRoots(canonical)
+}
+
+// ResolveAllowedNewPath is ResolveAllowedWorkdir for a path that may not exist
+// yet (the directory of a worktree about to be created): the deepest existing
+// ancestor is canonicalized, the missing remainder appended, and the result
+// held to the same containment check. For a path that exists the two agree.
+func (c *Config) ResolveAllowedNewPath(path string) (string, error) {
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return "", err
+	}
+	existing, rest := abs, ""
+	for {
+		if _, err := os.Lstat(existing); err == nil {
+			break
+		} else if !os.IsNotExist(err) {
+			return "", err
+		}
+		parent := filepath.Dir(existing)
+		if parent == existing {
+			break
+		}
+		rest = filepath.Join(filepath.Base(existing), rest)
+		existing = parent
+	}
+	// A dangling symlink on the way fails here: nothing gets created through it.
+	canonical, err := filepath.EvalSymlinks(existing)
+	if err != nil {
+		return "", err
+	}
+	return c.withinAllowedRoots(filepath.Join(canonical, rest))
+}
+
+// withinAllowedRoots returns canonical when it lies in (the canonical form of)
+// an allowed root.
+func (c *Config) withinAllowedRoots(canonical string) (string, error) {
 	for _, root := range c.AllowedRoots {
 		rootAbs, err := filepath.Abs(root)
 		if err != nil {
@@ -285,12 +322,6 @@ func (c *Config) ResolveAllowedWorkdir(dir string) (string, error) {
 		return canonical, nil
 	}
 	return "", fmt.Errorf("workdir not in allowed roots")
-}
-
-// ResolveAllowedNewPath is ResolveAllowedWorkdir for a path that may not exist
-// yet (a worktree about to be created).
-func (c *Config) ResolveAllowedNewPath(path string) (string, error) {
-	return c.ResolveAllowedWorkdir(path)
 }
 
 // IsAllowedWorkdir checks if a path falls within the allowed roots using

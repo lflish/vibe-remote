@@ -265,23 +265,17 @@ func (m *Manager) CreateChat(opts ChatCreateOptions) (ChatAttachment, error) {
 
 	workdir := opts.Workdir
 	var meta WorktreeMetadata
-	if mode == protocol.SessionModeWorktree {
-		created, err := CreateWorktree(WorktreeSpec{Source: opts.Workdir, SessionID: id, Name: opts.WorktreeName})
+	ownWorktree := mode == protocol.SessionModeWorktree
+	var created CreatedWorktree
+	var ownHome *Home
+	if ownWorktree {
+		var err error
+		created, err = m.createOwnWorktree(opts.Workdir, id, opts.WorktreeName, opts.ValidateWorkdir)
 		if err != nil {
 			m.releaseClaude(u, id)
 			return ChatAttachment{}, err
 		}
-		meta, workdir = created.Meta, created.Workdir
-		if opts.ValidateWorkdir != nil {
-			if _, err := opts.ValidateWorkdir(workdir); err != nil {
-				m.releaseClaude(u, id)
-				err = fmt.Errorf("worktree workdir %q: %w", workdir, err)
-				if rollbackErr := RollbackWorktree(meta); rollbackErr != nil {
-					return ChatAttachment{}, fmt.Errorf("%v; rollback worktree: %w", err, rollbackErr)
-				}
-				return ChatAttachment{}, err
-			}
-		}
+		meta, workdir, ownHome = created.Meta, created.Workdir, &created.Home
 	}
 	m.mu.RLock()
 	closing := m.closing
@@ -289,16 +283,12 @@ func (m *Manager) CreateChat(opts ChatCreateOptions) (ChatAttachment, error) {
 	if closing {
 		// Shutdown began while this create was on its way: start nothing.
 		m.releaseClaude(u, id)
-		if mode == protocol.SessionModeWorktree {
-			if rollbackErr := RollbackWorktree(meta); rollbackErr != nil {
-				return ChatAttachment{}, fmt.Errorf("%v; rollback worktree: %w", ErrShuttingDown, rollbackErr)
-			}
+		if ownWorktree {
+			return ChatAttachment{}, m.undoOwnWorktree(created, ErrShuttingDown)
 		}
 		return ChatAttachment{}, ErrShuttingDown
 	}
-	project, home, git := resolveSessionHome(
-		CreateOptions{Workdir: opts.Workdir, Mode: mode},
-		mode, workdir, meta, mode == protocol.SessionModeWorktree)
+	project, home, git := resolveSessionHome(nil, ownHome, workdir)
 	rec := chat.Record{
 		ID: id, Workdir: workdir, Mode: string(mode),
 		SourceWorkdir: meta.SourceWorkdir, SourceRepo: meta.SourceRepo, WorktreeRoot: meta.WorktreeRoot, Branch: meta.Branch,
@@ -311,10 +301,8 @@ func (m *Manager) CreateChat(opts ChatCreateOptions) (ChatAttachment, error) {
 	if err != nil {
 		m.releaseClaude(u, id)
 		err = fmt.Errorf("start claude: %w", err)
-		if mode == protocol.SessionModeWorktree {
-			if rollbackErr := RollbackWorktree(meta); rollbackErr != nil {
-				return ChatAttachment{}, fmt.Errorf("%v; rollback worktree: %w", err, rollbackErr)
-			}
+		if ownWorktree {
+			err = m.undoOwnWorktree(created, err)
 		}
 		return ChatAttachment{}, err
 	}
@@ -323,7 +311,7 @@ func (m *Manager) CreateChat(opts ChatCreateOptions) (ChatAttachment, error) {
 	m.gen++
 	m.persistLocked()
 	m.mu.Unlock()
-	m.recordCreated(project, git, mode == protocol.SessionModeWorktree, meta)
+	m.recordCreated(project, git)
 	return ChatAttachment{Session: sess, ID: id}, nil
 }
 
