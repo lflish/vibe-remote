@@ -1,5 +1,5 @@
-// Layout checks for the shell around the sessions (the row menus so far),
-// shared by the GUI smoke scripts.
+// Layout checks for the shell around the sessions (row menus, the toolbar
+// title), shared by the GUI smoke scripts.
 // They run in the smallest window the app allows, 800×500, where these are
 // the first things to stop fitting; jsdom has no layout, so only the running
 // app can show it. The window size is emulated: the real window is left alone.
@@ -106,4 +106,45 @@ export async function rowMenuLayout(cdp, size = MIN_WINDOW) {
     }
     return { problems, measured, nearBottom };
   });
+}
+
+const TITLE = `(() => {
+  const px = (n) => Math.round(n * 10) / 10;
+  const title = document.querySelector('#toolbar-title');
+  const part = (id) => title?.querySelector('[data-testid="' + id + '"]');
+  const project = part('title-project');
+  const branch = part('title-branch');
+  const session = part('title-session');
+  if (!title || !project || !session) return { problems: ['the toolbar title has no project / session parts'] };
+  const problems = [];
+  const cut = (el) => el.scrollWidth > el.clientWidth + 1;
+  const em = parseFloat(getComputedStyle(title).fontSize);
+  const t = title.getBoundingClientRect();
+  for (const [label, el] of [['project', project], ['branch', branch], ['session name', session]]) {
+    if (!el) continue;
+    const r = el.getBoundingClientRect();
+    if (r.width <= 0) problems.push(label + ' has no visible width');
+    if (r.left < t.left - 0.75 || r.right > t.right + 0.75) problems.push(label + ' ' + px(r.left) + '..' + px(r.right) + ' leaves the title ' + px(t.left) + '..' + px(t.right));
+    if (cut(el) && getComputedStyle(el).textOverflow !== 'ellipsis') problems.push(label + ' is cut off without an ellipsis');
+  }
+  // The session name is the part that reads: the branch gives way first. A cut
+  // session name is fine only once the branch is down to its minimum.
+  const branchMin = 3 * em + 1;
+  if (branch && cut(session) && branch.clientWidth > branchMin) {
+    problems.push('session name shows ' + session.clientWidth + ' of ' + session.scrollWidth + 'px while the branch still takes ' + branch.clientWidth + 'px (it can go down to ' + px(branchMin) + 'px)');
+  }
+  const status = document.querySelector('#toolbar-status')?.getBoundingClientRect();
+  if (status && t.right > status.left + 0.75) problems.push('the title ' + px(t.right) + ' runs into the connection status ' + px(status.left));
+  const sizes = (el) => (el ? { text: el.textContent, shown: el.clientWidth, needs: el.scrollWidth } : null);
+  return { problems, project: sizes(project), branch: sizes(branch), session: sizes(session), window: [innerWidth, innerHeight] };
+})()`;
+
+/**
+ * Measures the toolbar title of the session on screen in an 800×500 window:
+ * project, branch and session name are all visible, inside the title and cut
+ * only with an ellipsis; the session name is not cut while the branch still
+ * has room to give.
+ */
+export async function titleLayout(cdp, size = MIN_WINDOW) {
+  return atWindowSize(cdp, size, () => cdp.evaluate(TITLE));
 }

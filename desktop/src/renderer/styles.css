@@ -622,6 +622,9 @@ html, body {
 #toolbar-title:not(:has(span)) { color: var(--text-primary); font-weight: 600; }
 #toolbar-title > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; color: var(--text-secondary); }
 #toolbar-title > [data-testid='title-project'] { flex-shrink: 0; max-width: 40%; }
+/* When the three do not fit, the branch gives way first, down to a few
+   characters; only then is the session name cut. */
+#toolbar-title > [data-testid='title-branch'] { flex-shrink: 1000; min-width: 3em; }
 #toolbar-title > [data-testid='title-branch']::before {
   content: '';
   display: inline-block;

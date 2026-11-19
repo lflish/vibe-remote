@@ -12,6 +12,7 @@
 //   three-level sidebar (throwaway repositories with several worktrees) →
 //   every row's name, badge, state text and dot are readable at the default width;
 //   at 800×500 the "more" menu of a row at the bottom of the sidebar is usable
+//   and the toolbar title keeps the session name under a long branch
 //   chat (second daemon, fake claude): new chat session via the picker →
 //   reply rendered → permission prompt allowed once → turn resumes
 //   session-switching keys (⌘1–9, ⌘⇧[, ⌘⇧]) with the focus in the terminal and
@@ -41,7 +42,7 @@ import { createRequire } from 'node:module';
 import { randomBytes } from 'node:crypto';
 import { pickerLayout } from './picker-layout.mjs';
 import { sidebarLayout, makeSidebarRepos, startSession, LONG_BRANCH } from './sidebar-layout.mjs';
-import { rowMenuLayout } from './shell-layout.mjs';
+import { rowMenuLayout, titleLayout } from './shell-layout.mjs';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../../../..');
 const DESKTOP = join(ROOT, 'desktop');
@@ -482,6 +483,13 @@ async function sidebarCase(firstSessionId) {
     console.log(`NOTE row menus in an 800×500 window: ${(menus.measured ?? []).join(' | ')}`);
     check(menus.problems.length === 0 && menus.nearBottom > 0, 'the "more" menu of a project row and of a worktree row at the bottom of the sidebar stays inside an 800×500 window and takes a click',
       menus.problems.length ? menus.problems.join('; ') : 'no row sat near the bottom of the window: nothing was exercised');
+    // The toolbar title of the session under the long branch: the branch is what gets shortened.
+    await open(ids.long);
+    const title = await titleLayout(cdp);
+    console.log(`NOTE toolbar title in an 800×500 window: ${JSON.stringify({ project: title.project, branch: title.branch, session: title.session })}`);
+    check(title.problems.length === 0 && title.branch?.text === LONG_BRANCH && title.branch.needs > title.branch.shown,
+      'under a long branch the toolbar title of an 800×500 window shortens the branch and keeps the session name whole',
+      title.problems.length ? title.problems.join('; ') : `the branch was not the long one or was not shortened: ${JSON.stringify(title.branch)}`);
   } catch (e) {
     fail(`three-level sidebar layout — ${e.message}`);
   }
