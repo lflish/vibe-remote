@@ -269,7 +269,7 @@ v3 对话会话的条目另带（终端条目一律省略）：
 | `worktree_path_exists` | ✓ | v4：新 worktree 的目标目录已存在（空目录也算） |
 | `worktree_path_not_allowed` | ✓ | v4：目标目录不在 `allowed_roots` 内；或 worktree 建好之后，会话实际的工作目录（`workdir` 是仓库子目录时映射到新 worktree 里的那个）解析符号链接后不在 `allowed_roots` 内。`message` 含完整路径。不带 `worktreeName` 的 worktree 模式遇到这种情况同样返回这个代码（v3 是 `create_failed`） |
 
-以上四个 v4 的错误发生时，daemon 不留下这次创建的目录和分支。
+以上四个 v4 的错误（以及创建 worktree 途中出现的 `create_failed`）发生时，daemon 撤销这次创建，正常情况下不留下这次建出的目录和分支。有两种例外会留下东西，`message` 的末尾写明留下了什么（`…; cleanup: …` 或 `…; rollback worktree: …`）：撤销本身失败（git 删不掉这个 worktree，或目录里已经有别的内容）；撤销时发现它已经不是这次创建的样子（分支被移到了别的提交，或那个目录里被放进了另一个 worktree）——这时保留现场，不强删别人同时做的改动。错误码不变，所以不能只凭错误码断定磁盘上什么都没留。
 
 对话会话运行中的失败（版本过旧、进程崩溃、重启失败）不走 `error` 帧，而是 `chat_state.ended` + `vr_exit` 消息 + `exit` 帧，连接保持，客户端不重连。
 

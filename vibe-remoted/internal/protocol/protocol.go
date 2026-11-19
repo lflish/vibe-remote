@@ -211,7 +211,9 @@ const (
 	ErrCodeClaudeSessionBusy = "claude_session_busy" // fatal: that claude conversation runs in another session
 	ErrCodeShuttingDown      = "shutting_down"       // transient: the daemon is stopping, retry (it restarts)
 
-	// v4: creating a worktree (all fatal; nothing is left behind)
+	// v4: creating a worktree (all fatal). The create is undone; what the undo
+	// could not or must not remove (git failed, or the branch or directory is
+	// no longer what this create made) stays and is named in the message.
 	ErrCodeInvalidWorktreeName    = "invalid_worktree_name"     // the name is not usable as a branch name
 	ErrCodeWorktreeBranchExists   = "worktree_branch_exists"    // that branch, or one git cannot keep next to it, exists
 	ErrCodeWorktreePathExists     = "worktree_path_exists"      // the target directory exists (even if empty)
