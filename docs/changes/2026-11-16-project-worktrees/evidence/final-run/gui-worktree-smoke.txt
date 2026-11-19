@@ -1,38 +1,44 @@
-work dir /private/tmp/vr-wt-YAKg9j
-PASS 5 daemons up (this-mac:29401 proto 4, lab-mac:26256 proto 4, keep-mac:24741 proto 4, narrow-mac:24744 proto 4, old-mac:21377 proto 3)
+start 2026-11-20 06:16:40
+work dir /private/tmp/vr-wt-cIUMe1
+PASS 5 daemons up (this-mac:28049 proto 4, lab-mac:26011 proto 4, keep-mac:20999 proto 4, narrow-mac:26749 proto 4, old-mac:28403 proto 3)
+
+(!) Some chunks are larger than 500 kB after minification. Consider:
+- Using dynamic import() to code-split the application
+- Use build.rollupOptions.output.manualChunks to improve chunking: https://rollupjs.org/configuration-options/#output-manualchunks
+- Adjust chunk size limit for this warning via build.chunkSizeWarningLimit.
 PASS app started with 5 machines (zh), hooks installed
-PASS R1.1 one project, two worktrees, each with a session — devflow: main, change/general-skills, fix-login, 0808876; main has the chat session "devflow", fix-login the terminal session "登录修复"
+PASS R1.1 one project, two worktrees, each with a session — devflow: main, change/general-skills, fix-login, 31933e2; main has the chat session "devflow", fix-login the terminal session "登录修复"
 PASS R1.2 a project with one worktree has no worktree level — 2 sessions directly under new-api, row shows "dev"
 PASS R1.3 a folder outside any git repository — notes: 2 session(s), row buttons ["project-new-session"]
 PASS R1.4 sessions of one worktree that were never renamed — devflow | devflow 2 | devflow 3
 PASS R1.5 the order is the same over 40 refreshes — 3 projects, 8 sessions, 40 refreshes (40 requests of the project list), 0 differences
 PASS R1.6 a folded project shows that a session inside is waiting — folded: session-unread waiting; unfolded: session row dot waiting, "对话 · 等你处理"
 PASS R1.7 title and notification title carry project, branch and session name — title "DEdevflow / fix-login · 登录修复"; notification (fallback) "this-mac · devflow / fix-login · 登录修复"
-PASS R1.8 a worktree on no branch shows its short commit id — row "0808876" = HEAD of /private/tmp/vr-wt-YAKg9j/a/devflow-wt/detached
+PASS R1.8 a worktree on no branch shows its short commit id — row "31933e2" = HEAD of /private/tmp/vr-wt-cIUMe1/a/devflow-wt/detached
 PASS R2.1 a worktree made elsewhere, with no session — row "change/general-skills" (没有会话), entries ["worktree-new-session","worktree-menu","worktree-empty-new-session"]
 PASS R2.2 a project whose sessions are all deleted stays, across a desktop and a daemon restart — keep and its 2 worktrees listed after: deleting its session, restarting the desktop, restarting the daemon
 PASS R2.3 remove a project from the sidebar — removed: not shown, not listed by the daemon, 2 worktrees and 2 branches untouched; back after a session in rm/sub
 PASS R2.4 a project with sessions cannot be removed — disabled, with the note "这个项目下还有会话，先结束会话才能移除"
 PASS R2.5 a worktree removed outside the app — row px gone; session "x" under prune says "目录已不存在"
-PASS R2.6 a worktree outside the allowed directories is not listed — git lists 2 worktrees, the sidebar and the daemon only /private/tmp/vr-wt-YAKg9j/n/solo
-PASS R2.7 the worktree list cannot be read — gone: "仓库目录不存在"; broken: "读取失败：git worktree list --porcelain: exit status 128: fatal: not a git repository (or any of the parent directories): .git"; both sessions take input
-PASS R3.1 new worktree fix-login with a chat session — branch fix-login @ ff9386e, directory /private/tmp/vr-wt-YAKg9j/l/webapp-worktrees/fix-login, chat session 1795116779202-04955fde
-PASS R3.2 a name with a slash — sidebar "change/foo", branch change/foo, directory /private/tmp/vr-wt-YAKg9j/l/webapp-worktrees/change-foo
+PASS R2.6 a worktree outside the allowed directories is not listed — git lists 2 worktrees, the sidebar and the daemon only /private/tmp/vr-wt-cIUMe1/n/solo
+PASS R2.7 the worktree list cannot be read — gone: "仓库目录不存在"; broken: "读取失败：git worktree list --porcelain -z: exit status 128: fatal: not a git repository (or any of the parent directories): .git"; both sessions take input
+PASS R3.1 new worktree fix-login with a chat session — branch fix-login @ 25414da, directory /private/tmp/vr-wt-cIUMe1/l/webapp-worktrees/fix-login, chat session 1795126620882-4c170eb0
+PASS R3.2 a name with a slash — sidebar "change/foo", branch change/foo, directory /private/tmp/vr-wt-cIUMe1/l/webapp-worktrees/change-foo
 PASS R3.3 names that cannot be used — "a b" → 名字不能包含空格; "a..b" → 名字不能包含 ..; "-x" → 名字不能以 - 开头; "a~b" → git 不接受这个分支名; "@{-1}" → git 不接受这个分支名; "" → 请填写名字
-PASS R3.4 the branch already exists — "分支 taken-branch 已存在", dialog stayed open; taken-branch-2 then created (session 1795116787527-56191eb1)
-PASS R3.5 the directory already exists — 目录已存在：/private/tmp/vr-wt-YAKg9j/l/webapp-worktrees/occupied
-PASS R3.6 uncommitted changes where the worktree starts from — "基于 main @ ff9386e，不包含未提交的改动"; the new worktree is clean at ff9386e
+PASS R3.4 the branch already exists — "分支 taken-branch 已存在", dialog stayed open; taken-branch-2 then created (session 1795126629122-ac131143)
+PASS R3.5 the directory already exists — 目录已存在：/private/tmp/vr-wt-cIUMe1/l/webapp-worktrees/occupied
+PASS R3.6 uncommitted changes where the worktree starts from — "基于 main @ 25414da，不包含未提交的改动"; the new worktree is clean at 25414da
 PASS R3.7 the connection drops between confirming and ready — automatic reconnect: 2 attaches with one id; Retry now: 2 attaches with one id; one worktree, one branch, one session each
-PASS R3.8 git fails while creating — 错误：create session: create worktree: git worktree add --detach /private/tmp/vr-wt-YAKg9j/l/failrepo-worktrees/will-fail 09f23aca21171c8ef4a34e05194273c3b5ee6d0e: exit status 128: Preparing worktree (detached HEAD 09f23ac)
+PASS R3.8 git fails while creating — 错误：create session: create worktree: git worktree add --detach /private/tmp/vr-wt-cIUMe1/l/failrepo-worktrees/will-fail 484a9b3d3a1aadd83c08f9f26ae0b638310a9720: exit status 128: Preparing worktree (detached HEAD 484a9b3)
 fatal: could not create directory of '.git/worktrees/will-fail': Permission denied
-PASS R3.9 Worktree mode from the machine overview asks for the name too — name field with the same rules; created branch from-overview (session 1795116798472-45484af8)
-PASS R3.10 the new directory would be outside the allowed directories — 目录不在允许的范围内：/private/tmp/vr-wt-YAKg9j/n/solo-worktrees/blocked
-PASS R4.1 "new session" on a worktree row — "在 fix-login 新建会话" · devflow · /private/tmp/vr-wt-YAKg9j/a/devflow-worktrees/fix-login
-PASS R4.2 a worktree under a hidden directory — terminal session 1795116800633-25970dfa runs in /private/tmp/vr-wt-YAKg9j/a/devflow/.devflow-tmp/worktrees/general-skills
-PASS R4.3 chat in a worktree whose main directory is trusted — chat session 1795116801257-4d58198f in /private/tmp/vr-wt-YAKg9j/a/devflow/.devflow-tmp/worktrees/general-skills; only /private/tmp/vr-wt-YAKg9j/a/devflow is in the trust file
-PASS R4.4 neither the main directory nor the worktree is trusted — 先用终端界面在项目主目录 /private/tmp/vr-wt-YAKg9j/l/untrusted 打开一次 claude，信任这个项目后才能用对话界面。
+PASS R3.9 Worktree mode from the machine overview asks for the name too — name field with the same rules; created branch from-overview (session 1795126640328-b069c3d2)
+PASS R3.10 the new directory would be outside the allowed directories — 目录不在允许的范围内：/private/tmp/vr-wt-cIUMe1/n/solo-worktrees/blocked
+PASS R4.1 "new session" on a worktree row — "在 fix-login 新建会话" · devflow · /private/tmp/vr-wt-cIUMe1/a/devflow-worktrees/fix-login
+PASS R4.2 a worktree under a hidden directory — terminal session 1795126642448-ce9e548a runs in /private/tmp/vr-wt-cIUMe1/a/devflow/.devflow-tmp/worktrees/general-skills
+PASS R4.3 chat in a worktree whose main directory is trusted — chat session 1795126643072-4b2b0960 in /private/tmp/vr-wt-cIUMe1/a/devflow/.devflow-tmp/worktrees/general-skills; only /private/tmp/vr-wt-cIUMe1/a/devflow is in the trust file
+PASS R4.4 neither the main directory nor the worktree is trusted — 先用终端界面在项目主目录 /private/tmp/vr-wt-cIUMe1/l/untrusted 打开一次 claude，信任这个项目后才能用对话界面。
 PASS R4.5 a second session in the same worktree — fix-login: 登录修复 | fix-login; both take input
-PASS R4.6 the worktree itself is trusted, the main directory is not — chat session 1795116803365-e936b8e5 in /private/tmp/vr-wt-YAKg9j/l/selftrust-wt/b
+PASS R4.6 the worktree itself is trusted, the main directory is not — chat session 1795126645232-9aabc5f8 in /private/tmp/vr-wt-cIUMe1/l/selftrust-wt/b
 PASS R5.1 deleting a session keeps its worktree, branch and commits — "worktree r51 的目录和分支都会保留，之后可以在侧边栏继续使用，或者单独删除。"; afterwards the directory, branch r51 and its 2 commits are there, the row says "没有会话"
 PASS R5.2 deleting a clean, merged worktree removes the directory and the branch — row gone; directory, worktree entry and branch r52 gone
 PASS R5.3 uncommitted and untracked files: Enter cancels, "delete anyway" deletes — "有 3 个文件未提交或未跟踪。删除 worktree 会丢弃它们，无法恢复。"; Enter changed nothing; "仍然删除" removed the directory
@@ -41,10 +47,10 @@ PASS R5.5 unmerged commits: keep the branch (default) or delete it too — defau
 PASS R5.6 a worktree with two running sessions — "会先结束这 2 个会话。"; both ended, their views closed, worktree removed as a clean one
 PASS R5.7 the main directory cannot be deleted — main row buttons ["worktree-new-session","worktree-empty-new-session"]; other row has the menu; daemon answers 400 worktree_is_main
 PASS R5.8 a worktree vibe-remote did not create: directory only, the branch stays — "这个 worktree 不是由 vibe-remote 创建：只删目录，分支 ext/tool 保留。"; directory gone, branch ext/tool still listed
-PASS R5.9 failures found before anything is touched: locked, nested worktree — locked: "删除失败：this worktree is locked with git worktree lock (reason: usb); unlock it first: git worktree unlock /private/tmp/vr-wt-YAKg9j/l/del-worktrees/r59" (fits 800×500: 2 buttons reachable), session still takes input; nested: "删除失败：another worktree is inside this one: /private/tmp/vr-wt-YAKg9j/l/del-worktrees/r59b/node_modules/inner (branch r59-inner); remove that one first"
+PASS R5.9 failures found before anything is touched: locked, nested worktree — locked: "删除失败：this worktree is locked with git worktree lock (reason: usb); unlock it first: git worktree unlock /private/tmp/vr-wt-cIUMe1/l/del-worktrees/r59" (fits 800×500: 2 buttons reachable), session still takes input; nested: "删除失败：another worktree is inside this one: /private/tmp/vr-wt-cIUMe1/l/del-worktrees/r59b/node_modules/inner (branch r59-inner); remove that one first"
 PASS R5.10 a desktop that only sends DELETE /sessions/{id} loses no commits — clean with 2 unmerged commits → 204; with an uncommitted file → 204; directories, branches, commits and the file are there
 PASS R5.11 a worktree on no branch — "这 2 个提交删除后不再属于任何分支，无法恢复。"; Enter changed nothing; "仍然删除" removed it; a clean detached worktree gets the plain confirmation
-PASS R5.12 failures after the sessions were ended are reported as they are — git refuses: "删除失败：fatal: simulated failure of worktree remove (gui-worktree-smoke)" + "已结束 2 个会话。", directory and branch kept; half-deleted: "git 已经不再登记这个 worktree，但目录没有删完，还剩一部分在 /private/tmp/vr-wt-YAKg9j/k/fail2-wt/b。分支没有删除。" (fits 800×500: "关闭" 574.5,358.3..635,392.3)
+PASS R5.12 failures after the sessions were ended are reported as they are — git refuses: "删除失败：fatal: simulated failure of worktree remove (gui-worktree-smoke)" + "已结束 2 个会话。", directory and branch kept; half-deleted: "git 已经不再登记这个 worktree，但目录没有删完，还剩一部分在 /private/tmp/vr-wt-cIUMe1/k/fail2-wt/b。分支没有删除。" (fits 800×500: "关闭" 574.5,358.3..635,392.3)
 PASS R6.1 -c where a session already runs: the note, and Confirm stays on — 这个目录已有会话正在用最近那段对话：对话界面会切到已有的那个会话，终端界面可能无法启动。不勾选即可开一段新对话。
 PASS R6.2 -c where no session runs: no note — ticked, no note
 PASS R7.1 ⌘1–⌘9 open the session at that position — 7 sessions showing: ⌘3, ⌘1, ⌘7, ⌘2 open that position; ⌘8…⌘9 do nothing; 3: seen(prevented); k: seen>page>bubble
@@ -57,19 +63,21 @@ PASS R8.2 a terminal session: shell and the four terminal colors follow the them
 PASS R8.3 the two existing GUI scripts keep every case of the version before this change — gui-smoke.mjs: 14 → 30 cases, no asserting line removed; gui-chat-smoke.mjs: 26 → 26 cases, no asserting line removed (run them for the other half: gui-smoke.mjs, gui-chat-smoke.mjs)
 PASS R8.4 text contrast as painted, and three state dots that differ in shape — 1043 texts on 5 screens: lowest body 6.5 (.worktree-label), button 4.78 (.worktree-empty-action), secondary 3.59 (.machine-state); dots: ring 4.4, solid 3.58, solid+halo 3.24 against the sidebar
 PASS R8.5 the smallest window, 800×500, in Chinese and in English — 26 measurements at 800×500, no problem: zh-CN sidebar (80 rows); zh-CN picker, worktree mode, name refused; zh-CN new session in a worktree, chat off; zh-CN new worktree, usable name; zh-CN new worktree, name refused; zh-CN delete session; zh-CN delete worktree: clean; zh-CN delete worktree: files; zh-CN delete worktree: commits; zh-CN delete worktree: detached; zh-CN delete worktree: external; zh-CN delete worktree: failed, re-opened; zh-CN slash menu (13 commands); en sidebar (80 rows); en picker, worktree mode, name refused; en new session in a worktree, chat off; en new worktree, usable name; en new worktree, name refused; en delete session; en delete worktree: clean; en delete worktree: files; en delete worktree: commits; en delete worktree: detached; en delete worktree: external; en delete worktree: failed, re-opened; en slash menu (13 commands)
-PASS R8.6 a cold start shows the theme from the first frame — window background #EFEFF4 right after it was created (visible: true), first paint 105 ms after the window was created: gutters and sidebar #EFEFF4, card #FFFFFF, 0% dark pixels (text), none of the previous beige
-PASS R9.1 this desktop with a protocol-3 daemon — grouped under legacy (main row, vibe/1795116768379-783949f8); quiet worktree not listed; both entries off: "需要升级这台机器的 vibe-remoted"; picker without a name field → vibe/1795116855656-8094b443; delete note is the old-daemon one and true; dirty one: "Worktree 已保留 · /private/tmp/vr-wt-YAKg9j/o/legacy-worktrees/1795116768379-783949f8 · 分支 vibe/1795116768379-783949f8"
-PASS R9.2 the previous desktop's protocol against this daemon — ws-smoke.mjs of 6d88e45: 12 PASS, 0 FAIL; worktree mode without a name → vibe/1795116857447-d5423680; attach, input, delete work
+PASS R8.6 a cold start shows the theme from the first frame — window background #EFEFF4 right after it was created (visible: true), first paint 96 ms after the window was created: gutters and sidebar #EFEFF4, card #FFFFFF, 0% dark pixels (text), none of the previous beige
+PASS R9.1 this desktop with a protocol-3 daemon — grouped under legacy (main row, vibe/1795126608362-3475232d); quiet worktree not listed; both entries off: "需要升级这台机器的 vibe-remoted"; picker without a name field → vibe/1795126697436-783959e4; delete note is the old-daemon one and true; dirty one: "Worktree 已保留 · /private/tmp/vr-wt-cIUMe1/o/legacy-worktrees/1795126608362-3475232d · 分支 vibe/1795126608362-3475232d"
+PASS R9.2 the previous desktop's protocol against this daemon — ws-smoke.mjs of 6d88e45: 12 PASS, 0 FAIL; worktree mode without a name → vibe/1795126699306-2d35f221; attach, input, delete work
 PASS an open row menu survives the sidebar being rebuilt and still works (review, pending 11) — after two rebuilds the menu is still 3px from the same button, the sidebar is still scrolled to 1295px, and the item opens the confirmation
-PASS a worktree being deleted says so until its row is gone (review, pending 11) — 41 looks over 6393 ms (request and list each delayed 3000 ms): the row always said "正在删除…" with "new session" off, then went away
+PASS a worktree being deleted says so until its row is gone (review, pending 11) — 41 looks over 6401 ms (request and list each delayed 3000 ms): the row always said "正在删除…" with "new session" off, then went away
 PASS double-clicking the name of a session that is open here renames it (exploration X2) — double click → input with "new-api" → typed a name, Enter: daemon and sidebar have it; on the session shown: input, Esc keeps the name
 PASS a row menu opened with the pointer stays at its button when the sidebar is rebuilt (exploration X8) — opened with the pointer: 3px under its button; still there after two rebuilds (pointer on the button, then on the item); the item opens the confirmation
 PASS the row menus work from the keyboard alone (exploration X3) — Tab to "more", Enter: focus on "删除 worktree"; arrows stay; Esc and Tab close it and the focus is on a button; Enter on the item opens the confirmation; Esc closes that
 PASS switching with the keys scrolls the session's row into view (exploration X6) — 19 sessions in a sidebar that scrolls 3395px: ⌘⇧[ to the last and ⌘1 to the first both bring the row into view
-PASS performance: 20 projects × 5 worktrees add at most 200 ms to the lists — median of 15: /api/v1/projects 110.4 ms; /api/v1/sessions 6.8 ms on an empty daemon, 7.9 ms with 20 projects × 5 worktrees and 20 sessions
+PASS performance: 20 projects × 5 worktrees add at most 200 ms to the lists — median of 15: /api/v1/projects 108.6 ms; /api/v1/sessions 6.6 ms on an empty daemon, 7.5 ms with 20 projects × 5 worktrees and 20 sessions
 PASS no uncaught renderer exceptions
 
 65 cases: R1 8/8, R2 7/7, R3 10/10, R4 6/6, R5 12/12, R6 2/2, R7 5/5, R8 6/6, R9 2/2, other 7/7
 
 all GUI worktree checks passed
 exit=0
+end 2026-11-20 06:18:43
+b99c6400cdcab14bd3be87a1c9bdb86998322998

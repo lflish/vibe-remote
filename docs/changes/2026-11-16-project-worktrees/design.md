@@ -1006,7 +1006,7 @@ daemon 的升级步骤：
 
 1. 构建并替换二进制：`make dist-daemon`（或 `cd vibe-remoted && GOOS=linux GOARCH=amd64 go build -o ../bin/vibe-remoted-linux-amd64 ./cmd/vibe-remoted`），复制到远程机器覆盖原文件。只重启旧二进制不会更新协议。
 2. 确认 `state_dir`（默认是配置文件旁的 `vibe-remoted-state/`）可写：`projects.json` 写在这里。不可写时 daemon 照常启动，但项目清单和「哪些 worktree 是 vibe-remote 建的」只在内存里，重启后这些 worktree 按「外部」显示（能删目录，不会删分支）。
-3. 确认 daemon 的运行环境里 `git`、`tmux` 在 PATH 上。实测过的 git 是 2.30.2 和 2.50.1，更早的版本没有测。daemon 的 PATH 里找不到 tmux 而机器上还有终端会话时，删除 worktree 会被拒绝（500，`message` 写明原因）。`TMUX_TMPDIR` 若设置，必须指向存在的目录。
+3. 确认 daemon 的运行环境里 `git`、`tmux` 在 PATH 上。实测过的 git 是 2.50.1（全部测试通过）、2.34.1 和 2.30.2（后两个从源码构建，整包测试里各有用例失败，原因和后果见 evidence/gate-c-1-rework.md 第 3 节），更早的版本没有测，没有写明支持的最低版本。已知的版本差别（关口 C 第 1 轮返工时补记，tasks.md「后续」）：git 低于 2.36 时路径里有换行的 worktree 列不出来；低于 2.31 时被 `git worktree lock` 锁定的 worktree 不会在结束会话之前被拦下（会话先被结束，git 再拒绝删除，响应如实带 `endedSessions`）。daemon 的 PATH 里找不到 tmux 而机器上还有终端会话时，删除 worktree 会被拒绝（500，`message` 写明原因）。`TMUX_TMPDIR` 若设置，必须指向存在的目录。
 4. 重启 daemon。终端会话在 tmux 里，不受影响，桌面端自动重连；对话会话的进程随 daemon 结束，重启后显示「会话已结束：vibe-remoted 重启过」，点「重新启动」用同一段对话接上。
 5. 升级桌面端（替换 app）。在此之前旧桌面端仍可使用。
 

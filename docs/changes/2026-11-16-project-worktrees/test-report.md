@@ -1,43 +1,54 @@
 # 测试报告：按项目和 worktree 组织会话，并更换视觉风格
 
-日期：2026-11-20　分支：change/project-worktrees　提交：5d8878c（被测的代码；其后的提交只加文档、证据和记录）
+日期：2026-11-20　分支：change/project-worktrees　提交：3c9cff8（被测的代码；其后的提交只改 `docs/changes/` 下的文档和记录，运行时的 HEAD 是 `b99c640`）
 
-> ⚠️ 端到端测试：**已完成**。58 个验收场景每个都有在真实应用里运行的用例（CDP 驱动构建产物，本机有界面的 Electron 临时实例），最终运行 65 个用例全部通过；另有不带界面的接口冒烟 30 行全部通过。
+> ⚠️ **这是关口 C 第 1 轮不通过、返工（T21–T28，只改了 daemon）之后的第 2 轮全量运行。** 第 1 轮的报告对应提交 `5d8878c`，那一轮的两份验证结论归档在 `verdict-history.md`；验证者拦下的 7 个问题（X9–X15）和这一轮的复测结果见下面「关口 C 第 1 轮返工」一节。
+> ⚠️ 端到端测试：**已完成**。58 个验收场景每个都有在真实应用里运行的用例（CDP 驱动构建产物，本机有界面的 Electron 临时实例），这一轮运行 65 个用例全部通过；另有不带界面的接口冒烟 30 行全部通过。
 > 浏览器环节：适用（桌面应用，裸 CDP；没有用 Playwright，跟随项目已有的做法）。
-> 测试环境：e2e_env = local。被测的是临时 daemon（终端会话跑 `/bin/bash`，对话会话跑假 claude）和本机的 git 2.50.1、tmux 3.6a，**不是真实的 claude，也不是远程 Linux**。独立验证（关口 C）还没有做，结论见之后的 verdict.md。
-> 这一轮探索式检查发现 8 个问题，修了 4 个（都在桌面端，都不涉及删除、信任规则和协议），1 个交给用户决定（c7），3 个记入后续。
+> 测试环境：e2e_env = local。被测的是临时 daemon（终端会话跑 `/bin/bash`，对话会话跑假 claude）和本机的 git 2.50.1、tmux 3.6a，**不是真实的 claude，也不是远程 Linux**。第 2 轮独立验证（关口 C）还没有做，结论见之后的 verdict.md。
+> 这一轮只运行、不改代码：没有出现失败，已知偶发的用例一次都没有出现。探索式检查是第 1 轮做的（发现 8 个问题，修了 4 个，都在桌面端；1 个交给用户决定（c7），3 个记入后续），返工没有改桌面端，这一轮没有重做。
 
 ## 汇总
 
 | 类别 | 通过 | 失败 | 跳过 | 合计 |
 |------|------|------|------|------|
-| 单元 + 集成：Go（`make check` 里的 `go test -race ./...`） | 5 个包全部 `ok`（`go test -list` 列出 440 个顶层测试函数：session 230、server 98、chat 95、config 15、protocol 2） | 0 | 没有统计（没有带 `-v`） | 5 个包 |
+| 单元 + 集成：Go（`make check` 里的 `go test -race -count=1 ./...`） | 5 个包全部 `ok`；带 `-v` 另跑的一遍：454 个顶层测试函数（session 243、server 99、chat 95、config 15、protocol 2）和 386 个子用例全部 PASS | 0 | 0 | 5 个包，454 个顶层测试（第 1 轮是 440；多出的 14 个是返工的回归测试） |
 | 单元：桌面端（`make check` 里的 `npm test`，33 个脚本） | 311 | 0 | 0 | 311 |
-| 端到端（浏览器）：`gui-worktree-smoke.mjs` | 65 | 0 | 0 | 65（61 个按场景命名的 + 这一轮新增的 4 个） |
+| 端到端（浏览器）：`gui-worktree-smoke.mjs` | 65 | 0 | 0 | 65（61 个按场景命名的 + 探索式检查后加的 4 个；`--list` 列出 65 个） |
 | 端到端（浏览器）：`gui-smoke.mjs` | 46 行 PASS | 0 | 0 | 46（脚本里 `check(` 30 处，未减少） |
-| 端到端（浏览器）：`gui-chat-smoke.mjs` | 29 行 PASS | 0 | 0 | 29（脚本里 `test(` 26 处，未减少） |
+| 端到端（浏览器）：`gui-chat-smoke.mjs` | 29 行 PASS | 0 | 0 | 29（脚本里 `^test(` 26 处，未减少） |
 | 端到端（接口）：`ws-smoke.mjs` / `ws-chat-smoke.mjs` / `ws-worktree-smoke.mjs` | 12 / 9 / 9 | 0 | 0 | 30 |
-| `.devflow.yml` 的不变规则（19 条） | 18 条命令退出码 0；第 2 条是 `/protocol-sync` skill，机械可比的部分核对无差异 | 0 | 0 | 19 |
+| `.devflow.yml` 的不变规则（19 条） | 18 条命令原样执行，退出码全是 0，没有 `(cached)`；第 2 条是 `/protocol-sync` skill，这一轮只核对了改动的部分（见下） | 0 | 0 | 19 |
 
-都在提交 `5d8878c` 的代码上运行，一个一个跑，各带独立的 `TMUX_TMPDIR`。已知偶发的用例（`gui-smoke.mjs` 的「drag-select + ⌘C」、第 4 步等选区目标、第 9 步状态点；`gui-chat-smoke.mjs` 的 R1.1、R7、R13.2 / R14.2；`TestStopAccountsForEveryQueuedMessage/restart`、`TestProjectsOneGitCallPerProject/unresolved_session`、`TestProjectStoreRemoveWorktreeIfSame`、`TestWorktreeStatus/ignored_timeout`）**这一轮都没有出现，没有重跑**。
+每一项都是退出码 0、第一次运行就通过，没有重跑。都在 HEAD `b99c640` 上运行（代码与 `3c9cff8` 相同：`git diff 3c9cff8..b99c640` 只有 `docs/changes/` 下的两个文件），一个一个跑，各带独立的 `TMUX_TMPDIR`（`/tmp/vr-XXXXXX`）；临时 daemon 的 `allowed_roots` 只有自己在 `/tmp` 下建的目录。
 
-运行命令和结果（完整输出在 `evidence/final-run/`）：
+已知偶发的用例（`gui-smoke.mjs` 的「drag-select + ⌘C」、第 4 步等选区目标、第 9 步状态点；`gui-chat-smoke.mjs` 的 R1.1、R7、R13.2 / R14.2；`TestStopAccountsForEveryQueuedMessage/restart`、`TestProjectsOneGitCallPerProject/unresolved_session`、`TestProjectStoreRemoveWorktreeIfSame`、`TestWorktreeStatus/ignored_timeout`）**这一轮一次都没有出现**：三份 GUI 冒烟各跑 1 次，Go 全套跑了 2 次（`make check` 一次、带 `-v` 一次），这四个 Go 用例在带 `-v` 的那次逐个看到是 PASS。它们偶发的原因仍然没有查清。
+
+运行命令和结果（完整输出在 `evidence/final-run/`，这一轮覆盖了第 1 轮的同名文件）：
 
 ```
 $ TMUX_TMPDIR=<临时目录> make check
 cd vibe-remoted && go vet ./...
-cd vibe-remoted && go test -race ./...
-ok  	github.com/lflish/vibe-remote/vibe-remoted/internal/chat	19.784s
-ok  	github.com/lflish/vibe-remote/vibe-remoted/internal/config	2.396s
-ok  	github.com/lflish/vibe-remote/vibe-remoted/internal/protocol	3.366s
-ok  	github.com/lflish/vibe-remote/vibe-remoted/internal/server	65.312s
-ok  	github.com/lflish/vibe-remote/vibe-remoted/internal/session	269.152s
+cd vibe-remoted && go test -race -count=1 ./...
+ok  	github.com/lflish/vibe-remote/vibe-remoted/internal/chat	17.905s
+ok  	github.com/lflish/vibe-remote/vibe-remoted/internal/config	2.440s
+ok  	github.com/lflish/vibe-remote/vibe-remoted/internal/protocol	2.013s
+ok  	github.com/lflish/vibe-remote/vibe-remoted/internal/server	65.162s
+ok  	github.com/lflish/vibe-remote/vibe-remoted/internal/session	317.533s
 cd desktop && npm run typecheck
 > tsc --noEmit
 cd desktop && npm test
-…（311 行 ok，0 行 FAIL）
+…（311 行 ok，0 行 not ok / FAIL）
 test-theme-tokens checks passed (16)
 exit=0
+
+$ cd vibe-remoted && TMUX_TMPDIR=<临时目录> go test -race -count=1 -v -timeout 20m ./...     # 为了数通过和跳过另跑的一遍（evidence/final-run/go-test-v-summary.txt）
+ok  	…/internal/chat	17.379s
+ok  	…/internal/config	1.830s
+ok  	…/internal/protocol	2.209s
+ok  	…/internal/server	63.111s
+ok  	…/internal/session	312.710s
+exit=0                                              # 顶层 PASS 454 / FAIL 0 / SKIP 0；子用例 PASS 386 / FAIL 0 / SKIP 0
 
 $ TMUX_TMPDIR=<临时目录> node .claude/skills/verify/scripts/gui-smoke.mjs
 …
@@ -46,65 +57,67 @@ PASS ordinary keys typed afterwards still reach the remote shell
 PASS no uncaught renderer exceptions
 
 all GUI checks passed
-exit=0                                              # 46 行 PASS
+exit=0                                              # 46 行 PASS、0 行 FAIL
 
-$ TMUX_TMPDIR=<临时目录> node .claude/skills/verify/scripts/gui-chat-smoke.mjs --no-build
+$ TMUX_TMPDIR=<临时目录> node .claude/skills/verify/scripts/gui-chat-smoke.mjs
 …
-PASS R14.2 handoff while a turn runs asks first, then continues in a terminal — dialog "Claude 正在回复，交给终端会中断当前回合。继续吗？"; terminal: fake-claude interactive resume=21ca14a8-…
+PASS R14.2 handoff while a turn runs asks first, then continues in a terminal — dialog "Claude 正在回复，交给终端会中断当前回合。继续吗？"; terminal: fake-claude interactive resume=9c0ddfc3-…
 PASS R13.4 init reports an old claude → ended with required version, no reconnect — claude 版本过旧（1.0.0），对话界面需要 2.1.210 或更新…
 PASS no uncaught renderer exceptions
 
 all GUI chat checks passed
-exit=0                                              # 29 行 PASS
+exit=0                                              # 29 行 PASS、0 行 FAIL
 
-$ DEVFLOW_EVIDENCE_DIR=docs/changes/2026-11-16-project-worktrees/evidence node .claude/skills/verify/scripts/gui-worktree-smoke.mjs --no-build
-PASS 5 daemons up (this-mac proto 4, lab-mac proto 4, keep-mac proto 4, narrow-mac proto 4, old-mac proto 3)
+$ node .claude/skills/verify/scripts/gui-worktree-smoke.mjs     # 自己建 /tmp/vr-wt-*、给每台 daemon 单独的 tmux 目录；这次连 desktop/dist 和几台 daemon 一起重新构建
+PASS 5 daemons up (this-mac:<端口> proto 4, lab-mac:<端口> proto 4, keep-mac:<端口> proto 4, narrow-mac:<端口> proto 4, old-mac:<端口> proto 3)
 PASS app started with 5 machines (zh), hooks installed
 …
 PASS double-clicking the name of a session that is open here renames it (exploration X2) — double click → input with "new-api" → typed a name, Enter: daemon and sidebar have it; on the session shown: input, Esc keeps the name
 PASS a row menu opened with the pointer stays at its button when the sidebar is rebuilt (exploration X8) — opened with the pointer: 3px under its button; still there after two rebuilds (pointer on the button, then on the item); the item opens the confirmation
 PASS the row menus work from the keyboard alone (exploration X3) — Tab to "more", Enter: focus on "删除 worktree"; arrows stay; Esc and Tab close it and the focus is on a button; Enter on the item opens the confirmation; Esc closes that
-PASS switching with the keys scrolls the session's row into view (exploration X6) — … ⌘⇧[ to the last and ⌘1 to the first both bring the row into view
-PASS performance: 20 projects × 5 worktrees add at most 200 ms to the lists — median of 15: /api/v1/projects 110.4 ms; /api/v1/sessions 6.8 ms on an empty daemon, 7.9 ms with 20 projects × 5 worktrees and 20 sessions
+PASS switching with the keys scrolls the session's row into view (exploration X6) — 19 sessions in a sidebar that scrolls 3395px: ⌘⇧[ to the last and ⌘1 to the first both bring the row into view
+PASS performance: 20 projects × 5 worktrees add at most 200 ms to the lists — median of 15: /api/v1/projects 108.6 ms; /api/v1/sessions 6.6 ms on an empty daemon, 7.5 ms with 20 projects × 5 worktrees and 20 sessions
 PASS no uncaught renderer exceptions
 
 65 cases: R1 8/8, R2 7/7, R3 10/10, R4 6/6, R5 12/12, R6 2/2, R7 5/5, R8 6/6, R9 2/2, other 7/7
 
 all GUI worktree checks passed
-exit=0
+exit=0                                              # 68 行 PASS、0 行 FAIL
 
-$ VR_TOKEN=<临时 token> node .claude/skills/verify/scripts/ws-smoke.mjs 127.0.0.1:<随机端口> <临时目录>     # 自建的临时 daemon，allowed_roots 只有这个临时目录
+$ VR_TOKEN=<临时 token> node .claude/skills/verify/scripts/ws-smoke.mjs 127.0.0.1:<随机端口> <临时目录>     # 自建的临时 daemon：从这份代码 go build，随机端口，/bin/bash，独立的 state_dir 和 tmux 目录，allowed_roots 只有这个临时目录
+PASS /healthz
+PASS /api/v1/info version=dev
 …
-PASS deleted 1795116911771-b72982a5
-PASS deleted 1795116911965-620a044d
+PASS B sees its own VIBE_REMOTE_SESSION_ID (no env bleed from A)
+PASS deleted 1795126762723-6a5c15b0
+PASS deleted 1795126762920-fb1e7d8a
 
 all checks passed
 exit=0                                              # 12 行 PASS
 
-$ node .claude/skills/verify/scripts/ws-chat-smoke.mjs
+$ TMUX_TMPDIR=<临时目录> node .claude/skills/verify/scripts/ws-chat-smoke.mjs
 all chat checks passed
 exit=0                                              # 9 行 PASS
 
-$ node .claude/skills/verify/scripts/ws-worktree-smoke.mjs
+$ TMUX_TMPDIR=<临时目录> node .claude/skills/verify/scripts/ws-worktree-smoke.mjs
+git: git version 2.50.1 (Apple Git-155) (the one on PATH); tmux: tmux 3.6a
 all worktree checks passed
 exit=0                                              # 9 行 PASS
 
-$ .devflow.yml 的 invariants：18 条 check 命令原样执行（evidence/final-run/invariants.txt），每条 exit=0
-$ node <核对脚本>        # /protocol-sync 里可以机械比对的部分（evidence/final-run/protocol-sync.txt）
-types compared: 29 (146 fields); Go types with no TS interface of the same name: Frame, SessionMetadata, DataFrame, EventRequest
-routes: 14 (…)
-version: go 4, ts 4, docs table has a row for it: true
-no differences
+$ .devflow.yml 的 invariants：18 条 check 命令原样交给 zsh，环境里加 GOFLAGS=-count=1 和各自的 TMUX_TMPDIR（evidence/final-run/invariants.txt）
+1 exit=0 (41 s)   3 exit=0   4 exit=0 (17 s)   5 exit=0   6 exit=0   7 exit=0   8 exit=0   9 exit=0   10 exit=0   11 exit=0
+12 exit=0   13 exit=0 (11 s)   14 exit=0   15 exit=0 (76 s)   16 exit=0   17 exit=0   18 exit=0 (25 s)   19 exit=0 (11 s)
 ```
 
-关于不变规则的两点说明：
+关于不变规则的三点说明：
 
-- 第 2 条「协议三处一致」的 check 是 `/protocol-sync` skill，不是命令。这一轮没有改 `protocol.go`、`protocol.ts`、`rest.ts`、`docs/protocol.md`（`git diff a3d07cc..HEAD` 对这四个文件为空）。做了能机械比对的部分：Go 的 29 个带 JSON 标签的类型与同名 TS 接口逐字段比（字段名、可缺省性，共 146 个字段）、每个字段名在 `docs/protocol.md` 里出现、`server.go` 的 14 条路由在文档和 `rest.ts` 里出现、版本号两边都是 4。桌面端有意读成可缺省的两个字段（`ReadyFrame.proto`、`ChatInfo.claudeVersion`，旧 daemon 不发）不算差异，基准提交上就是这样。错误码表、`chat_ack` 码这类开放集合没有重新逐项核对（上一次完整核对在开发阶段，decisions #112）。
-- 第 13 条的命令里 `./internal/server` 那一半输出 `[no tests to run]`：两个测试名都在 session 包里，命令原文如此，没有改。
+- 第 2 条「协议三处一致」的 check 是 `/protocol-sync` skill，不是命令。这一轮做的是：确认 `protocol.go`、`protocol.ts`、`rest.ts`、`server.go` 自第 1 轮做机械比对的提交 `5d8878c` 以来没有改动（`git diff` 为空；那次比对是 29 个类型 146 个字段、14 条路由、版本号两边都是 4，无差异）；返工改了 `docs/protocol.md` 的三行（预检的 400、删除的 409 和 500）：预检三种 400 的 `message` 与实现逐字相同，409 和 500 两行各对应到这一轮通过的回归测试（`evidence/final-run/protocol-sync.txt`）。关口 C 第 1 轮的验证者在 `91e0fab` 上按 skill 完整核对过一遍，结论是字段一致、只有预检端点对不存在目录的状态码与文档不符（X15，已修）。错误码表、`chat_ack` 码这类开放集合这一轮没有重新逐项核对。
+- 加 `GOFLAGS=-count=1` 是为了让 `go test` 真的运行：返工结束时的那一次（`evidence/gate-c-1-rework.md` 第 5 节）有 7 条命中了 Go 的缓存，这一轮 18 条的输出里都没有 `(cached)`。命令本身没有改。
+- 第 13 条的命令里 `./internal/server` 那一半输出 `[no tests to run]`：点名的测试都在 session 包里，命令原文如此，没有改。第 12–19 条自带 `TMUX_TMPDIR=$(mktemp -d)`，以命令自己的为准。
 
 ## 场景对照
 
-58 行，取自 `evidence/scenario-matrix.md`，「结果」是最终那次 `gui-worktree-smoke.mjs` 运行里同名用例的结果；截图是这次运行存的（覆盖了上一步的同名文件）。
+58 行，取自 `evidence/scenario-matrix.md`。「结果」是这一轮（代码 `3c9cff8`）`gui-worktree-smoke.mjs` 运行里同名用例的结果：58 个场景编号逐个在这次的输出里找到了 `PASS` 行（`evidence/final-run/gui-worktree-smoke.txt`）；表里点名的 Go 和桌面端测试在同一轮的 `make check` 里运行。截图是第 1 轮最终运行（`5d8878c`）存的，这一轮没有重新存进仓库——`5d8878c..HEAD` 之间 `desktop/` 和三份 GUI 脚本没有任何改动（`git diff` 为空），画面不变。
 
 | 场景 | 测试 | 层级 | 结果 | 证据 |
 |------|------|------|------|------|
@@ -167,12 +180,15 @@ no differences
 | R9.1 新桌面端 + 旧 daemon | desktop 单元：`test-tree.mjs › legacy_groups_by_session_fields`、`test-chat-availability.mjs › proto3_daemon_supports_chat`、`test-sidebar.mjs › legacy_note_and_disabled_entries`、`test-session-form.mjs › picker_proto3_has_no_name_segment`、`test-worktree-dialogs.mjs › delete_session_legacy_note`、`test-legacy-daemon.mjs`；e2e：`gui-worktree-smoke.mjs` › R9.1；gui-chat-smoke.mjs R17.2（协议 2 的 daemon） | 单元 / 浏览器 | 通过 | evidence/R9.1.png |
 | R9.2 旧桌面端 + 新 daemon | Go 集成：`TestAttachWorktreeWithoutNameKeepsLegacyNaming`、`TestTerminalFramesUnchangedV3`、`TestV3ClientFlowAgainstV4Daemon`；e2e：`gui-worktree-smoke.mjs` › R9.2；同一用例运行基准提交的 `ws-smoke.mjs`（12 行 PASS） | 集成 / 浏览器 / 接口 | 通过 | 运行输出 |
 
-58 个场景：58 个通过，0 个失败，0 个未覆盖。场景之外的用例（同一次运行）：`NFR.perf`、`X11.menu`、`X11.removing`、`X2.rename`、`X3.keys`、`X6.scroll`、`X8.menu` 通过。tasks.md 测试计划里点名的 Go 测试 `TestProjectsSingleWorktreeRepo`（含 `legacy_worktree_mode`）这一轮补上了（提交 `246b437`，三个子用例通过；两处故意改坏的实现下它会失败）。
+58 个场景：58 个通过，0 个失败，0 个未覆盖。场景之外的用例（同一次运行）：`NFR.perf`、`X11.menu`、`X11.removing`、`X2.rename`、`X3.keys`、`X6.scroll`、`X8.menu` 通过。tasks.md 测试计划里点名的 Go 测试 `TestProjectsSingleWorktreeRepo`（含 `legacy_worktree_mode`）是第 1 轮补上的（提交 `246b437`，三个子用例通过；两处故意改坏的实现下它会失败）。
+
+关口 C 第 1 轮的验证者对这张表的判断（`verdict-history.md`）：非界面部分的验证者逐个读了 58 个场景的断言，其中 R2.1、R3.5、R3.8、R4.2、R5.6、R5.9、R5.12 这 7 行标了「普通情况的守护通过，新增的反例不通过」，对应 X9–X14（X15 是预检端点的状态码，不在场景表里），回归测试见下面「关口 C 第 1 轮返工」；界面部分的验证者用真实指针和按键亲手走了其中 50 个，没有发现脚本通过而实际不符的场景。
 
 ## 交付预览
 
 - 产物：**截图替代**。项目没有录屏能力（`dev-preview` skill 不存在），没有视频。关键流程留了一组按步骤编号的截图 `evidence/flow-01.png` … `flow-12.png`，每一步核对了什么写在 `evidence/flow-run.txt`。
 - 来源：2026-11-20，本机（macOS，Electron 临时实例，1280×800），被测提交 `85a18cc` 的桌面端构建和 daemon（与 `5d8878c` 的代码相同）；操作全部是经 CDP 发给这个临时实例的真实指针和按键事件（`Input.dispatchMouseEvent` / `dispatchKeyEvent` / `insertText`），不是 DOM 的 `click()`。
+- 返工之后：这组截图是第 1 轮录的，daemon 是返工之前的。返工改的是 daemon 里创建失败的撤销、删除 worktree 时对会话和分支的复核、读 tmux 和 worktree 列表的方式、预检端点的一个状态码，这条流程经过的画面没有变；这一轮没有重录，流程里的每一种操作（新建 worktree、删会话、删 worktree、移除项目、切换）在这一轮的 `gui-worktree-smoke.mjs` 里各有用例通过。
 - 操作与结果（同一个项目里同时开几条工作线，一条连贯的流程）：
 
   | 截图 | 这一步 | 核对（界面和磁盘） |
@@ -195,6 +211,8 @@ no differences
 - 成片核验：无成片。截图没有剪辑、标注或点击提示；提交前逐张看过，图里和 `flow-run.txt` 里没有 token。
 
 ## 探索式检查
+
+（第 1 轮做的，修复后的代码是 `5d8878c`；返工只改 daemon，这一轮没有重做。关口 C 第 1 轮的界面验证者之后又用真实指针和按键独立走了一遍，58 个场景里走了 50 个，X2、X3、X6、X8 的修复在真实窗口里都生效，另提了 7 条备注，见 `verdict-history.md`。）
 
 检查的入口（视口都是桌面：1280×800 为主，另有 800×500 的最小窗口和 2200 宽）。用真实的 Electron 临时实例（两台临时 daemon：一台有 2 个仓库和 1 个普通目录，一台 23 个项目、其中一个项目 13 个 worktree；`allowed_roots` 只有 `/tmp` 下自建的目录），经裸 CDP 发真实的指针和按键事件：
 
@@ -289,9 +307,31 @@ no differences
 - daemon 的 PATH 里没有 tmux 而 socket 在时，`worktrees/status` 的会话列表为空：**不算缺陷，保留在后续**。确认框会少列会话，但删除被 500 拦住并写明原因（`ws-worktree-smoke` 的「no tmux program on PATH but its socket is there」），不丢东西。
 - tasks.md 计划的 `TestProjectsSingleWorktreeRepo` 不存在：**已补上**（提交 `246b437`）。
 
+## 关口 C 第 1 轮返工
+
+第 1 轮独立验证（被测 `91e0fab`，两份结论全文在 `verdict-history.md`）：非界面部分的验证者（codex）结论「不通过」，拦下 7 个问题（P1–P7），在测试阶段的编号上接着编为 X9–X15；界面部分的验证者结论「通过，有备注」（N1–N7，记在 tasks.md「后续」）。7 个问题全部采纳，返工任务 T21–T27，另有「放松检查」一节的两条备注（T28）。返工只改了 daemon（`vibe-remoted/internal/session`、`internal/server/projects.go`）、它的测试、`docs/protocol.md` 三行、`CLAUDE.md` 和 `.devflow.yml`；桌面端和三份 GUI 脚本没有改动。每个修复都是先把验证者的反例写成回归测试并确认失败、再修、再做变异核对（修复前的失败输出和变异结果在 tasks.md「进度」的 T21–T28 各行和 `evidence/gate-c-1-rework.md`）。
+
+「这次运行的结果」取自这一轮带 `-v` 的那遍 Go 全套（`evidence/final-run/go-test-v-summary.txt`，逐个用例的 PASS 行）和对应不变规则的命令；同一批用例在 `make check` 里又跑了一遍（包一级的 `ok`）。
+
+| 编号 | 问题（验证者的编号、程度） | 修复提交 | 回归测试 | 这次运行的结果 |
+|------|----------------------------|----------|----------|----------------|
+| X9 | P1，严重：创建失败的撤销把另一个进程在同一路径上建的 worktree（同分支，或 detached 在同一提交）当成本次建的，强制删除，对方的文件和分支一起丢 | `f86be13` | `TestUndoLeavesAWorktreeSomeoneElseAddedAtTheSamePath`（`same_branch`、`detached_at_the_same_commit`、`added_before_the_branch_was_claimed`）；`TestUndoAfterWorktreeAddFailedOnItsOwn`（2 个子用例）；被时限杀掉仍认领：`TestWorktreeAddKilledDuringCheckoutIsUndone` | 全部 PASS（3 + 2 个子用例，无跳过）；第 18 条规则 exit 0 |
+| X10 | P2，严重：删除 worktree 的途中 tmux 的 socket 文件被删，`kill-session` 失败被吞，目录照删，没结束的会话被报成已结束 | `6282332` | `TestRemoveWorktreeStopsWhenASessionDidNotEnd`；`TestRemoveWorktreeConfirmsSessionsAgainstTmux`（2 个子用例） | 全部 PASS；第 15 条规则 exit 0；`ws-worktree-smoke.mjs` 的「the socket file is removed while the server runs」PASS（500，什么都没删） |
+| X11 | P3，严重：会话所在目录的名字里有换行或制表符时，tmux 列表的行解析不了或字段错位，读取仍算成功，删除 worktree 漏掉活着的会话 | `44c049d` | `TestSessionWhoseProcessIsInAnOddlyNamedDirectoryIsStillRead`（5 种目录名 × 重启与否，10 个子用例）；`TestSessionCreatedInAnOddlyNamedDirectoryIsStillRead`（5 个子用例）；`TestTmuxReadFailsWhenARecordDoesNotParse`；改写的 `TestParseTmuxSessionLine*` 6 个 | 全部 PASS（15 个子用例，无跳过）；第 15 条规则 exit 0 |
+| X12 | P4，一般：tmux 报错里 socket 的路径含 `no sessions` 字样时被当成「没有会话」 | `465945a` | `TestIsNoTmuxServerGoesByTheWholeLine`；`TestSocketPathSayingNoSessionsIsNotAnEmptySet` | 全部 PASS；第 15 条规则 exit 0 |
+| X13 | P5，一般：结束会话之后只复核 HEAD 的提交，期间切到同一提交上的另一个分支或 detach，仍删目录和原分支 | `f94ea31` | `TestRemoveBranchSwitchedWhileEndingSessions`（`other_branch_at_the_same_commit`、`detached_at_the_same_commit`）；原有的 `TestRemoveHeadMovedWhileEndingSessions`、`TestWorktreeRemoveEndpoint/changed_after_sessions_ended` | 全部 PASS；第 15 条规则 exit 0 |
+| X14 | P6，一般：路径里有换行的外部 worktree 列不出来、查不了状态 | `771dcc6` | `TestListWorktreesPathWithNewline`（6 个子用例，列出、查状态、在其中开会话并一起删除）；`TestListWorktreesFallsBackWithoutZ`；`TestParseWorktreeList` | 全部 PASS（本机 git 2.50.1 认 `-z`，带换行的子用例没有跳过）；第 13 条规则 exit 0。旧版 git 上的退回模式这一轮没有重跑，结果是返工时的（见「未覆盖和遗留」的「旧版 git」） |
+| X15 | P7，一般：预检端点对白名单内但不存在的目录返回 403「不在允许范围内」，与文档不符 | `694e3f5` | `TestPlanMissingWorkdirIs400` | PASS |
+| 备注 1（T28） | `TestGitTimeoutKillsProcess` 在验证者那里 4 次都 SKIP，等于没有断言 | `3c9cff8` | 同名用例（先把假 git 运行一次，pid 没写出来算失败，不再跳过） | PASS，没有 SKIP；第 19 条规则 exit 0 |
+| 备注 2（T28，c6） | `TestGitEnvKeepsInheritedConfig` 的跳过条件比「git 低于 2.31」宽：探测命令自己失败也会跳过 | `3c9cff8` | 同名用例的两个子用例（探测失败算测试失败） | `GIT_CONFIG_PARAMETERS`、`GIT_CONFIG_COUNT` 都是 PASS，没有 SKIP（git 2.50.1）；要不要保留这个条件跳过仍等用户决定（c6） |
+
+这一轮整套 Go 测试 0 个 SKIP（454 个顶层、386 个子用例）。修复带来的行为变化（design.md 第 10 节「关口 C 第 1 轮返工」、decisions #140–#151、d68–d70）里，用户可能碰到的有两处：post-checkout 钩子失败的仓库里新建命名 worktree 会留下一个 detached 的 worktree（d70，记在「后续」）；单独删会话仍不确认 tmux 里的会话是否真的结束（d68，只有删除 worktree 的途中才确认）。
+
+返工的这 8 个提交没有再做独立代码评审（review.md 里没有返工之后的记录），由关口 C 第 2 轮的独立验证者把关。
+
 ## 待验证项
 
-来自 review.md 的 13 条，实验是上一步做的（`evidence/pending-checks.md`，被测 `ba9caa4`）；这一轮对第 11 条有新的发现。
+来自 review.md 的 13 条。实验是测试阶段前半做的（`evidence/pending-checks.md`，被测 `ba9caa4`），第 1 轮探索时对第 11 条有新的发现（X8）。关口 C 第 1 轮的两名验证者把这 13 条各看了一遍（`verdict-history.md` 两份结论的「待验证项」）：与这里不同的是第 7 条（被推翻了一部分），第 9、10、13 条由验证者独立重做后排除，第 3、4、8 条仍缺条件。这一轮（返工复验）没有重做这些实验，只按返工的结果更新了第 5、7 条。
 
 | 来源（review.md「待验证项」） | 做的实验 | 结果 | 证据 |
 |------------------------------|----------|------|------|
@@ -299,27 +339,37 @@ no differences
 | 2，`test-dialog-layout.mjs:14`：800×500 中英文下各对话框 | `dialog-layout.mjs` 在 800×500、中英文各量 13 个画面 | 已排除；这一轮在真实缩小的窗口里又看了一遍英文的四种删除确认框 | evidence/R8.5.png |
 | 3，`main/index.ts:102`：冷启动首帧 | 主进程停在第一条语句，记录窗口原生底色和第一次绘制完成的整帧 | 已排除到「第一次绘制完成的那一帧」；窗口出现到首次绘制之间（约 0.1 秒）屏幕上实际合成的像素**仍缺条件**（要录屏） | evidence/R8.6.png |
 | 4，`shortcuts.ts:48`：真实键盘 | CDP 按键：捕获阶段拦截、切换、终端 0 字节、草稿不变 | **仍缺条件**：缺的是真实键盘经过 macOS 菜单分发和输入法的那一段（不允许向系统前台发按键）。下一步：人在打包后的 app 里按一遍，步骤见「未覆盖和遗留」 | 运行输出（R7.1–R7.5） |
-| 5，`worktree.go:90`：git 低于 2.31 | 从源码构建并安装 git 2.30.2：那条规则的 6 个测试、`ws-worktree-smoke.mjs` 9 例 | 已排除（2.30.2）；更早的版本没有测 | evidence/ws-worktree-smoke-git-2.30.2.txt |
+| 5，`worktree.go:90`：git 低于 2.31 | 从源码构建并安装 git 2.30.2：那条规则的 6 个测试、`ws-worktree-smoke.mjs` 9 例 | 那条规则（fsmonitor）在 2.30.2 上已排除；更早的版本没有测。返工时又从源码构建 2.30.2 和 2.34.1 跑了 session、server 两个包的整包测试：返工没有带来新的失败，但两个旧版本上各有用例失败（基准上就有），原因是旧 git 的行为差别，见「未覆盖和遗留」的「旧版 git」 | evidence/ws-worktree-smoke-git-2.30.2.txt；evidence/gate-c-1-rework.md 第 3 节 |
 | 6，`runner.go:209`：全新的 tmux 环境、没有 tmux 程序 | 临时 daemon 经 REST 删除没有会话的 worktree，3 种环境 | 已排除 | evidence/final-run/ws-worktree-smoke.txt |
-| 7，`runner.go:209`、`manager.go:130`：对账四条规则 | 经 REST 走三种状态，每例读回磁盘和 tmux；代码与 CLAUDE.md 逐句对过；旧提交的 daemon 上用例会失败 | 已排除（测试工程师做的实验，不代替关口 C 的独立验证者再看一遍） | 同上 |
+| 7，`runner.go:209`、`manager.go:130`：对账四条规则 | 经 REST 走三种状态，每例读回磁盘和 tmux；代码与 CLAUDE.md 逐句对过；旧提交的 daemon 上用例会失败 | **关口 C 第 1 轮推翻了一部分**：普通的三种状态成立（验证者的接口冒烟同样通过），但验证者另找到三条绕过四条规则的路——结束会话失败被吞（X10）、目录名里的换行和制表符让列表读错（X11）、socket 路径里的 `no sessions` 字样（X12）。三条都已修复，回归测试这一轮通过（见「关口 C 第 1 轮返工」）；修复后的规则还要第 2 轮的独立验证者再看 | 同上；verdict-history.md 的 P2–P4 |
 | 8，`runner.go:51`：`TMUX_TMPDIR` 指向不存在的目录时 tmux 把 socket 放在哪 | 只读了 tmux 3.2a、3.0a 的源码 | **仍缺条件**：缺一个可以随意使用默认 tmux 目录的环境（容器）。源码显示 3.0a 不回退到 `/tmp`（报错退出），与 `tmuxSocketPath` 不一致，后果的方向是拒绝删除。下一步：容器里用 tmux 3.0、3.1、3.2 各跑一次 `TMUX_TMPDIR=/nonexistent tmux -L vibe-remote new-session -d`，并在文档里写明 `TMUX_TMPDIR` 必须指向存在的目录（升级步骤里已写） | evidence/pending-checks.md 第 8 条 |
-| 9，`worktree.go:46`：百万级未合并提交 | `git fast-import` 造 100 万个提交，量 `rev-list --count` 和 status | 已排除（3.9 秒） | evidence/pending-checks.md 第 9 条 |
-| 10，`worktree.go:47`：`git worktree remove` 到时限被杀 | 把时限改成 4 秒的临时构建加一个不返回的 git 包装 | 已排除 | evidence/pending-checks.md 第 10 条 |
+| 9，`worktree.go:46`：百万级未合并提交 | `git fast-import` 造 100 万个提交，量 `rev-list --count` 和 status | 已排除（3.9 秒）；关口 C 第 1 轮验证者独立重做：100 万个提交 4.2 秒 | evidence/pending-checks.md 第 9 条 |
+| 10，`worktree.go:47`：`git worktree remove` 到时限被杀 | 把时限改成 4 秒的临时构建加一个不返回的 git 包装 | 已排除；关口 C 第 1 轮验证者用 2 秒时限独立重做，同样排除 | evidence/pending-checks.md 第 10 条 |
 | 11，`sidebar.ts:140`、`index.ts:99`：行菜单跟随重建、「正在删除…」的行 | 上一步：`X11.menu`、`X11.removing`（DOM 点击）。这一轮：用真实指针打开菜单再刷新 | 「正在删除…」已排除；**行菜单跟随重建复现出问题（X8），已修复**，原用例和新用例都通过 | evidence/X8.png、运行输出 |
 | 12，`worktree-name.ts:19`：Electron 的 ICU 与 Go 的 Unicode 表 | 渲染进程和 Go 各跑全部码位 | 已排除（各拒绝 172 个，集合相同） | evidence/pending-checks.md 第 12 条 |
-| 13，`projects.go:318`：没有归属也没有 `@vibe_remote_workdir` 的旧终端会话 | 手工起一个不带任何选项的 tmux 会话再启动 daemon，直接查状态并删除 | 已排除 | evidence/final-run/ws-worktree-smoke.txt |
+| 13，`projects.go:318`：没有归属也没有 `@vibe_remote_workdir` 的旧终端会话 | 手工起一个不带任何选项的 tmux 会话再启动 daemon，直接查状态并删除 | 已排除；关口 C 第 1 轮验证者独立重做，同样排除 | evidence/final-run/ws-worktree-smoke.txt |
 
 ## 修复记录
 
 | 问题 | 提交 | 回归测试 | 复测 |
 |------|------|----------|------|
-| X2 双击已打开的会话不能改名 | `3f80670` | `test-sidebar › double_click_renames_a_session_that_is_open`；`gui-worktree-smoke › X2.rename` | 两个用例修复前失败、修复后通过；最终全量运行通过 |
+| X2 双击已打开的会话不能改名 | `3f80670` | `test-sidebar › double_click_renames_a_session_that_is_open`；`gui-worktree-smoke › X2.rename` | 两个用例修复前失败、修复后通过；这一轮全量运行通过 |
 | X8 行菜单在刷新后跳开 | `6bd5d5a` | `test-sidebar › menu_button_is_marked_expanded_while_its_menu_is_open`；`gui-worktree-smoke › X8.menu` | 同上；原有的 `X11.menu`、`X11.removing`、R2.3、R2.4、R5.x 通过 |
 | X3 行菜单不能用键盘操作 | `dc55d84` | `test-sidebar › row_menu_from_the_keyboard`；`gui-worktree-smoke › X3.keys` | 同上 |
 | X6 快捷键切换后行不在可见区 | `85a18cc` | `test-shortcuts › switching_reveals_the_row_via_index`；`gui-worktree-smoke › X6.scroll` | 同上；R7.1–R7.5 通过 |
 | 计划里的 Go 测试缺失 | `246b437` | `TestProjectsSingleWorktreeRepo`（`submodule`、`separate_git_dir`、`legacy_worktree_mode`） | 通过；两处故意改坏的实现下失败 |
+| X9 创建失败的撤销删掉别人在同一路径上建的 worktree（关口 C 第 1 轮 P1） | `f86be13` | `TestUndoLeavesAWorktreeSomeoneElseAddedAtTheSamePath`、`TestUndoAfterWorktreeAddFailedOnItsOwn`、`TestWorktreeAddKilledDuringCheckoutIsUndone` | 修复前 3 + 1 个子用例失败（对方的文件被删、分支被删），修复后通过；去掉 `c.added` 的变异下 4 个子用例失败；这一轮通过 |
+| X10 结束会话失败仍删目录并报成已结束（P2） | `6282332` | `TestRemoveWorktreeStopsWhenASessionDidNotEnd`、`TestRemoveWorktreeConfirmsSessionsAgainstTmux` | 修复前 3 个用例失败（`err = <nil>`），修复后通过；去掉两个判断的变异下都失败；这一轮通过 |
+| X11 目录名里的换行、制表符让 tmux 列表读错（P3） | `44c049d` | `TestSessionWhoseProcessIsInAnOddlyNamedDirectoryIsStillRead`、`TestSessionCreatedInAnOddlyNamedDirectoryIsStillRead`、`TestTmuxReadFailsWhenARecordDoesNotParse`、`TestParseTmuxSessionLine*` | 修复前 12 个子用例失败，修复后通过；两种变异（解析失败改成跳过、标记改回制表符）下失败；这一轮通过 |
+| X12 socket 路径里的 `no sessions` 被当成没有会话（P4） | `465945a` | `TestIsNoTmuxServerGoesByTheWholeLine`、`TestSocketPathSayingNoSessionsIsNotAnEmptySet` | 修复前失败，修复后通过；「整行等于」改回「包含」的变异下失败；这一轮通过 |
+| X13 结束会话之后不复核分支（P5） | `f94ea31` | `TestRemoveBranchSwitchedWhileEndingSessions` | 修复前 2 个子用例失败（`err = <nil>`），修复后通过；去掉分支和 detached 的复核后失败；这一轮通过 |
+| X14 路径带换行的 worktree 列不出来（P6） | `771dcc6` | `TestListWorktreesPathWithNewline`、`TestListWorktreesFallsBackWithoutZ`、`TestParseWorktreeList` | 修复前 3 个带换行的子用例和退回用例失败，修复后通过；4 种变异各有用例失败；这一轮通过（git 2.50.1） |
+| X15 预检端点把不存在的目录报成不在允许范围内（P7） | `694e3f5` | `TestPlanMissingWorkdirIs400` | 修复前失败（403），修复后通过；去掉「落在白名单之内」的判断后白名单外的路径变成 400，用例失败；这一轮通过 |
+| T28 两个测试的跳过条件（验证结论的两条备注；不改产品行为） | `3c9cff8` | `TestGitTimeoutKillsProcess`、`TestGitEnvKeepsInheritedConfig` | 改之前 8 次运行 8 次 SKIP，改之后 `-race -count=3` 没有 SKIP；SIGKILL 换成信号 0 的变异下失败；这一轮两个都是 PASS、没有 SKIP |
 
-四个修复前的失败输出在 `evidence/exploration-findings.md`。没有撤回过修复。四个修复都只动桌面端的 `sidebar.ts`、`menu.ts`、`styles.css`、`index.ts`（一行）和测试，**没有涉及删除、撤销、信任规则、协议这些关键路径**；daemon 的代码这一轮没有改（只加了一个测试）。X3 的修复把「菜单项的动作」和「关闭菜单」的先后对调了（先关再执行），「删除 worktree」「从侧边栏移除」的入口因此经过了改动，这两条路径的用例（R2.3、R2.4、R5.1–R5.12、`X11.*`、`X3.keys`、`X8.menu`）在最终运行里全部通过。
+第 1 轮（X2、X3、X6、X8）四个修复前的失败输出在 `evidence/exploration-findings.md`，都只动桌面端的 `sidebar.ts`、`menu.ts`、`styles.css`、`index.ts`（一行）和测试，没有涉及删除、撤销、信任规则、协议这些关键路径。X3 的修复把「菜单项的动作」和「关闭菜单」的先后对调了（先关再执行），「删除 worktree」「从侧边栏移除」的入口因此经过了改动，这两条路径的用例（R2.3、R2.4、R5.1–R5.12、`X11.*`、`X3.keys`、`X8.menu`）这一轮全部通过。
+
+关口 C 第 1 轮返工（X9–X15）改的正是关键路径：创建失败的撤销、删除 worktree 时对会话和分支的复核、读 tmux 和 worktree 列表的方式。修复前的失败输出、变异核对和旧版 git 上的实测在 tasks.md「进度」的 T21–T28 各行和 `evidence/gate-c-1-rework.md`，是开发（返工）阶段做的，这一轮没有重做，只做了复测。两轮都没有撤回过修复。
 
 ## 未覆盖和遗留
 
@@ -332,24 +382,50 @@ no differences
   4. 打开新建会话对话框、删除确认框各一次，按 ⌘2、⌘⇧] → 不切换。
   5. 换成中文输入法（拼音）再做第 1、2 步 → 结果相同，候选窗不弹出。
   6. 看菜单栏：这些键没有触发系统或应用菜单里的任何一项。
-  7. （这一轮新增）Tab 到某个 worktree 行的「⋯」，回车、回车 → 出现删除确认框；Esc 关闭后焦点回到「⋯」。会话多到要滚动时按 ⌘⇧[ → 侧边栏滚到被选中的那一行。
+  7. Tab 到某个 worktree 行的「⋯」，回车、回车 → 出现删除确认框；Esc 关闭后焦点回到「⋯」。会话多到要滚动时按 ⌘⇧[ → 侧边栏滚到被选中的那一行。
 - **冷启动首帧只证明到首次绘制**：窗口创建后的原生底色和第一次绘制完成的整帧都是新主题；两者之间约 0.1 秒屏幕上实际合成的画面没有取到（要录屏）。
-- **没有低于 git 2.30.2 的实测，最低 git 版本没有写进文档**（Ubuntu 20.04 自带 2.25）。升级步骤里写的是「实测过 2.30.2 和 2.50.1」。
+- **真正的旧版桌面端没有运行过**：R5.10 / R9.2 是按协议 3 的帧直接发、并运行基准提交的 `ws-smoke.mjs`，没有启动基准提交的桌面端（关口 C 第 1 轮界面验证者同样指出）。
+- **旧版 git**。这一轮全部在 git 2.50.1 上运行，旧版本上的结果是返工时的（`evidence/gate-c-1-rework.md` 第 3 节：从源码构建的 2.34.1 和 2.30.2，session、server 两个包整包运行，返工后与基准 `91e0fab` 上失败的用例相同，返工没有带来新的失败）。已知的差别，都记在 tasks.md「后续」，都没有修：
+  - **项目没有写明支持的最低 git 版本**。实测过的只有 2.50.1（全过）、2.34.1（Ubuntu 22.04）和 2.30.2（Debian 11）；更早的（Ubuntu 20.04 是 2.25）没有测。design.md「升级步骤」这一轮补上了这几点。
+  - git 低于 2.36 时，`-c core.fsmonitor=false` 的 `false` 被 git 当成一个要运行的程序名。`PATH` 里有 `false`（通常是 `/usr/bin/false`）时无害；找不到时 git 的报错（`error: cannot run false: No such file or directory`）混进输出，被算成未提交文件——方向是多报不少报（多要一次同意，不会少报而丢文件）。`TestRemoveWorktreeWhenTmuxIsNotInstalled` 在两个旧版本上因此失败（用例把 `PATH` 缩到只剩 git）。
+  - git 2.30 的 `worktree list --porcelain` 不输出 `locked` 和 `prunable`：被 `git worktree lock` 锁定的 worktree **不会在结束会话之前被拦下**——会话先被结束，git 再拒绝删除，响应如实带 `endedSessions`，目录和分支不丢；这与 spec R5.9「开始删除之前就能发现的失败」在这个版本上不符。目录不见了的 worktree 也认不成 `prunable`。2.30.2 上因此失败的用例：`TestListWorktrees`、`TestRemoveLockedRefusedBeforeEndingSessions`、`TestRemoveRefusedWhenNestedWorktree/prunable`、`TestWorktreeRemoveEndpoint/locked`、`TestChatTrust` 的 3 个子用例（后者另有测试自己用了 2.31 才有的 `rev-parse --path-format=absolute`）。
+  - git 低于 2.36 没有 `worktree list -z`，daemon 退回按行解析，这时**路径里有换行的 worktree 列不出来**，也就不能在界面里打开和删除（X14 的已知限制；制表符、引号、反斜线不受影响）。对应的 5 个子用例在旧版本上跳过。
+- **与效果页（M1）的已记录外观差异**。关口 C 第 1 轮的界面验证者说没有找到这份清单（N5）；此前它散在 tasks.md「后续」、design.md 第 10 节和 decisions 里，汇总如下。都是外观，都没有改，功能和 spec 的「那么」不受影响：
+
+  | # | 位置 | 效果页 | 实际 | 记录在 |
+  |---|------|--------|------|--------|
+  | 1 | 终端会话的卡片底部 | 一行状态：「机器 · 工作目录」和「终端 · tmux 保活」 | 没有这一行（对话会话底部有机器和路径） | 后续（T19）；验证者 N5 (2) |
+  | 2 | 对话里的工具行 | 左侧是按工具类型的图标；增删行数分色 | 左侧是运行 / 完成 / 失败的状态点；增删行数不分色 | 后续（T19）；decisions d41 (10) |
+  | 3 | 标题 | 分支和会话名之间是「/」 | 是「·」 | 后续（T19） |
+  | 4 | 权限卡片的「Esc 中断」 | 在标题右侧 | 在卡片底部 | 后续（T19） |
+  | 5 | 新建 worktree 的名字输入框 | 框里有分支图标 | 没有 | 后续（T19） |
+  | 6 | 删除 worktree 确认框里的会话 | 列出每个会话的名字和类型 | 只写「会先结束这 N 个会话」 | 后续；验证者 N5 (1) |
+  | 7 | 不在任何分支上的 worktree 行 | 提交图标 | 分支图标 | 后续（第 1 轮探索） |
+  | 8 | 会话行第一行 | 有相对时间（「3 分钟前」） | 没有（协议里没有最近活动时间） | decisions d10；后续 |
+  | 9 | 删除失败的说明 | 中文句子，另有「什么都没改动：…」一行和「现在的状态」小表 | daemon 的英文原因原样显示；删到一半的那种另有一段中文说明 | 验证者 N2；后续 |
+  | 10 | 仓库目录不存在的项目行 | 「读取失败」加原因 | 「仓库目录不存在」（其它 git 失败才是「读取失败：<原因>」） | 验证者 N4；design 7.4 的文案表 |
+  | 11 | 项目行两字母标签的文字 | 亮度 32% | 30%（32% 时对比度最低 4.15，不到 4.5） | design V17、decisions #26（有意的） |
+  | 12 | 机器行 | 显示器形状的图标；离线的机器不显示会话数 | 另一种图标（不是显示器）；离线的机器显示「0」 | **此前没有文字记录**，这一轮从并排截图 `evidence/m1-terminal.png` 上看到 |
+
+  另有一处不是差异而是没核对：红绿灯的位置改成了 (18, 19)，CDP 截图里看不到原生窗口控件，要在打包后的 app 里看一眼。效果页没画到、按 M1 的同一套语言自己定的画面见 decisions d41。
+- **关口 C 第 1 轮界面验证者的 7 条备注（N1–N7）** 都不拦，都没有改，记在 tasks.md「后续」：N1 新建会话后侧边栏不滚到新行；N2 删除失败的原因是英文；N3 英文界面「Terminal · New messages」被截断；N4 仓库目录不存在时没有「读取失败」几个字；N5 与效果页的两处外观差别（上表第 1、6 行）；N6 失败说明框开着时背后还是刚被结束的会话；N7 「保留分支」之后界面里接不回去。
 - **`TMUX_TMPDIR` 指向不存在的目录时旧版 tmux 的行为**没有实跑（待验证项 8）。
-- **c6**（review.md「交给用户决定」）：`TestGitEnvKeepsInheritedConfig` 里依赖 `GIT_CONFIG_COUNT` 的子用例在 git 低于 2.31 时跳过，是否保留这个条件跳过等用户决定。推荐保留。
-- **c7**（这一轮新增）：X1，后台终端会话的「有新消息」点在别处新建 / 重命名会话时全部亮起，要不要改点亮规则等用户决定。
-- 这一轮没有修、记入 tasks.md「后续」的：X4、X5、X7，「对话」卡片在信任结果回来之前的文案，daemon 重启后机器状态多停一个退避周期（实测 8.9 秒），detached 行的图标，目录选择器里用键盘进入子目录后的焦点。
+- **c6**（review.md「交给用户决定」）：`TestGitEnvKeepsInheritedConfig` 里依赖 `GIT_CONFIG_COUNT` 的子用例在 git 低于 2.31 时跳过，是否保留这个条件跳过等用户决定。推荐保留。返工（T28）把跳过条件收紧了：只有探测命令成功运行且结果表明 git 不读这个环境变量才跳过，探测失败算测试失败；本机 2.50.1 上不跳过。
+- **c7**：X1，后台终端会话的「有新消息」点在别处新建 / 重命名会话时全部亮起，要不要改点亮规则等用户决定。关口 C 第 1 轮的界面验证者也遇到了，与描述一致。
+- 第 1 轮探索没有修、记入 tasks.md「后续」的：X4、X5、X7，「对话」卡片在信任结果回来之前的文案，daemon 重启后机器状态多停一个退避周期（实测 8.9 秒），目录选择器里用键盘进入子目录后的焦点。返工留下、同样记在「后续」的：post-checkout 钩子失败的仓库里新建命名 worktree 会留下一个 detached 的 worktree（d70）；单独删会话不确认 tmux 里的会话是否真的结束（d68）。
 - **已知的偶发失败**（清单见「汇总」下方）这一轮一次都没有出现，没有重跑；它们的原因仍然没有查清，记录在 tasks.md「后续」。
-- `/protocol-sync` 这一轮只做了机械可比的部分（类型字段、路由、版本号），错误码等开放集合没有重新逐项核对；这一轮没有改协议文件。
-- 「交付预览」是截图，没有录屏。
-- 独立验证（dev-test 第 8 步，机器关口 C）**没有做**，由主会话安排。
+- `/protocol-sync` 这一轮只核对了返工改动的部分（协议的类型、路由、版本号没有改动；文档改的三行对了实现和测试），错误码等开放集合没有重新逐项核对。
+- 返工的 8 个提交没有再做独立代码评审。
+- 「交付预览」是截图，没有录屏；截图是第 1 轮的，这一轮没有重录。
+- 这一轮 `gui-worktree-smoke.mjs` 的截图没有存进仓库（`evidence/R*.png` 仍是第 1 轮 `5d8878c` 上的；其后桌面端没有改动）。
+- 独立验证（dev-test 第 8 步，机器关口 C）第 1 轮不通过；**第 2 轮还没有做**，由主会话安排。
 
 ## 验收核对
 
 | 方面 | 结论 | 依据 |
 |------|------|------|
-| 完整 | 成立 | tasks.md「进度」里 T1–T20（含 T6a / T6b / T6c）22 个任务都有完成记录，没有「阻塞」；R1–R9 的 58 个场景每个都有单元 / 集成测试（R8.3 除外，它本身就是运行两份冒烟）和真实应用里的用例，最终运行 58 个通过；测试计划里点名的测试现在都存在 |
-| 正确 | 成立 | `make check` 和六份冒烟在 `5d8878c` 上全过。抽查 spec 的文案：R3.4「分支 {branch} 已存在」、R3.5「目录已存在：{path}」、R3.10「目录不在允许的范围内：{path}」、R3.6「基于 main @ 8b50ad8，不包含未提交的改动」；R5.1「worktree … 的目录和分支都会保留」、R5.3「有 {n} 个文件未提交或未跟踪。删除 worktree 会丢弃它们」+「仍然删除」+ 默认取消、R5.4「另有 {n} 个被 git 忽略的文件会一并删除」、R5.5「只删目录、保留分支」（默认）/「目录和分支都删」、R5.8「不是由 vibe-remote 创建：只删目录，分支 … 保留」、R5.11「这 {n} 个提交删除后不再属于任何分支」；R6.1「对话界面会切到已有的那个会话，终端界面可能无法启动。不勾选即可开一段新对话」——`i18n.ts` 里的字符串与 spec 的说法一致，并在运行中的对话框里读到。数值：名字上限 250 字节（250 可用、251 被拒）、目录是 `<仓库名>-worktrees/<名字，斜杠换成连字符>`、最小窗口 800×500、性能（`/api/v1/sessions` 多 1.1 ms，上限 200 ms） |
-| 一致 | 成立 | 开发阶段的调整都在 design.md 第 10 节和 decisions.md 里；这一轮的四个修复补进了第 10 节（「测试阶段的修复」）和 decisions #134、#135、d66、d67 |
-| 干净 | 成立 | 提交后 `git status --short` 为空；产品代码相对基准新增的行里没有 `console.log`、`debugger`、`fmt.Print`、TODO / FIXME，也没有注释掉的代码段；`.devflow-tmp/` 不在仓库里（`git ls-files` 0 个，写在 `.git/info/exclude`） |
-| 改全 | 成立，补了一处 | 没有新增配置项（`state_dir` 早已在 `vibe-remoted.example.json` 里）。**design.md 第 10 节原来没有「升级步骤」，这一轮补上了**：桌面端和 daemon 一起升级、先升 daemon；两种先后顺序各自的中间状态（先升 daemon：旧桌面端照常用，删会话后留下的 worktree 要等升级桌面端才看得到；先升桌面端：分组降级、两个入口置灰，旧 daemon 删 Worktree 会话时仍会连 worktree 和分支一起删，不要久留）；daemon 的 5 个步骤（换二进制、`state_dir` 可写、git / tmux 在 PATH 上、重启、升级桌面端）；升级前留下的会话（自动补归属）、旧 Worktree 模式建的 worktree（按 vibe-remote 创建认领，可从界面删）、别的工具建的（标「外部」）、子模块和 `--separate-git-dir` 仓库里的（手动清理）；回退。19 条不变规则的检查全部通过 |
+| 完整 | 成立 | tasks.md 里 30 个任务（T1–T20，含 T6a / T6b / T6c；返工 T21–T28）的状态都是「完成」（T16 注明真实键盘待人工确认），没有「阻塞」，「进度」里各有完成记录；R1–R9 的 58 个场景每个都有单元 / 集成测试（R8.3 除外，它本身就是运行两份冒烟）和真实应用里的用例，这一轮 58 个场景编号都在 `gui-worktree-smoke.mjs` 的输出里有 PASS 行；关口 C 第 1 轮的 7 个问题各有回归测试，这一轮通过 |
+| 正确 | 成立 | `make check`、六份冒烟、18 条命令型规则在 `3c9cff8` 的代码上全过，Go 全套 0 个 SKIP。spec 的文案这一轮重新在 `desktop/src/renderer` 里逐条查到：R3.4「分支 … 已存在」、R3.5「目录已存在」、R3.10「目录不在允许的范围内」、R3.6「不包含未提交的改动」；R5.1「目录和分支都会保留」、R5.3「个文件未提交或未跟踪」+「仍然删除」、R5.4「被 git 忽略的文件会一并删除」、R5.5「只删目录、保留分支」/「目录和分支都删」、R5.8「不是由 vibe-remote 创建」、R5.11「删除后不再属于任何分支」；R6.1「终端界面可能无法启动」（桌面端自第 1 轮以来没有改动，第 1 轮在运行中的对话框里读到过这些句子，关口 C 的界面验证者也逐个看过）。数值：性能 `/api/v1/sessions` 多 0.9 ms（上限 200 ms）；名字上限 250 字节、目录命名、最小窗口 800×500 由共用向量和布局用例守着，这一轮通过。**不符合 spec 字面的两处**（都已记录、都不是这一轮新出现的）：R2.7 仓库目录不存在时写的是「仓库目录不存在」而不是「读取失败」（N4）；git 2.30 上被锁定的 worktree 不在结束会话之前被拦下（R5.9，见「旧版 git」） |
+| 一致 | 成立 | 开发阶段的调整在 design.md 第 10 节和 decisions.md 里；第 1 轮的四个修复在第 10 节「测试阶段的修复」和 decisions #134、#135、d66、d67；返工的七个修复在第 10 节「关口 C 第 1 轮返工」和 decisions #140–#151、d68–d70，`CLAUDE.md`、`.devflow.yml`（第 13、15、18 条规则的文字和 check）、`docs/protocol.md` 三行随之改了，`.devflow.yml` 里新加进 check 的用例名都存在并在这一轮运行（第 13、15、18、19 条 exit 0） |
+| 干净 | 成立 | 提交后 `git status --short` 为空；`git diff 3c9cff8..HEAD` 只有 `docs/changes/` 下的文件，代码和测试没有动；产品代码相对基准 `6d88e45` 新增的行里没有 `console.log`、`debugger`、`fmt.Print`、TODO / FIXME（这一轮重新 grep，0 处）；`.devflow-tmp/` 不在仓库里（`git ls-files .devflow-tmp` 0 个，写在 `.git/info/exclude`）。全量运行前后 `git status` 里没有出现 `docs/changes/` 之外的改动（没有脚本改了不该改的文件） |
+| 改全 | 成立，补了一处 | 返工没有新增配置项（`git diff 91e0fab..HEAD` 里没有 `vibe-remoted.example.json` 和 `internal/config`）。升级步骤在 design.md 第 10 节；**这一轮补了第 3 步里关于 git 版本的一句**：实测过的版本改为 2.50.1、2.34.1、2.30.2，写明低于 2.36 时路径带换行的 worktree 列不出来、低于 2.31 时被锁定的 worktree 不会事先拦下、没有写明最低版本（原文只写「实测过 2.30.2 和 2.50.1」，没有反映返工看到的差别）。没有停用的功能要清。19 条不变规则：18 条命令 exit 0，第 2 条（skill）只核对了改动的部分，见「汇总」下的说明 |

@@ -1,14 +1,20 @@
-work dir /private/tmp/vr-gc-U91uGL
-PASS 5 daemons up (gui-term:22410 gui-main:24959 gui-chat:24378 gui-old-claude:23494 gui-old-init:29825)
+start 2026-11-20 06:15:22
+work dir /private/tmp/vr-gc-BLqj7v
+PASS 5 daemons up (gui-term:23605 gui-main:23158 gui-chat:26113 gui-old-claude:29533 gui-old-init:21108)
+
+(!) Some chunks are larger than 500 kB after minification. Consider:
+- Using dynamic import() to code-split the application
+- Use build.rollupOptions.output.manualChunks to improve chunking: https://rollupjs.org/configuration-options/#output-manualchunks
+- Adjust chunk size limit for this warning via build.chunkSizeWarningLimit.
 PASS app started with 5 machines (zh), network hook installed
 PASS R1.3 bash machine: chat card disabled with the reason — 对话界面只支持 claude：这台机器的 claude_cmd 不是 claude
-PASS R1.1 default new session is a terminal session — session 1795116721092-d6873ace
+PASS R1.1 default new session is a terminal session — session 1795126528182-6db7962f
 PASS R1.4 claude too old: chat card disabled, upgrade claude — 远程 claude 版本 1.0.51 低于对话界面要求的 2.1.210，请升级 claude
 PASS new-session dialog: buttons reachable in 500/700/803px-high windows — 500px ok, 700px ok, 803px ok
 PASS R17.2 new desktop + protocol-2 daemon: terminal works, chat card says upgrade vibe-remoted — 这台机器的 vibe-remoted（协议 2）不支持对话界面（需要协议 3），请升级 vibe-remoted; picker note: 这台机器的 vibe-remoted（dev，协议 2）比桌面端（协议 4）旧，部分功能不可用。建议先更新 daemon。
-PASS R1.5 chat + -c shows the full 3000-line history, windowed — session 1795116722563-66fe287a; first screen 300 messages; 9 scrolls to the first; total 2000
+PASS R1.5 chat + -c shows the full 3000-line history, windowed — session 1795126529607-1e3eac5a; first screen 300 messages; 9 scrolls to the first; total 2000
 PASS R1.6/R11.2 bypass: mode fixed, no permission prompts — menu bypassPermissions (会话以 --dangerously-skip-permissions 启动，权限模式固定为「跳过权限」，不能切换。)
-PASS main chat session created (dir main) — 1795116725830-90c71afa
+PASS main chat session created (dir main) — 1795126532765-20690d3f
 PASS R3.2 markdown + code copy button — font "SF Mono"
 PASS R3.3 raw html/script inert, links go to the system browser — links [["ok","https://example.com"]]; open-external got ["https://example.com"]
 PASS R4 tool blocks: Read/Grep folded, Bash output, Edit diff, failure — Read:ok Grep:ok Bash:ok Edit:ok:open Bash:error:open
@@ -28,9 +34,11 @@ PASS R13.2 claude exits → ended banner, restart works — 会话已结束：cl
 fake claude crash line 2
 fake claude crash line 3
 重新启动新建终端会话接上
-PASS R14.2 handoff while a turn runs asks first, then continues in a terminal — dialog "Claude 正在回复，交给终端会中断当前回合。继续吗？"; terminal: fake-claude interactive resume=21ca14a8-a187-4516-addf-3f1c7240496b
+PASS R14.2 handoff while a turn runs asks first, then continues in a terminal — dialog "Claude 正在回复，交给终端会中断当前回合。继续吗？"; terminal: fake-claude interactive resume=9c0ddfc3-0eef-48e3-85d8-c80c3b9a19a6
 PASS R13.4 init reports an old claude → ended with required version, no reconnect — claude 版本过旧（1.0.0），对话界面需要 2.1.210 或更新已升级，重新检测新建终端会话接上
 PASS no uncaught renderer exceptions
 
 all GUI chat checks passed
 exit=0
+end 2026-11-20 06:15:55
+b99c6400cdcab14bd3be87a1c9bdb86998322998

@@ -1009,7 +1009,7 @@
 | T27 | 2026-11-20 05:46 | 本行所在的提交 | 修复前 `TestPlanMissingWorkdirIs400` FAIL（`missing directory in the allowed root: status 403 body {"error":"path not in allowed roots"}`）；修复后 `-run TestPlan` `ok`、`go test -race -count=1 -timeout 10m ./internal/server` `ok`（63 s）；`docs/protocol.md` 该端点的三种 400 的 `message` 与实现逐字相同；变异核对：去掉「落在白名单之内」的判断 → `missing directory outside the allowed roots: status 400 …; want 403` |
 | T28 | 2026-11-20 05:47 | 本行所在的提交 | 改之前 `go test -count=8 -v -run TestGitTimeoutKillsProcess`：8 次 SKIP；改之后完成定义的 `go test -race -count=3 -timeout 10m -v ./internal/session -run 'TestGitTimeoutKillsProcess\|TestGitEnvKeepsInheritedConfig'` 12 行 PASS、没有 SKIP（本机 git 2.50.1）；git 2.30.2 上 `GIT_CONFIG_COUNT` 子用例 SKIP（探测输出 `not-read`）、其余 PASS，2.34.1 上全部 PASS；`.devflow.yml` 第 19 条原样执行 exit 0；变异核对：超时后的 SIGKILL 换成信号 0 → `gitAtTimeout took 1.06s, want < 1s` |
 
-关口 C 第 1 轮返工各行写「本行所在的提交」的，提交分别是：T22 `6282332`，T23 `44c049d`，T21 `f86be13`，T25 `f94ea31`，T24 `465945a`，T26 `771dcc6`，T27 `694e3f5`，T28 `3c9cff8`。全部修完后的一轮检查（`make check`、三份 ws 冒烟、18 条命令型规则）在 `3c9cff8` 上，结果见 evidence/gate-c-1-rework.md 第 5 节；三份 GUI 冒烟没有跑，等主会话安排。
+关口 C 第 1 轮返工各行写「本行所在的提交」的，提交分别是：T22 `6282332`，T23 `44c049d`，T21 `f86be13`，T25 `f94ea31`，T24 `465945a`，T26 `771dcc6`，T27 `694e3f5`，T28 `3c9cff8`。全部修完后的一轮检查（`make check`、三份 ws 冒烟、18 条命令型规则）在 `3c9cff8` 上，结果见 evidence/gate-c-1-rework.md 第 5 节；三份 GUI 冒烟没有跑，等主会话安排。（之后回到测试阶段，在同一份代码上做了全量运行：`make check`、三份 GUI 冒烟、三份接口冒烟、18 条命令型规则都通过，见 test-report.md。）
 
 更正：T5 实际完成于 2026-11-19 12:39，T6a 13:11，T6b 14:04（以提交时间为准）。此后各行的时间用 `date '+%F %H:%M'` 取。
 
@@ -1020,7 +1020,7 @@ spec「推迟到以后」的条目：
 - E2 一个窗口里并排看 2 个会话（分屏）。
 - E3 多个 macOS 窗口。
 - E4 worktree 行上常驻显示「有未提交改动 / 领先 N 个提交」（本次只在删除确认时现查；放进列表会让 100 个 worktree 的列表超出 200 ms，见 decisions #7）。
-- 为已存在的分支创建 worktree（本次新建 worktree 总是新建分支）。
+- 为已存在的分支创建 worktree（本次新建 worktree 总是新建分支）。（关口 C 第 1 轮界面验证 N7：删除 worktree 时选了「只删目录、保留分支」，确认框写「以后可以再检出」，但界面里没有接回去的入口——再用同名新建得到「分支已存在」，要自己在终端里 `git worktree add`。真用的时候第一下就会碰到，做这一条时优先。）
 - 新建 worktree 时选择基于哪个分支（本次固定基于发起处当前 HEAD）。
 
 设计中发现、不在本次范围的改进：
@@ -1049,13 +1049,13 @@ spec「推迟到以后」的条目：
 - （评审修复已处理：每个 git 调用都带时限，`rev-list --count` 是 30 秒，decisions #93）`UnmergedCommits`（T1 写的）走的是不带超时的 `gitAt`：查状态和删除前重查时，这一条 `git rev-list` 卡住会让请求一直不返回（其余几条都有 5 秒超时）。可以改走 `gitAtTimeout`，超时按 `git_failed` 处理。
 - 并发用例 `TestConcurrentRemoveAndCreateOneWins` 发现不了「去掉删除与新建的互斥」这种改动（窗口太窄，12 轮撞不上），那一条现在靠两个卡时序的用例守着（decisions #67）。可以给它加一个只在测试里生效的让步点，把窗口撑开。
 - 当前打开的会话被删除（删会话或删它所在的 worktree）而又没有别的已打开会话时，主区域是空白的，没有回到机器概览或空状态（`closeSession` 原来就是这样，T14 的收尾沿用了它）。
-- 「删到一半失败」的说明框里，daemon 的 `message` 已经写了「目录还剩一部分、分支没删」，下面 `wt.delete.partial` 又说了一遍。可以让 daemon 的 `message` 只带 git 的输出，或在界面上合成一段。
-- 删除 worktree 的确认框只写「会先结束这 N 个会话」，没有列出是哪几个（效果页上列了名字和类型）。可以把会话名列出来。（第二轮复评补充：status 的 `sessions` 可能含不挂在这一行下的会话，例如开在其中另一个仓库里的；只写数量时用户看不出是哪几个。）
+- 「删到一半失败」的说明框里，daemon 的 `message` 已经写了「目录还剩一部分、分支没删」，下面 `wt.delete.partial` 又说了一遍。可以让 daemon 的 `message` 只带 git 的输出，或在界面上合成一段。（关口 C 第 1 轮界面验证 N2：R5.9 / R5.12 里 daemon 给的失败原因是英文，原样夹在中文界面里，例如 `this worktree is locked with git worktree lock…`、`another worktree is inside this one…`、`git no longer lists this worktree, but…`；效果页画面 7 画的是中文句子，另有一行「什么都没改动：…」和「现在的状态」小表。design 第 7 节定的就是 `message` 用英文、桌面端原样显示，原因和处理办法都看得到。要改的话给这几种失败各加一个原因码，由桌面端按语言出文案。）
+- 删除 worktree 的确认框只写「会先结束这 N 个会话」，没有列出是哪几个（效果页上列了名字和类型）。可以把会话名列出来。（第二轮复评补充：status 的 `sessions` 可能含不挂在这一行下的会话，例如开在其中另一个仓库里的；只写数量时用户看不出是哪几个。关口 C 第 1 轮界面验证 N5 (1) 是同一处：效果页画面 6(e)、7 列出了每个会话的名字和类型，spec R5.6 只要求写明会先结束几个会话。）
 - **待人工确认（交给 dev-test，写进测试报告）**：切换会话的快捷键在打包后的 app 里用真实键盘按一遍：⌘1–⌘9、⌘⇧[、⌘⇧]，焦点分别在终端里和对话输入框里；期望会话切换、终端和输入框里没有多出字符，系统菜单没有抢走这些键。T16 只用 CDP 向临时实例发键验证过（`gui-smoke.mjs` 第 11 步），CDP 的按键不经过 macOS 的原生菜单分发（design V7）；开发时没有向系统前台发按键（decisions #70）。
 - 连着协议 3 的 daemon 时，项目的主目录一行没有分支名，只有「主目录」标签（旧 daemon 的会话列表不带主目录的分支，d39）。可以在这一行显示项目名，或改成「主目录」不带标签的样式。
 - 状态栏的浮层（如「协议版本 3 低于桌面端 4」）出现的 6 秒里盖住对话输入框下方的提示行右半边（T17 的截图 `t17-legacy-chat-zh.png`）；原来就是这样。
 - 查 `gui-chat-smoke` R7 偶发失败的原因（AskUserQuestion 表单：`answers echoed: on": "Pick a fruit"`；T6b 提交后 3 次里失败 1 次，decisions #47）。
-- 效果页 M1 上有、这次没有做的几处外观（T19）：终端会话底部的一行状态（「机器 · 工作目录」和「终端 · tmux 保活」，要在终端容器里再分出一块，改终端的挂载和尺寸计算）；工具行左侧按工具类型的图标（现在是运行 / 完成 / 失败的状态点）和增删行数的分色；新建 worktree 名字输入框里的分支图标；标题里分支和会话名之间用的是「·」，效果页是「/」；权限卡片的「Esc 中断」在卡片底部，效果页在标题右侧。
+- 效果页 M1 上有、这次没有做的几处外观（T19）：终端会话底部的一行状态（「机器 · 工作目录」和「终端 · tmux 保活」，要在终端容器里再分出一块，改终端的挂载和尺寸计算）；工具行左侧按工具类型的图标（现在是运行 / 完成 / 失败的状态点）和增删行数的分色；新建 worktree 名字输入框里的分支图标；标题里分支和会话名之间用的是「·」，效果页是「/」；权限卡片的「Esc 中断」在卡片底部，效果页在标题右侧。（关口 C 第 1 轮界面验证 N5 (2) 说的是其中第一处：终端会话的卡片底部没有效果页画面 2 那一行，对话会话底部有机器和路径。与效果页的全部已记录差异汇总在 test-report.md「未覆盖和遗留」的清单里。）
 - 红绿灯的位置改成了 (18, 19)（T19），CDP 截图里看不到原生窗口控件，没有肉眼核对过它与「vibe-remote」字样是否对齐；打包后看一眼。
 - 查 `gui-smoke.mjs` 第 9 步「state dots on the two background sessions」偶发超时的原因（T19 开发中 6 次里出现 1 次，decisions #78）：脚本打开会话后立刻切走再发 hook 事件，事件可能早于那条连接接入。
 
@@ -1106,7 +1106,7 @@ spec「推迟到以后」的条目：
 
 - post-checkout 钩子失败的仓库里新建命名 worktree：git 把 `worktree add` 报成失败而 worktree 已经建完，撤销分不清它是不是别人刚建的，所以留在原处（detached，分支删掉，`message` 写明；d70）。每次重试都要先把留下的那个删掉。可以在运行 add 之前记下 `<git 公共目录>/worktrees/` 里已有的登记，只认领这次新出现的那一个。
 - （T26 已处理：`ResolveHome` 只去掉输出末尾的一个换行，decisions #147；`trailing_tab`、`newline_at_end` 两个用例守着）路径以空白结尾（末尾是空格、制表符或换行）的目录里的会话算不出归属、这样的 worktree 查不了状态。还剩一处同样的写法没有动：`HasSubmoduleCheckouts` 对 `rev-parse --absolute-git-dir` 的输出用 `strings.TrimSpace`——git 目录的路径以 `.git` 或 `.git/worktrees/<名字>` 结尾，名字是 git 自己清理过的，末尾不会是空白。
-- `gitWithin` 用 `CombinedOutput`，git 写到 stderr 的行和 stdout 混在一起：`git status --porcelain` 有警告时（读不了的目录；2.36 之前的 git 在 `PATH` 里没有 `false` 程序时每次读索引都报 `cannot run false`），`DirtyFiles` 把这些行也数成未提交文件。方向是安全的（多要一次同意），但数字不准；`TestRemoveWorktreeWhenTmuxIsNotInstalled` 在旧 git 上因此失败（基准上就是，evidence/gate-c-1-rework.md 第 3 节）。可以让按行计数的那几个调用只读 stdout。
+- `gitWithin` 用 `CombinedOutput`，git 写到 stderr 的行和 stdout 混在一起：`git status --porcelain` 有警告时（读不了的目录；2.36 之前的 git 在 `PATH` 里没有 `false` 程序时每次读索引都报 `cannot run false`），`DirtyFiles` 把这些行也数成未提交文件。起因是 2.36 之前的 git 把 `-c core.fsmonitor=false` 的 `false` 当成一个要运行的程序名：`PATH` 里有 `false`（通常是 `/usr/bin/false`）时没有这两行报错、无害，找不到时报错才混进输出。方向是安全的（多报不少报，多要一次同意），但数字不准；`TestRemoveWorktreeWhenTmuxIsNotInstalled` 在旧 git 上因此失败（基准上就是，evidence/gate-c-1-rework.md 第 3 节）。可以让按行计数的那几个调用只读 stdout。
 - 2.31 之前的 git（Debian 11 的 2.30）上，`git worktree list --porcelain` 不输出 `locked` 和 `prunable`：被 `git worktree lock` 锁定的 worktree 不会在结束会话之前被拦下（会话先被结束，git 再拒绝删除，响应如实带 `endedSessions`）；目录不见了的 worktree 不会被认成 `prunable`。基准上就是这样（evidence/gate-c-1-rework.md 第 3 节），本需求没有写明支持的最低 git 版本（上面「第二轮复评」一段已有这一条）。
 - **已知限制（X14）**：git 低于 2.36（没有 `git worktree list -z`；Ubuntu 22.04 自带 2.34、Debian 11 是 2.30）的机器上，路径里有换行的 worktree 列不出来，也就不能在界面里打开和删除。别的字符（制表符、引号、反斜线）不受影响。升级 git 即可。
 
@@ -1119,5 +1119,12 @@ spec「推迟到以后」的条目：
 - daemon 重启后，侧边栏的机器状态可能在「离线」上多停一个退避周期（`machineRetryAt`：5 s × 2^(失败次数−1)，上限 60 s；实测停了 8.9 s），而会话已经重连、对话框里的预检也已经成功。原有逻辑；可以让会话就绪触发的那次刷新不受退避限制。
 - 不在任何分支上的 worktree 行用的是分支图标，效果页（画面 3）是提交图标。
 - 目录选择器里用键盘进入一个子目录后焦点落在 `body` 上（列表被重建），再按一次 Tab 回到对话框里；可以把焦点放回列表的第一项。
-- 另一台桌面删除了本机正开着的会话所在的 worktree 时，本机的视图留在已退出的终端上，标题退回「机器名 · 会话 id 后缀」（原有的「会话在别处被删」的表现，本需求没有改）。
+- 另一台桌面删除了本机正开着的会话所在的 worktree 时，本机的视图留在已退出的终端上，标题退回「机器名 · 会话 id 后缀」（原有的「会话在别处被删」的表现，本需求没有改）。（关口 C 第 1 轮界面验证 N6 是同一种表现的另一个入口：本机删除 worktree 删到一半失败、R5.12 的说明框开着时，主区域还停在刚被结束的那个会话上，标题是「this-mac · 8a2f03」并显示「连接已断开，正在重连…」，关掉说明框后恢复；截图 `evidence/verdict-1/12-R5.12-partial-failure.png`。可以在会话被结束时就把视图切走，不等说明框关闭。）
 - 侧边栏行半露在可见区边缘时，点击会先把它滚进可见区（X6 的修复），双击的第二次点击可能落到别的行上，这一次不会进入改名；再双击一次即可。
+
+关口 C 第 1 轮界面验证者的备注（N1–N7，都不拦；全文在 verdict-history.md 的界面部分「问题」一节）：
+
+- N1：新建会话后侧边栏不会滚到新会话那一行。侧边栏的行多到要滚动时（验证时是 14 个会话），从机器概览或项目行新建一个会话：会话已打开、标题已变，侧边栏停在原处，高亮的新行在可见区之外。X6 修的是快捷键切换那条路；新建这条路为什么没滚到没有查（可能是选中那一刻新行还不在树里）；spec 没有对应条目。可以在新会话的行出现之后把它滚进可见区。
+- N3：英文界面下，默认宽度（284px）的侧边栏里后台终端会话第二行的「Terminal · New messages」被截成「New messa…」；同一位置的「Turn finished」不截，没有重叠。可以缩短英文文案，或让状态文字换一种更短的写法。
+- N4：仓库目录不存在时，项目行显示「仓库目录不存在」，没有 spec R2.7 和效果页画面 3 写的「读取失败」这几个字（其它 git 失败才是「读取失败：<原因>」）。design 7.4 的文案表就是这样定的，用户看得懂；要与 spec 的字面一致的话改成「读取失败：仓库目录不存在」。
+- N2、N5、N6、N7 与已有条目相近，补在那几条上，不另列：N2 →「『删到一半失败』的说明框里……」那条；N5 (1) →「删除 worktree 的确认框只写『会先结束这 N 个会话』……」那条；N5 (2) →「效果页 M1 上有、这次没有做的几处外观（T19）」那条；N6 →「另一台桌面删除了本机正开着的会话所在的 worktree 时……」那条；N7 →「为已存在的分支创建 worktree」那条。

@@ -1,14 +1,17 @@
-work dir /private/tmp/vr-chat-kiaLKG
-daemon up on 127.0.0.1:22244, claude 2.1.210 (fake)
-PASS chat: create — id=1795116926770-f01e588a
+start 2026-11-20 06:19:47
+work dir /private/tmp/vr-chat-IxNUkY
+daemon up on 127.0.0.1:20214, claude 2.1.210 (fake)
+PASS chat: create — id=1795126789422-87ab5edc
 PASS chat: replay before ready — one session, one process
 PASS chat: two clients — both saw both, same order, one process
-PASS chat: pending survives reconnect — request 6e0f19b9-5025-46c8-983d-c4d9b37f9b19 answered after reconnect
+PASS chat: pending survives reconnect — request f48bf38e-e398-4f2f-ac8e-fd1055c72505 answered after reconnect
 PASS chat: resync 50 — backlog 54, seq 14..67
-PASS chat: handoff — terminal 1795116927418-24d1013b runs --resume c35a0652-1f64-4ee0-8305-3f3c19a7365a
+PASS chat: handoff — terminal 1795126790051-ddf17954 runs --resume f648a32f-d3a9-4f9d-adda-4da53d9eb0ef
 PASS chat: daemon restart → ended — history 2, reloaded and replying
 PASS chat: state without hooks — idle → running → idle → waiting → idle
 PASS chat: delete keeps jsonl — process gone, transcript kept
 
 all chat checks passed
 exit=0
+end 2026-11-20 06:19:53
+b99c6400cdcab14bd3be87a1c9bdb86998322998
