@@ -69,16 +69,16 @@ invariants:
     check: cd vibe-remoted && TMUX_TMPDIR=$(mktemp -d) go test -race -timeout 10m ./internal/session ./internal/server -run 'TestRemoveOnlyListedWorktrees|TestRemoveMainRefused'
   - rule: 不是 vibe-remote 创建的 worktree，分支永远不删
     check: cd vibe-remoted && TMUX_TMPDIR=$(mktemp -d) go test -race -timeout 10m ./internal/session -run 'TestRemoveExternalNeverDeletesBranch|TestManagedRequiresPathAndBranch'
-  - rule: 未经同意不丢文件和提交（删除前重查，结束会话之后再核对一次 HEAD，与确认的不一致就 409，含确认之后分支被切换；里面嵌着别的 worktree、子模块或嵌入式仓库的检出、未被跟踪的独立仓库时拒绝删除；会话表没能和 tmux 对上时不动手；工作目录在其中的会话不管归属在哪都算进去）
-    check: cd vibe-remoted && TMUX_TMPDIR=$(mktemp -d) go test -race -timeout 10m ./internal/session -run 'TestRemoveDirtyNeedsConsent|TestRemoveUnmergedNeedsConsent|TestRemoveChangedSinceStatus|TestRemoveHeadMovedWhileEndingSessions|TestRemoveRefusedWhenNestedWorktree|TestRemoveSubmoduleCheckoutRefused|TestRemoveUntrackedRepositoryRefused|TestRemoveBranchSwitchedAfterConfirmation|TestRemoveEndsSessionsAttributedElsewhere|TestRemoveWorktreeAfterRestartNeedsTheSessionsFromTmux'
+  - rule: 未经同意不丢文件和提交（删除前重查，结束会话之后再核对一次 HEAD，与确认的不一致就 409，含确认之后分支被切换；里面嵌着别的 worktree、子模块或嵌入式仓库的检出、未被跟踪的独立仓库时拒绝删除；会话表没能和 tmux 对上时不动手——tmux 的 socket 不存在或没有 tmux 程序算没有终端会话，不算没对上；创建时的工作目录在其中的会话不管归属在哪都算进去，不看进程现在在哪）
+    check: cd vibe-remoted && TMUX_TMPDIR=$(mktemp -d) go test -race -timeout 10m ./internal/session -run 'TestRemoveDirtyNeedsConsent|TestRemoveUnmergedNeedsConsent|TestRemoveChangedSinceStatus|TestRemoveHeadMovedWhileEndingSessions|TestRemoveRefusedWhenNestedWorktree|TestRemoveSubmoduleCheckoutRefused|TestRemoveUntrackedRepositoryRefused|TestRemoveBranchSwitchedAfterConfirmation|TestRemoveEndsSessionsAttributedElsewhere|TestRemoveWorktreeAfterRestartNeedsTheSessionsFromTmux|TestRemoveWorktreeRefusedWhenTmuxSocketDoesNotAnswer|TestSessionsOfAWorktreeGoByWhereTheyWereCreatedAcrossRestart'
   - rule: 客户端传的 worktree 名字不经 shell；新建会话时本地规则不通过的名字在任何 git 调用之前被拒，预检时这样的名字不进入任何 git 参数
     check: cd vibe-remoted && TMUX_TMPDIR=$(mktemp -d) go test -race -timeout 10m ./internal/session ./internal/server -run 'TestWorktreeNameNeverReachesShell|TestValidateWorktreeName|TestCreateRefusesBadWorktreeNameBeforeAnyGit|TestAttachRefusesBadWorktreeNameBeforeAnyGit'
   - rule: 对话界面的信任只认目录本身，或「仓库自己列出的 worktree 根 + 主目录这一个路径被信任」
     check: cd vibe-remoted && TMUX_TMPDIR=$(mktemp -d) go test -race -timeout 10m ./internal/session -run TestChatTrust
   - rule: daemon 交给 git 的分支只写成完整引用名 refs/heads/<名字>，不调用 git branch、不用 -b / -B；撤销创建只清本次建出来的目录和分支
     check: cd vibe-remoted && TMUX_TMPDIR=$(mktemp -d) go test -race -timeout 10m ./internal/session -run 'TestGitNeverGetsShortBranchName|TestValidateWorktreeNameRejectsExpansion|TestUndoOnlyRemovesOwnArtifacts|TestRemoveDeletesBranchByFullRef'
-  - rule: daemon 运行的 git 不执行仓库配置指定的程序（core.fsmonitor 在 git 环境里统一关闭；查看状态、预检、被拒绝的删除请求的检查都不运行它）
-    check: cd vibe-remoted && TMUX_TMPDIR=$(mktemp -d) go test -race -timeout 10m ./internal/session -run 'TestReadOnlyGitRunsNoRepositoryProgram|TestCreateAndRemoveWorktreeDoNotRunFsmonitor|TestGitEnvKeepsInheritedConfig|TestDirtyFilesDoesNotRunFsmonitor'
+  - rule: daemon 运行的 git 不运行 core.fsmonitor 指定的程序（查看状态、预检、被拒绝的删除请求的检查都不运行它；每条 git 命令行以 -c core.fsmonitor=false 开头，git 2.31 之前的版本也认。clean / smudge 过滤器和 hook 是 git 自己的行为，不在这条规则内）
+    check: cd vibe-remoted && TMUX_TMPDIR=$(mktemp -d) go test -race -timeout 10m ./internal/session -run 'TestReadOnlyGitRunsNoRepositoryProgram|TestCreateAndRemoveWorktreeDoNotRunFsmonitor|TestGitEnvKeepsInheritedConfig|TestDirtyFilesDoesNotRunFsmonitor|TestFsmonitorStaysOffOnGitWithoutConfigEnvironment|TestEveryGitCallTurnsFsmonitorOff'
 
 rules:
   requirements: []
