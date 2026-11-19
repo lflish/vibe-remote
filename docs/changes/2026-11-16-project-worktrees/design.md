@@ -979,6 +979,37 @@ CSS 变量：保留现有变量名（`styles.css` 里到处在用），换成 M1
   - 6.4、7.4：worktree 行「正在删除…」的标记在删除成功后留到机器刷新结束才清；`deleteWorktreeFlow` 的回调多一个参数说明 worktree 是不是已经没了（#119、d60）。
   - 4.1：名字的两条本地规则各有原因码，不再是 `invalid`：不显示的字符是 `invisible`，超过 250 字节是 `too_long`；新增文案键 `wt.name.invisible`、`wt.name.too_long`（d61，改上面 G9 那条的「原因都是 `invalid`」）。
 - 第三轮核对修复（评审对象 c74e715..3b01cf3；decisions #121–#124、d62）：4.9 与 tmux 的对账，上一条第一项的「socket 文件不存在、或机器上没有 tmux 程序，都算没有任何 tmux 会话」收窄为：tmux 运行失败或找不到 tmux 程序，并且 socket 文件不存在，并且会话表里没有终端会话，才算没有会话；socket 文件不见了而表里有终端会话（server 可能还活着，SIGUSR1 能让它重建 socket）、找不到 tmux 程序而 socket 文件在，都按对账失败处理，500 的 `message` 写明是哪一种（#121、#122）。`tmuxSocketPath` 先解析 `TMUX_TMPDIR`，解析不了用 `/tmp`（#123）。已知限制：daemon 重启后（表为空）socket 文件被外部删掉而 server 还活着，仍算没有会话（d62）。
+- 测试阶段的修复（探索式检查 X2、X3、X6、X8，test-report.md；decisions #134、#135、d66、d67）：7.4 的四处补充，对外的结构和文案不变。(1) 会话行：双击的第二次点击（`detail > 1`）不再触发「打开」，否则已经打开过的会话在第一次点击时重建侧边栏、第二次点击又重建一次，浏览器的 `dblclick` 无处可发，改名只对还没在本窗口打开过的会话有效。(2) `menu.ts`：菜单开着时按钮带 `aria-expanded="true"`，样式表在此期间让这一行的操作按钮保持显示（`.row-actions:has([aria-expanded='true'])`）——重建出来的行既没有悬停也没有焦点，菜单原来会被放到隐藏按钮塌缩的位置（按钮左边约 180px）。(3) `menu.ts`：打开菜单时焦点移到第一个可选的菜单项，方向键 / Home / End 在可选项之间移动，Esc 和 Tab 关闭菜单，菜单关闭时焦点若在菜单里就还给按钮；菜单项的动作在菜单关闭之后才执行（对话框关闭后焦点回到按钮）。(4) `setActive` 在重建侧边栏之后把当前会话的行滚进可见区（`scrollIntoView({ block: 'nearest' })`）；轮询刷新不滚动。
+
+### 升级步骤
+
+（`.devflow.yml` 没有配 `upgrade_doc`，升级要做的事记在这里。测试阶段补写。）
+
+这次升级之后 daemon 的行为有四处变化：协议版本 3 → 4（多五个 REST 端点、`attach.worktreeName`）；`state_dir` 里多一个 `projects.json`；删除会话不再清理 worktree 和分支；终端会话多四个 tmux 用户选项（`@vibe_remote_created`、`@vibe_remote_project`、`@vibe_remote_home`、`@vibe_remote_workdir`）。没有需要手工迁移的数据，也没有新增的配置项。
+
+**桌面端和 daemon 要一起升级，先升 daemon。** 两边各自升级时都能降级工作、不报错（`docs/protocol.md`「版本互连」），但只升一边时功能不全：
+
+| 顺序 | 中间状态下会怎样 |
+|------|------------------|
+| 先升 daemon（推荐），桌面端还是旧的 | 新建、接入、输入、重命名、重载、删除会话都照常；旧桌面端的 Worktree 模式仍建出 `vibe/<会话id>`。删除会话一律成功，**worktree 的目录和分支都留下**（旧 daemon 在工作区干净时会连分支一起删，分支上有未合并提交时提交会丢——这正是本需求修掉的问题）。留下的 worktree 旧桌面端看不到，升级桌面端后出现在侧边栏，可以在那里删除 |
+| 先升桌面端，daemon 还是旧的 | 侧边栏按会话自带的字段分组，没有会话的 worktree 不显示；「新建 worktree」「删除 worktree」置灰并提示升级 vibe-remoted；目录选择器的 Worktree 模式没有名字输入框。**旧 daemon 删除 Worktree 模式的会话时仍会在工作区干净时连 worktree 和分支一起删**（确认框上写明了），所以这种状态不要久留 |
+
+daemon 的升级步骤：
+
+1. 构建并替换二进制：`make dist-daemon`（或 `cd vibe-remoted && GOOS=linux GOARCH=amd64 go build -o ../bin/vibe-remoted-linux-amd64 ./cmd/vibe-remoted`），复制到远程机器覆盖原文件。只重启旧二进制不会更新协议。
+2. 确认 `state_dir`（默认是配置文件旁的 `vibe-remoted-state/`）可写：`projects.json` 写在这里。不可写时 daemon 照常启动，但项目清单和「哪些 worktree 是 vibe-remote 建的」只在内存里，重启后这些 worktree 按「外部」显示（能删目录，不会删分支）。
+3. 确认 daemon 的运行环境里 `git`、`tmux` 在 PATH 上。实测过的 git 是 2.30.2 和 2.50.1，更早的版本没有测。daemon 的 PATH 里找不到 tmux 而机器上还有终端会话时，删除 worktree 会被拒绝（500，`message` 写明原因）。`TMUX_TMPDIR` 若设置，必须指向存在的目录。
+4. 重启 daemon。终端会话在 tmux 里，不受影响，桌面端自动重连；对话会话的进程随 daemon 结束，重启后显示「会话已结束：vibe-remoted 重启过」，点「重新启动」用同一段对话接上。
+5. 升级桌面端（替换 app）。在此之前旧桌面端仍可使用。
+
+升级前留下的东西怎么处理：
+
+- **会话**：不用处理。升级前建的终端会话没有归属选项，daemon 在第一次列项目时按它当时的工作目录推一次、写回 tmux（5.4），它们所在的 git 项目自动进入侧边栏。这些会话没有 `@vibe_remote_workdir`，删除某个 worktree 时只按归属判断它们在不在里面；想让它们按创建目录计算，重开一次会话即可。对话会话的 `project` / `home` 在读 `chat-sessions.json` 时补上。
+- **旧 Worktree 模式建的 worktree**（`<仓库名>-worktrees/<会话id>` 加分支 `vibe/<会话id>`）：按「vibe-remote 创建」认领，列在所属项目下，可以从行菜单删除（干净且已合并时连分支一起删，有未合并提交时默认只删目录）。旧版本「删会话时因工作区不干净而保留」的那些 worktree 也在其中，升级后第一次能在界面里看到并清理。
+- **别的工具建的 worktree**（如 devflow 的 `.devflow-tmp/worktrees/*`）：列在所属项目下，标「外部」；能在其中开会话，能删目录，分支从不删。
+- **子模块和 `--separate-git-dir` 仓库里旧 Worktree 模式建出的 worktree**：各自显示成一个单独的项目，不能从界面删除，要手动 `git worktree remove` 并删掉 `vibe/<会话id>` 分支（spec H27）。
+
+回退：把 daemon 换回协议 3 的二进制即可。`projects.json` 和新增的 tmux 选项会被旧 daemon 忽略；命名 worktree 仍是普通的 git worktree，旧 daemon 不会列出其中没有会话的，需要时手动清理。
 
 ## 11. 方案验证（机器关口 B）
 

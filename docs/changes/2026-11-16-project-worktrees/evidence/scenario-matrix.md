@@ -1,5 +1,7 @@
 # 场景对照表：按项目和 worktree 组织会话，并更换视觉风格
 
+> 最终运行（提交 `5d8878c`，65 个用例，含这一轮新增的 X2.rename、X3.keys、X6.scroll、X8.menu）的结果见 `../test-report.md` 的「场景对照」；下面是测试阶段前半写下的对照表，状态一列是当时的。
+
 生成于测试阶段前半（补齐测试）。被测提交：`ba9caa4` 的产品代码（这一步没有改产品代码），测试脚本为本目录所在提交。
 
 列的含义：「已有测试」是开发阶段写的单元 / 集成测试（名字取自 tasks.md 的测试计划，已逐个核对存在于代码里）；「端到端」是在真实应用（CDP 驱动构建产物）或真实 daemon（REST / WebSocket）上跑的用例；状态取自最后两次完整运行。
@@ -79,7 +81,7 @@
 | 非功能：安全（新端点要 token；名字不经 shell；只删列出的、白名单内的 worktree） | Go 集成：`TestNewEndpointsRequireToken`；`.devflow.yml` 的 7 条规则各自的 check | R2.6（白名单外的 worktree：status 404）、R3.10、R5.7（400 `worktree_is_main`）在真实 daemon 上各走一次 | 通过 |
 | 非功能：可靠性（创建失败回滚；删除前失败原样；删除后失败如实报告） | 见 R3.8、R5.9、R5.12 的已有测试 | R3.8、R5.9、R5.12；待验证项 10（git 被时限杀掉）见 `pending-checks.md` | 通过 |
 | 评审待验证项 11（行菜单跟随重建；「正在删除…」的行） | `test-sidebar.mjs › focus_survives_a_rebuild` 等 | `gui-worktree-smoke.mjs` › X11.menu、X11.removing | 通过 |
-| tasks.md「容易出问题的情况」：子模块、`--separate-git-dir` 仓库的项目树 | 计划里的 `TestProjectsSingleWorktreeRepo`（含 `legacy_worktree_mode`）在代码里不存在；同一行的其余 7 个测试都在 | 补：`ws-worktree-smoke.mjs`「a repository whose main directory git does not name」 | 通过 |
+| tasks.md「容易出问题的情况」：子模块、`--separate-git-dir` 仓库的项目树 | `TestProjectsSingleWorktreeRepo`（含 `legacy_worktree_mode`）当时在代码里不存在，测试阶段后半已补上（提交 `246b437`）；同一行的其余 7 个测试都在 | 补：`ws-worktree-smoke.mjs`「a repository whose main directory git does not name」 | 通过 |
 | tasks.md「容易出问题的情况」其余 51 行 | 105 个测试名逐个核对，除上一行外都存在 | 其中 R3.7、R5.9、R5.12、tmux 对账的几种状态另有端到端用例 | — |
 
 ## 自动化到不了的部分

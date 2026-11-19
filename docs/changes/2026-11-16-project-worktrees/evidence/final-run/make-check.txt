@@ -1,0 +1,115 @@
+cd vibe-remoted && go vet ./...
+cd vibe-remoted && go test -race -count=1 ./...
+?   	github.com/lflish/vibe-remote/vibe-remoted/cmd/vibe-remoted	[no test files]
+ok  	github.com/lflish/vibe-remote/vibe-remoted/internal/chat	19.784s
+?   	github.com/lflish/vibe-remote/vibe-remoted/internal/chat/chattest	[no test files]
+?   	github.com/lflish/vibe-remote/vibe-remoted/internal/chat/fakeclaude	[no test files]
+ok  	github.com/lflish/vibe-remote/vibe-remoted/internal/config	2.396s
+ok  	github.com/lflish/vibe-remote/vibe-remoted/internal/protocol	3.366s
+ok  	github.com/lflish/vibe-remote/vibe-remoted/internal/server	65.312s
+ok  	github.com/lflish/vibe-remote/vibe-remoted/internal/session	269.152s
+cd desktop && npm run typecheck
+> vibe-remote@0.1.3 typecheck
+> tsc --noEmit
+cd desktop && npm test
+> vibe-remote@0.1.3 test
+> npm run test:preserved-notice && npm run test:attach-replay && npm run test:terminal-layout && npm run test:picker-layout && npm run test:slash-menu-layout && npm run test:terminal-clipboard && npm run test:terminal-selection && npm run test:client-reconnect && npm run test:client-liveness && npm run test:machine-store && npm run test:i18n-parity && npm run test:chat-client && npm run test:chat-parser && npm run test:chat-session && npm run test:chat-permission && npm run test:chat-diff && npm run test:chat-queue && npm run test:chat-markdown && npm run test:chat-render-guard && npm run test:chat-window && npm run test:chat-view && npm run test:chat-availability && npm run test:chat-activity && npm run test:rest-projects && npm run test:tree && npm run test:sidebar && npm run test:worktree-name && npm run test:session-form && npm run test:worktree-dialogs && npm run test:dialog-layout && npm run test:shortcuts && npm run test:legacy-daemon && npm run test:theme-tokens
+> vibe-remote@0.1.3 test:preserved-notice
+> node -e "const fs=require('fs');const s=fs.readFileSync('src/renderer/index.ts','utf8');const f=s.slice(s.indexOf('async function closeSession'),s.indexOf('function renderEmptyState'));const preserved=f.indexOf(\"e.code === 'worktree_preserved'\");const refresh=f.indexOf('await refreshAllMachines()',preserved);const notice=f.indexOf(\"t('session.worktreePreserved'\",preserved);if(!(preserved>=0&&refresh>preserved&&notice>refresh))throw new Error('Worktree-preserved notice must be applied after awaited refresh');"
+> vibe-remote@0.1.3 test:attach-replay
+> node scripts/test-attach-replay.mjs
+> vibe-remote@0.1.3 test:terminal-layout
+> node scripts/test-terminal-layout.mjs
+> vibe-remote@0.1.3 test:picker-layout
+> node scripts/test-picker-layout.mjs
+> vibe-remote@0.1.3 test:slash-menu-layout
+> node scripts/test-slash-menu-layout.mjs
+> vibe-remote@0.1.3 test:terminal-clipboard
+> node scripts/test-terminal-clipboard.mjs
+> vibe-remote@0.1.3 test:terminal-selection
+> node scripts/test-terminal-selection.mjs
+> vibe-remote@0.1.3 test:client-reconnect
+> node scripts/test-client-reconnect.mjs
+> vibe-remote@0.1.3 test:client-liveness
+> node scripts/test-client-liveness.mjs
+> vibe-remote@0.1.3 test:machine-store
+> node scripts/test-machine-store.mjs
+> vibe-remote@0.1.3 test:i18n-parity
+> node scripts/test-i18n-parity.mjs
+> vibe-remote@0.1.3 test:chat-client
+> node scripts/test-chat-client.mjs
+> vibe-remote@0.1.3 test:chat-parser
+> node scripts/test-chat-parser.mjs
+> vibe-remote@0.1.3 test:chat-session
+> node scripts/test-chat-session.mjs
+> vibe-remote@0.1.3 test:chat-permission
+> node scripts/test-chat-permission.mjs
+> vibe-remote@0.1.3 test:chat-diff
+> node scripts/test-chat-diff.mjs
+> vibe-remote@0.1.3 test:chat-queue
+> node scripts/test-chat-queue.mjs
+> vibe-remote@0.1.3 test:chat-markdown
+> node scripts/test-chat-markdown.mjs
+> vibe-remote@0.1.3 test:chat-render-guard
+> node scripts/test-chat-render-guard.mjs
+> vibe-remote@0.1.3 test:chat-window
+> node scripts/test-chat-window.mjs
+> vibe-remote@0.1.3 test:chat-view
+> node scripts/test-chat-view.mjs
+> vibe-remote@0.1.3 test:chat-availability
+> node scripts/test-chat-availability.mjs
+> vibe-remote@0.1.3 test:chat-activity
+> node scripts/test-chat-activity.mjs
+> vibe-remote@0.1.3 test:rest-projects
+> node scripts/test-rest-projects.mjs
+> vibe-remote@0.1.3 test:tree
+> node scripts/test-tree.mjs
+> vibe-remote@0.1.3 test:sidebar
+> node scripts/test-sidebar.mjs
+> vibe-remote@0.1.3 test:worktree-name
+> node scripts/test-worktree-name.mjs
+> vibe-remote@0.1.3 test:session-form
+> node scripts/test-session-form.mjs
+> vibe-remote@0.1.3 test:worktree-dialogs
+> node scripts/test-worktree-dialogs.mjs
+> vibe-remote@0.1.3 test:dialog-layout
+> node scripts/test-dialog-layout.mjs
+> vibe-remote@0.1.3 test:shortcuts
+> node scripts/test-shortcuts.mjs
+> vibe-remote@0.1.3 test:legacy-daemon
+> node scripts/test-legacy-daemon.mjs
+> vibe-remote@0.1.3 test:theme-tokens
+> node scripts/test-theme-tokens.mjs
+…（桌面端 npm test：311 行 ok，0 行 FAIL；各脚本的结尾行如下）
+attach-replay regression checks passed
+terminal layout regression checks passed
+picker layout regression checks passed
+slash menu layout regression checks passed
+terminal clipboard regression checks passed
+terminal selection regression checks passed
+client-reconnect regression checks passed
+client-liveness regression checks passed
+machine-store checks passed
+i18n parity checks passed (336 keys)
+chat client checks passed (9)
+test-chat-parser checks passed (15)
+test-chat-session checks passed (18)
+test-chat-permission checks passed (11)
+test-chat-diff checks passed (8)
+test-chat-queue checks passed (15)
+test-chat-markdown checks passed (6)
+test-chat-window checks passed (3)
+test-chat-view checks passed (17)
+test-chat-availability checks passed (12)
+test-chat-activity checks passed (6)
+test-rest-projects checks passed (12)
+test-tree checks passed (23)
+test-sidebar checks passed (33)
+test-worktree-name checks passed (4)
+test-session-form checks passed (20)
+test-worktree-dialogs checks passed (56)
+dialog layout structure checks passed
+test-shortcuts checks passed (15)
+test-legacy-daemon checks passed (11)
+test-theme-tokens checks passed (16)
+exit=0

@@ -1,0 +1,30 @@
+# flow run 2026-11-19T19:22:50.805Z — throwaway daemon (terminal: /bin/bash, chat: fake claude), window [1280,800]
+ok   title "SHshop / main · shop" has the project and the branch
+[flow-01.png] the project appears with its first terminal session (one directory: no worktree level yet)
+[flow-02.png] new worktree dialog: name feature/checkout, target directory, base commit, chat interface chosen
+ok   git worktree list: <roots>/shop, <roots>/shop-worktrees/docs-update, <roots>/shop-worktrees/feature-checkout, <roots>/shop-worktrees/fix-cart
+ok   branches: docs-update, feature/checkout, fix-cart, main
+[flow-03.png] three worktrees under the project, sessions of both kinds; the chat session in feature/checkout
+ok   ⌘1, ⌘2, ⌘⇧], ⌘⇧], ⌘⇧[ → shop, docs-update, feature-checkout, fix-cart, feature-checkout
+ok   the fourth session is fix-cart
+ok   on disk: fix-cart is 2 commits ahead of main, docs-update 1
+[flow-04.png] two commits made in the terminal of fix-cart (docs-update has one of its own)
+[flow-05.png] double click on the session name: renaming in place
+ok   the daemon has the new name; title: "SHshop / fix-cart · fix-cart"
+ok   delete-session dialog: "worktree fix-cart 的目录和分支都会保留，之后可以在侧边栏继续使用，或者单独删除。", focus on dialog-cancel
+[flow-06.png] deleting the session: the dialog says the worktree and the branch are kept
+ok   on disk: directory (with the untracked file), branch and both commits still there
+[flow-07.png] the session is gone, the worktree row stays and says it has no session
+ok   "docs-update 有 1 个未合并的提交" | 会先结束这 1 个会话。 | 这 1 个提交不在其他任何本地分支或远程分支上。 | default: keep the branch
+[flow-08.png] deleting docs-update: one session will be ended, one unmerged commit, "keep the branch" preselected
+ok   on disk: directory gone, branch docs-update still has its commit
+ok   its session was ended
+ok   "fix-cart 里有还没提交的文件" | 有 1 个文件未提交或未跟踪。删除 worktree 会丢弃它们，无法恢复。 | focus on dialog-cancel
+[flow-09.png] deleting fix-cart: 1 file would be discarded, "directory and branch" chosen; the default button is Cancel
+ok   on disk: directory and branch fix-cart gone; left: <roots>/shop, <roots>/shop-worktrees/feature-checkout / docs-update, feature/checkout, main
+ok   project folded: 0 session rows showing; machine folded: 0 project rows showing; both unfold again
+[flow-10.png] after both deletions: main with its session and feature/checkout are left
+[flow-11.png] a project whose sessions are all gone stays in the sidebar; its menu offers "remove from sidebar"
+ok   removed: the daemon lists shop; the repository on disk is untouched
+[flow-12.png] a new session in that repository brings the project back
+ok   renderer exceptions and console errors during the flow: 0

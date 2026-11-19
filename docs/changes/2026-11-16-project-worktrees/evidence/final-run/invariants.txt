@@ -1,0 +1,67 @@
+## 1: cd desktop && npm test
+   ok lines: 311, FAIL lines: 0
+   exit=0
+## 2: /protocol-sync skill — a skill, not a command: see protocol-sync.txt
+## 3: cd vibe-remoted && go test -race ./internal/server -run TestTerminalFramesUnchangedV3
+   ok  	github.com/lflish/vibe-remote/vibe-remoted/internal/server	2.333s
+   exit=0
+## 4: cd vibe-remoted && go test -race ./internal/chat -run 'TestSingleProcess|TestOrphanCleanup' && go test -race ./internal/session ./internal/server -run 'TestReloadWaitsForOldProcess|TestChatCreateReplaySameID|TestContinueReusesRunningSession|TestConcurrentContinueCreatesOneProcess|TestRestartRefusedWhenUResumedElsewhere|TestHandoffVsReloadOneWins|TestReloadVsDeleteSerialized|TestTerminalContinueBusyWhenChatOwns|TestTerminalContinueClaimsLatest'
+   ok  	github.com/lflish/vibe-remote/vibe-remoted/internal/chat	(cached)
+   ok  	github.com/lflish/vibe-remote/vibe-remoted/internal/session	5.640s
+   ok  	github.com/lflish/vibe-remote/vibe-remoted/internal/server	10.714s
+   exit=0
+## 5: cd vibe-remoted && go test -race ./internal/server -run TestChatDisconnectKeepsProcess
+   ok  	github.com/lflish/vibe-remote/vibe-remoted/internal/server	4.273s
+   exit=0
+## 6: cd vibe-remoted && go test -race ./internal/chat -run TestPendingSurvivesRingEviction
+   ok  	github.com/lflish/vibe-remote/vibe-remoted/internal/chat	(cached)
+   exit=0
+## 7: cd vibe-remoted && go test -race ./internal/chat -run TestRespondRejectsForeignRule
+   ok  	github.com/lflish/vibe-remote/vibe-remoted/internal/chat	(cached)
+   exit=0
+## 8: cd vibe-remoted && go test ./internal/chat -run TestCommandFromConfigOnly && go test ./internal/server -run TestAttachIgnoresCommandFields
+   ok  	github.com/lflish/vibe-remote/vibe-remoted/internal/chat	(cached)
+   ok  	github.com/lflish/vibe-remote/vibe-remoted/internal/server	1.186s
+   exit=0
+## 9: cd desktop && npm run test:chat-markdown && npm run test:chat-render-guard
+   ok - test-chat-markdown: DOMPurify runs on the injected window
+   ok - test-chat-markdown: gfm
+   ok - test-chat-markdown: code block copy button
+   ok - test-chat-markdown: raw html escaped
+   ok - test-chat-markdown: sanitizer drops what markdown-it might let through
+   ok - test-chat-markdown: links get no target and are intercepted
+   exit=0
+## 10: cd vibe-remoted && go test ./internal/session -run TestChatEnvHookTokenOnly
+   ok  	github.com/lflish/vibe-remote/vibe-remoted/internal/session	1.145s
+   exit=0
+## 11: cd vibe-remoted && go test ./internal/chat -run TestNoCredentialAccess
+   ok  	github.com/lflish/vibe-remote/vibe-remoted/internal/chat	0.396s
+   exit=0
+## 12: cd vibe-remoted && TMUX_TMPDIR=$(mktemp -d) go test -race -timeout 10m ./internal/session ./internal/server -run 'TestDeleteSessionKeepsWorktreeAndBranch|TestDeleteSessionNeverReturnsPreserved'
+   ok  	github.com/lflish/vibe-remote/vibe-remoted/internal/session	3.158s
+   ok  	github.com/lflish/vibe-remote/vibe-remoted/internal/server	3.891s
+   exit=0
+## 13: cd vibe-remoted && TMUX_TMPDIR=$(mktemp -d) go test -race -timeout 10m ./internal/session ./internal/server -run 'TestRemoveOnlyListedWorktrees|TestRemoveMainRefused'
+   ok  	github.com/lflish/vibe-remote/vibe-remoted/internal/session	4.250s
+   ok  	github.com/lflish/vibe-remote/vibe-remoted/internal/server	1.721s [no tests to run]
+   exit=0
+## 14: cd vibe-remoted && TMUX_TMPDIR=$(mktemp -d) go test -race -timeout 10m ./internal/session -run 'TestRemoveExternalNeverDeletesBranch|TestManagedRequiresPathAndBranch'
+   ok  	github.com/lflish/vibe-remote/vibe-remoted/internal/session	4.303s
+   exit=0
+## 15: cd vibe-remoted && TMUX_TMPDIR=$(mktemp -d) go test -race -timeout 10m ./internal/session -run 'TestRemoveDirtyNeedsConsent|TestRemoveUnmergedNeedsConsent|TestRemoveChangedSinceStatus|TestRemoveHeadMovedWhileEndingSessions|TestRemoveRefusedWhenNestedWorktree|TestRemoveSubmoduleCheckoutRefused|TestRemoveUntrackedRepositoryRefused|TestRemoveBranchSwitchedAfterConfirmation|TestRemoveEndsSessionsAttributedElsewhere|TestRemoveWorktreeAfterRestartNeedsTheSessionsFromTmux|TestRemoveWorktreeRefusedWhenTmuxSocketDoesNotAnswer|TestSessionsOfAWorktreeGoByWhereTheyWereCreatedAcrossRestart|TestSocketFileGoneWhileTheTmuxServerRuns|TestMissingSocketIsNotAnEmptySetWhileTheTableHasTerminalSessions|TestRemoveWorktreeRefusedWhenTmuxIsNotOnPathButItsSocketIsThere|TestNoTmuxProgramIsAnEmptySetOnlyWithoutSocketAndWithoutTerminalSessions|TestTmuxSocketPathResolvesTheDirectoryLikeTmux'
+   ok  	github.com/lflish/vibe-remote/vibe-remoted/internal/session	38.774s
+   exit=0
+## 16: cd vibe-remoted && TMUX_TMPDIR=$(mktemp -d) go test -race -timeout 10m ./internal/session ./internal/server -run 'TestWorktreeNameNeverReachesShell|TestValidateWorktreeName|TestCreateRefusesBadWorktreeNameBeforeAnyGit|TestAttachRefusesBadWorktreeNameBeforeAnyGit'
+   ok  	github.com/lflish/vibe-remote/vibe-remoted/internal/session	5.538s
+   ok  	github.com/lflish/vibe-remote/vibe-remoted/internal/server	5.404s
+   exit=0
+## 17: cd vibe-remoted && TMUX_TMPDIR=$(mktemp -d) go test -race -timeout 10m ./internal/session -run TestChatTrust
+   ok  	github.com/lflish/vibe-remote/vibe-remoted/internal/session	4.643s
+   exit=0
+## 18: cd vibe-remoted && TMUX_TMPDIR=$(mktemp -d) go test -race -timeout 10m ./internal/session -run 'TestGitNeverGetsShortBranchName|TestValidateWorktreeNameRejectsExpansion|TestUndoOnlyRemovesOwnArtifacts|TestRemoveDeletesBranchByFullRef'
+   ok  	github.com/lflish/vibe-remote/vibe-remoted/internal/session	15.176s
+   exit=0
+## 19: cd vibe-remoted && TMUX_TMPDIR=$(mktemp -d) go test -race -timeout 10m ./internal/session -run 'TestReadOnlyGitRunsNoRepositoryProgram|TestCreateAndRemoveWorktreeDoNotRunFsmonitor|TestGitEnvKeepsInheritedConfig|TestDirtyFilesDoesNotRunFsmonitor|TestFsmonitorStaysOffOnGitWithoutConfigEnvironment|TestEveryGitCallTurnsFsmonitorOff'
+   ok  	github.com/lflish/vibe-remote/vibe-remoted/internal/session	10.962s
+   exit=0
+done

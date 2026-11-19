@@ -1,0 +1,15 @@
+PASS /healthz
+PASS /api/v1/info version=dev
+PASS session A ready id=1795116911771-b72982a5
+PASS A sees its own VIBE_REMOTE_SESSION_ID
+PASS A got a hook token distinct from the main token
+PASS hook token → events 204
+PASS notify frame delivered to session A
+PASS hook token rejected for another sessionId
+PASS hook token rejected on /api/v1/info
+PASS B sees its own VIBE_REMOTE_SESSION_ID (no env bleed from A)
+PASS deleted 1795116911771-b72982a5
+PASS deleted 1795116911965-620a044d
+
+all checks passed
+exit=0
