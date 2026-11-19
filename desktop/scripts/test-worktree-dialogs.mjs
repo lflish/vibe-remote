@@ -933,6 +933,36 @@ test('delete_flow_500_status_query_fails', async () => {
   assert.equal(overlay(), null);
 });
 
+// The caller is told while a removal request is in flight, and only then:
+// not while a confirmation is on screen.
+test('delete_flow_reports_request_in_flight', async () => {
+  const busy = [];
+  let answer;
+  const rest = {
+    worktreeStatus: async () => status({ sessions: ['s1'] }),
+    removeWorktree: () => new Promise((resolve, reject) => { answer = { resolve, reject }; }),
+  };
+  const done = deleteWorktreeFlow(rest, { path: WT_PATH, label: 'fix-login' }, () => {}, (inFlight) => busy.push(inFlight));
+  await settle(6);
+  page.flushFrames();
+  assert.deepEqual(busy, [], 'nothing is in flight while the confirmation is open');
+  click(tid('dialog-confirm', overlay()));
+  await settle(6);
+  assert.deepEqual(busy, [true]);
+  // 409: the confirmation comes back, the request is over.
+  answer.reject(restError(409, 'worktree_changed', { status: status({ sessions: ['s1'], dirtyFiles: 1 }), endedSessions: [] }));
+  await settle(6);
+  page.flushFrames();
+  assert.ok(tid('delete-wt-changed', overlay()));
+  assert.deepEqual(busy, [true, false]);
+  click(tid('delete-wt-force', overlay()));
+  await settle(6);
+  assert.deepEqual(busy, [true, false, true]);
+  answer.resolve({ removed: true, branchDeleted: true, endedSessions: ['s1'] });
+  assert.deepEqual(await done, { removed: true, endedSessions: ['s1'] });
+  assert.deepEqual(busy, [true, false, true, false]);
+});
+
 test('delete_flow_branch_error', async () => {
   const f = startFlow({ statuses: [status({ sessions: ['s1'] })], removes: [{ removed: true, branchDeleted: false, branchError: 'x', endedSessions: ['s1'] }] });
   await f.act('dialog-confirm');

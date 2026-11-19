@@ -26,6 +26,8 @@ export interface SidebarModel {
   dotOf(machineKey: string, sessionId: string): Dot;
   isOpen(viewKey: string): boolean;
   isReloading(viewKey: string): boolean;
+  /** A removal request for this worktree is in flight (optional: absent = never). */
+  isRemoving?(machineKey: string, worktreePath: string): boolean;
 }
 
 export interface SidebarActions {
@@ -282,7 +284,14 @@ function renderWorktree(pg: HTMLElement, m: SidebarMachine, project: TreeProject
   label.textContent = wt.label;
   row.appendChild(label);
 
-  if (wt.main) {
+  // The daemon is removing it (it ends the sessions first, which takes a
+  // while): the row says so and offers nothing until the answer is in.
+  const removing = model.isRemoving?.(m.key, wt.path) ?? false;
+  if (removing) {
+    row.dataset.removing = 'true';
+    row.setAttribute('aria-busy', 'true');
+    row.appendChild(worktreeTag('worktree-removing', t('sidebar.worktree.removing')));
+  } else if (wt.main) {
     row.appendChild(worktreeTag('worktree-tag-main', t('sidebar.worktree.main')));
   } else if (!wt.managed) {
     const tag = worktreeTag('worktree-tag-external', t('sidebar.worktree.external'));
@@ -294,6 +303,7 @@ function renderWorktree(pg: HTMLElement, m: SidebarMachine, project: TreeProject
   rowActions.className = 'row-actions';
   if (actions.newSession) {
     const btn = iconButton('worktree-new-session', 'plus', t('sidebar.project.newSession'));
+    btn.disabled = removing;
     btn.addEventListener('click', (e) => { e.stopPropagation(); actions.newSession!(m.machine, project, wt); });
     rowActions.appendChild(btn);
   }
@@ -304,7 +314,7 @@ function renderWorktree(pg: HTMLElement, m: SidebarMachine, project: TreeProject
       openMenu(btn, [{
         label: t('sidebar.worktree.delete'),
         testid: 'worktree-delete',
-        disabled: m.cap !== 'v4',
+        disabled: m.cap !== 'v4' || removing,
         note: m.cap !== 'v4' ? t('sidebar.legacy.needUpgrade') : undefined,
         onClick: () => actions.deleteWorktree!(m.machine, project, wt),
       }]);
@@ -328,6 +338,7 @@ function renderWorktree(pg: HTMLElement, m: SidebarMachine, project: TreeProject
       start.className = 'worktree-empty-action';
       start.dataset.testid = 'worktree-empty-new-session';
       start.textContent = t('sidebar.project.newSession');
+      start.disabled = removing;
       start.addEventListener('click', (e) => { e.stopPropagation(); actions.newSession!(m.machine, project, wt); });
       empty.appendChild(start);
     }

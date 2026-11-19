@@ -753,6 +753,49 @@ test('remove_result_closes_views', async () => {
   assert.deepEqual(openViews(), ['a', 'b']);
   assert.deepEqual(refreshes(), { sessions: 1, projects: 1 }, 'the machine is refreshed');
 
+  // While the removal is under way (the daemon ends the sessions one by one
+  // and deletes the directory: several seconds) the row says so, its entries
+  // are off, and asking again does nothing (review D7).
+  let finishRemove;
+  statusAnswers = [() => json(200, status())];
+  removeAnswers = [() => new Promise((resolve) => { finishRemove = () => resolve(json(200, { removed: true, branchDeleted: true, endedSessions: [] })); })];
+  disposed = await start();
+  const staleDelete = (() => {
+    // A menu left over from before the request, as after a sidebar rebuild.
+    const row = [...document.querySelectorAll('[data-testid="worktree-row"]')].find((r) => r.querySelector('.worktree-label').textContent === 'fix-login');
+    click(row.querySelector('[data-testid="worktree-menu"]'));
+    return menuItem('worktree-delete');
+  })();
+  click(dialogButton('dialog-confirm'));
+  await settle();
+  const removingRow = () => [...document.querySelectorAll('[data-testid="worktree-row"]')].find((r) => r.querySelector('.worktree-label').textContent === 'fix-login');
+  assert.equal(document.querySelector('.modal-overlay'), null, 'the confirmation is closed');
+  assert.ok(removingRow(), 'the row is still there: the daemon has not answered');
+  assert.equal(removingRow().dataset.removing, 'true');
+  assert.equal(removingRow().getAttribute('aria-busy'), 'true');
+  assert.equal(removingRow().querySelector('[data-testid="worktree-removing"]').textContent, '正在删除…');
+  assert.equal(removingRow().querySelector('[data-testid="worktree-new-session"]').disabled, true, 'no new session in a worktree that is being deleted');
+  click(removingRow().querySelector('[data-testid="worktree-menu"]'));
+  assert.equal(menuItem('worktree-delete').disabled, true, 'the delete entry is off while the request is in flight');
+  document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+  // A rebuild in between (the poll) keeps the marker.
+  app.renderSidebar();
+  assert.equal(removingRow().dataset.removing, 'true');
+  // The entry of the menu opened earlier is still enabled; using it starts nothing.
+  calls = [];
+  click(staleDelete);
+  await settle();
+  assert.deepEqual(calls.filter((c) => c.includes('/worktrees/')), [], 'no second status or remove request');
+  assert.equal(document.querySelector('.modal-overlay'), null, 'no second confirmation');
+  // Other worktrees are not affected.
+  const mainRow = [...document.querySelectorAll('[data-testid="worktree-row"]')].find((r) => r.querySelector('.worktree-label').textContent === 'main');
+  assert.equal(mainRow.dataset.removing, undefined);
+  finishRemove();
+  await settle();
+  assert.equal(removingRow().dataset.removing, undefined, 'the marker goes when the request is answered');
+  assert.equal(removingRow().querySelector('[data-testid="worktree-removing"]'), null);
+  assert.equal(removingRow().querySelector('[data-testid="worktree-new-session"]').disabled, false);
+
   // Cancelled before anything was requested: nothing happens at all.
   statusAnswers = [() => json(200, status())];
   disposed = await start();

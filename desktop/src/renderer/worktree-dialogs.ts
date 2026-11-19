@@ -511,13 +511,23 @@ export type DeleteWorktreeOutcome = { removed: boolean; endedSessions: string[] 
  * confirmation, or the worktree was already gone). Once a request went out the
  * result is never null: sessions may have been ended even though the worktree
  * is still there, and the caller has to close their views and refresh.
- * `notify` shows one line of text (the status bar).
+ * `notify` shows one line of text (the status bar). `onRequest(true)` is called
+ * when a removal request goes out and `onRequest(false)` when its outcome is
+ * known (it can take the daemon many seconds): the caller shows the worktree
+ * as being deleted in between. It is not in flight while a dialog is open.
  */
 export async function deleteWorktreeFlow(
   rest: Pick<VibeRemoteRest, 'worktreeStatus' | 'removeWorktree'>,
   target: { path: string; label: string },
   notify: (text: string) => void,
+  onRequest?: (inFlight: boolean) => void,
 ): Promise<DeleteWorktreeOutcome | null> {
+  let inFlight = false;
+  const setInFlight = (value: boolean) => {
+    if (inFlight === value) return;
+    inFlight = value;
+    onRequest?.(value);
+  };
   const ended: string[] = [];
   const addEnded = (ids: unknown) => {
     if (!Array.isArray(ids)) return;
@@ -541,6 +551,7 @@ export async function deleteWorktreeFlow(
     const req = await confirmDeleteWorktree(status, { label: target.label, changed, error, ended: ended.length });
     if (!req) return requested ? outcome(false) : null;
     requested = true;
+    setInFlight(true);
     try {
       const res = await rest.removeWorktree(req);
       addEnded(res.endedSessions);
@@ -588,6 +599,7 @@ export async function deleteWorktreeFlow(
       } catch (again) {
         if (gone(again)) {
           // git no longer lists it: only part of the directory can be left.
+          setInFlight(false);
           await showDeleteWorktreeFailure({ label: target.label, message, ended: ended.length, path: target.path });
         } else {
           notify(t('wt.delete.failed', { msg: message }));
@@ -596,6 +608,9 @@ export async function deleteWorktreeFlow(
       }
       changed = false;
       error = message;
+    } finally {
+      // Before the next dialog, and on every way out.
+      setInFlight(false);
     }
   }
 }

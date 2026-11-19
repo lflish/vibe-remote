@@ -92,6 +92,11 @@ let renamingActive = false;
 // refresh) — a fresh button would come back enabled and let the user fire a
 // second respawn-pane at the same pane while the first is still running.
 const reloadingSessions = new Set<string>();
+// Worktrees with a removal request in flight, keyed `${machineKey}|${path}`.
+// Kept here for the same reason: the row is rebuilt while the daemon is still
+// ending the sessions and deleting the directory, and has to keep saying so
+// (and keep its entries off, so the removal cannot be asked for twice).
+const removingWorktrees = new Set<string>();
 // Chat sessions not open here get their sidebar dot from the 5s REST poll
 // (activitySeq / epoch / state, R16.4). Keyed by viewKey; open views keep
 // their own `activity` from live frames instead.
@@ -336,6 +341,9 @@ function wireManageMachinesButton() {
           // machine's entries so they can't outlive it.
           for (const marker of [...reloadingSessions]) {
             if (marker.startsWith(`${rk}::`)) reloadingSessions.delete(marker);
+          }
+          for (const marker of [...removingWorktrees]) {
+            if (marker.startsWith(`${rk}|`)) removingWorktrees.delete(marker);
           }
         }
         if (removedKeys.length > 0) { persistCollapsedMachines(); persistCollapsedProjects(); }
@@ -1287,6 +1295,7 @@ function buildSidebarModel(): SidebarModel {
     },
     isOpen: (key) => views.has(key),
     isReloading: (key) => reloadingSessions.has(key),
+    isRemoving: (mk, path) => removingWorktrees.has(`${mk}|${path}`),
   };
 }
 
@@ -1358,7 +1367,14 @@ async function handleDeleteWorktree(machine: MachineConfig, worktree: TreeWorktr
   const mk = machineKey(machine);
   const rest = rests.get(mk);
   if (!rest) return;
-  const outcome = await deleteWorktreeFlow(rest, { path: worktree.path, label: worktree.label }, (text) => updateStatusBar(text));
+  const marker = `${mk}|${worktree.path}`;
+  // Already being removed (a menu opened before the request can still be on screen).
+  if (removingWorktrees.has(marker)) return;
+  const outcome = await deleteWorktreeFlow(rest, { path: worktree.path, label: worktree.label }, (text) => updateStatusBar(text), (inFlight) => {
+    if (inFlight) removingWorktrees.add(marker);
+    else removingWorktrees.delete(marker);
+    renderSidebar();
+  });
   if (!outcome) return;
   for (const id of outcome.endedSessions) dropSessionView(viewKey(machine, id));
   await refreshAllMachines(true, mk);
