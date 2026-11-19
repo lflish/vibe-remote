@@ -912,3 +912,72 @@ func TestWorktreePathChecksBeforeGit(t *testing.T) {
 	}
 	f.intact()
 }
+
+// A daemon that has just restarted knows its terminal sessions only once it
+// has read them back from tmux. A removal must not go by an empty table when
+// that reading did not happen: it would take the directory from under
+// sessions it never looked for.
+func TestRemoveWorktreeAfterRestartNeedsTheSessionsFromTmux(t *testing.T) {
+	requireTmux(t)
+	setup := func(t *testing.T) (m2 *Manager, id, root, repo string) {
+		t.Helper()
+		repo = devflowRepo(t)
+		store := NewMemoryProjectStore()
+		m1 := NewManager(true, "sleep 30", false, "")
+		m1.SetProjectStore(store)
+		r, err := m1.Create(CreateOptions{Workdir: repo, Mode: protocol.SessionModeWorktree, WorktreeName: "fix-login", Cols: 80, Rows: 24})
+		if err != nil {
+			t.Fatal(err)
+		}
+		id, root = r.ID, r.WorktreeRoot
+		t.Cleanup(func() { m1.Delete(id) })
+		// The restarted daemon: an empty table.
+		m2 = NewManager(true, "sleep 30", false, "")
+		m2.SetProjectStore(store)
+		return m2, id, root, repo
+	}
+	failFirst := func(m *Manager, n int) {
+		real := m.liveTmuxSessions
+		m.liveTmuxSessions = func() (map[string]tmuxSessionInfo, bool) {
+			if n > 0 {
+				n--
+				return nil, false
+			}
+			return real()
+		}
+	}
+	untouched := func(t *testing.T, id, root, repo string) {
+		t.Helper()
+		if !pathExists(root) || branchOID(t, repo, "fix-login") == "" {
+			t.Fatal("the directory or the branch was removed")
+		}
+		if tmuxCmd("has-session", "-t", "vibe-remote-"+id).Run() != nil {
+			t.Fatal("the tmux session is gone")
+		}
+	}
+
+	// The first reading fails (a transient tmux error): it is tried again, the
+	// session is found, and the request that did not name it is refused.
+	t.Run("first_query_fails", func(t *testing.T) {
+		m2, id, root, repo := setup(t)
+		failFirst(m2, 1)
+		head := runGit(t, root, "rev-parse", "HEAD")
+		_, err := m2.RemoveWorktree(protocol.WorktreeRemoveRequest{Path: root, Head: head, Sessions: []string{}}, allowAny)
+		if changed := wantChanged(t, err); !reflect.DeepEqual(changed.Status.Sessions, []string{id}) {
+			t.Fatalf("changed = %+v, want the running session %s listed", changed, id)
+		}
+		untouched(t, id, root, repo)
+	})
+
+	// It keeps failing: nothing is removed.
+	t.Run("query_keeps_failing", func(t *testing.T) {
+		m2, id, root, repo := setup(t)
+		failFirst(m2, 1000)
+		head := runGit(t, root, "rev-parse", "HEAD")
+		_, err := m2.RemoveWorktree(protocol.WorktreeRemoveRequest{Path: root, Head: head, Sessions: []string{}}, allowAny)
+		if failed := wantRemoveError(t, err); len(failed.EndedSessions) != 0 || !strings.Contains(failed.Message, "tmux") {
+			t.Fatalf("failed = %+v, want a refusal that names tmux and ends nobody", failed)
+		}
+		untouched(t, id, root, repo)
+	})
+}

@@ -597,6 +597,21 @@ func (m *Manager) WorktreeStatus(path string, allow AllowFunc) (protocol.Worktre
 	return st, nil
 }
 
+// sessionTableCurrent reconciles the session table with tmux and reports
+// whether that was applied, trying a second time when it was not. Without tmux
+// the table is all there is.
+func (m *Manager) sessionTableCurrent() bool {
+	if !m.useTmux {
+		return true
+	}
+	for attempt := 0; attempt < 2; attempt++ {
+		if _, applied := m.syncFromTmux(); applied {
+			return true
+		}
+	}
+	return false
+}
+
 // markRemoving declares the worktree at root as being removed, unless a
 // session is being created in it right now. From then until the returned func
 // is called, beginStart refuses sessions in it.
@@ -661,7 +676,14 @@ func (m *Manager) RemoveWorktree(req protocol.WorktreeRemoveRequest, allow Allow
 	}
 	wt := wts[i]
 
-	m.syncFromTmux()
+	// Which sessions lose their directory is read from the table, and after a
+	// restart the terminal sessions are only in it once tmux has been read. A
+	// reading that was not applied (the query failed, or the table changed
+	// under it) is tried once more; without one, nothing is removed.
+	if !m.sessionTableCurrent() {
+		return none, &WorktreeRemoveError{EndedSessions: []string{},
+			Message: "could not read the running sessions from tmux, so the sessions in this worktree are not known; nothing was removed. Try again"}
+	}
 	st, err := m.worktreeState(home, wt, false)
 	if err != nil {
 		return none, err

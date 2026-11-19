@@ -959,6 +959,7 @@ CSS 变量：保留现有变量名（`styles.css` 里到处在用），换成 M1
 - 评审修复（G4）：第 3 节里两条命令的 `-c core.fsmonitor=false` 改成在 git 环境里统一关闭（`gitEnv()`），对 daemon 启动的每一个 git 进程及其子进程都生效；7.1 多一条规则「daemon 的只读 git 调用不执行仓库配置指定的程序」（d45）。
 - 评审修复（G9）：4.1 名字的本地规则在「其它控制字符」之后再加两条，原因都是 `invalid`：含 Unicode Cf / Zl / Zp 类字符；UTF-8 编码超过 250 字节（整个名字，不是分段）（d46）。共用向量在合并桌面端修复之后补（decisions #87）。
 - 评审修复（X4）：6.1 新建时名字的本地规则挪到第 1 步之前（任何 git 调用之前），在 WebSocket 入口和 `createOwnWorktree` 各查一次；4.4 的预检仍是先看目录、再查名字，所以「预检与新建先报哪个原因一致」只在目录没有问题时成立（d47）。7.1 里「以 - 开头的在调用 git 前被拒」这条规则的检查应加上 `TestAttachRefusesBadWorktreeNameBeforeAnyGit`、`TestCreateRefusesBadWorktreeNameBeforeAnyGit`（`.devflow.yml` 由主会话改）。
+- 评审修复（待验证项 1，已确认）：6.2 第 3 步之前，`RemoveWorktree` 要求与 tmux 的对账被应用（没应用重试一次）；两次都没成 → 500 `worktree_remove_failed`，什么都不动。4.9「先和 tmux 对账」原来不看对账有没有成功（decisions #92）。
 
 ## 11. 方案验证（机器关口 B）
 
