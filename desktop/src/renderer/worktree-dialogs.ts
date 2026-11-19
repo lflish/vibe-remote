@@ -426,7 +426,7 @@ export function confirmDeleteWorktree(
       // is the one Enter presses.
       shell.confirm.dataset.testid = 'delete-wt-force';
       shell.confirm.className = 'btn-secondary btn-danger-outline';
-      shell.cancel.className = 'btn-primary';
+      shell.cancel.className = 'btn-primary btn-neutral';
       const hint = el('span', 'modal-footer-hint');
       hint.textContent = t('wt.delete.cancelDefault');
       shell.footer.replaceChildren(hint, shell.confirm, shell.cancel);
@@ -473,7 +473,7 @@ export function showDeleteWorktreeFailure(opts: { label: string; message: string
   return new Promise((resolve) => {
     const shell = dialogShell('delete-wt-failed', t('wt.delete.failedTitle', { name: opts.label }), '', '');
     shell.cancel.textContent = t('wt.delete.close');
-    shell.cancel.className = 'btn-primary';
+    shell.cancel.className = 'btn-primary btn-neutral';
     shell.footer.replaceChildren(shell.cancel);
     const text = el('div', 'modal-confirm');
     const error = paragraph(t('wt.delete.failed', { msg: opts.message }), 'delete-wt-error');

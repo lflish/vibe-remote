@@ -1394,4 +1394,8 @@ html, body {
   background: color-mix(in srgb, var(--error) 8%, var(--bg-elevated));
   color: var(--error);
 }
+/* The safe button of a dialog that warns: filled, but not in the color that
+   means "delete" elsewhere. */
+.modal-footer .btn-neutral { background: var(--text-primary); color: var(--bg-elevated); }
+.modal-footer .btn-neutral:hover { background: color-mix(in srgb, var(--text-primary) 86%, var(--bg-elevated)); }
 .modal-footer .btn-primary, .modal-footer .btn-secondary { white-space: nowrap; }
