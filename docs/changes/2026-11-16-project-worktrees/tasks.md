@@ -867,7 +867,7 @@
 | T2 | 2026-11-19 11:40 | eb6143b | 三条完成命令全 `ok`（含 `-race`、`TZ=Asia/Shanghai`、golden 未动）；`make check` exit 0 |
 | T3 | 2026-11-19 11:52 | 37336f8 | `go test -race ./internal/session -run 'TestProjectStore\|TestManaged\|TestOpenProjectStore\|TestMemoryProjectStore'` `ok`；`grep ValidSessionID` 无输出；`make check` exit 0 |
 | T4 | 2026-11-19 12:40 | b60351d | 三组完成命令全绿（Go `-race` 三包 `ok`、`test:chat-availability`+`test:rest-projects` 退出 0、golden/IsAllowedWorkdir 核对通过）；`make check` exit 0 |
-| T5 | 2026-11-19 14:35 | (本提交) | `npm run typecheck` 退出 0；`npm run test:tree` 18 个用例 `ok`；`TMUX_TMPDIR=… make check` exit 0 |
+| T5 | 2026-11-19 14:35 | 28f6d19 | `npm run typecheck` 退出 0；`npm run test:tree` 18 个用例 `ok`；`TMUX_TMPDIR=… make check` exit 0 |
 
 ## 后续
 
