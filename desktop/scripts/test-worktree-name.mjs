@@ -37,16 +37,21 @@ test('shared_vectors', () => {
   assert.equal(validateWorktreeName('-@{-1}'), 'leading_dash');
 });
 
-// Two rules the daemon applies before git (review G9); the shared vector file
-// is the daemon's, so the cases are spelled out here. Both come after the older
-// rules and report `invalid`.
-test('segment_length_and_invisible_characters', () => {
+// Two rules the daemon applies before git (review G9). Both come after the
+// older rules and report `invalid`; the cases at the limits are in the shared
+// vectors too.
+test('name_length_and_invisible_characters', () => {
   const bytes = (text) => new TextEncoder().encode(text).length;
-  // No path segment of the name may be longer than 250 bytes of UTF-8: the
-  // segment becomes a file name under refs/heads/ and in the worktree folder.
+  // The whole name may not be longer than 250 bytes of UTF-8: with its slashes
+  // turned into hyphens it becomes one directory name (decisions d46).
   assert.equal(validateWorktreeName('a'.repeat(250)), null);
   assert.equal(validateWorktreeName('a'.repeat(251)), 'invalid');
-  assert.equal(validateWorktreeName(`${'a'.repeat(250)}/${'b'.repeat(250)}`), null, 'the limit is per segment, not for the whole name');
+  // Not per "/" part: two parts that are each short enough still add up.
+  assert.equal(validateWorktreeName(`${'a'.repeat(125)}/${'b'.repeat(124)}`), null, '250 bytes in two parts');
+  assert.equal(validateWorktreeName(`${'a'.repeat(125)}/${'b'.repeat(125)}`), 'invalid', '251 bytes in two parts, 125 each');
+  assert.equal(validateWorktreeName(`${'a'.repeat(250)}/${'b'.repeat(250)}`), 'invalid', 'the limit is for the whole name, not per part');
+  assert.equal(validateWorktreeName(`fix/${'a'.repeat(246)}`), null, 'exactly 250 bytes with a slash');
+  assert.equal(validateWorktreeName(`fix/${'a'.repeat(247)}`), 'invalid');
   assert.equal(validateWorktreeName(`fix/${'a'.repeat(251)}`), 'invalid');
   assert.equal(validateWorktreeName(`${'a'.repeat(251)}/fix`), 'invalid');
   assert.equal(validateWorktreeName(`fix/${'a'.repeat(251)}/x`), 'invalid');
@@ -57,6 +62,8 @@ test('segment_length_and_invisible_characters', () => {
   assert.equal(validateWorktreeName('名'.repeat(84)), 'invalid', '84 characters, 252 bytes');
   assert.equal(validateWorktreeName(`${'名'.repeat(83)}a`), null, 'exactly 250 bytes');
   assert.equal(validateWorktreeName(`${'名'.repeat(83)}ab`), 'invalid', '251 bytes');
+  assert.equal(validateWorktreeName(`${'名'.repeat(42)}/${'名'.repeat(41)}`), null, '250 bytes of CJK in two parts');
+  assert.equal(validateWorktreeName(`${'名'.repeat(42)}/${'名'.repeat(42)}`), 'invalid', '253 bytes of CJK in two parts');
 
   // Format characters (Unicode Cf) cannot be seen in a name: zero-width space
   // and joiners, direction controls, the byte order mark, soft hyphen.

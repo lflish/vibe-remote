@@ -14,9 +14,10 @@ const CONTROL = /[\u0000-\u001f\u007f-\u009f]/;
 // space and joiners, direction controls, the byte order mark…) and the line and
 // paragraph separators (Zl, Zp).
 const INVISIBLE = /[\p{Cf}\p{Zl}\p{Zp}]/u;
-// Each "/"-separated part of the name becomes a file name (under refs/heads/
-// and as part of the worktree's folder name); file systems stop at 255 bytes.
-const MAX_SEGMENT_BYTES = 250;
+// The whole name, in bytes of UTF-8 (the daemon's maxWorktreeNameBytes): with
+// its slashes turned into hyphens it becomes one directory name, and file
+// systems stop at 255 bytes per name. So the limit is not per "/" part.
+const MAX_NAME_BYTES = 250;
 const utf8 = new TextEncoder();
 
 /** Returns the first rule the name breaks, or null when only git can still object. */
@@ -28,7 +29,7 @@ export function validateWorktreeName(name: string): WorktreeNameProblem | null {
   // "@{" is git's syntax for the previous or upstream branch.
   if (name.includes('@{') || CONTROL.test(name)) return 'invalid';
   if (INVISIBLE.test(name)) return 'invalid';
-  if (name.split('/').some((segment) => utf8.encode(segment).length > MAX_SEGMENT_BYTES)) return 'invalid';
+  if (utf8.encode(name).length > MAX_NAME_BYTES) return 'invalid';
   return null;
 }
 
