@@ -394,3 +394,65 @@ func TestPlanRefusesSourceWithoutCommits(t *testing.T) {
 		check(t, repo, repo)
 	})
 }
+
+// A session started in a plain directory keeps its non-git project when a
+// directory above it becomes a repository later: the session's directory is
+// not that repository's main directory, so it is not a git project, the real
+// main directory is not listed under it as a removable worktree, and nothing
+// is added to the project list.
+func TestProjectsDirectoryInsideLaterRepositoryIsNotAProject(t *testing.T) {
+	base, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	plain := filepath.Join(base, "plain")
+	sub := filepath.Join(plain, "sub")
+	if err := os.MkdirAll(sub, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	m := NewManager(false, "/bin/cat", false, "")
+	store := NewMemoryProjectStore()
+	m.SetProjectStore(store)
+	r, err := m.Create(CreateOptions{Workdir: sub, Cols: 80, Rows: 24})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { r.Kill() })
+	if p := findProject(m.Projects(allowAny), sub); p == nil || p.Git {
+		t.Fatalf("before git init: project = %+v, want the non-git project %s", p, sub)
+	}
+
+	repoAt(t, plain)
+	check := func(t *testing.T) {
+		t.Helper()
+		ps := m.Projects(allowAny)
+		p := findProject(ps, sub)
+		if p == nil {
+			t.Fatalf("the session's project is gone: %+v", ps)
+		}
+		if p.Git || p.Error != "" || len(p.Worktrees) != 0 || !reflect.DeepEqual(p.Sessions, []string{r.ID}) {
+			t.Fatalf("project = %+v, want non-git with the session at the project level and no worktrees", *p)
+		}
+		for _, id := range store.Projects() {
+			if id == sub {
+				t.Fatalf("%s was added to the project list: %v", sub, store.Projects())
+			}
+		}
+	}
+	check(t)
+	check(t) // and it stays that way on the next round
+
+	// An entry the list already has for such a directory (written before this
+	// was checked) is not shown as a git project either, and is not shown at
+	// all once its last session is gone.
+	store.AddProject(sub)
+	if p := findProject(m.Projects(allowAny), sub); p == nil || p.Git || len(p.Worktrees) != 0 {
+		t.Fatalf("listed entry = %+v, want non-git and no worktrees", p)
+	}
+	if err := m.Delete(r.ID); err != nil {
+		t.Fatal(err)
+	}
+	if p := findProject(m.Projects(allowAny), sub); p != nil {
+		t.Fatalf("project outlived its last session: %+v", *p)
+	}
+}

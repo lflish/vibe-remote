@@ -89,6 +89,11 @@ func (m *Manager) Projects(allow AllowFunc) []protocol.Project {
 	projects := make([]protocol.Project, 0, len(candidates))
 	for id := range candidates {
 		p := m.buildProject(id, inStore[id], lists[id], byProject[id], allow)
+		if !p.Git && len(byProject[id]) == 0 {
+			// A listed id that is not a repository's main directory (any more)
+			// and has no session: a non-git project is gone with its sessions.
+			continue
+		}
 		// A git project discovered only through its sessions joins the store so
 		// it survives after those sessions end (design 5.4, H18).
 		if m.projectStore != nil && p.Git && p.Error == "" && !inStore[id] {
@@ -144,9 +149,22 @@ func (m *Manager) buildProject(id string, inStore bool, res listResult, sess []s
 		return p
 	}
 
-	p.Git = true
 	wts := res.wts
-	if len(wts) > 0 && !wts[0].Bare && !hasDotGit(wts[0].Path) {
+	single := len(wts) > 0 && !wts[0].Bare && !hasDotGit(wts[0].Path)
+	// git answers from anywhere inside a repository, so a list alone does not
+	// make id a project: it has to be what the list is the list of — the main
+	// directory (the first entry), or, where there is none to recognize, a work
+	// tree's own top. A session's plain directory that a repository later grew
+	// around is neither: it stays the non-git project it was created as, and
+	// the repository's real main directory is not shown under it.
+	if (!single && len(wts) > 0 && wts[0].Path != id) || (single && !hasDotGit(id)) {
+		for _, s := range sess {
+			p.Sessions = append(p.Sessions, s.id)
+		}
+		return p
+	}
+	p.Git = true
+	if single {
 		// No recognizable main worktree (submodule, --separate-git-dir): the
 		// project is this id alone, as a single main worktree (design 4.2).
 		entry := wts[0]
