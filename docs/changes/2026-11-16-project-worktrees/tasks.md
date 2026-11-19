@@ -849,7 +849,7 @@
 - 依赖：T14、T15（它们是最后往 `styles.css` 追加规则的任务；先让追加的规则都在，再统一换颜色）
 
 ### T19 视觉 M1（二）：形态
-- 状态：待办
+- 状态：进行中
 - 文件：修改 `desktop/src/renderer/styles.css`（按效果页 `docs/changes/2026-11-16-project-worktrees/pages/prototype/index.html` 的 M1：`#main-area` 是外边距 10px、`--radius-card`、带边框和 `--shadow-card` 的浮起卡片，标题栏在卡片里、没有底边线；侧边栏宽 `--sidebar-width`、顶部 124px 的 `--sidebar-glow` 渐变；项目行、worktree 行、两行的会话行、选中行用 `--bg-selected` 和 `--radius-item`；`.chat-instance` 一段里用户消息是右对齐气泡（`--accent-soft`，圆角 17px），输入框是圆角 17px 的卡片、发送按钮是圆形，权限卡片、工具行、代码块、diff 按效果页；对话框用 `--shadow-lift` 和 `--scrim`）、`desktop/scripts/test-theme-tokens.mjs`（加形态用例）、`CLAUDE.md` 第 12 行（只改 c2 同意的那一句：「（侧边栏/状态栏对标 Claude Desktop）」改为「（侧边栏、标题、状态栏，外观以 `docs/changes/2026-11-16-project-worktrees` 选定的 M1 方案为准）」）、`.claude/skills/verify/scripts/gui-smoke.mjs` 和 `gui-chat-smoke.mjs`（只在选择器受影响时调整；另外 `gui-smoke.mjs` 的 `--keep` 分支多打印一行 `--keep: CDP 127.0.0.1:<cdpPort>`，供下面的截图步骤找到临时实例的调试端口。这一行不是断言，不改任何检查）
 - 接口：
   - 使用：T18 定义的全部 CSS 变量；T6b、T9、T11、T12、T14、T15 追加的 class 和 `data-testid`
