@@ -630,3 +630,73 @@ func TestStartDirSurvivesRestartTmux(t *testing.T) {
 		t.Fatalf("recovered = %v, start directory %q; want %s", ok, r2.StartDir(), canon)
 	}
 }
+
+// A worktree whose directory cannot be read for one round of the poll (its
+// disk is not mounted, the directory was moved aside for a moment) is still in
+// git's list, marked prunable. That is not the worktree being gone: its
+// creation record stays, and it is a worktree vibe-remote created again once
+// the directory is back. The record goes when git's list no longer has the
+// path at all.
+func TestProjectsKeepsRecordWhileGitStillListsTheWorktree(t *testing.T) {
+	prunable := func(t *testing.T, f *removeFixture) bool {
+		t.Helper()
+		wts, err := ListWorktrees(f.repo)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, wt := range wts {
+			if wt.Path == f.root {
+				return wt.Prunable
+			}
+		}
+		t.Fatalf("git does not list %s at all: %+v", f.root, wts)
+		return false
+	}
+
+	t.Run("directory_away_for_one_poll", func(t *testing.T) {
+		f := newRemoveFixture(t, 0)
+		aside := f.root + ".aside"
+		if err := os.Rename(f.root, aside); err != nil {
+			t.Fatal(err)
+		}
+		if !prunable(t, f) {
+			t.Skip("this git does not mark a worktree whose directory is missing as prunable")
+		}
+		if row := worktreeRow(f.m.Projects(allowAny), f.root); row != nil {
+			t.Fatalf("a worktree whose directory is missing is listed: %+v", row)
+		}
+		if err := os.Rename(aside, f.root); err != nil {
+			t.Fatal(err)
+		}
+		row := worktreeRow(f.m.Projects(allowAny), f.root)
+		if row == nil || !row.Managed {
+			t.Fatalf("row after the directory came back = %+v, records = %+v; want it still created by vibe-remote", row, f.store.Worktrees())
+		}
+		f.intact()
+		// And so its branch can still go with it.
+		req := request(f.status())
+		req.DeleteBranch = true
+		if res := f.mustRemove(req); !res.BranchDeleted {
+			t.Fatalf("result = %+v, want the branch deleted", res)
+		}
+	})
+
+	t.Run("gone_from_gits_list", func(t *testing.T) {
+		f := newRemoveFixture(t, 0)
+		if err := os.RemoveAll(f.root); err != nil {
+			t.Fatal(err)
+		}
+		if !prunable(t, f) {
+			t.Skip("this git does not mark a worktree whose directory is missing as prunable")
+		}
+		f.m.Projects(allowAny)
+		if !f.store.Managed(f.repo, f.root, "fix-login") {
+			t.Fatal("the record was dropped while git still lists the worktree")
+		}
+		runGit(t, f.repo, "worktree", "prune")
+		f.m.Projects(allowAny)
+		if len(f.store.Worktrees()) != 0 {
+			t.Fatalf("records after git stopped listing the worktree = %+v, want none", f.store.Worktrees())
+		}
+	})
+}

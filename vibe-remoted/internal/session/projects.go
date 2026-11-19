@@ -112,7 +112,10 @@ func (m *Manager) Projects(allow AllowFunc) []protocol.Project {
 	// has no session right now — or whose list failed to read is kept: not
 	// having looked is not the worktree being gone, and a dropped record turns
 	// the worktree "external" for good. The test is git's own list, not the rows
-	// shown, which also leave out what the allowed roots do not cover.
+	// shown, which also leave out what the allowed roots do not cover and what
+	// git marks prunable: a worktree whose directory cannot be read this round
+	// (its disk is not mounted, it was moved aside) is still in the list, and
+	// its record stays until git itself no longer lists the path.
 	// RemoveWorktreeIfSame leaves a record that was replaced since the snapshot
 	// alone.
 	if m.projectStore != nil {
@@ -121,7 +124,7 @@ func (m *Manager) Projects(allow AllowFunc) []protocol.Project {
 			if !read || res.err != nil {
 				continue
 			}
-			if !listsWorktreeDir(res.wts, rec.Path) {
+			if !listsWorktree(res.wts, rec.Path) {
 				m.projectStore.RemoveWorktreeIfSame(rec)
 			}
 		}
@@ -228,11 +231,11 @@ func (m *Manager) buildProject(id string, inStore bool, res listResult, sess []s
 	return p
 }
 
-// listsWorktreeDir reports whether wts has a worktree at path whose directory
-// is still there.
-func listsWorktreeDir(wts []Worktree, path string) bool {
+// listsWorktree reports whether wts has an entry for path at all, prunable
+// (its directory is missing right now) or not.
+func listsWorktree(wts []Worktree, path string) bool {
 	for _, wt := range wts {
-		if wt.Path == path && !wt.Prunable {
+		if wt.Path == path {
 			return true
 		}
 	}
