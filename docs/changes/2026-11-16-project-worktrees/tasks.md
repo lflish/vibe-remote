@@ -1,6 +1,6 @@
 # 任务：按项目和 worktree 组织会话，并更换视觉风格
 
-依据：spec.md、design.md　共 21 个任务（T1–T20，其中 T6 拆成 T6a 和 T6b）　更新：2026-11-19（按第二轮工程评审和用户的三个决定修订，decisions #28–#40、d28–d31、c5；上一次是 2026-11-18 按第一轮工程评审修订，#16–#27、d22–d27、c4）
+依据：spec.md、design.md　共 21 个任务（T1–T20，其中 T6 拆成 T6a 和 T6b；开发中另加返工任务 T6c）　更新：2026-11-19（按第二轮工程评审和用户的三个决定修订，decisions #28–#40、d28–d31、c5；上一次是 2026-11-18 按第一轮工程评审修订，#16–#27、d22–d27、c4）
 
 ## 约定
 
@@ -461,6 +461,25 @@
   - 在仓库根执行 `TMUX_TMPDIR=$(mktemp -d /tmp/vr-XXXXXX) node .claude/skills/verify/scripts/gui-smoke.mjs` 和 `TMUX_TMPDIR=$(mktemp -d /tmp/vr-XXXXXX) node .claude/skills/verify/scripts/gui-chat-smoke.mjs`，都以退出码 0 结束、没有 FAIL 行；`git diff HEAD~1 -- .claude/skills/verify/scripts/` 里只有选择器字符串的改动，`grep -c "^test(" .claude/skills/verify/scripts/gui-chat-smoke.mjs` 仍是 26，`grep -c "check(" .claude/skills/verify/scripts/gui-smoke.mjs` 不小于 14
 - 依赖：T4、T5、T6a
 
+### T6c 返工：三层侧边栏行的排版
+- 状态：完成
+- 来源：主会话核对 T6b 截图（`.devflow-tmp/build-shots/t6b-sidebar.png`）。默认宽度的侧边栏里：会话行的名字被挤没（有的行只看到「终端 · 回合结束」，选中的会话名只剩一个字，有一行「对话」徽标压在名字上）；项目名 `new-api` 被截成「ne…」、worktree `change/general-skills` 被截成「change/gen…」，而右侧还有空间。jsdom 的 `test-sidebar.mjs` 没有布局，看不到这类问题
+- 文件：
+  - 新建 `.claude/skills/verify/scripts/sidebar-layout.mjs`（可共用的侧边栏布局测量 `sidebarLayout(cdp)`，以及造数据用的 `makeSidebarRepos`、`startSession`）
+  - 修改 `.claude/skills/verify/scripts/gui-smoke.mjs`（新增一步「三层侧边栏」：在 `/tmp` 下的临时目录里建一个带 4 个 worktree 的仓库（一个分支名很长、一个没有会话）、两个单 worktree 仓库（其中一个停在很长的分支上）、一个非 git 目录，在其中开 8 个终端会话（两个改成长名字，中英文各一），给两个后台会话各发一个 hook 事件让它们带状态点，然后量；对话用例之后带着对话会话再量一次；`VR_SIDEBAR_SHOT=<文件>` 时存一张侧边栏截图。临时目录随用例结束删除）
+  - 修改 `desktop/src/renderer/styles.css`（只在末尾「项目树」一段就地改或追加侧边栏行的布局规则，不动配色）；根因在 DOM 结构时才改 `desktop/src/renderer/sidebar.ts`，并保证 design 7.4 的侧边栏 DOM 不变、T19 的两行会话条目能在这个结构上实现
+- 场景：R1.1–R1.4（界面一侧：项目、worktree、会话的名字和状态看得见）、R8.5（默认宽度下不重叠、不无故省略）
+- 测试（浏览器层，真实渲染；先写、确认修复前失败）：`gui-smoke.mjs` 新增 3 处 `check(`
+  - `sidebar shows the projects, worktrees and sessions under test`：至少 9 个会话行，worktree 行里有 `fix-login` 和长分支名
+  - `sidebar rows are readable at the default width (names, badges, state text, dots)`：`sidebarLayout` 的问题列表为空。它对每个可见的项目行、worktree 行、会话行检查：行和行内各部分不超出侧边栏左右边界；同一行里名字、类型图标、类型徽标、状态文字、状态点、分支、标签、操作按钮的矩形两两不相交；会话名的可见宽度大于 0，并且要么完整显示、要么至少有 4 个字宽；名字被省略（`scrollWidth > clientWidth`）时它所在的那一行不能还有超过 2px 的空白；没有设省略号的文字不被裁掉。静止时量一遍，再把鼠标依次移到每个可见的行上各量一遍（行上的操作按钮在悬停时才占位置）
+  - `sidebar rows stay readable with a chat session listed`：对话用例建出对话会话之后再量一次，问题列表为空
+- 完成定义：
+  - 修复前：`TMUX_TMPDIR=$(mktemp -d /tmp/vr-XXXXXX) node .claude/skills/verify/scripts/gui-smoke.mjs` 里新增的布局检查是 FAIL，输出里列出被挤没的名字和重叠的部分（关键输出记进报告）
+  - 修复后：同一条命令和 `TMUX_TMPDIR=$(mktemp -d /tmp/vr-XXXXXX) node .claude/skills/verify/scripts/gui-chat-smoke.mjs` 都以退出码 0 结束、没有 FAIL 行；`grep -c "check(" .claude/skills/verify/scripts/gui-smoke.mjs` 不小于 17，`grep -c "^test(" .claude/skills/verify/scripts/gui-chat-smoke.mjs` 仍是 26
+  - `cd desktop && npm run typecheck && npm run test:sidebar` 退出码 0（`test-sidebar.mjs` 不改）
+  - 用真实的 Electron 临时实例截一张三层侧边栏的图（`VR_SIDEBAR_SHOT=…/.devflow-tmp/build-shots/t6c-sidebar.png`），名字、徽标、状态都看得清
+- 依赖：T6b
+
 ### T7 daemon 和客户端连接层：attach 带 `worktreeName` 新建命名 worktree
 - 状态：待办
 - 文件：
@@ -870,6 +889,7 @@
 | T5 | 2026-11-19 14:35 | 28f6d19 | `npm run typecheck` 退出 0；`npm run test:tree` 18 个用例 `ok`；`TMUX_TMPDIR=… make check` exit 0 |
 | T6a | 2026-11-19 15:40 | 57413e3（快照）、b746d2b（搬家） | `npm run typecheck`+`npm test` 退出 0（`test:sidebar` 4 用例 `ok`，快照逐字节不变）；`gui-smoke.mjs`、`gui-chat-smoke.mjs` 全绿、无 FAIL（两脚本 vs merge-base 无 diff）；`TMUX_TMPDIR=… make check` exit 0。`index.ts` 净减少 155 行（完成定义估计 ≥200，见 decisions #45） |
 | T6b | 2026-11-19 16:30 | fac25a9 | `typecheck`+`test:sidebar`(19)+`test:i18n-parity`(266)+`test:chat-activity`(6)+`test:chat-render-guard`(15) 全退出 0；`npm test` 退出 0；`TMUX_TMPDIR=… make check` exit 0；`gui-smoke.mjs`、`gui-chat-smoke.mjs` 全绿无 FAIL（两脚本未改、`^test(`=26、`check(`=14） |
+| T6c | 2026-11-19 14:38 | 见下一个提交 | 修复前 `gui-smoke.mjs` 新检查 FAIL（`session "fix": name has no visible width`、`session "new-api": name shows only 8px of 47px`、对话行 `name shows only 26px of 56px`）；修复后 `gui-smoke.mjs` 33 行 PASS、0 FAIL，`gui-chat-smoke.mjs` 29 行 PASS、0 FAIL；`typecheck`+`test:sidebar`(19) 退出 0；`TMUX_TMPDIR=… make check` exit 0（第一次在 `internal/chat` 卡住超时，重跑通过，decisions #50）；`check(`=17、`^test(`=26；截图 `.devflow-tmp/build-shots/t6c-sidebar*.png` |
 
 更正：T5 实际完成于 2026-11-19 12:39，T6a 13:11，T6b 14:04（以提交时间为准）。此后各行的时间用 `date '+%F %H:%M'` 取。
 
@@ -902,4 +922,5 @@ spec「推迟到以后」的条目：
 - 新建 worktree 对话框确认之后才出现的竞态错误（另一台桌面刚建了同名分支）只显示在状态栏（design 第 1 节方案 A 的代价）；其中「目录/文件」冲突的那一种，error 帧不带 `conflict`，状态栏只能写成「分支 … 已存在」。以后可以把这类错误带回对话框，并给 error 帧加上冲突的分支。
 - 新流程建出的分支不跟随 `branch.autoSetupMerge`，`post-checkout` 钩子运行时 HEAD 还是 detached（design 6.1 第 9 步，d28）。有用户依赖这两点时，可以在 `symbolic-ref` 之后补写上游配置，或再触发一次钩子。
 - `/api/v1/projects` 的补归属对一直失败的会话每轮重试、没有退避（design 5.4）。实际遇到大量这种会话时再加。
+- 查 `go test -race ./...` 里 `internal/chat` 偶发卡住的原因（T6c 时 `make check` 卡了 10 分钟被外层超时杀掉，当时没有留下 goroutine 堆栈；单独跑这个包 18 秒通过，重跑 `make check` 通过；decisions #50）。下次遇到时给卡住的 `chat.test` 发 `SIGQUIT` 把堆栈留下来。
 - 查 `gui-chat-smoke` R7 偶发失败的原因（AskUserQuestion 表单：`answers echoed: on": "Pick a fruit"`；T6b 提交后 3 次里失败 1 次，decisions #47）。

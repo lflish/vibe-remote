@@ -1111,7 +1111,7 @@ html, body {
   color: hsl(var(--tag-hue) var(--tag-fg-s) var(--tag-fg-l));
 }
 .project-name {
-  flex: 1;
+  flex: 0 1 auto;
   min-width: 0;
   font-size: 12px;
   font-weight: 600;
@@ -1120,9 +1120,38 @@ html, body {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.project-branch { flex: none; font-size: 11px; color: var(--text-muted); }
-.project-status { flex: none; font-size: 11px; color: var(--error); }
-.row-actions { display: inline-flex; gap: 2px; margin-left: auto; }
+/* The branch and the error text get what the project name leaves over. */
+.project-branch,
+.project-status {
+  flex: 1 1 0;
+  min-width: 3em;
+  font-size: 11px;
+  text-align: right;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.project-branch { color: var(--text-muted); }
+.project-status { color: var(--error); }
+/* Row actions take no room until the row is hovered or holds the focus (the
+   buttons stay reachable with Tab), so they never cost a name its width. */
+.row-actions {
+  display: inline-flex;
+  gap: 2px;
+  margin-left: auto;
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+}
+.project-row:hover > .row-actions,
+.project-row:focus-within > .row-actions,
+.worktree-row:hover > .row-actions,
+.worktree-row:focus-within > .row-actions {
+  position: static;
+  opacity: 1;
+  pointer-events: auto;
+}
+.row-actions:empty { display: none; }
 .row-action {
   display: inline-flex;
   align-items: center;
@@ -1137,7 +1166,7 @@ html, body {
 }
 .row-action:hover:not(:disabled) { background: var(--bg-hover); }
 .row-action:disabled { opacity: 0.4; cursor: default; }
-.row-action svg { width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 1.5; }
+.row-action svg { width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
 .worktree-group { display: flex; flex-direction: column; margin-left: 14px; }
 .worktree-row { display: flex; align-items: center; gap: 6px; padding: 2px 8px; }
 .worktree-label {
@@ -1158,7 +1187,33 @@ html, body {
   background: var(--bg-hover);
 }
 .worktree-empty { padding: 2px 8px 4px 20px; font-size: 11px; color: var(--text-muted); }
-.session-meta { font-size: 10px; color: var(--text-muted); }
+/* Session rows are two lines (design 7.4): the name has the first line to
+   itself; kind and state text share the second with the dot and the hover
+   actions. On one line the state text squeezed the name out at the default
+   sidebar width. */
+.session-item {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto auto;
+  column-gap: 6px;
+  row-gap: 0;
+}
+.session-item > .session-label,
+.session-item > .session-rename-input { grid-column: 1 / -1; grid-row: 1; min-width: 0; }
+.session-item > .session-meta {
+  grid-column: 1;
+  grid-row: 2;
+  min-width: 0;
+  padding-left: 21px; /* under the name: 14px icon + 7px gap */
+  font-size: 10px;
+  color: var(--text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.session-item > .session-unread { grid-column: 2; grid-row: 2; }
+.session-item > .session-reload { grid-column: 3; grid-row: 2; }
+.session-item > .session-close { grid-column: 4; grid-row: 2; }
+.session-item > .session-action { width: 18px; height: 18px; }
+.session-label > .session-ui-badge { margin-left: 0; }
 .menu {
   min-width: 160px;
   background: var(--bg-elevated);

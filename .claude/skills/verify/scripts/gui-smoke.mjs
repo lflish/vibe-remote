@@ -9,6 +9,8 @@
 //   typing → PTY echo; drag-select under mouse reporting + ⌘C; ⌘V paste
 //   navigation / window.open blocked; hook event → desktop notification
 //   daemon restart → reconnect banner → session recovered
+//   three-level sidebar (throwaway repositories with several worktrees) →
+//   every row's name, badge, state text and dot are readable at the default width
 //   chat (second daemon, fake claude): new chat session via the picker →
 //   reply rendered → permission prompt allowed once → turn resumes
 //
@@ -24,6 +26,7 @@
 // Usage (from the repo root):  node .claude/skills/verify/scripts/gui-smoke.mjs
 //   --no-build   reuse existing desktop/dist and skip `vite build`
 //   --keep       leave the app open at the end (manual poking); Ctrl+C to exit
+// VR_SIDEBAR_SHOT=<file.png> saves screenshots of the sidebar after the layout checks.
 // Requires Node 22+ (global WebSocket).
 
 import { spawn, spawnSync } from 'node:child_process';
@@ -34,6 +37,7 @@ import { fileURLToPath } from 'node:url';
 import { createRequire } from 'node:module';
 import { randomBytes } from 'node:crypto';
 import { pickerLayout } from './picker-layout.mjs';
+import { sidebarLayout, makeSidebarRepos, startSession, LONG_BRANCH } from './sidebar-layout.mjs';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../../../..');
 const DESKTOP = join(ROOT, 'desktop');
@@ -82,6 +86,7 @@ let electron = null;
 let savedClipboard = null;
 let cdp = null;
 const createdSessions = new Set();
+let sidebarRoot = null;
 
 function keychainHas(service) {
   return spawnSync('security', ['find-generic-password', '-s', service], { stdio: 'ignore' }).status === 0;
@@ -397,8 +402,14 @@ async function main() {
     (e) => fail(`post-reconnect session — ${e.message}`),
   );
 
-  // 9. Chat sessions on the second machine (fake claude).
+  // 9. Three-level sidebar: every row readable at the default sidebar width.
+  await sidebarCase(sessionId);
+
+  // 10. Chat sessions on the second machine (fake claude).
   await chatCases();
+  const withChat = await sidebarLayout(cdp);
+  check(withChat.problems.length === 0, 'sidebar rows stay readable with a chat session listed', withChat.problems.join('; '));
+  if (process.env.VR_SIDEBAR_SHOT) await sidebarShot(process.env.VR_SIDEBAR_SHOT);
 
   const exceptions = cdp.events.filter((e) => e.method === 'Runtime.exceptionThrown')
     .map((e) => e.params.exceptionDetails.exception?.description || e.params.exceptionDetails.text);
@@ -408,6 +419,83 @@ async function main() {
   if (args.has('--keep')) {
     console.log('--keep: app left running; press Ctrl+C to clean up');
     await new Promise((r) => process.once('SIGINT', r));
+  }
+}
+
+// Sessions spread over three projects (one with four worktrees, two flat) and a
+// plain folder; two of them carry a state dot. Then the real boxes are measured.
+async function sidebarCase(firstSessionId) {
+  try {
+    const repos = makeSidebarRepos('/tmp');
+    sidebarRoot = repos.root;
+    const d = repos.dirs;
+    const addr = `127.0.0.1:${port}`;
+    const ids = {};
+    for (const [k, dir] of [['main', d.main], ['fix', d.fix], ['fix2', d.fix], ['long', d.long], ['api', d.newApi], ['api2', d.newApi], ['billing', d.billing], ['notes', d.notes]]) {
+      ids[k] = await startSession(addr, token, dir);
+      createdSessions.add(ids[k]);
+    }
+    const rename = (id, name) => fetch(`http://${addr}/api/v1/sessions/${id}/rename`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name }),
+    });
+    await rename(ids.fix2, '登录修复与回归测试的会话');
+    await rename(ids.api2, 'a-session-with-a-rather-long-name');
+    const row = (id) => `document.querySelector('.session-item[data-session-id="${id}"]')`;
+    await waitFor(() => cdp.evaluate(`[${Object.values(ids).map((id) => JSON.stringify(id)).join(',')}].every((id) => !!document.querySelector('.session-item[data-session-id="' + id + '"]'))
+      && document.querySelectorAll('.worktree-row').length >= 4
+      && [...document.querySelectorAll('.session-label-text')].some((e) => e.textContent.includes('登录修复'))`), 20000, 'sidebar lists the new sessions and worktrees');
+    // A state dot needs an open view: open two of the sessions, go back to the
+    // first one, then send them hook events.
+    const open = async (id) => {
+      await cdp.evaluate(`${row(id)}.querySelector('.session-label').click(), true`);
+      await waitFor(() => cdp.evaluate(`${row(id)}?.classList.contains('active')`), 15000, `session ${id} open`);
+    };
+    await open(ids.fix);
+    await open(ids.api);
+    await open(firstSessionId);
+    const event = (sessionId, kind) => fetch(`http://${addr}/api/v1/events`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ sessionId, kind, message: 'layout' }),
+    });
+    await event(ids.fix, 'idle');
+    await event(ids.api, 'waiting');
+    await waitFor(() => cdp.evaluate(`${row(ids.fix)}?.dataset.dot === 'idle' && ${row(ids.api)}?.dataset.dot === 'waiting'`), 10000, 'state dots on the two background sessions');
+    const l = await sidebarLayout(cdp);
+    const labels = await cdp.evaluate(`[...document.querySelectorAll('.worktree-label')].map((e) => e.textContent)`);
+    console.log(`NOTE sidebar ${l.width}px wide: ${l.rows} rows (${l.hovered} also measured under the mouse), ${l.sessions} sessions; names ending in "…": ${l.truncated.length ? l.truncated.join(' | ') : 'none'}`);
+    check(l.sessions >= 9 && labels.includes(LONG_BRANCH) && labels.includes('fix-login'), 'sidebar shows the projects, worktrees and sessions under test', `${l.sessions} sessions, worktrees ${JSON.stringify(labels)}`);
+    check(l.problems.length === 0, 'sidebar rows are readable at the default width (names, badges, state text, dots)', l.problems.join('; '));
+  } catch (e) {
+    fail(`three-level sidebar layout — ${e.message}`);
+  }
+}
+
+// Saves the sidebar as shown, then with the mouse over the first project row
+// (<name>-hover.png: the row's action buttons); when the list scrolls, a third
+// file (<name>-bottom.png) shows its end.
+async function sidebarShot(file) {
+  const r = await cdp.evaluate(`(() => { const b = document.querySelector('#sidebar').getBoundingClientRect(); return { x: b.left, y: b.top, width: b.width + 24, height: b.height }; })()`);
+  const save = async (to) => {
+    const shot = await cdp.send('Page.captureScreenshot', { format: 'png', clip: { ...r, scale: 2 } });
+    writeFileSync(to, Buffer.from(shot.data, 'base64'));
+    console.log(`NOTE sidebar screenshot saved to ${to}`);
+  };
+  const scroller = `(() => { let e = document.querySelector('#machine-list'); while (e && e.scrollHeight <= e.clientHeight + 1) e = e.parentElement; return e; })()`;
+  await save(file);
+  const suffix = (tag) => file.replace(/(\.png)?$/, `-${tag}.png`);
+  const p = await cdp.evaluate(`(() => { const b = document.querySelector('.project-row')?.getBoundingClientRect(); return b ? { x: b.left + b.width / 2, y: b.top + b.height / 2 } : null; })()`);
+  if (p) {
+    await cdp.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: p.x, y: p.y });
+    await save(suffix('hover'));
+    await cdp.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: r.width + 200, y: 8 });
+  }
+  if (await cdp.evaluate(`(() => { const e = ${scroller}; if (!e) return false; e.scrollTop = e.scrollHeight; return true; })()`)) {
+    await sleep(200);
+    await save(suffix('bottom'));
+    await cdp.evaluate(`${scroller}.scrollTop = 0, true`);
   }
 }
 
@@ -486,6 +574,7 @@ async function cleanup() {
     spawnSync('security', ['delete-generic-password', '-s', keychainService], { stdio: 'ignore' });
     console.log(`NOTE removed the "${keychainService}" keychain item this run created (mock keychain not honored)`);
   }
+  if (sidebarRoot) rmSync(sidebarRoot, { recursive: true, force: true });
   if (existsSync(work)) rmSync(work, { recursive: true, force: true });
 }
 
