@@ -146,8 +146,11 @@ export function createFlagsSection(opts: { existingSessions: number }): {
  * `plan` (GET /api/v1/worktrees/plan), asked once typing pauses. Answers that
  * arrive for an older value are dropped.
  *
- * `refresh()` asks again for the current value — call it when the section is
- * first shown and whenever the directory `plan` works on changes. `confirm()`
+ * `ready()`: the daemon has answered that the current value can be used.
+ * `acceptable()`: the local rules have nothing against it (the daemon may not
+ * have been asked yet). `refresh()` asks again for the current value — call it
+ * when the section is first shown and whenever the directory `plan` works on
+ * changes. `confirm()`
  * asks once more right away and returns the plan only if the name can be used;
  * otherwise the reason is shown under the field and it returns null.
  */
@@ -156,6 +159,7 @@ export function createNameSection(opts: { plan(name: string): Promise<WorktreePl
   input: HTMLInputElement;
   value(): string;
   ready(): boolean;
+  acceptable(): boolean;
   confirm(): Promise<WorktreePlan | null>;
   refresh(): void;
 } {
@@ -275,6 +279,8 @@ export function createNameSection(opts: { plan(name: string): Promise<WorktreePl
     input,
     value: () => input.value,
     ready: () => !blocked && answer !== null && answer.name === input.value && answer.plan.ok === true,
+    // Nothing known here speaks against the name: confirm() may be asked.
+    acceptable: () => !blocked && validateWorktreeName(input.value) === null,
     async confirm() {
       clearTimeout(timer);
       const name = input.value;

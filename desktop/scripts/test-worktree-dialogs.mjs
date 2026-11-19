@@ -149,6 +149,71 @@ test('new_worktree_enter_confirms', async () => {
   d.daemon.restore();
 });
 
+// "Type the name, press Enter" is the natural way through this dialog. Enter
+// must not wait for the 250 ms debounce and the pre-check that enable the
+// button: confirming asks the daemon once more anyway (review D8).
+test('new_worktree_enter_right_after_typing', async () => {
+  const d = await openNew({ plan: (workdir, name) => planFor(name) });
+  typeInto(d.input, 'fix-login');
+  assert.equal(d.confirm.disabled, true, 'the pre-check has not answered yet');
+  const before = d.daemon.plans().length;
+  pressKey(d.input, 'Enter');
+  await settle(8);
+  assert.equal(d.settled(), true, 'Enter right after typing creates the worktree, without a second press');
+  const picked = await d.result;
+  assert.deepEqual(picked, { mode: 'worktree', workdir: MAIN, ui: 'terminal', flags: ['skip'], worktreeName: 'fix-login', worktreePath: WT_PATH });
+  assert.deepEqual(d.daemon.plans().slice(before), [{ workdir: MAIN, name: 'fix-login' }], 'the name was checked once, at confirm');
+  assert.equal(overlay(), null);
+  d.daemon.restore();
+
+  // A name the daemon refuses: the dialog stays, with the reason, as after a click.
+  const e = await openNew({
+    plan: (workdir, name) => (name === 'taken' ? { ...planFor(name), ok: false, error: 'worktree_branch_exists', conflict: 'taken', message: 'refused' } : planFor(name)),
+  });
+  typeInto(e.input, 'taken');
+  pressKey(e.input, 'Enter');
+  await settle(8);
+  assert.ok(overlay(), 'the dialog stays open');
+  assert.equal(e.settled(), false);
+  assert.equal(e.error.textContent, '分支 taken 已存在');
+  // Pressing Enter twice in a row sends one confirmation, not two.
+  typeInto(e.input, 'free');
+  const sent = e.daemon.plans().length;
+  pressKey(e.input, 'Enter');
+  pressKey(e.input, 'Enter');
+  assert.equal((await e.result).worktreeName, 'free');
+  assert.equal(e.daemon.plans().length - sent, 1);
+  e.daemon.restore();
+
+  // What Enter still does not do: submit a name the local rules refuse or an
+  // empty one, or submit before the machine info is in.
+  const f = await openNew({ plan: (workdir, name) => planFor(name) });
+  for (const name of ['', 'a b', '-x']) {
+    typeInto(f.input, name);
+    const asked = f.daemon.plans().length;
+    pressKey(f.input, 'Enter');
+    await settle();
+    assert.ok(overlay() && !f.settled(), `${JSON.stringify(name)} is not submitted`);
+    assert.equal(f.daemon.plans().length, asked, 'and the daemon is not asked');
+  }
+  click(f.cancel);
+  await f.result;
+  f.daemon.restore();
+
+  let release;
+  const gate = new Promise((resolve) => { release = resolve; });
+  const g = await openNew({ plan: (workdir, name) => planFor(name), info: async () => { await gate; return INFO_V4; } });
+  typeInto(g.input, 'fix-login');
+  pressKey(g.input, 'Enter');
+  await settle(8);
+  assert.ok(overlay() && !g.settled(), 'not before the machine info is in: the default launch options would be lost');
+  release();
+  await settle(8);
+  pressKey(g.input, 'Enter');
+  assert.deepEqual((await g.result).flags, ['skip']);
+  g.daemon.restore();
+});
+
 test('new_worktree_unsupported_repo', async () => {
   for (const [code, text] of [['unsupported_repo', t('wt.error.unsupported_repo')], ['not_git', '这个目录不在 git 仓库里']]) {
     const d = await openNew({

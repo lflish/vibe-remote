@@ -80,15 +80,21 @@ export function openNewWorktreeDialog(
     const flagsSection = createFlagsSection({ existingSessions: 0 });
     shell.body.append(nameSection.el, uiSection.el, flagsSection.el);
 
+    // Everything but the name allows confirming. The machine info has to be in
+    // (or have failed) first: confirming earlier would drop the launch options
+    // that are on by default.
+    function submittable(): boolean {
+      const settled = info !== undefined || infoError !== undefined;
+      const chatOff = uiSection.value() === 'chat' && !chatAvailability(info, infoError, trust).enabled;
+      return !confirming && settled && !chatOff;
+    }
+
     function refresh() {
       const a = chatAvailability(info, infoError, trust);
       const ui = uiSection.value();
       uiSection.setAvailability(a);
       flagsSection.setUI(ui);
-      // The machine info has to be in (or have failed) first: confirming
-      // earlier would drop the launch options that are on by default.
-      const settled = info !== undefined || infoError !== undefined;
-      shell.confirm.disabled = confirming || !settled || !nameSection.ready() || (ui === 'chat' && !a.enabled);
+      shell.confirm.disabled = !submittable() || !nameSection.ready();
     }
 
     let deactivate = () => {};
@@ -100,8 +106,12 @@ export function openNewWorktreeDialog(
       resolve(result);
     }
 
+    // The button is on once the pre-check of the name has answered. Enter in
+    // the name field does not wait for that (typing a name and pressing Enter
+    // is one motion): a name the local rules accept is submitted, and the
+    // check below decides. A refusal shows under the field as usual.
     async function submit() {
-      if (shell.confirm.disabled) return;
+      if (!submittable() || !nameSection.acceptable()) return;
       // Ask once more: the name may have been taken since it was typed.
       confirming = true;
       refresh();
