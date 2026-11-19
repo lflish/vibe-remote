@@ -485,7 +485,7 @@ HTTP 错误：缺 `workdir` → 400 `{"error":"invalid_request"}`；`workdir` �
 |------|------|------|------|
 | `path` | string | 是 | 要删的 worktree |
 | `head` | string | 是 | 确认框打开时 status 返回的 `head` |
-| `sessions` | string[] | 是 | 确认框上告诉用户会被结束的会话（status 的 `sessions`） |
+| `sessions` | string[] | 是 | 确认框上告诉用户会被结束的会话（status 的 `sessions`）。没有会话时是 `[]`，不能省略或传 `null` |
 | `discardFiles` | bool | 否 | 用户同意丢弃未提交和未跟踪的文件 |
 | `deleteBranch` | bool | 否 | 用户选择连分支一起删。只有 `managed` 且在分支上时 daemon 才照做，其余情况忽略：不是 vibe-remote 创建的 worktree，分支一律保留 |
 | `dropCommits` | bool | 否 | 用户同意让未合并的提交不再属于任何分支 |
@@ -493,6 +493,7 @@ HTTP 错误：缺 `workdir` → 400 `{"error":"invalid_request"}`；`workdir` �
 | 响应 | 什么时候 |
 |------|----------|
 | 200 `{"removed":true,"branchDeleted":true,"endedSessions":["…"]}` | 目录已删。`branchDeleted`：分支是否也删了；该删而没删成（例如还被别的 worktree 检出着）时为 `false` 并带 `branchError`（string）。`endedSessions`：被结束的会话 |
+| 400 `invalid_request` | 请求体不是合法的 JSON；缺必填字段：`path`、`head` 为空或没有，`sessions` 没有或是 `null`（没有会话时传 `[]`）。`message` 写明缺哪一个。什么都没动 |
 | 400 `worktree_is_main` | `path` 是主目录；仓库是子模块或用了独立的 git 目录时，它唯一的 worktree 也按主目录对待 |
 | 404 `worktree_not_found` | 见上 |
 | 409 `worktree_changed`，响应体多 `status`（上面 status 的结构，最新状态）和 `endedSessions` | 重查后与用户确认的不一致，没有删除。结束会话之前发现的（`endedSessions` 是 `[]`，什么都没动）：`head` 变了；有不在请求 `sessions` 里的会话，或有会话正在这个 worktree 里创建；有未提交文件而 `discardFiles` 不为真；会让未合并提交失去分支而 `dropCommits` 不为真。结束会话之后才发现的（`endedSessions` 是已经结束的会话，目录和分支都还在）：会话在被结束之前又提交了一次；git 拒绝删除后再查，出现了没被同意丢弃的文件。客户端用 `status` 重新确认 |

@@ -109,8 +109,20 @@ func (s *Server) handleWorktreeRemove(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, status, map[string]string{"error": "invalid_request", "message": err.Error()})
 		return
 	}
-	if req.Path == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid_request", "message": "path is required"})
+	// What the user saw is not optional. A missing or null sessions is not an
+	// empty list: it would read as "saw no sessions" without anyone having said
+	// so.
+	missing := ""
+	switch {
+	case req.Path == "":
+		missing = "path"
+	case req.Head == "":
+		missing = "head"
+	case req.Sessions == nil:
+		missing = "sessions"
+	}
+	if missing != "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid_request", "message": missing + " is required"})
 		return
 	}
 	result, err := s.mgr.RemoveWorktree(req, session.AllowFunc(s.cfg.ResolveAllowedWorkdir))
