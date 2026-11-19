@@ -229,6 +229,77 @@ test('picker_normal_mode_unchanged', async () => {
   p.daemon.restore();
 });
 
+// The machine info can arrive after the folder listing (or not at all). Until
+// it is in, the picker does not know whether the daemon names worktrees, nor
+// which launch options are on by default: confirming then created a worktree
+// with no name (`vibe/<session id>`) and dropped the default options.
+test('picker_waits_for_machine_info', async () => {
+  let release;
+  const gate = new Promise((resolve) => { release = resolve; });
+  const p = await openPicker('worktree', { plan: pickerPlan, info: async () => { await gate; return INFO_V4; } });
+  assert.equal(p.root.querySelector('.modal-path').textContent, '/r/devflow', 'the folder listing is in');
+  assert.equal(tid('wt-name-input', p.root), null, 'the info is not: no name field yet');
+  assert.equal(p.confirm.disabled, true, 'Worktree mode cannot be confirmed before the machine info is in');
+  const cards = [...p.root.querySelectorAll('.modal-mode-card:not(.modal-ui-card)')];
+  click(cards[0]);
+  await settle();
+  assert.equal(p.confirm.disabled, true, 'normal mode waits as well: the default launch options are not known yet');
+  click(cards[1]);
+  await settle();
+  assert.equal(p.confirm.disabled, true);
+
+  release();
+  await settle(8);
+  assert.ok(tid('wt-name-input', p.root), 'the name field appears once the daemon is known to be protocol 4');
+  assert.equal(p.confirm.disabled, true, 'and an empty name keeps the button off');
+  typeInto(tid('wt-name-input', p.root), 'fix-login');
+  await afterDebounce();
+  assert.equal(p.confirm.disabled, false);
+  click(p.confirm);
+  assert.deepEqual(await p.result, {
+    workdir: '/r/devflow', flags: ['skip'], mode: 'worktree', ui: 'terminal',
+    worktreeName: 'fix-login', worktreePath: '/r/devflow-worktrees/fix-login',
+  });
+  p.daemon.restore();
+
+  // Normal mode, late info: the default options are sent once it is in.
+  let release2;
+  const gate2 = new Promise((resolve) => { release2 = resolve; });
+  const q = await openPicker('normal', { info: async () => { await gate2; return INFO_V4; } });
+  assert.equal(q.confirm.disabled, true);
+  release2();
+  await settle(8);
+  assert.equal(q.confirm.disabled, false);
+  click(q.confirm);
+  assert.deepEqual(await q.result, { workdir: '/r/devflow', flags: ['skip'], mode: 'normal', ui: 'terminal' });
+  q.daemon.restore();
+});
+
+test('picker_info_failed', async () => {
+  const p = await openPicker('normal', { plan: pickerPlan, info: new Error('offline') });
+  assert.equal(p.confirm.disabled, false, 'a folder can still be opened in a terminal session');
+  assert.equal(tid('picker-worktree-unavailable', p.root), null);
+  const cards = [...p.root.querySelectorAll('.modal-mode-card:not(.modal-ui-card)')];
+  click(cards[1]);
+  await settle();
+  // Whether this daemon names worktrees is unknown: creating one could leave
+  // an unnamed worktree and branch behind.
+  assert.equal(p.confirm.disabled, true, 'Worktree mode is off when the machine info could not be read');
+  const why = tid('picker-worktree-unavailable', p.root);
+  assert.ok(why && !why.hidden, 'and the dialog says why');
+  assert.equal(why.textContent, t('picker.worktreeNeedsInfo'));
+  assert.notEqual(t('picker.worktreeNeedsInfo'), 'picker.worktreeNeedsInfo', 'the text exists');
+  assert.equal(tid('wt-name-input', p.root), null);
+  assert.deepEqual(p.daemon.plans(), [], 'no plan is asked for');
+  click(cards[0]);
+  await settle();
+  assert.equal(p.confirm.disabled, false);
+  assert.equal(tid('picker-worktree-unavailable', p.root), null, 'the reason goes away with the mode');
+  click(p.confirm);
+  assert.deepEqual(await p.result, { workdir: '/r/devflow', flags: [], mode: 'normal', ui: 'terminal' });
+  p.daemon.restore();
+});
+
 // --- T15: what -c does when the directory already has a session (R6) ---
 
 const flagBox = (root, id) => root.querySelector(`.modal-flag input[name="claude-flag-${id}"]`);

@@ -1078,6 +1078,7 @@ html, body {
 .modal-mode-description { font-size: 12px; line-height: 1.45; color: var(--text-secondary); }
 .modal-mode-note { padding: 0 0 6px; font-size: 12px; line-height: 1.5; color: var(--text-muted); }
 .modal-mode-note[hidden] { display: none; }
+.modal-mode-note-error { color: var(--error); }
 /* The picker's "this daemon is older" note sits between two sections of the
    scrolling body; it takes the side padding the sections have. */
 .modal-body > .modal-mode-note { padding: 8px 16px 0; }
