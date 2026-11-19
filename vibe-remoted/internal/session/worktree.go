@@ -346,6 +346,30 @@ func HasSubmoduleCheckouts(worktreeDir string) (bool, error) {
 	return false, nil
 }
 
+// UntrackedRepositories returns the directories in a worktree that are git
+// repositories of their own and not tracked by it. git reports such a
+// directory as a single untracked entry with a trailing slash and does not
+// look inside, so whatever is committed in there is in none of the counts.
+// (One nested in an ignored directory is not reported at all.)
+func UntrackedRepositories(worktreeDir string) ([]string, error) {
+	out, err := gitAtTimeout(worktreeDir, "-c", "core.fsmonitor=false", "status", "--porcelain", "-z", "--untracked-files=all")
+	if err != nil {
+		return nil, fmt.Errorf("check worktree status: %w", err)
+	}
+	var repos []string
+	for _, entry := range strings.Split(string(out), "\x00") {
+		name, untracked := strings.CutPrefix(entry, "?? ")
+		if !untracked || !strings.HasSuffix(name, "/") {
+			continue
+		}
+		dir := filepath.Join(worktreeDir, name)
+		if _, statErr := os.Lstat(filepath.Join(dir, ".git")); statErr == nil {
+			repos = append(repos, dir)
+		}
+	}
+	return repos, nil
+}
+
 // BranchExistsError says which existing branch blocks the new one: the branch
 // itself, or one git cannot keep next to it (fix blocks fix/login, change/foo
 // blocks change). errors.Is(err, ErrWorktreeBranchExists) is true.

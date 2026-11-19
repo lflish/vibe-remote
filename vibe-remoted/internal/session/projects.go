@@ -730,6 +730,19 @@ func (m *Manager) RemoveWorktree(req protocol.WorktreeRemoveRequest, allow Allow
 		}
 	}
 
+	// After the nested worktrees, which this would report as well, less exactly.
+	nestedRepos, err := UntrackedRepositories(path)
+	if err != nil {
+		return none, err
+	}
+	if len(nestedRepos) > 0 {
+		return none, &WorktreeRemoveError{EndedSessions: ended,
+			Message: fmt.Sprintf("this worktree contains another git repository that it does not track: %s. git counts it as one untracked file, "+
+				"so the confirmation says nothing of the commits inside it; vibe-remote does not remove it. "+
+				"Move that directory out of the worktree (or delete it yourself) and try again, or remove the worktree yourself: git worktree remove --force %s",
+				strings.Join(nestedRepos, ", "), path)}
+	}
+
 	confirmed := make(map[string]bool, len(req.Sessions))
 	for _, id := range req.Sessions {
 		confirmed[id] = true

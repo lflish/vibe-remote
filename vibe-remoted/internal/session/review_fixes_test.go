@@ -527,3 +527,72 @@ func TestRemoveBranchSwitchedAfterConfirmation(t *testing.T) {
 		}
 	})
 }
+
+// A git repository of its own that sits untracked in the worktree shows up as
+// one untracked "file", whatever is committed inside it. The confirmation's
+// number says nothing of those commits, so the removal is refused before
+// anything is touched, whatever was agreed to.
+func TestRemoveUntrackedRepositoryRefused(t *testing.T) {
+	f := newRemoveFixture(t, 1)
+	scratch := filepath.Join(f.root, "tools", "scratch")
+	repoAt(t, scratch)
+	tip := emptyCommits(t, scratch, 3)
+	st := f.status()
+	if st.DirtyFiles != 1 {
+		t.Fatalf("dirtyFiles = %d, want 1 (git reports the nested repository as one entry: the case under test)", st.DirtyFiles)
+	}
+	log := installArgLoggingGit(t)
+	for _, discard := range []bool{true, false} {
+		req := request(st)
+		req.DiscardFiles, req.DeleteBranch = discard, true
+		_, err := f.remove(req)
+		failed := wantRemoveError(t, err)
+		if !strings.Contains(failed.Message, scratch) || len(failed.EndedSessions) != 0 {
+			t.Fatalf("discardFiles=%v: failed = %+v, want the nested repository %s named and nobody ended", discard, failed, scratch)
+		}
+		if !f.alive(f.ids[0]) {
+			t.Fatalf("discardFiles=%v: the session was ended", discard)
+		}
+		f.intact()
+		if !commitExists(scratch, tip) {
+			t.Fatalf("discardFiles=%v: the nested repository lost its commits", discard)
+		}
+	}
+	if hasGitCall(loggedGitCalls(t, log), "worktree", "remove") {
+		t.Fatal("git worktree remove was run")
+	}
+
+	// Moved out of the way, the worktree can be removed.
+	if err := os.Rename(scratch, filepath.Join(t.TempDir(), "scratch")); err != nil {
+		t.Fatal(err)
+	}
+	req := request(f.status())
+	req.DeleteBranch = true
+	f.mustRemove(req)
+}
+
+func TestUntrackedRepositories(t *testing.T) {
+	f := newRemoveFixture(t, 0)
+	list := func() []string {
+		t.Helper()
+		got, err := UntrackedRepositories(f.root)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return got
+	}
+	// Plain untracked files and directories, and a repository in an ignored
+	// directory (git does not report that one at all), are not it.
+	writeFiles(t, f.root, "notes.txt", "docs/a.md", "docs/deep/b.md")
+	repoAt(t, filepath.Join(f.root, "vendor", "lib"))
+	if got := list(); len(got) != 0 {
+		t.Fatalf("UntrackedRepositories = %v, want none", got)
+	}
+	one := filepath.Join(f.root, "scratch")
+	two := filepath.Join(f.root, "docs", "deep", "with space")
+	repoAt(t, one)
+	repoAt(t, two)
+	if got := list(); !reflect.DeepEqual(got, []string{two, one}) && !reflect.DeepEqual(got, []string{one, two}) {
+		t.Fatalf("UntrackedRepositories = %v, want %s and %s", got, one, two)
+	}
+}

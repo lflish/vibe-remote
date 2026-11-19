@@ -955,6 +955,7 @@ CSS 变量：保留现有变量名（`styles.css` 里到处在用），换成 M1
 - 评审修复（G6）：4.5 / 6.2 里分支还没有任何提交的 worktree（`head` 全 0）可以查状态和删除：`unmergedCommits` 记 0，删除前复核 HEAD 改用能认出「仍然没有提交」的写法（decisions #83）。4.4 的预检多一个原因 `no_commits`（发起处没有任何提交），排在 `unsupported_repo` 之后、名字规则之前；4.4 原来声明的「预检不覆盖发起处还没有提交」不再成立，6.1 读发起处提交那一步挪进 `precheckWorktree`（d42）。
 - 评审修复（G3）：4.2 的项目树多一步身份核对：`git worktree list` 读成功还不够，项目 id 必须就是列表的第一项（主目录或裸仓库；没有可认的主目录时是工作区的顶层）。会话建在普通目录、上层之后才成为仓库的，仍是原来那个非 git 项目（decisions #84）。
 - 评审修复（G8）：4.6 的删除请求多一个可缺省字段 `branch`（确认时看到的分支）；6.2 与请求比对的那一步多两条：带了 `branch` 而现在检出的分支不同 → 409；带 `deleteBranch` 而这个 worktree 现在不是 `managed` 或不在分支上 → 409（原来写的是「忽略 `deleteBranch`」）（d43）。4.6 另写明 `path`、`head`、`sessions` 缺失是 400 `invalid_request`，请求体必须恰好是一个 JSON 对象（decisions #85、#86）。
+- 评审修复（G7）：6.2 动手之前的拦截从三种变成四种，多一种「里面有没被它跟踪的独立 git 仓库」（git 只把它算成 1 个未跟踪文件），带不带 `discardFiles` 都拒绝（d44）。
 
 ## 11. 方案验证（机器关口 B）
 
