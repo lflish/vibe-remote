@@ -42,6 +42,25 @@ test('listProjects: 200 → the projects array', async () => {
   assert.equal(res[0].id, '/a');
 });
 
+// The body is {proto, projects}, both required (docs/protocol.md). A 200 that
+// lacks the list is a broken answer, not a machine with no projects: taking it
+// for an empty tree would wipe the sidebar and mark the daemon as protocol 4.
+test('listProjects: a 200 without the projects array is an error, not an empty tree', async () => {
+  const rest = new VibeRemoteRest(machine);
+  for (const body of [{}, { proto: 4 }, { proto: 4, projects: null }, { proto: 4, projects: {} }, null, []]) {
+    let err;
+    let res;
+    await withFetch(async () => json(200, body), async () => {
+      try { res = await rest.listProjects(); } catch (e) { err = e; }
+    });
+    assert.ok(err instanceof Error, `${JSON.stringify(body)} is refused (got ${JSON.stringify(res)})`);
+    assert.ok(!(err instanceof RestError), 'not an HTTP refusal');
+  }
+  // An empty list is a valid answer.
+  const empty = await withFetch(async () => json(200, { proto: 4, projects: [] }), () => rest.listProjects());
+  assert.deepEqual(empty, []);
+});
+
 test('listProjects: 500 → RestError with status 500', async () => {
   const rest = new VibeRemoteRest(machine);
   let err;

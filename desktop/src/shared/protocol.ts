@@ -100,6 +100,12 @@ export interface WorktreeRemoveResult {
   endedSessions: string[];
 }
 
+/** The 200 answer of GET /api/v1/projects (v4): this machine's project tree. */
+export interface ProjectsResponse {
+  proto: number;
+  projects: Project[]; // always an array, [] when there is none
+}
+
 /** One project in the tree (GET /api/v1/projects). */
 export interface Project {
   id: string;
