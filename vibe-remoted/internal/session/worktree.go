@@ -10,6 +10,8 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 	"unicode"
@@ -131,23 +133,83 @@ type Worktree struct {
 	LockReason                       string
 }
 
+// gitUsageError is the exit status of a git command that was given an option
+// it does not know.
+const gitUsageError = 129
+
+// gitListZ is what is known, per git executable, about `worktree list -z`:
+// -z is git 2.36, and Ubuntu 22.04 still ships 2.34. The first reading with a
+// given git finds out (asked finishes it; readings that arrive meanwhile wait
+// for it rather than each asking on their own), and a git that answered with a
+// usage error is asked for the line-separated list straight away from then on.
+type gitListZ struct {
+	asked   sync.Once
+	without atomic.Bool
+}
+
+var gitListZByPath sync.Map // git executable → *gitListZ
+
 // ListWorktrees returns the worktrees of the repository that contains dir. The
 // first entry is the main worktree (or, for a bare repo, the bare entry); paths
 // are git's canonical paths.
+//
+// The list is read NUL-separated (-z), which is the only form that can carry
+// every path: a directory name may contain a newline, and in the
+// line-separated list such a path is cut in two. A git that does not know -z
+// is asked for the lines instead; there, a worktree whose path has a newline
+// in it is not listed (a known limit of that form, not of the others).
 func ListWorktrees(dir string) ([]Worktree, error) {
-	out, err := gitAtTimeout(dir, "worktree", "list", "--porcelain")
+	gitPath, _ := exec.LookPath("git")
+	known, _ := gitListZByPath.LoadOrStore(gitPath, &gitListZ{})
+	z := known.(*gitListZ)
+	listZ := func() ([]byte, error) {
+		out, err := gitAtTimeout(dir, "worktree", "list", "--porcelain", "-z")
+		if code, exited := gitExitCode(err); exited && code == gitUsageError {
+			z.without.Store(true)
+		}
+		return out, err
+	}
+	var out []byte
+	var err error
+	first := false
+	z.asked.Do(func() {
+		first = true
+		out, err = listZ()
+	})
+	if !z.without.Load() {
+		if !first {
+			out, err = listZ()
+		}
+		if err == nil {
+			return parseWorktreeList(string(out), "\x00"), nil
+		}
+		if !z.without.Load() {
+			return nil, err // any failure but "this git does not know -z"
+		}
+	}
+	out, err = gitAtTimeout(dir, "worktree", "list", "--porcelain")
 	if err != nil {
 		return nil, err
 	}
+	return parseWorktreeList(string(out), "\n"), nil
+}
+
+// parseWorktreeList reads `git worktree list --porcelain`: attributes one per
+// line (sep is "\n") or, with -z, NUL-terminated (sep is "\x00"), an empty one
+// between worktrees. An entry that cannot be a worktree — its path is not
+// absolute, or it has no HEAD and is not bare — is left out: that is what the
+// two halves of a path with a newline in it look like in the line-separated
+// form.
+func parseWorktreeList(out, sep string) []Worktree {
 	var list []Worktree
 	var cur *Worktree
 	flush := func() {
-		if cur != nil {
+		if cur != nil && filepath.IsAbs(cur.Path) && (cur.Head != "" || cur.Bare) {
 			list = append(list, *cur)
-			cur = nil
 		}
+		cur = nil
 	}
-	for _, line := range strings.Split(string(out), "\n") {
+	for _, line := range strings.Split(out, sep) {
 		if line == "" {
 			flush()
 			continue
@@ -185,7 +247,7 @@ func ListWorktrees(dir string) ([]Worktree, error) {
 		}
 	}
 	flush()
-	return list, nil
+	return list
 }
 
 // Home is a session's project attribution (design 4.9, 5.1). For a non-git
@@ -222,7 +284,9 @@ func ResolveHome(dir string) (Home, error) {
 		}
 		return Home{}, err
 	}
-	top := filepath.Clean(strings.TrimSpace(string(out)))
+	// The path and one newline, exactly: a directory name may itself end in
+	// white space.
+	top := filepath.Clean(strings.TrimSuffix(string(out), "\n"))
 	wts, err := ListWorktrees(top)
 	if err != nil {
 		return Home{}, err

@@ -66,7 +66,7 @@ invariants:
   - rule: 删会话不删 worktree 目录和分支，协议 4 的 daemon 不返回 worktree_preserved
     check: cd vibe-remoted && TMUX_TMPDIR=$(mktemp -d) go test -race -timeout 10m ./internal/session ./internal/server -run 'TestDeleteSessionKeepsWorktreeAndBranch|TestDeleteSessionNeverReturnsPreserved'
   - rule: 只删 daemon 自己读到的、在 allowed_roots 内的、不是主目录的 worktree
-    check: cd vibe-remoted && TMUX_TMPDIR=$(mktemp -d) go test -race -timeout 10m ./internal/session ./internal/server -run 'TestRemoveOnlyListedWorktrees|TestRemoveMainRefused'
+    check: cd vibe-remoted && TMUX_TMPDIR=$(mktemp -d) go test -race -timeout 10m ./internal/session ./internal/server -run 'TestRemoveOnlyListedWorktrees|TestRemoveMainRefused|TestListWorktreesPathWithNewline|TestListWorktreesFallsBackWithoutZ|TestParseWorktreeList'
   - rule: 不是 vibe-remote 创建的 worktree，分支永远不删
     check: cd vibe-remoted && TMUX_TMPDIR=$(mktemp -d) go test -race -timeout 10m ./internal/session -run 'TestRemoveExternalNeverDeletesBranch|TestManagedRequiresPathAndBranch'
   - rule: 未经同意不丢文件和提交（删除前重查，结束会话之后重读它在 git 列表里的那一项，HEAD、分支、是否 detached 有一样与确认的不一致就 409，含确认之后、结束会话期间分支被切换（即使提交没变）；里面嵌着别的 worktree、子模块或嵌入式仓库的检出、未被跟踪的独立仓库时拒绝删除；会话表没能和 tmux 对上时不动手——拿不准有没有 tmux 会话就算没对上：tmux 的 socket 文件不存在且 daemon 的会话表里没有终端会话时才算没有终端会话，有没有 tmux 程序都一样；socket 文件不见了而表里还有终端会话、找不到 tmux 程序而 socket 文件还在、tmux 的回答里有一条记录读不了，都算没对上；tmux 的报错只有整句是「没有 server / 没有会话」才算没有会话，socket 路径里出现这几个词不算；目录名里的制表符和换行不改变读到的归属；创建时的工作目录在其中的会话不管归属在哪都算进去，不看进程现在在哪；每结束一个终端会话都再读一次 tmux，读不到或它还在就不删目录，也不把它报成已结束）

@@ -945,13 +945,14 @@
 - 依赖：T22（同一段代码）
 
 ### T26 返工（X14）：worktree 列表用 `-z` 读，旧 git 退回按行解析
-- 状态：待办
+- 状态：完成
 - 来源：X14（验证结论 P6）。路径里有换行的外部 worktree 列不出来、查不了状态
 - 文件：修改 `vibe-remoted/internal/session/worktree.go`（`ListWorktrees` 先用 `git worktree list --porcelain -z`，git 不认 `-z`（用法错误的退出码 129）时退回按行解析）；`CLAUDE.md`、tasks.md「后续」（退回模式的已知限制）；测试 `gate_c_test.go`
 - 场景：R2.1、R4.2
 - 测试：`TestListWorktreesPathWithNewline`（验证者的反例：列得出、`WorktreeStatus` 可用）；`TestListWorktreesFallsBackWithoutZ`（用包一层的假 git 让 `-z` 以 129 退出：普通 worktree 照常列出）；`TestParseWorktreeList`（两种分隔的解析结果相同，含 `locked` 的原因、`prunable`、`bare`、`detached`）
 - 完成定义：`cd vibe-remoted && TMUX_TMPDIR=$(mktemp -d) go test -race -count=1 -timeout 10m ./internal/session ./internal/server -run 'TestListWorktrees|TestParseWorktreeList|TestProjects|TestChatTrust'` 两行 `ok`；在自己临时目录里构建的旧版 git（低于 2.36）上跑退回模式的用例和 worktree 相关的测试，结果写进报告
 - 依赖：无
+- 实现时的调整（decisions #146、#147）：`ResolveHome` 读 `rev-parse --show-toplevel` 时只去掉末尾的一个换行（原来是 `TrimSpace`），否则名字以换行结尾的 worktree 列得出来却查不了状态；`TestListWorktreesPathWithNewline` 的 6 个子用例除了「列出、查状态」还在其中开会话并连会话一起删除；X11 的 `TestSessionCreatedInAnOddlyNamedDirectoryIsStillRead` 补上 worktree 路径带换行的 3 个子用例。路径带换行的子用例在不认 `-z` 的 git 上跳过（探测命令以 129 退出才跳过，别的失败算测试失败）
 
 ### T27 返工（X15）：预检端点区分「目录不存在」和「不在允许范围内」
 - 状态：待办
@@ -1004,6 +1005,7 @@
 | T21 | 2026-11-20 04:55 | 本行所在的提交 | 修复前 `TestUndoLeavesAWorktreeSomeoneElseAddedAtTheSamePath` 3 个子用例 FAIL（`their file: "" … no such file or directory; a failed create deleted someone else's work`）、`TestUndoAfterWorktreeAddFailedOnItsOwn/file_in_the_directory_and_branch_checked_out_elsewhere` FAIL（`branch fix-login is at ""`）；修复后 `-run 'TestUndo\|TestCreate\|TestWorktreeAddKilled\|TestGitNeverGetsShortBranchName'` `ok`；`go test -race -count=1 -timeout 15m ./internal/session ./internal/server` 两行 `ok`（296 s、63 s）；`.devflow.yml` 第 18 条原样执行 exit 0；变异核对：去掉 `c.added` → 4 个子用例 FAIL，去掉分支被检出的判断 → 2 个子用例 FAIL |
 | T25 | 2026-11-20 05:07 | 本行所在的提交 | 修复前 `TestRemoveBranchSwitchedWhileEndingSessions` 2 个子用例 FAIL（`err = <nil>, want *WorktreeChangedError`）；修复后 `-run TestRemove` `ok`；`go test -race -count=1 -timeout 15m ./internal/session` `ok`（301 s）、`./internal/server` `ok`（61 s，其中 `TestWorktreeRemoveEndpoint/changed_after_sessions_ended` 的触发点从 daemon 的 `rev-parse HEAD` 改成结束会话后的那次 `worktree list`，断言没动）；`.devflow.yml` 第 15 条原样执行 exit 0；变异核对：复核里去掉分支和 detached → 2 个新子用例 FAIL，去掉 HEAD → 原有的 `TestRemoveHeadMovedWhileEndingSessions` 和上面那个 server 用例 FAIL |
 | T24 | 2026-11-20 05:14 | 本行所在的提交 | 修复前 `TestIsNoTmuxServerGoesByTheWholeLine` FAIL（5 行，如 `isNoTmuxServer("error connecting to /private/tmp/vr-no sessions-1/… (No such file or directory)") = true, want false`）、`TestSocketPathSayingNoSessionsIsNotAnEmptySet` FAIL（`liveTmuxSessions() = map[], true`）；修复后连同 `TestMissingSocket…`、`TestNoTmuxProgram…`、`TestSocketFileGone…`、`TestTmuxSocketPath…` `ok`；`go test -race -count=1 -timeout 15m ./internal/session ./internal/server` 两行 `ok`（304 s、69 s）；`.devflow.yml` 第 15 条原样执行 exit 0；变异核对：「整行等于」改回「包含」→ 两个用例 FAIL |
+| T26 | 2026-11-20 05:44 | 本行所在的提交 | 修复前 `TestListWorktreesPathWithNewline` 的 `newline`、`newline_at_end`、`nul_like` FAIL（路径被拆成两个条目）、`TestListWorktreesFallsBackWithoutZ` FAIL（`-z was tried 0 times`）；修复后连同 `TestParseWorktreeList`、`TestSessionCreatedInAnOddlyNamedDirectoryIsStillRead`（5 种目录名）`ok`；`go test -race -count=1 -timeout 15m ./internal/session ./internal/server` 两行 `ok`（323 s、66 s）；`.devflow.yml` 第 13、15、18 条原样执行 exit 0；旧版 git 实测见 evidence/gate-c-1-rework.md 第 3 节（2.34.1 和 2.30.2 上失败的用例与基准 `91e0fab` 相同，新增跳过只有路径带换行的 5 个子用例）；变异核对 4 种各有用例 FAIL |
 
 更正：T5 实际完成于 2026-11-19 12:39，T6a 13:11，T6b 14:04（以提交时间为准）。此后各行的时间用 `date '+%F %H:%M'` 取。
 
@@ -1099,7 +1101,10 @@ spec「推迟到以后」的条目：
 关口 C 第 1 轮返工（X9–X15）之后留下的：
 
 - post-checkout 钩子失败的仓库里新建命名 worktree：git 把 `worktree add` 报成失败而 worktree 已经建完，撤销分不清它是不是别人刚建的，所以留在原处（detached，分支删掉，`message` 写明；d70）。每次重试都要先把留下的那个删掉。可以在运行 add 之前记下 `<git 公共目录>/worktrees/` 里已有的登记，只认领这次新出现的那一个。
-- 路径以空白结尾（末尾是空格、制表符或换行）的目录：`ResolveHome`、`HasSubmoduleCheckouts` 等处对 git 输出的路径用 `strings.TrimSpace`，末尾的空白被一并去掉，这样的目录里的会话算不出归属（留空，每轮重试都失败），这样的 worktree 查不了状态。原有写法，X11 的用例 `trailing_tab` 只覆盖了「进程 cd 进这样的目录」（能读对），没有覆盖「在这样的目录里创建」。改成只去掉 git 输出末尾的一个换行即可。
+- （T26 已处理：`ResolveHome` 只去掉输出末尾的一个换行，decisions #147；`trailing_tab`、`newline_at_end` 两个用例守着）路径以空白结尾（末尾是空格、制表符或换行）的目录里的会话算不出归属、这样的 worktree 查不了状态。还剩一处同样的写法没有动：`HasSubmoduleCheckouts` 对 `rev-parse --absolute-git-dir` 的输出用 `strings.TrimSpace`——git 目录的路径以 `.git` 或 `.git/worktrees/<名字>` 结尾，名字是 git 自己清理过的，末尾不会是空白。
+- `gitWithin` 用 `CombinedOutput`，git 写到 stderr 的行和 stdout 混在一起：`git status --porcelain` 有警告时（读不了的目录；2.36 之前的 git 在 `PATH` 里没有 `false` 程序时每次读索引都报 `cannot run false`），`DirtyFiles` 把这些行也数成未提交文件。方向是安全的（多要一次同意），但数字不准；`TestRemoveWorktreeWhenTmuxIsNotInstalled` 在旧 git 上因此失败（基准上就是，evidence/gate-c-1-rework.md 第 3 节）。可以让按行计数的那几个调用只读 stdout。
+- 2.31 之前的 git（Debian 11 的 2.30）上，`git worktree list --porcelain` 不输出 `locked` 和 `prunable`：被 `git worktree lock` 锁定的 worktree 不会在结束会话之前被拦下（会话先被结束，git 再拒绝删除，响应如实带 `endedSessions`）；目录不见了的 worktree 不会被认成 `prunable`。基准上就是这样（evidence/gate-c-1-rework.md 第 3 节），本需求没有写明支持的最低 git 版本（上面「第二轮复评」一段已有这一条）。
+- **已知限制（X14）**：git 低于 2.36（没有 `git worktree list -z`；Ubuntu 22.04 自带 2.34、Debian 11 是 2.30）的机器上，路径里有换行的 worktree 列不出来，也就不能在界面里打开和删除。别的字符（制表符、引号、反斜线）不受影响。升级 git 即可。
 
 
 - **X1，交给用户决定（c7）**：新建或重命名任何一个终端会话时，本窗口里所有打开着的后台终端会话都会亮起「有新消息」。原因：daemon 用 `tmux set-option` 写会话的名字和归属，tmux 每执行一次 `set-option` 就重绘这台 server 上的全部客户端，重绘的字节到达后台会话，而点亮规则是「后台会话有任何字节到达即亮」。基准 `6d88e45` 上同样（每次新建 7 次 `set-option`，现在 11 次；`index.ts` 里判定的那几行逐字相同），但本需求让同时开多个会话成了常态。要去掉它得改点亮规则（例如屏幕内容没变就不亮），或换一种不触发重绘的存法（tmux 会话环境变量 `set-environment -t` 不重绘，但 `list-sessions` 的格式串读不到它）；两种都改动已确认的取舍，没有自己定。

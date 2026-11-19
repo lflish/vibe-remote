@@ -2,6 +2,7 @@ package session
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -255,6 +256,23 @@ func installCountingGitConcurrency(t *testing.T) (log, maxFile string) {
 		"exec '" + real + "' \"$@\"\n"
 	writeFakeGit(t, dir, script)
 	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	// Which form of the worktree list a git speaks is found out once per git
+	// executable (ListWorktrees): with a git before 2.36 the first reading costs
+	// one more process, and none after that. This wrapper is a git the process
+	// has not used before, and that one process is not part of what a poll
+	// costs, so it is spent here, before the counting starts.
+	probe := filepath.Join(dir, "probe")
+	if out, err := exec.Command(real, "init", "-q", probe).CombinedOutput(); err != nil {
+		t.Fatalf("git init: %v: %s", err, out)
+	}
+	if _, err := ListWorktrees(probe); err != nil {
+		t.Fatal(err)
+	}
+	for _, f := range []string{log, maxFile} {
+		if err := os.Remove(f); err != nil {
+			t.Fatal(err)
+		}
+	}
 	return log, maxFile
 }
 

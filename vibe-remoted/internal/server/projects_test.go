@@ -1287,7 +1287,9 @@ func TestWorktreeRemoveEndpoint(t *testing.T) {
 		// time once the sessions are ended: that third reading is the one the
 		// commit has to come before. (The checks below fail if it comes anywhere
 		// else: before the sessions are ended, endedSessions is empty.)
-		gitWrapper(t, `if [ -e '`+flag+`' ] && [ "$5 $6" = "worktree list" ]; then
+		// Only readings that work are counted: a git that does not know
+		// `worktree list -z` is asked twice the first time.
+		gitWrapper(t, `if [ -e '`+flag+`' ] && [ "$5 $6" = "worktree list" ] && "$REAL" "$@" >/dev/null 2>&1; then
   n=$(cat '`+flag+`'); n=$((n+1)); echo $n > '`+flag+`'
   if [ $n -eq 3 ]; then rm -f '`+flag+`'; "$REAL" -C '`+e.root+`' -c user.email=t@example.com -c user.name=T commit -q --allow-empty -m late; fi
 fi`)

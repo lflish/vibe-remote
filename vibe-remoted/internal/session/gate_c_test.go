@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"strings"
+	"sync"
 	"syscall"
 	"testing"
 	"time"
@@ -307,17 +308,18 @@ func TestSessionWhoseProcessIsInAnOddlyNamedDirectoryIsStillRead(t *testing.T) {
 // character — the worktree root all carry it.
 func TestSessionCreatedInAnOddlyNamedDirectoryIsStillRead(t *testing.T) {
 	requireTmux(t)
-	// A newline in a worktree's own path is X14's (the worktree list); see
-	// TestListWorktreesPathWithNewline.
-	for _, label := range []string{"tab"} {
-		name := weirdDirNames[label]
+	for label, name := range weirdDirNames {
 		t.Run(label, func(t *testing.T) {
 			freshTmuxDir(t)
 			repo := devflowRepo(t)
+			if strings.Contains(name, "\n") {
+				// X14: only the NUL-separated worktree list can carry this path.
+				requireWorktreeListZ(t, repo)
+			}
 			runGit(t, repo, "worktree", "add", "-b", "feat", filepath.Join(containerOf(repo), name))
 			root := listedWorktreeOnBranch(t, repo, "feat")
-			if !strings.Contains(root, "\t") {
-				t.Fatalf("worktree root %q has no tab in it", root)
+			if !strings.HasSuffix(root, name) {
+				t.Fatalf("worktree root %q does not end in %q", root, name)
 			}
 			store := NewMemoryProjectStore()
 			m1 := NewManager(true, "sleep 120", false, "")
@@ -762,5 +764,239 @@ func TestSocketPathSayingNoSessionsIsNotAnEmptySet(t *testing.T) {
 	restoreOwnTmuxSocket(t, pid, sock)
 	if !tmuxSessionAlive(id) {
 		t.Fatal("the tmux session did not survive")
+	}
+}
+
+// requireWorktreeListZ skips the test when this git cannot print its worktree
+// list NUL-separated (git before 2.36, which answers -z with a usage error):
+// there a worktree whose path has a newline in it cannot be listed, which is a
+// known limit of the line-separated list. A probe that fails any other way is
+// a failed test.
+func requireWorktreeListZ(t *testing.T, repo string) {
+	t.Helper()
+	out, err := exec.Command("git", "-C", repo, "worktree", "list", "--porcelain", "-z").CombinedOutput()
+	if err == nil {
+		return
+	}
+	var exit *exec.ExitError
+	if errors.As(err, &exit) && exit.ExitCode() == 129 {
+		t.Skip("this git does not know `worktree list -z` (it is older than 2.36): a path with a newline cannot be listed")
+	}
+	t.Fatalf("git worktree list --porcelain -z: %v: %s", err, out)
+}
+
+// X14. An external worktree whose directory name has a newline in it — git
+// takes such a name — is listed with its real path and can be looked at; so
+// are names with the other characters that the line-separated list quotes or
+// that separate things elsewhere.
+func TestListWorktreesPathWithNewline(t *testing.T) {
+	for label, name := range map[string]string{
+		"newline":        "external\nworktree",
+		"newline_at_end": "ends in a newline\n",
+		"tab":            "tab\there",
+		"quote":          `say "hi"`,
+		"backslash":      `back\slash`,
+		"nul_like":       "worktree /fake\nHEAD 0000000000000000000000000000000000000000\nbranch refs/heads/main",
+	} {
+		t.Run(label, func(t *testing.T) {
+			repo := devflowRepo(t)
+			if strings.Contains(name, "\n") {
+				requireWorktreeListZ(t, repo)
+			}
+			dir := filepath.Join(filepath.Dir(repo), name)
+			runGit(t, repo, "worktree", "add", "-b", "odd", dir, "HEAD")
+			// The path as the file system has it, without going through git.
+			parent, err := filepath.EvalSymlinks(filepath.Dir(repo))
+			if err != nil {
+				t.Fatal(err)
+			}
+			want := filepath.Join(parent, name)
+			wts, err := ListWorktrees(repo)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(wts) != 2 || wts[0].Path != repo || wts[1].Path != want || wts[1].Branch != "odd" || wts[1].Head != runGit(t, repo, "rev-parse", "HEAD") {
+				t.Fatalf("ListWorktrees = %+v; want the main directory and %q on branch odd", wts, want)
+			}
+			m := NewManager(false, "/bin/cat", false, "")
+			m.SetProjectStore(NewMemoryProjectStore())
+			st, err := m.WorktreeStatus(want, allowAny)
+			if err != nil {
+				t.Fatalf("WorktreeStatus(%q): %v", want, err)
+			}
+			if st.Path != want || st.Branch != "odd" || st.Main || st.DirtyFiles != 0 {
+				t.Fatalf("status = %+v", st)
+			}
+			// And it can be used: a session in it is counted in it, and the
+			// worktree can be removed with that session.
+			r, err := m.Create(CreateOptions{Workdir: want, Cols: 80, Rows: 24})
+			if err != nil {
+				t.Fatalf("create a session in %q: %v", want, err)
+			}
+			t.Cleanup(func() { r.Kill() })
+			if project, home := r.Home(); project != repo || home != want {
+				t.Fatalf("the session is attributed to project %q, worktree %q; want %q, %q", project, home, repo, want)
+			}
+			st, err = m.WorktreeStatus(want, allowAny)
+			if err != nil || !reflect.DeepEqual(st.Sessions, []string{r.ID}) {
+				t.Fatalf("status = %+v, %v; want the session %s counted", st, err, r.ID)
+			}
+			res, err := m.RemoveWorktree(request(st), allowAny)
+			if err != nil || !res.Removed || pathExists(want) {
+				t.Fatalf("RemoveWorktree = %+v, %v; directory there = %v", res, err, pathExists(want))
+			}
+			if branchOID(t, repo, "odd") == "" {
+				t.Fatal("the branch of an external worktree was deleted")
+			}
+		})
+	}
+}
+
+// X14. A git that does not know `worktree list -z` (before 2.36) is asked
+// again without it, once: after that this git is known, and is asked the old
+// way straight away. What is read is the same either way.
+func TestListWorktreesFallsBackWithoutZ(t *testing.T) {
+	repo := devflowRepo(t)
+	runGit(t, repo, "worktree", "add", "-b", "feat", filepath.Join(containerOf(repo), "feat"))
+	detached := filepath.Join(containerOf(repo), "detached")
+	runGit(t, repo, "worktree", "add", "--detach", detached, "HEAD")
+	locked := filepath.Join(containerOf(repo), "locked")
+	runGit(t, repo, "worktree", "add", "-b", "locked", locked)
+	runGit(t, repo, "worktree", "lock", "--reason", "on a usb stick", locked)
+	gone := filepath.Join(containerOf(repo), "gone")
+	runGit(t, repo, "worktree", "add", "-b", "gone", gone)
+	if err := os.RemoveAll(gone); err != nil {
+		t.Fatal(err)
+	}
+
+	withZ, err := ListWorktrees(repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(withZ) != 5 {
+		t.Fatalf("ListWorktrees = %+v, want 5 entries", withZ)
+	}
+	// git before 2.31 does not say "locked" and "prunable" in this list at all.
+	raw := "\n" + runGit(t, repo, "worktree", "list", "--porcelain") + "\n"
+	saysLocked, saysPrunable := strings.Contains(raw, "\nlocked"), strings.Contains(raw, "\nprunable")
+
+	// A git that answers -z the way git before 2.36 does.
+	dir := t.TempDir()
+	attempts := filepath.Join(dir, "z-attempts")
+	orig := os.Getenv("PATH")
+	installGitWrapper(t, `for a in "$@"; do
+  if [ "$a" = "-z" ] && [ "$GIT_SUB $GIT_SUB2" = "worktree list" ]; then
+    echo x >> '`+attempts+`'
+    echo "error: unknown switch `+"\\`"+`z'" >&2
+    echo "usage: git worktree list [<options>]" >&2
+    exit 129
+  fi
+done`)
+	// Eight readings at once, as /api/v1/projects makes them, then three more.
+	var wg sync.WaitGroup
+	for i := 0; i < 8; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			lines, err := ListWorktrees(repo)
+			if err != nil {
+				t.Errorf("ListWorktrees with a git that does not know -z: %v", err)
+			} else if !reflect.DeepEqual(lines, withZ) {
+				t.Errorf("read line by line: %+v\nread with -z:      %+v", lines, withZ)
+			}
+		}()
+	}
+	wg.Wait()
+	for i := 0; i < 3; i++ {
+		lines, err := ListWorktrees(repo)
+		if err != nil {
+			t.Fatalf("ListWorktrees with a git that does not know -z: %v", err)
+		}
+		if !reflect.DeepEqual(lines, withZ) {
+			t.Fatalf("read line by line: %+v\nread with -z:      %+v", lines, withZ)
+		}
+	}
+	data, _ := os.ReadFile(attempts)
+	if got := strings.Count(string(data), "x"); got != 1 {
+		t.Fatalf("-z was tried %d times against the same git, want once", got)
+	}
+	for i, wt := range withZ {
+		switch {
+		case i == 0 && (wt.Path != repo || wt.Branch != "main"):
+			t.Fatalf("main entry = %+v", wt)
+		case wt.Path == detached && (!wt.Detached || wt.Branch != ""):
+			t.Fatalf("detached entry = %+v", wt)
+		case wt.Path == locked && saysLocked && (!wt.Locked || wt.LockReason != "on a usb stick"):
+			t.Fatalf("locked entry = %+v", wt)
+		case wt.Branch == "gone" && wt.Prunable != saysPrunable:
+			t.Fatalf("entry of the missing directory = %+v, git says prunable: %v", wt, saysPrunable)
+		}
+	}
+
+	// Any other failure of the -z call is a failure, not a reason to ask again.
+	t.Setenv("PATH", orig)
+	installGitWrapper(t, `for a in "$@"; do
+  if [ "$a" = "-z" ] && [ "$GIT_SUB $GIT_SUB2" = "worktree list" ]; then echo "fatal: simulated" >&2; exit 128; fi
+done`)
+	if wts, err := ListWorktrees(repo); err == nil {
+		t.Fatalf("ListWorktrees = %+v after git failed with status 128; want the error", wts)
+	}
+}
+
+// X14. The two forms of the list read the same, and what is left of a path
+// with a newline in the line-separated form is not taken for worktrees.
+func TestParseWorktreeList(t *testing.T) {
+	oid := "1111111111111111111111111111111111111111"
+	records := [][]string{
+		{"worktree /r/devflow", "HEAD " + oid, "branch refs/heads/main"},
+		{"worktree /r/devflow-worktrees/fix login", "HEAD " + oid, "branch refs/heads/change/fix-login"},
+		{"worktree /r/detached", "HEAD " + oid, "detached"},
+		{"worktree /r/locked", "HEAD " + oid, "branch refs/heads/l", "locked on a usb stick"},
+		{"worktree /r/locked-no-reason", "HEAD " + oid, "branch refs/heads/m", "locked"},
+		{"worktree /r/gone", "HEAD " + oid, "branch refs/heads/g", "prunable gitdir file points to non-existent location"},
+	}
+	want := []Worktree{
+		{Path: "/r/devflow", Branch: "main", Head: oid},
+		{Path: "/r/devflow-worktrees/fix login", Branch: "change/fix-login", Head: oid},
+		{Path: "/r/detached", Head: oid, Detached: true},
+		{Path: "/r/locked", Branch: "l", Head: oid, Locked: true, LockReason: "on a usb stick"},
+		{Path: "/r/locked-no-reason", Branch: "m", Head: oid, Locked: true},
+		{Path: "/r/gone", Branch: "g", Head: oid, Prunable: true},
+	}
+	join := func(sep string) string {
+		var b strings.Builder
+		for _, rec := range records {
+			for _, attr := range rec {
+				b.WriteString(attr + sep)
+			}
+			b.WriteString(sep)
+		}
+		return b.String()
+	}
+	if got := parseWorktreeList(join("\n"), "\n"); !reflect.DeepEqual(got, want) {
+		t.Fatalf("lines:\n got %+v\nwant %+v", got, want)
+	}
+	if got := parseWorktreeList(join("\x00"), "\x00"); !reflect.DeepEqual(got, want) {
+		t.Fatalf("NUL-separated:\n got %+v\nwant %+v", got, want)
+	}
+	if got := parseWorktreeList("worktree /r/bare.git\nbare\n\n", "\n"); !reflect.DeepEqual(got, []Worktree{{Path: "/r/bare.git", Bare: true}}) {
+		t.Fatalf("bare: %+v", got)
+	}
+
+	// With -z a path keeps its newline, even one that reads like attributes.
+	odd := "/r/external\nworktree /fake\nHEAD " + oid
+	z := "worktree /r/devflow\x00HEAD " + oid + "\x00branch refs/heads/main\x00\x00worktree " + odd + "\x00HEAD " + oid + "\x00branch refs/heads/odd\x00\x00"
+	if got := parseWorktreeList(z, "\x00"); len(got) != 2 || got[1].Path != odd || got[1].Branch != "odd" {
+		t.Fatalf("NUL-separated, a path with newlines: %+v", got)
+	}
+	// Line by line the path "/r/external\nworktree" falls apart into an entry
+	// without a HEAD and one without a path: neither is listed, the rest is.
+	lines := "worktree /r/devflow\nHEAD " + oid + "\nbranch refs/heads/main\n\nworktree /r/external\nworktree\nHEAD " + oid + "\nbranch refs/heads/odd\n\nworktree /r/after\nHEAD " + oid + "\ndetached\n\n"
+	got := parseWorktreeList(lines, "\n")
+	if len(got) != 2 || got[0].Path != "/r/devflow" || got[1].Path != "/r/after" {
+		t.Fatalf("lines, a path with a newline: %+v; want the two whole entries only", got)
+	}
+	if got := parseWorktreeList("", "\x00"); len(got) != 0 {
+		t.Fatalf("empty: %+v", got)
 	}
 }
