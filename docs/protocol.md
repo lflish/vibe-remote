@@ -390,8 +390,8 @@ v3 对话会话的条目另带（终端条目一律省略）：
 | GET | `/healthz` | 存活探针（无需鉴权） |
 | GET | `/api/v1/info` | 机器信息：`{version, proto, hostname, tmux_enabled, default_workdir, allowed_roots, claude_flags, chat}`。`version` 是 daemon 构建版本（`-ldflags "-X main.version=..."` 注入，未注入为 `"dev"`），与 `vibe-remoted --version` 输出一致；`proto` 是协议版本（v2 起）；`claude_flags` 只含 `id/label/default`，不下发 `arg`；`chat`（v3）见下文，`?recheck=1` 强制重新探测 claude 版本 |
 | GET | `/api/v1/sessions` | 会话列表（条目字段同 `sessions` 帧，含 v3 对话字段） |
-| GET | `/api/v1/projects` | （v4）本机项目树：`{proto, projects:[{id, name, git, error?, errorMessage?, worktrees:[{path, branch?, head, detached?, main?, managed?, sessions:[id]}], sessions:[id]}]}`。数组字段恒为 `[]`。旧 daemon 没有此路径，返回 404（客户端据此回退到按会话分组） |
-| POST | `/api/v1/projects/remove` | （v4）从项目清单移除一个项目，body `{"id":"..."}`，不碰磁盘。成功 204；清单里没有该 id → 404 `{"error":"project_not_found"}`；仍有会话归属它 → 409 `{"error":"project_has_sessions"}` |
+| GET | `/api/v1/projects` | （v4）本机项目树：`{proto, projects:[{id, name, git, error?, errorMessage?, worktrees:[{path, branch?, head, detached?, main?, managed?, sessions:[id]}], sessions:[id]}]}`。数组字段恒为 `[]`。单个项目读取失败不影响整个响应（仍是 200，见下文「`/api/v1/projects` 和 `/api/v1/projects/remove`」）。旧 daemon 没有此路径，返回 404（客户端据此回退到按会话分组） |
+| POST | `/api/v1/projects/remove` | （v4）从项目清单移除一个项目，body `{"id":"..."}`，不碰磁盘。成功 204；请求体不是合法 JSON 或缺 `id` → 400 `{"error":"invalid_request"}`；清单里没有该 id → 404 `{"error":"project_not_found"}`；仍有会话归属它 → 409 `{"error":"project_has_sessions"}` |
 | GET | `/api/v1/worktrees/plan?workdir=<目录>&name=<名字>` | （v4）新建 worktree 之前的只读预检，不创建任何东西；检查的内容与 attach 带 `worktreeName` 新建时在动手之前做的相同。先后只有一处不同：attach 最先查名字里不需要 git 就能判断的规则（此时 daemon 还没有运行任何 git，不通过就是 `invalid_worktree_name`），预检先看 `workdir`（名字不合法时也要给出 `project` 和 `base`）；所以目录和名字都有问题时，两边报的可能不是同一个原因。见下文「`/api/v1/worktrees/plan`」 |
 | GET | `/api/v1/worktrees/status?path=<worktree 根目录>` | （v4）一个 worktree 现在的状态：删除确认框上的数字从这里来。见下文「`/api/v1/worktrees/status` 和 `/api/v1/worktrees/remove`」 |
 | POST | `/api/v1/worktrees/remove` | （v4）删除一个 worktree（不能是主目录），按请求里的同意项决定是否丢弃文件、是否连分支一起删。删除前 daemon 重查状态，与确认时不一致返回 409。见下文 |
@@ -415,6 +415,23 @@ v3 对话会话的条目另带（终端条目一律省略）：
 - `minClaudeVersion`：对话界面要求的最低 claude 版本
 
 旧 daemon 没有 `chat` 字段且 `proto < 3`：客户端提示升级 vibe-remoted。
+
+### `/api/v1/projects` 和 `/api/v1/projects/remove`（v4）
+
+`GET /api/v1/projects` 恒返回 200 `{proto, projects}`（`proto`、`projects` 都必有）。每个项目：
+
+| 字段 | 类型 | 可缺省 | 说明 |
+|------|------|--------|------|
+| `id`、`name` | string | | 项目 id（git 项目是仓库主目录的规范路径，非 git 目录是会话的工作目录）；名字是 id 的最后一段 |
+| `git` | bool | | 是不是 git 项目。会话所在目录不是仓库主目录本身时（例如会话建在普通目录里、之后上层目录才成为仓库）仍是 `false` |
+| `error` | string | ✓ | 这个项目本轮没读成：`repo_missing`（主目录已经不存在）、`git_failed`（`git worktree list` 执行失败或超时）。只有项目清单里的 git 项目才会带；带 `error` 时 `git` 为 `true`、`worktrees` 为 `[]`，它的会话全部列在项目级的 `sessions` 里，不丢。客户端按字符串处理，不认识的取值当作读取失败 |
+| `errorMessage` | string | ✓ | 只在 `git_failed` 时有：失败原因的第一行（含 git 的输出） |
+| `worktrees` | object[] | | 该仓库 `git worktree list` 里在 `allowed_roots` 内、目录还在的各项，主目录在最前；非 git 项目和读取失败的项目是 `[]` |
+| `sessions` | string[] | | 不属于上面任何一个 worktree 的会话：非 git 项目的全部会话、读取失败时的全部会话、所在 worktree 已不在列表里的会话 |
+
+一个项目读取失败不影响其它项目，也不改变 HTTP 状态码。整个请求的 HTTP 错误只有 401（token）。
+
+`POST /api/v1/projects/remove`：204 成功；400 `invalid_request`（请求体不是合法 JSON，或没有非空的 `id`）；404 `project_not_found`；409 `project_has_sessions`。
 
 ### `/api/v1/worktrees/plan`（v4）
 
