@@ -308,10 +308,11 @@ test('tmux: the socket file is removed while the server runs', async () => {
   const wt = join(d.root, 'wt', 'a');
   git(repo, 'worktree', 'add', '-q', '-b', 'topic-a', wt);
   await startDaemon(d);
+  let pid = 0;
   try {
     const s = await createSession(d, { workdir: wt });
     const id = s.sessionId;
-    const pid = Number(tmux(d, 'display-message', '-p', '#{pid}').stdout.trim());
+    pid = Number(tmux(d, 'display-message', '-p', '#{pid}').stdout.trim());
     assert(pid > 1 && existsSync(d.socket), `tmux server of this daemon: pid ${pid}, socket ${existsSync(d.socket)}`);
     rmSync(d.socket); // someone cleaned up the temporary directory
     const r = await remove(d, wt);
@@ -330,7 +331,12 @@ test('tmux: the socket file is removed while the server runs', async () => {
     return `socket gone: 500 "${r.json.message}", endedSessions [], directory, branch and session untouched; after SIGUSR1 to the server (pid of this run): 200 ${J(again.json)}`;
   } finally {
     await stopDaemon(d);
-    tmux(d, 'kill-server');
+    // The server of this case cannot be reached through a socket that is gone
+    // (the case failed before the socket came back): stop it by its pid, or it
+    // would be left running with nothing pointing at it.
+    if (tmux(d, 'kill-server').status !== 0 && pid > 1 && !existsSync(d.socket)) {
+      try { process.kill(pid, 'SIGTERM'); } catch { /* already gone */ }
+    }
   }
 });
 
