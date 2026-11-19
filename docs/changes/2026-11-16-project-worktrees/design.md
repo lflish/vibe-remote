@@ -951,6 +951,7 @@ CSS 变量：保留现有变量名（`styles.css` 里到处在用），换成 M1
 - T19：7.5「对话视图只改 `styles.css`」照做（`chat/` 下没有改动）；外壳这边在样式之外加了三处只增不改的 DOM（decisions #76）：机器行的连接状态文字（`data-testid="machine-state"`，`data-state` 是 `connected` / `offline` / `checking`）、标题里的项目两字母标签和会话类型图标（`renderToolbarTitle` 的 `ctx` 多两个可缺省字段 `hue`、`ui`，`tree.ts` 多一个 `sessionProject`）、没有会话的 worktree 行内的「新建会话」（`data-testid="worktree-empty-new-session"`，7.4 的 DOM 一节原来就写了这一项，文字移进 `.worktree-empty-text`）。`:root` 多五个 `--icon-*` 变量（分支、警告、提示、终端、对话的小图标，作为 `mask-image` 用，颜色来自使用它的规则）。会话行上的「对话」徽标 `.session-ui-badge` 仍在 DOM 里但不显示（第二行已经写着「对话 / 终端」）；品牌图标 `.brand-mark` 同样不显示（M1 的顶栏只有名字）。终端四周的留白是 `.xterm` 元素自己的内边距，xterm 的 fit 会扣掉它；xterm 自带样式把行后面的区域涂成黑色，覆盖成 `--term-bg`（仍属于「底色」这一个颜色）。主进程的红绿灯位置改为 (18, 19)。效果页没画到的画面怎么定的见 d41。并排截图用的是自己起的临时实例，不是 `gui-smoke.mjs --keep`（decisions #77）；`--keep` 打印调试端口的那一行照任务加了。
 - 评审修复（G5）：6.2 第 3 步「归属这个 worktree 的会话」改成按目录判断：`home` 或工作目录在 worktree 根里面的会话都算（归属在别处的也算，例如开在其中被忽略目录里的独立仓库的会话）（decisions #80）。
 - 评审修复（G2）：6.1 在 `symbolic-ref` 之后加一步：读一次 `git worktree list`，此后会话元数据、归属、创建记录和撤销都用 git 登记的路径和分支（容器目录是符号链接、macOS 上 NFD 写法的名字时与拼出来的不同）；找不到对应项按失败撤销（decisions #81）。
+- 评审修复（G1）：5.2「清理过期的创建记录」的条件收紧为：记录所属的项目本轮读了 `git worktree list`、读成功、原始列表里没有这个路径（或已是 `prunable`）。项目本轮没读或读失败时记录保留；不再用过了白名单的显示行来判断（decisions #82）。
 
 ## 11. 方案验证（机器关口 B）
 

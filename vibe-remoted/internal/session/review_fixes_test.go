@@ -1,6 +1,7 @@
 package session
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -205,4 +206,97 @@ func TestCreateWorktreeRecordsGitsSpellingOfTheName(t *testing.T) {
 	if row == nil || !row.Managed || !reflect.DeepEqual(row.Sessions, []string{r.ID}) {
 		t.Fatalf("worktree row = %+v, want managed with session %s", row, r.ID)
 	}
+}
+
+// A creation record is dropped only when its project's list was read this
+// round and does not have the worktree. Three ways the record used to be lost
+// while the worktree was still there, after which its branch could no longer
+// be deleted from the desktop.
+func TestProjectsKeepsRecordOfExistingWorktree(t *testing.T) {
+	managedRow := func(t *testing.T, m *Manager, root string) {
+		t.Helper()
+		ps := m.Projects(allowAny)
+		if row := worktreeRow(ps, root); row == nil || !row.Managed {
+			t.Fatalf("worktree row = %+v, want it managed (projects: %+v)", row, ps)
+		}
+	}
+
+	// The poll lands between `git worktree add` and the session being
+	// registered, in a repository that has not hosted a session yet: the
+	// project is not one of those read this round.
+	t.Run("poll_during_create_in_unlisted_project", func(t *testing.T) {
+		repo := devflowRepo(t)
+		m := NewManager(false, "/bin/cat", false, "")
+		store := NewMemoryProjectStore()
+		m.SetProjectStore(store)
+		polled := false
+		m.testAfterBeginStart = func(string) {
+			polled = true
+			if len(store.Worktrees()) != 1 {
+				t.Errorf("records at the time of the poll = %+v, want the new worktree's", store.Worktrees())
+			}
+			m.Projects(allowAny)
+		}
+		r, err := m.Create(CreateOptions{Workdir: repo, Mode: protocol.SessionModeWorktree, WorktreeName: "w1", Cols: 80, Rows: 24})
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { r.Kill() })
+		if !polled {
+			t.Fatal("the poll did not run during the create")
+		}
+		if !store.Managed(repo, r.WorktreeRoot, "w1") {
+			t.Fatalf("the creation record was dropped by the poll: %+v", store.Worktrees())
+		}
+		managedRow(t, m, r.WorktreeRoot)
+	})
+
+	// One round in which the project's git fails.
+	t.Run("git_fails_one_round", func(t *testing.T) {
+		f := newRemoveFixture(t, 1)
+		managedRow(t, f.m, f.root)
+		origPATH := os.Getenv("PATH")
+		installGitWrapper(t, `if [ "$3" = worktree ] && [ "$4" = list ]; then echo "fatal: simulated" >&2; exit 128; fi`)
+		p := findProject(f.m.Projects(allowAny), f.repo)
+		if p == nil || p.Error != "git_failed" {
+			t.Fatalf("project while git fails = %+v, want git_failed", p)
+		}
+		t.Setenv("PATH", origPATH)
+		if !f.store.Managed(f.repo, f.root, "fix-login") {
+			t.Fatalf("the creation record was dropped in the failed round: %+v", f.store.Worktrees())
+		}
+		managedRow(t, f.m, f.root)
+	})
+
+	// R2.3: removing the project from the sidebar changes nothing on disk, and
+	// it comes back as it was.
+	t.Run("project_removed_and_back", func(t *testing.T) {
+		f := newRemoveFixture(t, 0)
+		managedRow(t, f.m, f.root)
+		if err := f.m.RemoveProject(f.repo); err != nil {
+			t.Fatal(err)
+		}
+		if p := findProject(f.m.Projects(allowAny), f.repo); p != nil {
+			t.Fatalf("the removed project is still listed: %+v", p)
+		}
+		f.addSession(f.repo)
+		managedRow(t, f.m, f.root)
+	})
+
+	// The allowed roots no longer cover the worktree (configuration changed):
+	// git still lists it, so its record stays.
+	t.Run("worktree_outside_allowed_roots", func(t *testing.T) {
+		f := newRemoveFixture(t, 0)
+		f.addSession(f.repo)
+		onlyMain := func(path string) (string, error) {
+			if !within(f.repo, path) {
+				return "", errors.New("not allowed")
+			}
+			return path, nil
+		}
+		if row := worktreeRow(f.m.Projects(onlyMain), f.root); row != nil {
+			t.Fatalf("a worktree outside the allowed roots is listed: %+v", row)
+		}
+		managedRow(t, f.m, f.root)
+	})
 }

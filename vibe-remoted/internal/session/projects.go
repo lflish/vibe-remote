@@ -87,12 +87,8 @@ func (m *Manager) Projects(allow AllowFunc) []protocol.Project {
 
 	// Build each project.
 	projects := make([]protocol.Project, 0, len(candidates))
-	livePaths := map[string]bool{} // worktree paths present in some project's list
 	for id := range candidates {
 		p := m.buildProject(id, inStore[id], lists[id], byProject[id], allow)
-		for _, w := range p.Worktrees {
-			livePaths[w.Path] = true
-		}
 		// A git project discovered only through its sessions joins the store so
 		// it survives after those sessions end (design 5.4, H18).
 		if m.projectStore != nil && p.Git && p.Error == "" && !inStore[id] {
@@ -101,12 +97,22 @@ func (m *Manager) Projects(allow AllowFunc) []protocol.Project {
 		projects = append(projects, p)
 	}
 
-	// Drop stale records: those in the snapshot whose path is no longer in its
-	// project's list (someone else removed the worktree). RemoveWorktreeIfSame
-	// leaves a record that was replaced since the snapshot alone.
+	// Drop stale records: those in the snapshot whose project's list was read
+	// this round and no longer has the path (someone else removed the worktree).
+	// A record whose project was not read — it is not in the project list and
+	// has no session right now — or whose list failed to read is kept: not
+	// having looked is not the worktree being gone, and a dropped record turns
+	// the worktree "external" for good. The test is git's own list, not the rows
+	// shown, which also leave out what the allowed roots do not cover.
+	// RemoveWorktreeIfSame leaves a record that was replaced since the snapshot
+	// alone.
 	if m.projectStore != nil {
 		for _, rec := range recSnapshot {
-			if !livePaths[rec.Path] {
+			res, read := lists[rec.Project]
+			if !read || res.err != nil {
+				continue
+			}
+			if !listsWorktreeDir(res.wts, rec.Path) {
 				m.projectStore.RemoveWorktreeIfSame(rec)
 			}
 		}
@@ -198,6 +204,17 @@ func (m *Manager) buildProject(id string, inStore bool, res listResult, sess []s
 		}
 	}
 	return p
+}
+
+// listsWorktreeDir reports whether wts has a worktree at path whose directory
+// is still there.
+func listsWorktreeDir(wts []Worktree, path string) bool {
+	for _, wt := range wts {
+		if wt.Path == path && !wt.Prunable {
+			return true
+		}
+	}
+	return false
 }
 
 type listResult struct {
