@@ -320,6 +320,21 @@ func (r *Runner) Home() (project, home string) {
 	return r.project, r.home
 }
 
+// backfillHome records attribution resolved after creation (design 5.4): it
+// updates memory and, for a tmux session, persists the two options so a later
+// daemon restart recovers them. A persist failure is tolerated; the next
+// Projects() retries.
+func (r *Runner) backfillHome(project, home string) {
+	r.metaMu.Lock()
+	r.project, r.home = project, home
+	r.metaMu.Unlock()
+	if r.useTmux {
+		name := fmt.Sprintf("vibe-remote-%s", r.ID)
+		_ = setTmuxOption(name, "@vibe_remote_project", project)
+		_ = setTmuxOption(name, "@vibe_remote_home", home)
+	}
+}
+
 // CurrentWorkdir returns the session's working directory under metaMu, since a
 // recovered runner's Workdir may still be filled in by a concurrent reconcile.
 func (r *Runner) CurrentWorkdir() string {

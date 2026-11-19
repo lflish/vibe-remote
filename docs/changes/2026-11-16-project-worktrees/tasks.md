@@ -341,7 +341,7 @@
 - 依赖：无
 
 ### T4 协议 4：项目树端点 `GET /api/v1/projects`、`POST /api/v1/projects/remove`
-- 状态：待办
+- 状态：完成
 - 文件：
   - 新建 `vibe-remoted/internal/session/projects.go`（`Manager` 的方法）、`vibe-remoted/internal/session/projects_test.go`、`vibe-remoted/internal/server/projects.go`（两个处理函数）、`vibe-remoted/internal/server/projects_test.go`
   - 修改 `vibe-remoted/internal/protocol/protocol.go`（`Version = 4`；类型 `ProjectsResponse`、`Project`、`ProjectWorktree`）、`vibe-remoted/internal/server/server.go`（`routes()` 加两条路由）、`vibe-remoted/cmd/vibe-remoted/main.go`（打开 `ProjectStore`，失败时改用内存清单并记一行日志，`mgr.SetProjectStore`）、`vibe-remoted/internal/session/manager.go` 和 `chat_manager.go`（新建会话成功后 `AddProject`；现有 worktree 模式建好后 `AddWorktree`、回滚时 `RemoveWorktree`；都在 `Manager.mu` 之外调用）
@@ -866,6 +866,7 @@
 | T1 | 2026-11-19 11:01 | 948a65b | `go test -race ./internal/session ./internal/server -run 'TestUnmergedCommits\|TestCleanup\|TestWorktree\|TestDelete'` 两行 `ok`；`make check` exit 0；cherry-pick 到 change/dual-mode 后 `make check` exit 0 |
 | T2 | 2026-11-19 11:40 | eb6143b | 三条完成命令全 `ok`（含 `-race`、`TZ=Asia/Shanghai`、golden 未动）；`make check` exit 0 |
 | T3 | 2026-11-19 11:52 | 37336f8 | `go test -race ./internal/session -run 'TestProjectStore\|TestManaged\|TestOpenProjectStore\|TestMemoryProjectStore'` `ok`；`grep ValidSessionID` 无输出；`make check` exit 0 |
+| T4 | 2026-11-19 12:40 | _pending_ | 三组完成命令全绿（Go `-race` 三包 `ok`、`test:chat-availability`+`test:rest-projects` 退出 0、golden/IsAllowedWorkdir 核对通过）；`make check` exit 0 |
 
 ## 后续
 

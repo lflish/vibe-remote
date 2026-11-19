@@ -1,4 +1,4 @@
-import type { MachineConfig, SessionInfo } from '../shared/protocol';
+import type { MachineConfig, Project, SessionInfo } from '../shared/protocol';
 import { t } from './i18n';
 
 // Every REST call gets a deadline. Without one, a black-holed host (daemon
@@ -51,6 +51,29 @@ export class VibeRemoteRest {
       try { details = await res.json(); } catch { /* non-JSON response */ }
       throw new DeleteSessionError(res.status, details.error || `delete failed: ${res.status}`, details.message, details.worktreeRoot, details.branch);
     }
+  }
+
+  /**
+   * Fetch the project tree (v4). An old daemon has no such route and answers
+   * 404, which maps to null so the caller can fall back to session grouping;
+   * any other non-2xx throws a RestError.
+   */
+  async listProjects(): Promise<Project[] | null> {
+    const res = await timedFetch(`${this.base()}/api/v1/projects`, { headers: this.headers() });
+    if (res.status === 404) return null;
+    if (!res.ok) throw await RestError.from(res);
+    const body = await res.json() as { projects?: Project[] };
+    return body.projects ?? [];
+  }
+
+  /** Remove a project from the list (the disk is untouched). */
+  async removeProject(id: string): Promise<void> {
+    const res = await timedFetch(`${this.base()}/api/v1/projects/remove`, {
+      method: 'POST',
+      headers: { ...this.headers(), 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id }),
+    });
+    if (!res.ok && res.status !== 204) throw await RestError.from(res);
   }
 
   async renameSession(id: string, name: string): Promise<void> {
@@ -112,6 +135,30 @@ export class DeleteSessionError extends Error {
   constructor(public status: number, public code: string, public detail?: string, public worktreeRoot?: string, public branch?: string) {
     super(detail || code);
     this.name = 'DeleteSessionError';
+  }
+}
+
+/**
+ * A non-2xx response from a v4 project/worktree endpoint. `code` is the
+ * daemon's error code (e.g. project_has_sessions); timeouts and network
+ * failures are not RestErrors.
+ */
+export class RestError extends Error {
+  constructor(public status: number, public code: string, public body: unknown) {
+    super(code || `request failed: ${status}`);
+    this.name = 'RestError';
+  }
+
+  static async from(res: Response): Promise<RestError> {
+    let body: unknown = undefined;
+    let code = `request failed: ${res.status}`;
+    try {
+      body = await res.json();
+      if (body && typeof body === 'object' && typeof (body as { error?: unknown }).error === 'string') {
+        code = (body as { error: string }).error;
+      }
+    } catch { /* non-JSON response */ }
+    return new RestError(res.status, code, body);
   }
 }
 export interface ClaudeFlagInfo {

@@ -75,6 +75,14 @@ func main() {
 	// Chat sessions: their table lives in state_dir. Records of the previous
 	// daemon's still-running chats are ended (their processes stopped) here.
 	mgr.SetChatConfig(session.ChatConfig{ProjectsDir: chat.ProjectsDir()})
+	// Project list and worktree-creation records live beside the chat table in
+	// state_dir; an unwritable dir falls back to an in-memory list (design 5.2).
+	if ps, psErr := session.OpenProjectStore(cfg.StateDir); psErr != nil {
+		log.Printf("warning: projects store at %s is unavailable (%v); the project list is in-memory", cfg.StateDir, psErr)
+		mgr.SetProjectStore(session.NewMemoryProjectStore())
+	} else {
+		mgr.SetProjectStore(ps)
+	}
 	store, chatStateErr := chat.NewStore(cfg.StateDir)
 	if chatStateErr != nil {
 		log.Printf("warning: state_dir %s is not writable (%v); chat sessions are unavailable", cfg.StateDir, chatStateErr)

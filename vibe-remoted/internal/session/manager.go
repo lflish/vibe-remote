@@ -60,18 +60,20 @@ type Manager struct {
 	// injected into a session's environment.
 	mainToken string
 
-	chatCfg ChatConfig
-	store   *chat.Store
-	persist persister
+	chatCfg      ChatConfig
+	store        *chat.Store
+	projectStore *ProjectStore
+	persist      persister
 	// closing (guarded by mu) is set by Shutdown: no new chat process starts.
 	// chatCreates counts the CreateChat calls Shutdown waits for.
 	closing     bool
 	chatCreates sync.WaitGroup
 
 	// Seams for tests.
-	orphanCleanup    func([]chat.Record) ([]chat.Record, []chat.Orphan)
-	testAfterResolve func(workdir string) // after a -c terminal resolved its conversation
-	testFailRespawn  error                // makes the next fixed-identity reload fail to start
+	orphanCleanup             func([]chat.Record) ([]chat.Record, []chat.Orphan)
+	testAfterResolve          func(workdir string) // after a -c terminal resolved its conversation
+	testFailRespawn           error                // makes the next fixed-identity reload fail to start
+	testAfterWorktreeSnapshot func()               // Projects: after the worktree-record snapshot, before reading lists
 }
 
 // NewManager creates a session manager.
@@ -255,26 +257,28 @@ func (m *Manager) Create(opts CreateOptions) (*Runner, error) {
 // sits in the new worktree root and takes its project from the source repo
 // (itself when the repo has no recognizable main worktree). Otherwise it is
 // ResolveHome(workdir). A git failure leaves both empty for later backfill.
-func resolveSessionHome(opts CreateOptions, mode protocol.SessionMode, workdir string, meta WorktreeMetadata, ownWorktree bool) (project, home string) {
+// git reports whether the project should enter the project list (H18: only git
+// projects, and a handoff's project was already added by its origin).
+func resolveSessionHome(opts CreateOptions, mode protocol.SessionMode, workdir string, meta WorktreeMetadata, ownWorktree bool) (project, home string, git bool) {
 	if opts.Home != nil {
-		return opts.Home.Project, opts.Home.Path
+		return opts.Home.Project, opts.Home.Path, false
 	}
 	if ownWorktree {
 		h, err := ResolveHome(meta.SourceRepo)
 		if err != nil {
-			return "", ""
+			return "", "", false
 		}
 		project = h.Project
 		if h.Single {
 			project = meta.WorktreeRoot
 		}
-		return project, meta.WorktreeRoot
+		return project, meta.WorktreeRoot, true
 	}
 	h, err := ResolveHome(workdir)
 	if err != nil {
-		return "", ""
+		return "", "", false
 	}
-	return h.Project, h.Path
+	return h.Project, h.Path, h.Git
 }
 
 func (m *Manager) createTerminalLocked(id string, opts CreateOptions) (*Runner, error) {
@@ -340,7 +344,7 @@ func (m *Manager) createTerminalLocked(id string, opts CreateOptions) (*Runner, 
 			claudeU, claimedHere = u, true
 		}
 	}
-	project, home := resolveSessionHome(opts, mode, workdir, meta, ownWorktree)
+	project, home, git := resolveSessionHome(opts, mode, workdir, meta, ownWorktree)
 	runner, err := NewRunner(RunnerConfig{
 		ID:            id,
 		Workdir:       workdir,
@@ -379,7 +383,23 @@ func (m *Manager) createTerminalLocked(id string, opts CreateOptions) (*Runner, 
 	m.sessions[id] = runner
 	m.gen++
 	m.mu.Unlock()
+	m.recordCreated(project, git, ownWorktree, meta)
 	return runner, nil
+}
+
+// recordCreated adds a newly created session's git project to the store and, in
+// worktree mode, records the created worktree (design 5.2). It takes the
+// store's own leaf lock, never Manager.mu.
+func (m *Manager) recordCreated(project string, git, ownWorktree bool, meta WorktreeMetadata) {
+	if m.projectStore == nil {
+		return
+	}
+	if git && project != "" {
+		m.projectStore.AddProject(project)
+	}
+	if ownWorktree && project != "" {
+		m.projectStore.AddWorktree(project, meta.WorktreeRoot, meta.Branch)
+	}
 }
 
 // beginCreate claims id for creation. It returns exists=true (and no done

@@ -16,7 +16,9 @@ import "encoding/json"
 //	   sessions[].ui/state/activitySeq/epoch/endReason, /api/v1/info.chat
 //	   (+?recheck=1), /api/v1/fs chatTrust, chat reload 202,
 //	   errors ui_mismatch/chat_unsupported/claude_session_busy)
-const Version = 3
+//	4: GET /api/v1/projects, POST /api/v1/projects/remove (all S→C frames
+//	   unchanged from v3)
+const Version = 4
 
 // Frame types exchanged between client and server.
 const (
@@ -399,3 +401,34 @@ const (
 	TrustUntrusted = "untrusted"
 	TrustUnknown   = "unknown"
 )
+
+// ProjectsResponse is GET /api/v1/projects (v4, design 4.2): this machine's
+// project tree. Array fields serialize as [] rather than null.
+type ProjectsResponse struct {
+	Proto    int       `json:"proto"`
+	Projects []Project `json:"projects"`
+}
+
+// Project is one project in the tree. A non-git project has no worktrees; a
+// project with an error has none either and lists all its sessions at the
+// project level.
+type Project struct {
+	ID           string            `json:"id"`
+	Name         string            `json:"name"`
+	Git          bool              `json:"git"`
+	Error        string            `json:"error,omitempty"`        // repo_missing | git_failed
+	ErrorMessage string            `json:"errorMessage,omitempty"` // first line of git's output
+	Worktrees    []ProjectWorktree `json:"worktrees"`
+	Sessions     []string          `json:"sessions"`
+}
+
+// ProjectWorktree is one worktree row under a git project.
+type ProjectWorktree struct {
+	Path     string   `json:"path"`
+	Branch   string   `json:"branch,omitempty"` // omitted when detached
+	Head     string   `json:"head"`             // first 7 of the commit
+	Detached bool     `json:"detached,omitempty"`
+	Main     bool     `json:"main,omitempty"`
+	Managed  bool     `json:"managed,omitempty"`
+	Sessions []string `json:"sessions"`
+}

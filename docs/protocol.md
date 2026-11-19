@@ -10,13 +10,14 @@ PTY 字节数据使用 base64 编码传输（`data` 帧）。
 
 ## 协议版本
 
-当前协议版本为 **3**。服务端在 `ready` 帧和 `/api/v1/info` 中以 `proto` 字段报告；早于此字段的 daemon 不返回 `proto`，客户端按 `1` 处理。
+当前协议版本为 **4**。服务端在 `ready` 帧和 `/api/v1/info` 中以 `proto` 字段报告；早于此字段的 daemon 不返回 `proto`，客户端按 `1` 处理。
 
 | 版本 | 变化 |
 |------|------|
 | 1 | 初始版本（隐式） |
 | 2 | `attach.newSessionId`（新建会话幂等）、`error.code` / `error.fatal`、`proto` 字段本身、服务端 WebSocket 心跳 |
 | 3 | 对话界面：`attach.ui` / `epoch` / `since` / `handoffFrom`，`chat` / `chat_sync` / `chat_state` / `chat_ack`（含 send 的 `duplicate` / `completed`）/ `chat_send` / `chat_respond` / `chat_interrupt` / `chat_set_mode` 帧，`ready.ui` / `claudeSessionId` / `existing` / `handoffFrom`，`sessions[].ui` / `state` / `activitySeq` / `epoch` / `endReason`，`/api/v1/info.chat`（含 `?recheck=1`），`/api/v1/fs` 的 `chatTrust`，对话会话 reload 返回 202，错误码 `ui_mismatch` / `chat_unsupported` / `claude_session_busy` / `shutting_down`。终端会话的 `ready` / `sessions` / `data` / `exit` / `error` 帧除 `proto` 值外与 v2 逐字节相同 |
+| 4 | `GET /api/v1/projects`、`POST /api/v1/projects/remove`。所有 S→C 帧的字段与 v3 相同 |
 
 兼容规则：新增字段在接收端一律可选；未知帧类型、未知 `notify.kind`、未知 `error.code` 均忽略（未知 code 只按 `fatal` 处理）。客户端发现 `proto` 低于自身版本时应提示用户更新 daemon——旧 daemon 会接受请求但**静默忽略**不认识的字段。
 
@@ -103,7 +104,7 @@ Client                              Server (vibe-remoted)
   "type": "ready",
   "sessionId": "1720000000000",
   "workdir": "/home/user/project-worktrees/1720000000000/subdir",
-  "proto": 3,
+  "proto": 4,
   "mode": "worktree",
   "sourceWorkdir": "/home/user/project/subdir",
   "sourceRepo": "/home/user/project",
@@ -350,6 +351,8 @@ v3 对话会话的条目另带（终端条目一律省略）：
 | GET | `/healthz` | 存活探针（无需鉴权） |
 | GET | `/api/v1/info` | 机器信息：`{version, proto, hostname, tmux_enabled, default_workdir, allowed_roots, claude_flags, chat}`。`version` 是 daemon 构建版本（`-ldflags "-X main.version=..."` 注入，未注入为 `"dev"`），与 `vibe-remoted --version` 输出一致；`proto` 是协议版本（v2 起）；`claude_flags` 只含 `id/label/default`，不下发 `arg`；`chat`（v3）见下文，`?recheck=1` 强制重新探测 claude 版本 |
 | GET | `/api/v1/sessions` | 会话列表（条目字段同 `sessions` 帧，含 v3 对话字段） |
+| GET | `/api/v1/projects` | （v4）本机项目树：`{proto, projects:[{id, name, git, error?, errorMessage?, worktrees:[{path, branch?, head, detached?, main?, managed?, sessions:[id]}], sessions:[id]}]}`。数组字段恒为 `[]`。旧 daemon 没有此路径，返回 404（客户端据此回退到按会话分组） |
+| POST | `/api/v1/projects/remove` | （v4）从项目清单移除一个项目，body `{"id":"..."}`，不碰磁盘。成功 204；清单里没有该 id → 404 `{"error":"project_not_found"}`；仍有会话归属它 → 409 `{"error":"project_has_sessions"}` |
 | DELETE | `/api/v1/sessions/{id}` | 关闭指定会话，成功 204，不存在 404。对话会话：停进程、按 worktree 规则清理、删记录，claude 的 JSONL 对话记录保留。worktree 模式的会话在 worktree 有未提交改动时保留 worktree 与分支，返回 409 `{"error":"worktree_preserved","message","worktreeRoot","branch"}`（会话本身已关闭） |
 | POST | `/api/v1/sessions/{id}/rename` | 重命名会话，body `{"name":"..."}`，终端会话名字存 tmux 用户选项，对话会话存 daemon 的 `chat-sessions.json` |
 | POST | `/api/v1/sessions/{id}/reload` | 终端会话：在原 tmux 会话和工作目录中重启 CLI，并继续最近的对话，成功 204。对话会话（v3）：立即返回 **202**，在后台停进程后以同一 claude 会话重新启动，进度与结果经 `chat_state` 广播（重载中再调用也是 202）；该 claude 会话正被别的会话持有 → 409 `{"error":"claude_session_busy","owner":"<会话 id>","message":"…"}`；会话不存在 → 404。持有 claude 会话的终端会话（交接创建或带 continue 启动）在其被别人持有时同样 409；daemon 未启用 tmux 时终端会话 reload 返回 409 `{"error":"…"}` |

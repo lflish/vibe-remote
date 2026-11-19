@@ -4,7 +4,7 @@
 // listed directory's chatTrust).
 
 import type { ChatTrust, MachineInfo } from '../rest';
-import { PROTOCOL_VERSION } from '../../shared/protocol';
+import { CHAT_MIN_PROTO } from '../../shared/protocol';
 
 export interface ChatAvailability {
   enabled: boolean;
@@ -38,11 +38,11 @@ export function chatAvailability(info?: MachineInfo, error?: unknown, trust?: Ch
     return { enabled: false, reasonKey: 'picker.ui.chat.reason.checking' };
   }
   const proto = info.proto ?? 1;
-  if (proto < PROTOCOL_VERSION || !info.chat) {
+  if (proto < CHAT_MIN_PROTO || !info.chat) {
     return {
       enabled: false,
       reasonKey: 'picker.ui.chat.reason.daemonOld',
-      params: { proto, want: PROTOCOL_VERSION },
+      params: { proto, want: CHAT_MIN_PROTO },
       upgrade: 'daemon',
     };
   }

@@ -294,7 +294,7 @@ func (m *Manager) CreateChat(opts ChatCreateOptions) (ChatAttachment, error) {
 		}
 		return ChatAttachment{}, ErrShuttingDown
 	}
-	project, home := resolveSessionHome(
+	project, home, git := resolveSessionHome(
 		CreateOptions{Workdir: opts.Workdir, Mode: mode},
 		mode, workdir, meta, mode == protocol.SessionModeWorktree)
 	rec := chat.Record{
@@ -321,6 +321,7 @@ func (m *Manager) CreateChat(opts ChatCreateOptions) (ChatAttachment, error) {
 	m.gen++
 	m.persistLocked()
 	m.mu.Unlock()
+	m.recordCreated(project, git, mode == protocol.SessionModeWorktree, meta)
 	return ChatAttachment{Session: sess, ID: id}, nil
 }
 
@@ -535,6 +536,17 @@ func (m *Manager) LoadChats(store *chat.Store) error {
 		return err
 	}
 	recs, orphans := m.orphanCleanup(recs)
+	// Backfill attribution for records that predate it (design 5.4). ResolveHome
+	// runs git, so do it before taking Manager.mu; persistLocked below saves the
+	// filled-in values.
+	for i := range recs {
+		if recs[i].Project == "" && recs[i].Home == "" {
+			rl := recLite{workdir: recs[i].Workdir, mode: recs[i].Mode, worktreeRoot: recs[i].WorktreeRoot, sourceRepo: recs[i].SourceRepo}
+			if p, h, ok := resolveRecordHome(rl); ok {
+				recs[i].Project, recs[i].Home = p, h
+			}
+		}
+	}
 	m.mu.Lock()
 	m.store = store
 	m.persist.start(store)

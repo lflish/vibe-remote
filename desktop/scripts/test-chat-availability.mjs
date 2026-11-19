@@ -103,4 +103,19 @@ test('info not loaded yet / failed', () => {
   assert.match(text(failed), /info failed: 500/);
 });
 
+test('proto3_daemon_supports_chat', () => {
+  // Chat availability is gated on CHAT_MIN_PROTO (3), not PROTOCOL_VERSION (4),
+  // so a proto-3 daemon that reports chat support stays selectable.
+  const a = chatAvailability(info(ok, 3), undefined, 'trusted');
+  assert.equal(a.enabled, true);
+  assert.equal(a.reasonKey, undefined);
+});
+
+test('proto2_reason_still_says_3', () => {
+  const a = chatAvailability(info(undefined, 2), undefined, undefined);
+  assert.equal(a.enabled, false);
+  assert.match(text(a), /协议 2/);
+  assert.match(text(a), /需要协议 3/);
+});
+
 await run();

@@ -926,6 +926,7 @@ CSS 变量：保留现有变量名（`styles.css` 里到处在用），换成 M1
 
 （实现中对设计的调整记在这里。）
 
+- T4：worktree 模式的 `AddWorktree` 在会话登记成功后调用、仅成功时写入（回滚路径无需 `RemoveWorktree`），「立刻写入」的时序到 T7 统一落地（decisions #44）。
 - T2：list-sessions 扩到 13 列后，现有测试 `TestParseTmuxSessionLineReadsClaudeU` 的「10 列含 tab 仍接受」一段改为断言 10 列被拒绝（decisions #43）。
 
 ## 11. 方案验证（机器关口 B）

@@ -9,8 +9,38 @@
  *      sessions[].ui/state/activitySeq/epoch/endReason, info.chat (+?recheck=1),
  *      fs chatTrust, chat reload 202, errors ui_mismatch/chat_unsupported/
  *      claude_session_busy (fatal), shutting_down (transient: retry))
+ *   4: GET /api/v1/projects, POST /api/v1/projects/remove (S→C frames unchanged)
  */
-export const PROTOCOL_VERSION = 3;
+export const PROTOCOL_VERSION = 4;
+
+/**
+ * Minimum daemon proto for the chat UI. Chat availability is gated on this, not
+ * on PROTOCOL_VERSION, so bumping the latter for an unrelated feature does not
+ * grey out chat against a proto-3 daemon.
+ */
+export const CHAT_MIN_PROTO = 3;
+
+/** One worktree row under a git project (GET /api/v1/projects, design 4.2). */
+export interface ProjectWorktree {
+  path: string;
+  branch?: string;
+  head: string;
+  detached?: boolean;
+  main?: boolean;
+  managed?: boolean;
+  sessions: string[];
+}
+
+/** One project in the tree (GET /api/v1/projects). */
+export interface Project {
+  id: string;
+  name: string;
+  git: boolean;
+  error?: string;
+  errorMessage?: string;
+  worktrees: ProjectWorktree[];
+  sessions: string[];
+}
 
 export const FrameType = {
   Auth: 'auth',
