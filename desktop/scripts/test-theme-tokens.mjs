@@ -264,4 +264,95 @@ test('index_uses_terminal_theme', () => {
   assert.deepEqual(colorLiterals(index.slice(index.indexOf('function makeTerminal'), index.indexOf('function openExisting'))), [], 'no colors written into makeTerminal');
 });
 
+// --- shape (T19): the M1 forms that are easy to lose in a later edit --------
+const shorthand4 = (v) => {
+  const p = (v ?? '').split(' ');
+  return [p[0], p[1] ?? p[0], p[2] ?? p[0], p[3] ?? p[1] ?? p[0]]; // top right bottom left
+};
+
+test('main_area_is_card', () => {
+  const main = decls('#main-area');
+  assert.equal(main['border-radius'], 'var(--radius-card)');
+  assert.equal(main['box-shadow'], 'var(--shadow-card)');
+  assert.equal(main.border, '1px solid var(--border)');
+  assert.match(main.margin ?? '', /^10px\b/, '#main-area floats 10px inside the window');
+  const [top, right, bottom] = shorthand4(main.margin);
+  assert.deepEqual([top, right, bottom], ['10px', '10px', '10px']);
+  assert.equal(main.overflow, 'hidden', 'the card clips its content to the rounded corners');
+  // The title bar belongs to the card: no line under it, no surface of its own.
+  const toolbar = decls('#toolbar');
+  assert.ok(!('border-bottom' in toolbar) && !('box-shadow' in toolbar), 'the toolbar has no bottom line');
+  // What sits inside the card has no frame of its own any more.
+  for (const inner of ['.term-instance', '.chat-instance', '.machine-overview', '.empty-state']) {
+    const d = decls(inner);
+    assert.ok(!('border' in d) && !('box-shadow' in d) && !('border-radius' in d), `${inner} must not draw a second card inside the main card`);
+  }
+});
+
+test('sidebar_shape_rules', () => {
+  const sidebar = decls('#sidebar');
+  assert.equal(sidebar.width, 'var(--sidebar-width)');
+  assert.ok(!('border-right' in sidebar), 'the sidebar has no dividing line; the main card floats beside it');
+  const glow = decls('#sidebar::before');
+  assert.equal(glow.height, '124px');
+  // Not stronger than the prototype: full glow only at the very top, half by 42%, gone at the bottom.
+  assert.equal(glow.background, 'linear-gradient(180deg, var(--sidebar-glow) 0%, color-mix(in srgb, var(--sidebar-glow) 50%, transparent) 42%, transparent 100%)');
+  assert.equal(glow['pointer-events'], 'none');
+  const row = decls('.session-item');
+  assert.equal(row['border-radius'], 'var(--radius-item)');
+  assert.equal(decls('.session-item.active').background, 'var(--bg-selected)');
+  assert.ok(!('box-shadow' in decls('.session-item.active')), 'the selected row is a filled pill, not a bar on its edge');
+});
+
+test('machine_state_readable_on_glow', () => {
+  // The first machine row starts right under the 50px header, where the glow
+  // (pinned above: full at 0, half at 42% of 124px, none at the end) is still
+  // at about half strength. "Connected" is written there in --success.
+  assert.equal(decls('.sidebar-header').height, '50px');
+  assert.equal(decls(".machine-state[data-state='connected']").color, 'var(--success)');
+  const y = 50, half = 124 * 0.42;
+  const alpha = y <= half ? 1 - 0.5 * (y / half) : 0.5 * (1 - (y - half) / (124 - half));
+  const behind = mix(color('--sidebar-glow'), alpha * 100, color('--bg-sidebar'));
+  for (const [what, fg, min] of [['connected text', '--success', 3], ['machine name', '--text-secondary', 4.5], ['session count', '--text-muted', 3]]) {
+    const ratio = contrast(color(fg), behind);
+    assert.ok(ratio >= min, `${what} (${fg}) on the glow under the header is ${ratio.toFixed(2)}:1, needs ${min}:1`);
+  }
+});
+
+test('chat_shape_rules', () => {
+  const user = decls('.chat-instance .u-msg');
+  assert.equal(user.background, 'var(--accent-soft)');
+  assert.equal(user['border-radius'], '17px');
+  assert.equal(user.width, 'fit-content');
+  assert.equal(shorthand4(user.margin)[3], 'auto', 'the user bubble is pushed to the right');
+  assert.ok(!('border' in user) || user.border === '0', 'the bubble has no outline');
+  const composer = decls('.chat-instance .composer');
+  assert.equal(composer['border-radius'], '17px');
+  assert.equal(decls('.chat-instance .send')['border-radius'], '50%', 'the send button is round');
+  // The assistant's text has no bubble and no bullet.
+  const text = decls('.chat-instance .ti.txt');
+  assert.ok(!('background' in text) && !('border' in text));
+  assert.equal(decls('.chat-instance .perm')['border-radius'], 'var(--radius-card)');
+});
+
+test('dialog_shape_rules', () => {
+  assert.equal(decls('.modal-overlay').background, 'var(--scrim)');
+  assert.equal(decls('.modal')['box-shadow'], 'var(--shadow-lift)');
+  // Section dividers are gone: header, body and footer read as one sheet.
+  assert.ok(!('border-bottom' in decls('.modal-header')) && !('border-top' in decls('.modal-footer')));
+});
+
+test('selected_and_focused_cards_differ', () => {
+  // A chosen card and a card that merely has the keyboard focus must not look
+  // the same: chosen = accent border and tint, focus = a ring set off from the card.
+  const chosen = decls(".modal-mode-card[aria-pressed='true']");
+  const focus = decls('.modal-mode-card:focus-visible');
+  assert.equal(chosen['border-color'], 'var(--accent)');
+  assert.equal(chosen.background, 'var(--accent-softer)');
+  assert.ok(!('outline' in chosen));
+  assert.match(focus.outline ?? '', /^2px solid /);
+  assert.match(focus['outline-offset'] ?? '', /^[1-9]\d*px$/, 'the focus ring stands off from the card');
+  assert.ok(!('border-color' in focus) && !('background' in focus) && !('box-shadow' in focus), 'focus must not reuse the look of "chosen"');
+});
+
 await run();

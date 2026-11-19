@@ -291,6 +291,14 @@ export function sessionContext(
   return null;
 }
 
+/** The project a session is listed under, or null when it is not in the tree. */
+export function sessionProject(tree: TreeProject[], id: string): TreeProject | null {
+  for (const p of tree) {
+    if (p.sessions.some((x) => x.id === id) || p.worktrees.some((w) => w.sessions.some((x) => x.id === id))) return p;
+  }
+  return null;
+}
+
 export function notificationTitle(
   machineName: string,
   ctx: { project: string; branch?: string; name: string },

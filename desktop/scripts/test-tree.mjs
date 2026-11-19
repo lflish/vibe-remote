@@ -7,6 +7,7 @@ const {
   visibleSessions,
   projectRollup,
   sessionContext,
+  sessionProject,
   notificationTitle,
   nextCapability,
   projectHue,
@@ -279,6 +280,10 @@ test('session_context_and_notification_title', () => {
   assert.equal(ctxT.name, 'todo');
   assert.equal(notificationTitle('this-mac', ctxT), 'this-mac · notes · todo');
   assert.equal(sessionContext(tree, 'nope'), null);
+  // The project a session belongs to (the toolbar tags its title with it).
+  assert.equal(sessionProject(tree, 'L').id, '/r/devflow');
+  assert.equal(sessionProject(tree, 'T').id, '/n/notes');
+  assert.equal(sessionProject(tree, 'nope'), null);
 });
 
 test('capability_transitions', () => {

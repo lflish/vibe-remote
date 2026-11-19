@@ -17,7 +17,7 @@ import { ChatView } from './chat/view';
 import { nextDot, type ActivityEvent, type Dot, type RestSnapshot } from './chat/activity';
 import type { Prompt } from './chat/types';
 import { renderSidebar as renderSidebarView, renderToolbarTitle, rendererIcon, type SidebarModel, type SidebarActions } from './sidebar';
-import { buildTree, countActiveSessionsAt, nextCapability, sessionContext, notificationTitle, visibleSessions, type Capability, type TreeProject, type TreeWorktree } from './tree';
+import { buildTree, countActiveSessionsAt, nextCapability, projectHue, sessionContext, sessionProject, notificationTitle, visibleSessions, type Capability, type TreeProject, type TreeWorktree } from './tree';
 import { installShortcuts } from './shortcuts';
 import { closeMenu } from './menu';
 
@@ -1430,9 +1430,11 @@ function updateStatusBar(extra?: string, attempt?: number) {
   if (view) {
     // Toolbar title: project / branch · session (design 7.4). A brand-new
     // session not yet in the tree falls back to machine · short session code.
-    const ctx = view.sessionId ? sessionContext(treeFor(machineKey(view.machine)), view.sessionId) : null;
+    const tree = treeFor(machineKey(view.machine));
+    const ctx = view.sessionId ? sessionContext(tree, view.sessionId) : null;
+    const project = ctx ? sessionProject(tree, view.sessionId) : null;
     const shortId = view.sessionId ? view.sessionId.slice(-6) : 'new';
-    renderToolbarTitle(tbTitle, ctx, `${view.machine.name} · ${shortId}`);
+    renderToolbarTitle(tbTitle, ctx && { ...ctx, hue: project ? projectHue(project.id) : undefined, ui: view.ui }, `${view.machine.name} · ${shortId}`);
 
     const st = view.client.state;
     if (st === ConnectionState.Connected) {

@@ -116,11 +116,18 @@ export function renderSidebar(container: HTMLElement, model: SidebarModel, actio
     const machineIcon = document.createElement('span');
     machineIcon.className = `machine-kind-icon ${machineState === true ? 'connected' : machineState === false ? 'error' : 'checking'}`;
     machineIcon.appendChild(rendererIcon('machine'));
+    // "Connected" / "Offline" in words next to the name; nothing while checking.
+    const stateText = document.createElement('span');
+    stateText.className = 'machine-state';
+    stateText.dataset.testid = 'machine-state';
+    stateText.dataset.state = machineState === true ? 'connected' : machineState === false ? 'offline' : 'checking';
+    stateText.textContent = machineState === true ? t('workspace.connected') : machineState === false ? t('workspace.offline') : '';
+    stateText.setAttribute('aria-hidden', 'true'); // the row's aria-label already says it
     const sessionCount = document.createElement('span');
     sessionCount.className = 'machine-session-count';
     sessionCount.textContent = String(total);
     sessionCount.setAttribute('aria-hidden', 'true');
-    nameRow.append(machineIcon, nameSpan, sessionCount);
+    nameRow.append(machineIcon, nameSpan, stateText, sessionCount);
     nameRow.addEventListener('click', () => {
       actions.openOverview(machine);
     });
@@ -305,7 +312,19 @@ function renderWorktree(pg: HTMLElement, m: SidebarMachine, project: TreeProject
     const empty = document.createElement('div');
     empty.className = 'worktree-empty';
     empty.dataset.testid = 'worktree-empty';
-    empty.textContent = t('sidebar.worktree.empty');
+    const none = document.createElement('span');
+    none.className = 'worktree-empty-text';
+    none.textContent = t('sidebar.worktree.empty');
+    empty.appendChild(none);
+    if (actions.newSession) {
+      const start = document.createElement('button');
+      start.type = 'button';
+      start.className = 'worktree-empty-action';
+      start.dataset.testid = 'worktree-empty-new-session';
+      start.textContent = t('sidebar.project.newSession');
+      start.addEventListener('click', (e) => { e.stopPropagation(); actions.newSession!(m.machine, project, wt); });
+      empty.appendChild(start);
+    }
     wg.appendChild(empty);
   }
   for (const s of wt.sessions) renderSession(wg, m, s, model, actions);
@@ -436,15 +455,26 @@ function worktreeTag(testid: string, text: string): HTMLSpanElement {
 
 // renderToolbarTitle fills #toolbar-title with project / branch · session parts
 // (design 7.4). With no open session it shows the fallback (the machine name).
+// `hue` (the project's tag hue) and `ui` (the session kind) are decoration: the
+// same two-letter tag as the sidebar before the project, the kind glyph before
+// the session name.
 export function renderToolbarTitle(
   container: HTMLElement,
-  ctx: { project: string; branch?: string; name: string } | null,
+  ctx: { project: string; branch?: string; name: string; hue?: number; ui?: 'terminal' | 'chat' } | null,
   fallback: string,
 ): void {
   container.textContent = '';
   if (!ctx) {
     container.appendChild(document.createTextNode(fallback));
     return;
+  }
+  if (ctx.hue !== undefined) {
+    const tag = document.createElement('span');
+    tag.className = 'project-tag';
+    tag.textContent = ctx.project.slice(0, 2).toUpperCase();
+    tag.style.setProperty('--tag-hue', String(ctx.hue));
+    tag.setAttribute('aria-hidden', 'true');
+    container.appendChild(tag);
   }
   const project = document.createElement('span');
   project.dataset.testid = 'title-project';
@@ -461,6 +491,14 @@ export function renderToolbarTitle(
   const name = document.createElement('span');
   name.dataset.testid = 'title-session';
   name.textContent = ctx.name;
+  if (ctx.ui) {
+    name.dataset.ui = ctx.ui;
+    const icon = document.createElement('span');
+    icon.className = 'session-kind-icon';
+    icon.setAttribute('aria-hidden', 'true');
+    icon.appendChild(rendererIcon(ctx.ui === 'chat' ? 'chat' : 'terminal'));
+    name.prepend(icon);
+  }
   container.appendChild(name);
 }
 

@@ -84,12 +84,38 @@ test('empty_worktree_row', () => {
     ], sessions: [],
   }];
   const tree = buildTree([sess('s1', { workdir: '/r/devflow' })], projects);
-  const c = render([machineEntry(tree)], acts({ newSession() {} }));
+  const asked = [];
+  const c = render([machineEntry(tree)], acts({ newSession(_m, _p, wt) { asked.push(wt.path); } }));
   const empty = tid(c, 'worktree-empty');
   assert.ok(empty);
-  assert.equal(empty.textContent, t('sidebar.worktree.empty'));
+  // The row reads "no sessions" and offers to start one right there (M1).
+  assert.equal(empty.querySelector('.worktree-empty-text').textContent, t('sidebar.worktree.empty'));
+  const start = tid(empty, 'worktree-empty-new-session');
+  assert.ok(start, 'an empty worktree offers "new session" in the row itself');
+  assert.equal(start.textContent, t('sidebar.project.newSession'));
+  click(start);
+  assert.deepEqual(asked, ['/r/devflow/.devflow-tmp/worktrees/general-skills']);
   assert.ok(tid(c, 'worktree-tag-external'));
   assert.ok(tid(c, 'worktree-new-session'));
+  // Without the callback there is nothing to offer.
+  const plain = render([machineEntry(tree)]);
+  assert.equal(tid(plain, 'worktree-empty').querySelector('.worktree-empty-text').textContent, t('sidebar.worktree.empty'));
+  assert.equal(tid(plain, 'worktree-empty-new-session'), null);
+});
+
+test('machine_row_shows_connection_state', () => {
+  const tree = buildTree([sess('m1', { workdir: '/r/notes' })], [{ id: '/r/notes', name: 'notes', git: false, worktrees: [], sessions: ['m1'] }]);
+  const state = (online) => tid(render([machineEntry(tree, { online })]), 'machine-state');
+  assert.equal(state(true).textContent, t('workspace.connected'));
+  assert.equal(state(true).dataset.state, 'connected');
+  assert.equal(state(false).textContent, t('workspace.offline'));
+  assert.equal(state(false).dataset.state, 'offline');
+  // Still checking: no claim either way.
+  assert.equal(state(undefined).textContent, '');
+  assert.equal(state(undefined).dataset.state, 'checking');
+  // The state is part of the row button, after the name and before the count.
+  const row = render([machineEntry(tree, { online: true })]).querySelector('.machine-name');
+  assert.deepEqual([...row.children].map((e) => e.className.split(' ')[0]), ['machine-kind-icon', 'machine-name-label', 'machine-state', 'machine-session-count']);
 });
 
 test('gone_session_meta', () => {
@@ -247,6 +273,28 @@ test('toolbar_title_parts', () => {
   renderToolbarTitle(c, null, 'this-mac');
   assert.equal(tid(c, 'title-project'), null);
   assert.equal(c.textContent, 'this-mac');
+});
+
+test('toolbar_title_tag_and_kind', () => {
+  const c = document.createElement('div');
+  // With the project's hue and the session kind, the title carries the same
+  // two-letter tag as the sidebar and the kind glyph; the text parts are unchanged.
+  renderToolbarTitle(c, { project: 'devflow', branch: 'fix-login', name: '登录修复', hue: 123, ui: 'chat' }, 'fallback');
+  const tag = c.querySelector('.project-tag');
+  assert.ok(tag);
+  assert.equal(tag.textContent, 'DE');
+  assert.equal(tag.style.getPropertyValue('--tag-hue'), '123');
+  assert.equal(tag.getAttribute('aria-hidden'), 'true');
+  assert.equal(tag.nextElementSibling, tid(c, 'title-project'));
+  assert.equal(tid(c, 'title-project').textContent, 'devflow');
+  assert.equal(tid(c, 'title-session').textContent, '登录修复');
+  assert.ok(tid(c, 'title-session').querySelector('.session-kind-icon svg'));
+  assert.equal(tid(c, 'title-session').dataset.ui, 'chat');
+
+  renderToolbarTitle(c, { project: 'notes', name: 'todo' }, 'fallback');
+  assert.equal(c.querySelector('.project-tag'), null);
+  assert.equal(c.querySelector('.session-kind-icon'), null);
+  assert.equal(tid(c, 'title-session').textContent, 'todo');
 });
 
 // --- loadIndex-driven cases (real index.ts wiring) ---
