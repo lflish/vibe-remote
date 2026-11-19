@@ -167,7 +167,8 @@ What the feature is, where a user reaches it, and how the scripts operate it
 | Old daemon / old desktop | a machine whose daemon is built from the commit before the change | `machine-legacy-note`, the two entries disabled with a reason, the picker without a name field; `ws-smoke.mjs` of that commit against a new daemon |
 
 `gui-worktree-smoke.mjs` runs all of it against the built app (same launch
-model as the other two GUI scripts, ~2 min, 61 cases named by scenario):
+model as the other two GUI scripts, ~2 min, 65 cases: 61 named by scenario, and
+four found by using the app by hand — X2.rename, X3.keys, X6.scroll, X8.menu):
 
 ```bash
 node .claude/skills/verify/scripts/gui-worktree-smoke.mjs                 # builds desktop/dist and the daemons first
@@ -188,6 +189,15 @@ remove` while a flag file exists; restarted by R2.2), `narrow-mac`
 (`allowed_roots` is one repository), `old-mac` (protocol 3). `this-mac` and
 `lab-mac` run a two-line `claude` wrapper: the fake claude for chat sessions,
 `/bin/bash` for terminal sessions, so one daemon has both kinds.
+
+Most cases click through the DOM (`click()` calls the element's own click()),
+which is fast and blind to three things: what the pointer hovers, what lies
+over the element, and what a double click really sends. The X cases use
+`pointerClick()` / `pointerOver()` (`Input.dispatchMouseEvent`: the pointer
+moves there first, `count: 2` is click, click, dblclick) and real key events.
+Use those for anything about hover-revealed buttons, menus, double clicks and
+focus — a sidebar row is rebuilt every 5 s, and a rebuilt row is neither
+hovered nor focused.
 
 How it fakes things: `window.__vrNet` (installed before the app's code) cuts a
 connection between the daemon's `ready` and the desktop (R3.7), refuses new
