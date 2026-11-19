@@ -645,6 +645,15 @@ func CreateWorktree(spec WorktreeSpec) (CreatedWorktree, error) {
 	if _, err := gitAt(claim.root, "symbolic-ref", "-m", "worktree: attached to refs/heads/"+claim.branch, "HEAD", "refs/heads/"+claim.branch); err != nil {
 		return CreatedWorktree{}, withCleanup(fmt.Errorf("attach worktree to its branch: %w", err), claim.undo())
 	}
+	// From here on the worktree goes by the path and branch git registered,
+	// which are what every later reading of the list is compared with. They are
+	// not always the ones put together above: git resolves a symlinked
+	// container, and on macOS it precomposes a decomposed Unicode name.
+	registered, err := claim.registered()
+	if err != nil {
+		return CreatedWorktree{}, withCleanup(fmt.Errorf("read the new worktree back: %w", err), claim.undo())
+	}
+	claim.root, claim.branch = registered.Path, registered.Branch
 
 	mapped := claim.root
 	if rel != "." {
@@ -696,6 +705,44 @@ type worktreeClaim struct {
 	dir, branchRef, newContainer    bool
 }
 
+// sameDir reports whether a and b name one directory: the same string, or the
+// same file once symlinks and the file system's own folding of names are
+// resolved. A path that does not exist is only equal to itself.
+func sameDir(a, b string) bool {
+	if a == b {
+		return true
+	}
+	ai, err := os.Stat(a)
+	if err != nil {
+		return false
+	}
+	bi, err := os.Stat(b)
+	if err != nil {
+		return false
+	}
+	return os.SameFile(ai, bi)
+}
+
+// registered returns the entry git lists for the worktree just created in
+// c.root. It fails when there is none, or when the entry is not on a branch:
+// then the create did not produce what it set out to.
+func (c worktreeClaim) registered() (Worktree, error) {
+	wts, err := ListWorktrees(c.w)
+	if err != nil {
+		return Worktree{}, err
+	}
+	for _, wt := range wts {
+		if !sameDir(wt.Path, c.root) {
+			continue
+		}
+		if wt.Branch == "" {
+			return Worktree{}, fmt.Errorf("git lists %s without a branch", wt.Path)
+		}
+		return wt, nil
+	}
+	return Worktree{}, fmt.Errorf("git does not list a worktree at %s", c.root)
+}
+
 func (c worktreeClaim) undo() error {
 	var problems []string
 	if c.dir {
@@ -705,14 +752,17 @@ func (c worktreeClaim) undo() error {
 		}
 		removeDir := true
 		for _, wt := range wts {
-			if wt.Path != c.root {
+			// By identity, not spelling: until the create has read the worktree
+			// back, c.root is the path as put together here, and git may have
+			// registered another spelling of it (a resolved symlink).
+			if !sameDir(wt.Path, c.root) {
 				continue
 			}
 			// Ours is on the branch claimed here, or still detached at the
 			// commit (between worktree add and symbolic-ref). Anything else was
 			// put into the claimed, still empty directory by someone else (V20).
 			if wt.Branch == c.branch || (wt.Detached && wt.Head == c.oid) {
-				if _, err := gitAt(c.w, "worktree", "remove", "--force", c.root); err != nil {
+				if _, err := gitAt(c.w, "worktree", "remove", "--force", wt.Path); err != nil {
 					problems = append(problems, fmt.Sprintf("worktree %s not removed: %v", c.root, err))
 				}
 			} else {
