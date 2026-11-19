@@ -385,7 +385,7 @@
 - 依赖：T2、T3
 
 ### T5 桌面端：把会话和项目树合并成三层树（tree.ts，纯函数）
-- 状态：待办
+- 状态：完成
 - 文件：新建 `desktop/src/renderer/tree.ts`、`desktop/scripts/test-tree.mjs`；修改 `desktop/package.json`（加 `test:tree`）
 - 接口：
   - 使用：`SessionInfo`、`Project`（`desktop/src/shared/protocol.ts`，T4）；`Dot`（`desktop/src/renderer/chat/activity.ts`，现有）
@@ -867,6 +867,7 @@
 | T2 | 2026-11-19 11:40 | eb6143b | 三条完成命令全 `ok`（含 `-race`、`TZ=Asia/Shanghai`、golden 未动）；`make check` exit 0 |
 | T3 | 2026-11-19 11:52 | 37336f8 | `go test -race ./internal/session -run 'TestProjectStore\|TestManaged\|TestOpenProjectStore\|TestMemoryProjectStore'` `ok`；`grep ValidSessionID` 无输出；`make check` exit 0 |
 | T4 | 2026-11-19 12:40 | b60351d | 三组完成命令全绿（Go `-race` 三包 `ok`、`test:chat-availability`+`test:rest-projects` 退出 0、golden/IsAllowedWorkdir 核对通过）；`make check` exit 0 |
+| T5 | 2026-11-19 14:35 | (本提交) | `npm run typecheck` 退出 0；`npm run test:tree` 18 个用例 `ok`；`TMUX_TMPDIR=… make check` exit 0 |
 
 ## 后续
 
