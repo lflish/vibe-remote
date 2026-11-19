@@ -827,7 +827,7 @@ func (m *Manager) RemoveWorktree(req protocol.WorktreeRemoveRequest, allow Allow
 	if req.DiscardFiles {
 		args = append(args, "--force")
 	}
-	if out, err := gitAt(home.Repo, append(args, wt.Path)...); err != nil {
+	if out, err := gitWithin(gitTreeTimeout, home.Repo, append(args, wt.Path)...); err != nil {
 		// Why it failed is found by looking again, not by reading git's message.
 		failure := gitOutput(out, err)
 		cur, listed, curErr := current()
@@ -890,11 +890,11 @@ func deleteWorktreeBranch(repo, branch, head string) (deleted bool, problem stri
 			return false, fmt.Sprintf("branch %s is still checked out in %s", branch, wt.Path)
 		}
 	}
-	if out, err := gitAt(repo, "update-ref", "-d", "refs/heads/"+branch, head); err != nil {
+	if out, err := gitAtTimeout(repo, "update-ref", "-d", "refs/heads/"+branch, head); err != nil {
 		return false, gitOutput(out, err)
 	}
 	// Leftover tracking configuration; there being none is not an error.
-	_, _ = gitAt(repo, "config", "--remove-section", "branch."+branch)
+	_, _ = gitAtTimeout(repo, "config", "--remove-section", "branch."+branch)
 	return true, ""
 }
 

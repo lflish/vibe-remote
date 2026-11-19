@@ -24,13 +24,28 @@ type WorktreeMetadata struct {
 	Branch        string
 }
 
-// gitTimeout bounds the git calls made through gitAtTimeout: read-only
-// discovery (ListWorktrees, ResolveHome, the worktree pre-checks) and the file
-// counts of a status. Tests may lower it. gitAt is not time-bounded; it runs
-// what creates and undoes a worktree, `git worktree remove` and the deletion
-// of its branch, and UnmergedCommits (a rev-list, used by the status and by
-// the re-check of a removal).
-var gitTimeout = 5 * time.Second
+// Every git process the daemon starts is time-bounded: several of them run
+// while a repository's lock is held (creating, undoing and removing a
+// worktree), and one that never came back would block every later create and
+// removal in that repository for good. A call that runs out of time is killed
+// with its process group and counts as a failure. Tests may lower the limits.
+//
+// The limits are wide; what they are measured against (macOS, SSD, a
+// repository of 20,000 files and 20,000 commits):
+//
+//   - gitTimeout: lookups (worktree list, rev-parse, status, the pre-checks)
+//     and single ref updates (update-ref, symbolic-ref, config), 15–20 ms each.
+//   - gitCountTimeout: rev-list --count over a branch's unmerged commits,
+//     0.08 s for 20,000 of them (so 360 times that).
+//   - gitTreeTimeout: git worktree add and git worktree remove, which write or
+//     delete every file of the work tree (and add runs the post-checkout
+//     hook): 2.3 s and 1.6 s (so 130 times the slower one; 20 times is still
+//     kept for a work tree six times that size).
+var (
+	gitTimeout      = 5 * time.Second
+	gitCountTimeout = 30 * time.Second
+	gitTreeTimeout  = 5 * time.Minute
+)
 
 // gitStrippedEnv are environment variables that would redirect git at another
 // repository or index; a daemon started under one of them must not leak it into
@@ -75,23 +90,18 @@ func gitEnv() []string {
 		fmt.Sprintf("GIT_CONFIG_COUNT=%d", inherited+1), ownKey+"=core.fsmonitor", ownValue+"=false")
 }
 
-func gitAt(dir string, args ...string) ([]byte, error) {
-	cmd := exec.Command("git", append([]string{"-C", dir}, args...)...)
-	cmd.Env = gitEnv()
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		return out, fmt.Errorf("git %s: %w: %s", strings.Join(args, " "), err, strings.TrimSpace(string(out)))
-	}
-	return out, nil
+// gitAtTimeout runs git under gitTimeout; see gitWithin.
+func gitAtTimeout(dir string, args ...string) ([]byte, error) {
+	return gitWithin(gitTimeout, dir, args...)
 }
 
-// gitAtTimeout runs git under gitTimeout. A deadline hit wraps
-// context.DeadlineExceeded so callers can tell a timeout apart from a non-zero
-// exit without matching git's message text. The child runs in its own process
-// group, which is killed on timeout so a slow git (or its children) cannot
-// linger.
-func gitAtTimeout(dir string, args ...string) ([]byte, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), gitTimeout)
+// gitWithin runs git in dir and gives it timeout to finish. A deadline hit
+// wraps context.DeadlineExceeded so callers can tell a timeout apart from a
+// non-zero exit without matching git's message text. The child runs in its own
+// process group, which is killed on timeout so a slow git (or its children:
+// a hook, a pager) cannot linger.
+func gitWithin(timeout time.Duration, dir string, args ...string) ([]byte, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, "git", append([]string{"-C", dir}, args...)...)
 	cmd.Env = gitEnv()
@@ -106,7 +116,7 @@ func gitAtTimeout(dir string, args ...string) ([]byte, error) {
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		if ctx.Err() == context.DeadlineExceeded {
-			return out, fmt.Errorf("git %s: %w", strings.Join(args, " "), context.DeadlineExceeded)
+			return out, fmt.Errorf("git %s: no answer within %s: %w", strings.Join(args, " "), timeout, context.DeadlineExceeded)
 		}
 		return out, fmt.Errorf("git %s: %w: %s", strings.Join(args, " "), err, strings.TrimSpace(string(out)))
 	}
@@ -728,7 +738,7 @@ func CreateWorktree(spec WorktreeSpec) (CreatedWorktree, error) {
 	claim.dir = true
 	// An empty old value makes update-ref create the branch only if it does not
 	// exist. The message is what `git worktree add -b` writes to the reflog.
-	if _, err := gitAt(w, "update-ref", "-m", "branch: Created from HEAD", "refs/heads/"+claim.branch, claim.oid, ""); err != nil {
+	if _, err := gitAtTimeout(w, "update-ref", "-m", "branch: Created from HEAD", "refs/heads/"+claim.branch, claim.oid, ""); err != nil {
 		undoErr := claim.undo()
 		if conflict, cerr := BranchConflict(w, claim.branch); cerr == nil && conflict != "" {
 			return CreatedWorktree{}, withCleanup(&BranchExistsError{Branch: claim.branch, Conflict: conflict}, undoErr)
@@ -739,12 +749,12 @@ func CreateWorktree(spec WorktreeSpec) (CreatedWorktree, error) {
 	if testBeforeWorktreeAdd != nil {
 		testBeforeWorktreeAdd()
 	}
-	if _, err := gitAt(w, "worktree", "add", "--detach", claim.root, claim.oid); err != nil {
+	if _, err := gitWithin(gitTreeTimeout, w, "worktree", "add", "--detach", claim.root, claim.oid); err != nil {
 		return CreatedWorktree{}, withCleanup(fmt.Errorf("create worktree: %w", err), claim.undo())
 	}
 	// Not "checkout: moving from …": git resolves @{-1} from reflog entries of
 	// that form, and a worktree made with -b has no previous branch (V22).
-	if _, err := gitAt(claim.root, "symbolic-ref", "-m", "worktree: attached to refs/heads/"+claim.branch, "HEAD", "refs/heads/"+claim.branch); err != nil {
+	if _, err := gitAtTimeout(claim.root, "symbolic-ref", "-m", "worktree: attached to refs/heads/"+claim.branch, "HEAD", "refs/heads/"+claim.branch); err != nil {
 		return CreatedWorktree{}, withCleanup(fmt.Errorf("attach worktree to its branch: %w", err), claim.undo())
 	}
 	// From here on the worktree goes by the path and branch git registered,
@@ -864,7 +874,7 @@ func (c worktreeClaim) undo() error {
 			// commit (between worktree add and symbolic-ref). Anything else was
 			// put into the claimed, still empty directory by someone else (V20).
 			if wt.Branch == c.branch || (wt.Detached && wt.Head == c.oid) {
-				if _, err := gitAt(c.w, "worktree", "remove", "--force", wt.Path); err != nil {
+				if _, err := gitWithin(gitTreeTimeout, c.w, "worktree", "remove", "--force", wt.Path); err != nil {
 					problems = append(problems, fmt.Sprintf("worktree %s not removed: %v", c.root, err))
 				}
 			} else {
@@ -881,11 +891,11 @@ func (c worktreeClaim) undo() error {
 	}
 	if c.branchRef {
 		// Deletes only while the branch still points at the commit it was created at.
-		if _, err := gitAt(c.w, "update-ref", "-d", "refs/heads/"+c.branch, c.oid); err != nil {
+		if _, err := gitAtTimeout(c.w, "update-ref", "-d", "refs/heads/"+c.branch, c.oid); err != nil {
 			if exists, serr := branchRefExists(c.w, c.branch); serr != nil {
 				problems = append(problems, fmt.Sprintf("branch %s not removed: %v", c.branch, err))
 			} else if exists {
-				at, _ := gitAt(c.w, "rev-parse", "--verify", "refs/heads/"+c.branch+"^{commit}")
+				at, _ := gitAtTimeout(c.w, "rev-parse", "--verify", "refs/heads/"+c.branch+"^{commit}")
 				if cur := strings.TrimSpace(string(at)); cur != "" && cur != c.oid {
 					problems = append(problems, fmt.Sprintf("branch %s kept: it now points at %s", c.branch, cur))
 				} else {
@@ -926,7 +936,7 @@ func UnmergedCommits(dir, branch string) (int, error) {
 	} else {
 		args = []string{"rev-list", "--count", "refs/heads/" + branch, "--not", "--exclude=" + branch, "--branches", "--remotes"}
 	}
-	out, err := gitAt(dir, args...)
+	out, err := gitWithin(gitCountTimeout, dir, args...)
 	if err != nil {
 		return 0, fmt.Errorf("count unmerged commits: %w", err)
 	}

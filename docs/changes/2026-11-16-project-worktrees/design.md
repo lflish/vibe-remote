@@ -960,6 +960,7 @@ CSS 变量：保留现有变量名（`styles.css` 里到处在用），换成 M1
 - 评审修复（G9）：4.1 名字的本地规则在「其它控制字符」之后再加两条，原因都是 `invalid`：含 Unicode Cf / Zl / Zp 类字符；UTF-8 编码超过 250 字节（整个名字，不是分段）（d46）。共用向量在合并桌面端修复之后补（decisions #87）。
 - 评审修复（X4）：6.1 新建时名字的本地规则挪到第 1 步之前（任何 git 调用之前），在 WebSocket 入口和 `createOwnWorktree` 各查一次；4.4 的预检仍是先看目录、再查名字，所以「预检与新建先报哪个原因一致」只在目录没有问题时成立（d47）。7.1 里「以 - 开头的在调用 git 前被拒」这条规则的检查应加上 `TestAttachRefusesBadWorktreeNameBeforeAnyGit`、`TestCreateRefusesBadWorktreeNameBeforeAnyGit`（`.devflow.yml` 由主会话改）。
 - 评审修复（待验证项 1，已确认）：6.2 第 3 步之前，`RemoveWorktree` 要求与 tmux 的对账被应用（没应用重试一次）；两次都没成 → 500 `worktree_remove_failed`，什么都不动。4.9「先和 tmux 对账」原来不看对账有没有成功（decisions #92）。
+- 评审修复（待验证项 2，已确认）：4.9 / 第 7 节「读列表和预检的 git 带 5 秒超时、创建和清理不带」改成每个 git 调用都带时限：查询和单个引用的改动 5 秒，`rev-list --count` 30 秒，`git worktree add` / `remove` 5 分钟；不带超时的 `gitAt` 删掉。超时按失败处理，仓库锁随之释放（decisions #93）。
 
 ## 11. 方案验证（机器关口 B）
 

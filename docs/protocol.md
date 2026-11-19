@@ -523,7 +523,7 @@ HTTP 错误：缺 `workdir`，或 `workdir` 不是目录 → 400 `{"error":"inva
 
 删除期间，在这个 worktree 里新建会话（含交接）会收到 fatal 的 `create_failed`，`message` 写明它正在被删除；反过来，有会话正在其中创建时，删除返回 409。
 
-这个请求可能比别的 REST 请求慢得多（逐个结束会话，一个对话会话停进程最长约 4 秒；大目录的删除也要时间）。桌面端给它单独的超时 `10 秒 + 5 秒 × sessions 的个数`，上限 60 秒。客户端超时或断开后，daemon 仍会把这次删除做完；客户端此时应再查一次 status 来确定结果（404 = 已删除）。
+这个请求可能比别的 REST 请求慢得多（逐个结束会话，一个对话会话停进程最长约 4 秒；大目录的删除也要时间）。daemon 给自己运行的每个 git 都设了时限，超时按失败处理并放开这个仓库（否则一个卡住的 git 会让同一仓库之后的新建和删除一直等下去）：读状态和改引用 5 秒，数未合并提交 30 秒，`git worktree add` / `git worktree remove` 5 分钟。删除时在结束会话之前超时是 500 `git_failed`，之后是 500 `worktree_remove_failed`（带 `endedSessions`）；新建 worktree 时超时是 `create_failed`，已经建出的东西会被撤销。桌面端给它单独的超时 `10 秒 + 5 秒 × sessions 的个数`，上限 60 秒。客户端超时或断开后，daemon 仍会把这次删除做完；客户端此时应再查一次 status 来确定结果（404 = 已删除）。
 
 旧 daemon 没有这两个路径，返回 404（对 `status` 而言与 `worktree_not_found` 的区别是响应体里没有 `error` 字段；客户端按 `/api/v1/projects` 是否 404 判断版本，不在旧 daemon 上调用它们）。
 

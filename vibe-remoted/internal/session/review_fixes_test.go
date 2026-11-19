@@ -1,6 +1,7 @@
 package session
 
 import (
+	"context"
 	"errors"
 	"os"
 	"os/exec"
@@ -9,6 +10,7 @@ import (
 	"strings"
 	"syscall"
 	"testing"
+	"time"
 
 	"github.com/lflish/vibe-remote/vibe-remoted/internal/protocol"
 )
@@ -979,5 +981,100 @@ func TestRemoveWorktreeAfterRestartNeedsTheSessionsFromTmux(t *testing.T) {
 			t.Fatalf("failed = %+v, want a refusal that names tmux and ends nobody", failed)
 		}
 		untouched(t, id, root, repo)
+	})
+}
+
+// shortGitLimit sets one of the git time limits for the rest of the test. Only
+// the limit of the call that is made to hang is lowered: the ordinary lookups
+// keep theirs, so a slow moment on a busy machine does not fail them.
+func shortGitLimit(t *testing.T, limit *time.Duration, d time.Duration) {
+	t.Helper()
+	old := *limit
+	*limit = d
+	t.Cleanup(func() { *limit = old })
+}
+
+// A git that does not come back must not keep a repository's lock for good:
+// every git call made while the lock is held is time-bounded, the timed-out
+// call counts as a failure, and the next create or removal in that repository
+// goes ahead.
+func TestStuckGitReleasesTheRepositoryLock(t *testing.T) {
+	// stuck makes the git subcommand given as "$3 [$4]" sleep far longer than
+	// the test waits; everything else runs normally.
+	stuck := func(t *testing.T, match string) {
+		t.Helper()
+		installGitWrapper(t, `case "$3 $4" in `+match+`) sleep 120;; esac`)
+	}
+	createOther := func(t *testing.T, f *removeFixture) error {
+		t.Helper()
+		done := make(chan error, 1)
+		go func() {
+			r, err := f.m.Create(CreateOptions{Workdir: f.repo, Mode: protocol.SessionModeWorktree, WorktreeName: "other", Cols: 80, Rows: 24})
+			if err == nil {
+				t.Cleanup(func() { r.Kill() })
+			}
+			done <- err
+		}()
+		select {
+		case err := <-done:
+			return err
+		case <-time.After(20 * time.Second):
+			t.Fatal("a create in the same repository is still waiting 20s later: the repository's lock was not released")
+			return nil
+		}
+	}
+
+	t.Run("count_during_removal", func(t *testing.T) {
+		f := newRemoveFixture(t, 0)
+		st := f.status()
+		origPATH := os.Getenv("PATH")
+		stuck(t, `"rev-list "*`)
+		shortGitLimit(t, &gitCountTimeout, time.Second)
+		_, err := f.remove(request(st))
+		if !errors.Is(err, context.DeadlineExceeded) {
+			t.Fatalf("remove = %v, want the timed-out git reported as a failure", err)
+		}
+		f.intact()
+		// git answers again: the same repository is not blocked.
+		t.Setenv("PATH", origPATH)
+		if err := createOther(t, f); err != nil {
+			t.Fatalf("create after the stuck removal: %v", err)
+		}
+	})
+
+	t.Run("worktree_remove", func(t *testing.T) {
+		f := newRemoveFixture(t, 1)
+		st := f.status()
+		origPATH := os.Getenv("PATH")
+		stuck(t, `"worktree remove"*`)
+		shortGitLimit(t, &gitTreeTimeout, time.Second)
+		_, err := f.remove(request(st))
+		failed := wantRemoveError(t, err)
+		if !reflect.DeepEqual(failed.EndedSessions, f.ids) {
+			t.Fatalf("failed = %+v, want the session that was already ended reported", failed)
+		}
+		t.Setenv("PATH", origPATH)
+		if err := createOther(t, f); err != nil {
+			t.Fatalf("create after the stuck removal: %v", err)
+		}
+	})
+
+	t.Run("worktree_add_during_create", func(t *testing.T) {
+		f := newRemoveFixture(t, 0)
+		origPATH := os.Getenv("PATH")
+		stuck(t, `"worktree add"*`)
+		shortGitLimit(t, &gitTreeTimeout, time.Second)
+		_, err := f.m.Create(CreateOptions{Workdir: f.repo, Mode: protocol.SessionModeWorktree, WorktreeName: "stuck", Cols: 80, Rows: 24})
+		if !errors.Is(err, context.DeadlineExceeded) {
+			t.Fatalf("create = %v, want the timed-out git reported as a failure", err)
+		}
+		t.Setenv("PATH", origPATH)
+		if branchOID(t, f.repo, "stuck") != "" || pathExists(filepath.Join(containerOf(f.repo), "stuck")) {
+			t.Fatal("the failed create left its branch or directory")
+		}
+		if err := createOther(t, f); err != nil {
+			t.Fatalf("create after the stuck one: %v", err)
+		}
+		f.intact()
 	})
 }
