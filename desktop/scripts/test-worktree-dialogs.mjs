@@ -718,6 +718,59 @@ test('delete_wt_request_carries_the_branch_shown', async () => {
   }
 });
 
+// The worktree's branch has no commit yet: the daemon reports an all-zero head
+// and nothing to lose (review G6). The dialog is the ordinary one, and the
+// request sends that head back as it came.
+test('delete_wt_branch_without_commits', async () => {
+  const ZERO = '0'.repeat(40);
+  const ext = openWt(external({ branch: 'unborn', head: ZERO }));
+  assert.equal(ext.variant, 'external');
+  assert.equal(ext.root.querySelector('.modal-title').textContent, '删除 worktree unborn？');
+  assert.equal(ext.has('delete-wt-force'), false, 'nothing irrecoverable: the ordinary delete button');
+  assert.equal(ext.has('delete-wt-commits'), false);
+  assert.ok(!ext.root.querySelector('.modal-body').textContent.includes('0000000'), 'the all-zero id is not shown as if it were a commit');
+  assert.equal(document.activeElement, ext.confirm);
+  click(ext.confirm);
+  assert.deepEqual(await ext.result, { path: EXT_PATH, head: ZERO, sessions: [], branch: 'unborn' });
+  // One vibe-remote created (its branch's ref was deleted under it).
+  const own = openWt(status({ head: ZERO }));
+  assert.equal(own.variant, 'clean');
+  click(own.confirm);
+  assert.deepEqual(await own.result, { ...BASE, head: ZERO, deleteBranch: true });
+});
+
+// The sessions a removal ends are the ones the daemon's status names. Since
+// review G5 that includes sessions listed elsewhere in the tree (started in a
+// repository nested in the worktree): the dialog counts and sends back the
+// status's list, and the flow reports what the daemon says it ended.
+test('delete_flow_sessions_are_the_statuses_not_the_rows', async () => {
+  const st = status({ sessions: ['s1', 'nested-elsewhere'] });
+  const f = startFlow({ statuses: [st], removes: [{ removed: true, branchDeleted: true, endedSessions: ['s1', 'nested-elsewhere'] }] });
+  const root = await f.dialog();
+  assert.equal(tid('delete-wt-sessions', root).textContent, '会先结束这 2 个会话。');
+  await f.act('dialog-confirm');
+  assert.deepEqual(f.calls.remove[0].sessions, ['s1', 'nested-elsewhere']);
+  assert.deepEqual(await f.done, { removed: true, endedSessions: ['s1', 'nested-elsewhere'] });
+});
+
+// The refusals added after the review are 500 worktree_remove_failed with
+// nobody ended: the daemon's sentence is shown in the reopened confirmation.
+test('delete_flow_500_new_refusals_show_the_daemons_words', async () => {
+  for (const message of [
+    'this worktree contains another git repository that it does not track: vendor/lib. git counts it as one untracked file, so the confirmation says nothing of the commits inside it; vibe-remote does not remove it.',
+    'could not read the running sessions from tmux, so the sessions in this worktree are not known; nothing was removed. Try again',
+  ]) {
+    const st = status({ sessions: ['s1'] });
+    const f = startFlow({ statuses: [st, st], removes: [restError(500, 'worktree_remove_failed', { message, endedSessions: [] })] });
+    await f.act('dialog-confirm');
+    const root = await f.dialog();
+    assert.equal(tid('delete-wt-error', root).textContent, `删除失败：${message}`);
+    assert.equal(tid('delete-wt-ended', root), null, 'nobody was ended');
+    await f.act('dialog-cancel');
+    assert.deepEqual(await f.done, { removed: false, endedSessions: [] });
+  }
+});
+
 test('delete_wt_sessions_line', async () => {
   const d = openWt(status({ sessions: ['s1', 's2'] }));
   assert.equal(d.variant, 'clean');

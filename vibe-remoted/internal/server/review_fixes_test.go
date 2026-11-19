@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -155,5 +156,93 @@ func TestPlanWorktreeWorkdirIsAFile(t *testing.T) {
 	w := getPlanRaw(t, f.s, filepath.Join(f.repo, "README"), "fix-login")
 	if w.Code != http.StatusBadRequest || !strings.Contains(w.Body.String(), `"invalid_request"`) {
 		t.Fatalf("status = %d: %s; want 400 invalid_request", w.Code, w.Body.String())
+	}
+}
+
+// What the desktop relies on in the answers it gets (the two ends were changed
+// separately after the review; these hold them together over HTTP).
+
+// A removal whose branch is no longer the one the confirmation showed is a
+// 409 that carries the current status: the desktop reopens its confirmation
+// from that object, and without it only reports a failure.
+func TestWorktreeRemoveBranchMismatchCarriesStatus(t *testing.T) {
+	e := newWtEnv(t, 1)
+	st := e.status(e.root)
+	if st.Branch != "fix-login" || !st.Managed {
+		t.Fatalf("status = %+v, want managed on fix-login", st)
+	}
+	serverGit(t, e.root, "switch", "-c", "other") // HEAD does not move
+
+	// Exactly what the desktop sends for the confirmation it showed.
+	body := `{"path":"` + st.Path + `","head":"` + st.Head + `","sessions":["` + e.ids[0] + `"],"branch":"fix-login","deleteBranch":true}`
+	w := e.removeBody(body)
+	f := decodeFailure(t, w, http.StatusConflict, "worktree_changed")
+	if f.Status == nil || f.Status.Path != e.root || f.Status.Branch != "other" || f.Status.Head != st.Head || f.Status.Managed {
+		t.Fatalf("status in the body = %+v, want the current state: on other, not managed", f.Status)
+	}
+	if len(f.Status.Sessions) != 1 || f.Status.Sessions[0] != e.ids[0] {
+		t.Fatalf("status.sessions = %v, want the session that is still running", f.Status.Sessions)
+	}
+	if f.EndedSessions == nil || len(*f.EndedSessions) != 0 {
+		t.Fatalf("endedSessions = %v, want []", f.EndedSessions)
+	}
+	if !e.sessionListed(e.ids[0]) || !pathExists(e.root) || !branchExists(t, e.repo, "fix-login") || !branchExists(t, e.repo, "other") {
+		t.Fatal("the refused removal ended the session or removed something")
+	}
+
+	// Without deleteBranch the named branch alone is enough to refuse.
+	w = e.removeBody(`{"path":"` + st.Path + `","head":"` + st.Head + `","sessions":["` + e.ids[0] + `"],"branch":"fix-login"}`)
+	if f := decodeFailure(t, w, http.StatusConflict, "worktree_changed"); f.Status == nil || f.Status.Branch != "other" {
+		t.Fatalf("status in the body = %+v", f.Status)
+	}
+	// A status with no sessions lists them as [], never null.
+	if err := e.mgr.Delete(e.ids[0]); err != nil {
+		t.Fatal(err)
+	}
+	w = e.removeBody(`{"path":"` + st.Path + `","head":"` + st.Head + `","sessions":[],"branch":"fix-login"}`)
+	decodeFailure(t, w, http.StatusConflict, "worktree_changed")
+	if !strings.Contains(w.Body.String(), `"sessions":[]`) || !strings.Contains(w.Body.String(), `"endedSessions":[]`) {
+		t.Fatalf("the 409 body does not spell the empty lists as []: %s", w.Body.String())
+	}
+	// Confirmed again with what the 409 reported, as the desktop does: the
+	// directory goes, both branches stay.
+	w = e.removeBody(`{"path":"` + st.Path + `","head":"` + st.Head + `","sessions":[],"branch":"other"}`)
+	if w.Code != http.StatusOK || pathExists(e.root) || !branchExists(t, e.repo, "fix-login") || !branchExists(t, e.repo, "other") {
+		t.Fatalf("re-confirmed removal: status = %d: %s", w.Code, w.Body.String())
+	}
+}
+
+// The project list is always an array: a daemon with nothing to show answers
+// "projects":[] (the desktop treats anything else as a failed request).
+func TestProjectsEmptyListIsAnArray(t *testing.T) {
+	s := projServer(t, projMgr(t), t.TempDir())
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/projects", nil)
+	req.Header.Set("Authorization", "Bearer secret")
+	w := httptest.NewRecorder()
+	s.mux.ServeHTTP(w, req)
+	if got := strings.TrimSpace(w.Body.String()); w.Code != http.StatusOK || got != `{"proto":4,"projects":[]}` {
+		t.Fatalf("status = %d, body = %s; want {\"proto\":4,\"projects\":[]}", w.Code, got)
+	}
+}
+
+// A worktree whose branch has no commit yet: the status carries an all-zero
+// head, and the request the desktop makes of it (that head, and the branch
+// shown) is carried out.
+func TestWorktreeRemoveUnbornBranchAsTheDesktopSendsIt(t *testing.T) {
+	e := newWtEnv(t, 0)
+	path := filepath.Join(e.base, "unborn-wt")
+	if out, err := exec.Command("git", "-C", e.repo, "worktree", "add", "--orphan", "-b", "unborn", path).CombinedOutput(); err != nil {
+		t.Skipf("this git cannot add a worktree on an unborn branch: %v: %s", err, out)
+	}
+	st := e.status(path)
+	if st.Branch != "unborn" || strings.Trim(st.Head, "0") != "" || len(st.Head) < 40 || st.Managed || st.UnmergedCommits != 0 || st.DirtyFiles != 0 {
+		t.Fatalf("status = %+v, want branch unborn with an all-zero head and nothing to lose", st)
+	}
+	w := e.removeBody(`{"path":"` + st.Path + `","head":"` + st.Head + `","sessions":[],"branch":"unborn"}`)
+	if w.Code != http.StatusOK || pathExists(path) {
+		t.Fatalf("status = %d: %s", w.Code, w.Body.String())
+	}
+	if got := strings.TrimSpace(w.Body.String()); got != `{"removed":true,"branchDeleted":false,"endedSessions":[]}` {
+		t.Fatalf("body = %s", got)
 	}
 }
