@@ -9,7 +9,7 @@ vibe-remote 是一个「远程 Claude 终端」桌面工具：真正的 `claude`
 - **终端模式**（默认）：PTY→tmux→claude，桌面端（Electron + xterm.js）只是**哑终端**，通过 WebSocket 双向透传 PTY 字节流。
 - **对话模式**：daemon 以 `claude -p --input-format stream-json --output-format stream-json …` 直接持有 claude 进程，桌面端渲染结构化消息（消息、工具块、diff、权限/计划/提问卡片），交互参考 Claude Code 的 VS Code 插件。
 
-**核心设计约束 —— 终端模式纯字节透传**：终端模式下客户端**绝不解析** claude 的输出。PTY 字节流（含 ANSI 转义、颜色、光标控制、box-drawing）原样双向搬运，所以流式/颜色/重绘全部 0 失真「免费」还原。任何「解析终端输出来做富文本」的想法都违背此架构 —— 终端模式下的「富文本」指的是**外壳 UI 的精致度**（侧边栏/状态栏对标 Claude Desktop），不是解析终端内容。这条约束是终端模式成立的前提，改动时优先维护它。
+**核心设计约束 —— 终端模式纯字节透传**：终端模式下客户端**绝不解析** claude 的输出。PTY 字节流（含 ANSI 转义、颜色、光标控制、box-drawing）原样双向搬运，所以流式/颜色/重绘全部 0 失真「免费」还原。任何「解析终端输出来做富文本」的想法都违背此架构 —— 终端模式下的「富文本」指的是**外壳 UI 的精致度**（侧边栏、标题、状态栏，外观以 `docs/changes/2026-11-16-project-worktrees` 选定的 M1 方案为准），不是解析终端内容。这条约束是终端模式成立的前提，改动时优先维护它。
 
 **第二条数据通路 —— 对话模式（只支持 claude）**：结构化消息来自 claude 的 stream-json，而不是解析 PTY。daemon 只读信封字段（`type`、`message.id`、`request_id`、`result`…）来缓冲、补发和管理待答请求，消息体原样转发；解析与渲染在客户端 `desktop/src/renderer/chat/`。模型输出只经 `chat/markdown.ts`（markdown-it `html:false` → DOMPurify）进 DOM，`chat/` 下只有它能写 `innerHTML`（`test-chat-render-guard` 守着）；工具输出、diff 一律 `textContent`；链接经主进程 `open-external`（只放行 http/https/mailto）用系统浏览器打开。对话模式只支持 claude：`claude_cmd` 第一个词的文件名不是 `claude`、含 shell 语法、自带 `-p`/`--resume` 等冲突参数，或 claude 版本低于 2.1.210 时，`/api/v1/info.chat.supported=false`，新建对话框把「对话」卡片置灰并写明原因。
 

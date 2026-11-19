@@ -424,6 +424,7 @@ async function main() {
   if (args.has('--keep')) {
     console.log('--keep: app left running; press Ctrl+C to clean up');
     console.log(`--keep: Electron pid ${electron.pid}`);
+    console.log(`--keep: CDP 127.0.0.1:${cdpPort}`);
     await new Promise((r) => process.once('SIGINT', r));
   }
 }
