@@ -187,6 +187,159 @@ func TestProjectsTwoSessionsOneWorktree(t *testing.T) {
 	}
 }
 
+// TestProjectsSingleWorktreeRepo: a session opened in a submodule's working
+// directory, or in a `git init --separate-git-dir` repository. There the first
+// entry of `git worktree list` is the git directory, not the working directory
+// (spec H27): the project is the top of the working directory, with exactly one
+// worktree row, and the git directory never shows up as a path.
+func TestProjectsSingleWorktreeRepo(t *testing.T) {
+	// The one project whose id is `dir`, checked to be a git project with a
+	// single main worktree at `dir` on `branch` that holds session `id`.
+	single := func(t *testing.T, resp protocol.ProjectsResponse, dir, branch, id string) *protocol.Project {
+		t.Helper()
+		var p *protocol.Project
+		for i := range resp.Projects {
+			if resp.Projects[i].ID == dir {
+				p = &resp.Projects[i]
+			}
+		}
+		if p == nil {
+			t.Fatalf("no project with id %s: %+v", dir, resp.Projects)
+		}
+		if p.Name != filepath.Base(dir) || !p.Git || p.Error != "" {
+			t.Fatalf("project = %+v", p)
+		}
+		if len(p.Worktrees) != 1 {
+			t.Fatalf("worktrees = %+v, want exactly one", p.Worktrees)
+		}
+		w := p.Worktrees[0]
+		if w.Path != dir || !w.Main || w.Detached || w.Branch != branch {
+			t.Fatalf("worktree = %+v, want path %s, main, branch %s", w, dir, branch)
+		}
+		if len(w.Sessions) != 1 || w.Sessions[0] != id {
+			t.Fatalf("sessions of the worktree = %v, want [%s]", w.Sessions, id)
+		}
+		if len(p.Sessions) != 0 {
+			t.Fatalf("project-level sessions = %v (the desktop would mark them \"directory is gone\")", p.Sessions)
+		}
+		return p
+	}
+	// No id and no path of the tree is, or lies inside, a git directory.
+	noGitDir := func(t *testing.T, resp protocol.ProjectsResponse, gitDirs ...string) {
+		t.Helper()
+		check := func(what, path string) {
+			if strings.HasSuffix(path, "/.git/modules/sub") {
+				t.Fatalf("%s %s is a submodule's git directory", what, path)
+			}
+			for _, g := range gitDirs {
+				if path == g || strings.HasPrefix(path, g+string(filepath.Separator)) {
+					t.Fatalf("%s %s is the git directory %s", what, path, g)
+				}
+			}
+		}
+		for _, p := range resp.Projects {
+			check("project id", p.ID)
+			for _, w := range p.Worktrees {
+				check("worktree path", w.Path)
+			}
+		}
+	}
+	// newSubmodule returns the working directory of a submodule and its git directory.
+	newSubmodule := func(t *testing.T, root string) (sub, gitDir string) {
+		t.Helper()
+		outer := filepath.Join(root, "outer")
+		lib := filepath.Join(root, "lib")
+		initRepoAt(t, outer)
+		initRepoAt(t, lib)
+		serverGit(t, outer, "-c", "protocol.file.allow=always", "submodule", "add", lib, "sub")
+		serverGit(t, outer, "commit", "-m", "add submodule")
+		return filepath.Join(outer, "sub"), filepath.Join(outer, ".git", "modules", "sub")
+	}
+	tempRoot := func(t *testing.T) string {
+		t.Helper()
+		root, err := filepath.EvalSymlinks(t.TempDir())
+		if err != nil {
+			t.Fatal(err)
+		}
+		return root
+	}
+
+	t.Run("submodule", func(t *testing.T) {
+		root := tempRoot(t)
+		sub, gitDir := newSubmodule(t, root)
+		// Premise: git names the git directory first, not the working directory.
+		if first := strings.SplitN(serverGitOut(t, sub, "worktree", "list", "--porcelain"), "\n", 2)[0]; first != "worktree "+gitDir {
+			t.Fatalf("premise: first entry of a submodule's worktree list = %q, want the git directory %s", first, gitDir)
+		}
+		mgr := projMgr(t)
+		r := mustCreate(t, mgr, session.CreateOptions{Workdir: sub})
+		s := projServer(t, mgr, root)
+
+		resp := getProjects(t, s)
+		single(t, resp, sub, serverGitOut(t, sub, "symbolic-ref", "--short", "HEAD"), r.ID)
+		noGitDir(t, resp, gitDir)
+	})
+
+	t.Run("separate_git_dir", func(t *testing.T) {
+		root := tempRoot(t)
+		gitDir := filepath.Join(root, "gd")
+		work := filepath.Join(root, "work")
+		if err := os.MkdirAll(work, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		serverGit(t, root, "init", "-b", "trunk", "--separate-git-dir="+gitDir, work)
+		serverGit(t, work, "config", "user.email", "test@example.com")
+		serverGit(t, work, "config", "user.name", "Test User")
+		if err := os.WriteFile(filepath.Join(work, "README"), []byte("x\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		serverGit(t, work, "add", "README")
+		serverGit(t, work, "commit", "-m", "init")
+		if first := strings.SplitN(serverGitOut(t, work, "worktree", "list", "--porcelain"), "\n", 2)[0]; first != "worktree "+gitDir {
+			t.Fatalf("premise: first entry of the worktree list = %q, want the git directory %s", first, gitDir)
+		}
+		mgr := projMgr(t)
+		r := mustCreate(t, mgr, session.CreateOptions{Workdir: work})
+		s := projServer(t, mgr, root)
+
+		resp := getProjects(t, s)
+		single(t, resp, work, "trunk", r.ID)
+		noGitDir(t, resp, gitDir)
+	})
+
+	// The old Worktree mode (no name) still works in such a repository; what it
+	// makes is a project of its own, and its session hangs under that project's
+	// one row, not at the project level of the place it was started from.
+	t.Run("legacy_worktree_mode", func(t *testing.T) {
+		root := tempRoot(t)
+		sub, gitDir := newSubmodule(t, root)
+		mgr := projMgr(t)
+		r := mustCreate(t, mgr, session.CreateOptions{Workdir: sub})
+		s := projServer(t, mgr, root)
+		before := getProjects(t, s)
+
+		rw := mustCreate(t, mgr, session.CreateOptions{Workdir: sub, Mode: protocol.SessionModeWorktree})
+		if rw.WorktreeRoot == "" || rw.WorktreeRoot == sub {
+			t.Fatalf("worktree mode made no worktree: root %q", rw.WorktreeRoot)
+		}
+		if got, want := serverGitOut(t, rw.WorktreeRoot, "symbolic-ref", "--short", "HEAD"), "vibe/"+rw.ID; got != want {
+			t.Fatalf("branch of the new worktree on disk = %s, want %s", got, want)
+		}
+
+		resp := getProjects(t, s)
+		if len(resp.Projects) != len(before.Projects)+1 {
+			t.Fatalf("projects before = %+v, after = %+v, want one more", before.Projects, resp.Projects)
+		}
+		single(t, resp, rw.WorktreeRoot, "vibe/"+rw.ID, rw.ID)
+		// The place it was started from is unchanged: its own session only.
+		origin := single(t, resp, sub, serverGitOut(t, sub, "symbolic-ref", "--short", "HEAD"), r.ID)
+		if contains(origin.Sessions, rw.ID) || contains(origin.Worktrees[0].Sessions, rw.ID) {
+			t.Fatalf("the worktree-mode session also shows under the project it was started from: %+v", origin)
+		}
+		noGitDir(t, resp, gitDir)
+	})
+}
+
 func TestProjectsResponseShape(t *testing.T) {
 	root := t.TempDir()
 	repo := filepath.Join(root, "devflow")
