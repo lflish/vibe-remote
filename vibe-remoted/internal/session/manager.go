@@ -57,6 +57,14 @@ type Manager struct {
 	repoMu    sync.Mutex
 	repoLocks map[string]*sync.Mutex
 
+	// startingDirs counts the sessions being created per workdir, from the
+	// moment the workdir is settled until the session is in the table;
+	// removingRoots holds the worktree roots being removed. Together (both
+	// guarded by mu) they keep a removal and a session starting in the same
+	// worktree from missing each other (design 6.2 step 4).
+	startingDirs  map[string]int
+	removingRoots map[string]struct{}
+
 	useTmux          bool
 	claudeCmd        string
 	loginShell       bool
@@ -78,10 +86,15 @@ type Manager struct {
 
 	// Seams for tests.
 	orphanCleanup             func([]chat.Record) ([]chat.Record, []chat.Orphan)
-	testAfterResolve          func(workdir string) // after a -c terminal resolved its conversation
-	testFailRespawn           error                // makes the next fixed-identity reload fail to start
-	testAfterWorktreeSnapshot func()               // Projects: after the worktree-record snapshot, before reading lists
-	testUndoLocked            func()               // undoing a created worktree: repository lock held, nothing removed yet
+	testAfterResolve          func(workdir string)  // after a -c terminal resolved its conversation
+	testFailRespawn           error                 // makes the next fixed-identity reload fail to start
+	testAfterWorktreeSnapshot func()                // Projects: after the worktree-record snapshot, before reading lists
+	testUndoLocked            func()                // undoing a created worktree: repository lock held, nothing removed yet
+	testAfterBeginStart       func(workdir string)  // creating a session: its workdir is registered as starting, nothing runs yet
+	testAfterRemovingMarked   func()                // removing a worktree: marked as being removed, no session ended yet
+	testAfterSessionsEnded    func()                // removing a worktree: its sessions are ended, HEAD not yet re-read
+	testBeforeWorktreeRemove  func()                // removing a worktree: every check passed, git worktree remove not yet run
+	testEndSession            func(id string) error // removing a worktree: ends a session instead of Delete
 }
 
 // NewManager creates a session manager.

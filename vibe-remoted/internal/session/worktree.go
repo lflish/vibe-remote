@@ -13,6 +13,8 @@ import (
 	"syscall"
 	"time"
 	"unicode"
+
+	"github.com/lflish/vibe-remote/vibe-remoted/internal/protocol"
 )
 
 type WorktreeMetadata struct {
@@ -241,6 +243,52 @@ var (
 	ErrWorktreePathNotAllowed = errors.New("worktree path not allowed")
 	ErrUnsupportedRepo        = errors.New("this repository is a submodule or uses a separate git directory; named worktrees are not supported here")
 )
+
+// Errors of looking at or removing a worktree (design 4.5, 4.6).
+var (
+	// ErrWorktreeNotFound: the path is not a worktree the daemon read from its
+	// repository, or is outside the allowed roots.
+	ErrWorktreeNotFound = errors.New("worktree not found")
+	// ErrWorktreeIsMain: the path is a repository's main directory.
+	ErrWorktreeIsMain = errors.New("the main directory of a repository cannot be removed")
+	// ErrWorktreeBusy: a session was about to start in a worktree that is
+	// being removed.
+	ErrWorktreeBusy = errors.New("this worktree is being removed")
+)
+
+// WorktreeChangedError: the worktree is not in the state the user confirmed
+// (409 worktree_changed). Status is the current state; EndedSessions are the
+// sessions this removal had already ended when it noticed.
+type WorktreeChangedError struct {
+	Status        protocol.WorktreeStatus
+	EndedSessions []string
+}
+
+func (e *WorktreeChangedError) Error() string {
+	return fmt.Sprintf("worktree %s changed since it was confirmed", e.Status.Path)
+}
+
+// WorktreeRemoveError: the removal could not be done (500
+// worktree_remove_failed). With no EndedSessions nothing was touched.
+type WorktreeRemoveError struct {
+	Message       string
+	EndedSessions []string
+}
+
+func (e *WorktreeRemoveError) Error() string { return e.Message }
+
+var errNotImplemented = errors.New("not implemented")
+
+// DirtyFiles counts the uncommitted and untracked files of a worktree; files
+// git ignores are not counted (H10).
+func DirtyFiles(worktreeDir string) (int, error) { return 0, errNotImplemented }
+
+// IgnoredFiles counts the files git ignores in a worktree, one per file.
+func IgnoredFiles(worktreeDir string) (int, error) { return 0, errNotImplemented }
+
+// HasSubmoduleCheckouts reports whether a worktree holds a checked-out
+// submodule or embedded repository.
+func HasSubmoduleCheckouts(worktreeDir string) (bool, error) { return false, errNotImplemented }
 
 // BranchExistsError says which existing branch blocks the new one: the branch
 // itself, or one git cannot keep next to it (fix blocks fix/login, change/foo

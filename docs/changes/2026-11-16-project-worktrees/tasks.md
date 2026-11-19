@@ -663,7 +663,7 @@
 - 依赖：T1、T4、T6b、T9
 
 ### T13 协议 4：worktree 的状态和删除（`GET /api/v1/worktrees/status`、`POST /api/v1/worktrees/remove`）
-- 状态：待办
+- 状态：进行中
 - 文件：
   - 修改 `vibe-remoted/internal/session/worktree.go`（`DirtyFiles`、`IgnoredFiles`、`HasSubmoduleCheckouts`、`ErrWorktreeNotFound`、`ErrWorktreeIsMain`、`ErrWorktreeBusy`、`WorktreeChangedError`、`WorktreeRemoveError`；删除 `CleanupWorktree`、`WorktreePreservedError`、`RollbackWorktree`、`isMissingBranchError`、`isMissingWorktreeError`）、`vibe-remoted/internal/session/projects.go`（`WorktreeStatus`、`RemoveWorktree`，步骤照 design 6.2 的 10 步；`Projects` 之外的这两个方法也在读会话之前调 `syncFromTmux()`）、`vibe-remoted/internal/session/manager.go` 和 `chat_manager.go`（`startingDirs`、`removingRoots` 两张表和 `beginStart`；终端、对话两条创建路径在工作目录确定之后、启动进程之前调它，Worktree 模式在放开仓库锁之前对新 worktree 里的工作目录调它，交接出来的终端会话同样；T7 写的「会话启动失败 → 重新取仓库锁 → 锁内撤销 → 放锁」之后才调 `done()`，design 6.1）、`vibe-remoted/internal/server/projects.go`（两个处理函数）、`vibe-remoted/internal/server/server.go`（路由）
   - 修改 `vibe-remoted/internal/protocol/protocol.go`（`WorktreeStatus`，含恒有值的 `ignoredFiles`；`WorktreeRemoveRequest`、`WorktreeRemoveResult`）、`desktop/src/shared/protocol.ts`（同名类型）、`desktop/src/renderer/rest.ts`（`worktreeStatus`、`removeWorktree`、`removeTimeoutMs`；`timedFetch` 加第 3 个可缺省参数 `timeoutMs`，缺省仍是 8 秒）、`docs/protocol.md`（两个端点的请求、响应、错误码，含 409 和 500 响应体里的 `endedSessions`、`worktree_remove_failed` 的两类来源；版本表第 4 行补全，补完后与 design 第 4 节开头那句一致）

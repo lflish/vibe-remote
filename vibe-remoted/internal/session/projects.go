@@ -363,6 +363,16 @@ func (m *Manager) RemoveProject(id string) error {
 	return nil
 }
 
+// WorktreeStatus reports the state of the worktree at path (design 4.5).
+func (m *Manager) WorktreeStatus(path string, allow AllowFunc) (protocol.WorktreeStatus, error) {
+	return protocol.WorktreeStatus{}, errNotImplemented
+}
+
+// RemoveWorktree removes the worktree at req.Path (design 6.2).
+func (m *Manager) RemoveWorktree(req protocol.WorktreeRemoveRequest, allow AllowFunc) (protocol.WorktreeRemoveResult, error) {
+	return protocol.WorktreeRemoveResult{}, errNotImplemented
+}
+
 // PlanWorktree is the read-only pre-check for creating a worktree named name
 // from workdir (design 4.4): the same checks, in the same order, that
 // CreateWorktree makes before it creates anything. A git failure or timeout is

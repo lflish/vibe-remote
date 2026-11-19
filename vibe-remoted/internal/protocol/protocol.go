@@ -471,3 +471,42 @@ type WorktreeBase struct {
 	Head     string `json:"head"`             // first 7 of the commit
 	Detached bool   `json:"detached,omitempty"`
 }
+
+// WorktreeStatus is GET /api/v1/worktrees/status (v4, design 4.5): what the
+// delete confirmation shows. Head is the full commit hash and is sent back
+// with the removal. IgnoredFiles only informs: -1 means it could not be
+// counted, and a removal never compares it.
+type WorktreeStatus struct {
+	Path            string   `json:"path"`
+	Project         string   `json:"project"`
+	Branch          string   `json:"branch,omitempty"` // omitted when detached
+	Head            string   `json:"head"`
+	Detached        bool     `json:"detached,omitempty"`
+	Main            bool     `json:"main"`
+	Managed         bool     `json:"managed"`
+	DirtyFiles      int      `json:"dirtyFiles"`      // uncommitted or untracked, ignored files excluded
+	UnmergedCommits int      `json:"unmergedCommits"` // on no other local branch or remote-tracking ref
+	IgnoredFiles    int      `json:"ignoredFiles"`    // ignored by git, removed with the directory
+	Sessions        []string `json:"sessions"`
+}
+
+// WorktreeRemoveRequest is the body of POST /api/v1/worktrees/remove (v4,
+// design 4.6): the worktree, what the user saw of it (Head, Sessions) and what
+// they agreed to lose.
+type WorktreeRemoveRequest struct {
+	Path         string   `json:"path"`
+	Head         string   `json:"head"`
+	Sessions     []string `json:"sessions"`
+	DiscardFiles bool     `json:"discardFiles,omitempty"`
+	DeleteBranch bool     `json:"deleteBranch,omitempty"` // honored only for a worktree vibe-remote created, on a branch
+	DropCommits  bool     `json:"dropCommits,omitempty"`
+}
+
+// WorktreeRemoveResult is the 200 answer to a removal: the directory is gone.
+// BranchError says why a branch that was to be deleted is still there.
+type WorktreeRemoveResult struct {
+	Removed       bool     `json:"removed"`
+	BranchDeleted bool     `json:"branchDeleted"`
+	BranchError   string   `json:"branchError,omitempty"`
+	EndedSessions []string `json:"endedSessions"`
+}

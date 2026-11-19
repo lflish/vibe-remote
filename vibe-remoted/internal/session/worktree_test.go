@@ -51,7 +51,7 @@ func TestWorktreeRepositoryRootSelection(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer CleanupWorktree(meta)
+	defer created.Undo()
 	canonicalRepo := runGit(t, sub, "rev-parse", "--show-toplevel")
 	if meta.SourceRepo != canonicalRepo {
 		t.Fatalf("meta=%+v mapped=%q", meta, mapped)
@@ -98,7 +98,7 @@ func TestWorktreeUsesCanonicalRepoRootForSymlinkAlias(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer CleanupWorktree(meta)
+	defer created.Undo()
 	if meta.SourceRepo != canonicalRoot {
 		t.Fatalf("SourceRepo=%q want canonical git root %q", meta.SourceRepo, canonicalRoot)
 	}
@@ -122,7 +122,7 @@ func TestWorktreeNestedSubdirectoryMapping(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer CleanupWorktree(meta)
+	defer created.Undo()
 	expected := filepath.Join(meta.WorktreeRoot, "a", "b")
 	if mapped != expected {
 		t.Fatalf("mapped=%q want %q", mapped, expected)
@@ -146,7 +146,7 @@ func TestWorktreeGeneratedBranchAndPath(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer CleanupWorktree(meta)
+	defer created.Undo()
 	if meta.Branch != "vibe/session-1" {
 		t.Fatal(meta.Branch)
 	}
@@ -159,75 +159,7 @@ func TestWorktreeGeneratedBranchAndPath(t *testing.T) {
 	}
 }
 
-func TestWorktreeCleanCleanupRemovesWorktreeAndBranch(t *testing.T) {
-	repo := tempRepo(t)
-	created, err := CreateWorktree(WorktreeSpec{Source: repo, SessionID: "clean"})
-	meta := created.Meta
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := CleanupWorktree(meta); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := os.Stat(meta.WorktreeRoot); !os.IsNotExist(err) {
-		t.Fatalf("worktree still exists: %v", err)
-	}
-	if got := runGit(t, repo, "branch", "--list", meta.Branch); got != "" {
-		t.Fatalf("branch still exists: %q", got)
-	}
-}
-
-func TestWorktreeDirtyCleanupPreservesBoth(t *testing.T) {
-	repo := tempRepo(t)
-	created, err := CreateWorktree(WorktreeSpec{Source: repo, SessionID: "dirty"})
-	meta := created.Meta
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(meta.WorktreeRoot, "changed"), []byte("keep"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	err = CleanupWorktree(meta)
-	var preserved *WorktreePreservedError
-	if !asPreserved(err, &preserved) {
-		t.Fatalf("err=%T %v", err, err)
-	}
-	if preserved.WorktreeRoot != meta.WorktreeRoot || preserved.Branch != meta.Branch {
-		t.Fatalf("preserved=%+v", preserved)
-	}
-	if _, err := os.Stat(meta.WorktreeRoot); err != nil {
-		t.Fatal(err)
-	}
-	if got := runGit(t, repo, "branch", "--list", meta.Branch); !strings.Contains(got, meta.Branch) {
-		t.Fatal(got)
-	}
-}
-
-func TestWorktreeIgnoredFileIsPreserved(t *testing.T) {
-	repo := tempRepo(t)
-	if err := os.WriteFile(filepath.Join(repo, ".gitignore"), []byte("ignored.txt\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	runGit(t, repo, "add", ".gitignore")
-	runGit(t, repo, "commit", "-m", "ignore")
-	created, err := CreateWorktree(WorktreeSpec{Source: repo, SessionID: "ignored"})
-	meta := created.Meta
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(meta.WorktreeRoot, "ignored.txt"), []byte("keep"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	err = CleanupWorktree(meta)
-	if err == nil {
-		t.Fatal("ignored file cleanup unexpectedly succeeded")
-	}
-	var preserved *WorktreePreservedError
-	if !asPreserved(err, &preserved) {
-		t.Fatalf("err=%T %v", err, err)
-	}
-}
-func TestWorktreeRollbackToleratesMissingWorktreeOrBranch(t *testing.T) {
+func TestUndoToleratesMissingWorktreeOrBranch(t *testing.T) {
 	repo := tempRepo(t)
 	created, err := CreateWorktree(WorktreeSpec{Source: repo, SessionID: "rollback"})
 	meta := created.Meta
@@ -237,23 +169,12 @@ func TestWorktreeRollbackToleratesMissingWorktreeOrBranch(t *testing.T) {
 	if err := os.RemoveAll(meta.WorktreeRoot); err != nil {
 		t.Fatal(err)
 	}
-	if err := RollbackWorktree(meta); err != nil {
+	if err := created.Undo(); err != nil {
 		t.Fatal(err)
 	}
-	if err := RollbackWorktree(meta); err != nil {
+	if err := created.Undo(); err != nil {
 		t.Fatal(err)
 	}
-}
-
-func asPreserved(err error, target **WorktreePreservedError) bool {
-	if err == nil {
-		return false
-	}
-	p, ok := err.(*WorktreePreservedError)
-	if ok {
-		*target = p
-	}
-	return ok
 }
 
 func TestUnmergedCommits(t *testing.T) {
@@ -311,82 +232,6 @@ func TestUnmergedCommits(t *testing.T) {
 			t.Fatalf("UnmergedCommits = %d, %v; want 2, nil", n, err)
 		}
 	})
-}
-
-func TestCleanupKeepsCleanWorktreeWithUnmergedCommits(t *testing.T) {
-	repo := tempRepo(t)
-	base := runGit(t, repo, "rev-parse", "HEAD")
-	created, err := CreateWorktree(WorktreeSpec{Source: repo, SessionID: "unmerged"})
-	meta := created.Meta
-	if err != nil {
-		t.Fatal(err)
-	}
-	runGit(t, meta.WorktreeRoot, "commit", "--allow-empty", "-m", "c1")
-	runGit(t, meta.WorktreeRoot, "commit", "--allow-empty", "-m", "c2")
-
-	err = CleanupWorktree(meta)
-	var preserved *WorktreePreservedError
-	if !asPreserved(err, &preserved) {
-		t.Fatalf("err=%T %v", err, err)
-	}
-	if _, statErr := os.Stat(meta.WorktreeRoot); statErr != nil {
-		t.Fatalf("worktree dir was removed: %v", statErr)
-	}
-	if got := runGit(t, repo, "branch", "--list", meta.Branch); !strings.Contains(got, meta.Branch) {
-		t.Fatalf("branch removed: %q", got)
-	}
-	if got := runGit(t, repo, "rev-list", "--count", base+".."+"refs/heads/"+meta.Branch); got != "2" {
-		t.Fatalf("unmerged count = %q, want 2", got)
-	}
-}
-
-func TestCleanupKeepsBranchWhenWorktreeDirMissing(t *testing.T) {
-	repo := tempRepo(t)
-	created, err := CreateWorktree(WorktreeSpec{Source: repo, SessionID: "missingdir"})
-	meta := created.Meta
-	if err != nil {
-		t.Fatal(err)
-	}
-	runGit(t, meta.WorktreeRoot, "commit", "--allow-empty", "-m", "c1")
-	runGit(t, meta.WorktreeRoot, "commit", "--allow-empty", "-m", "c2")
-	if err := os.RemoveAll(meta.WorktreeRoot); err != nil {
-		t.Fatal(err)
-	}
-
-	err = CleanupWorktree(meta)
-	var preserved *WorktreePreservedError
-	if !asPreserved(err, &preserved) {
-		t.Fatalf("err=%T %v", err, err)
-	}
-	if got := runGit(t, repo, "branch", "--list", meta.Branch); !strings.Contains(got, meta.Branch) {
-		t.Fatalf("branch removed: %q", got)
-	}
-}
-
-func TestCleanupFailsClosedWhenUnmergedCheckFails(t *testing.T) {
-	repo := tempRepo(t)
-	created, err := CreateWorktree(WorktreeSpec{Source: repo, SessionID: "failclosed"})
-	meta := created.Meta
-	if err != nil {
-		t.Fatal(err)
-	}
-	broken := meta
-	broken.SourceRepo = filepath.Join(t.TempDir(), "does-not-exist")
-
-	err = CleanupWorktree(broken)
-	if err == nil {
-		t.Fatal("expected error when the unmerged check fails")
-	}
-	var preserved *WorktreePreservedError
-	if asPreserved(err, &preserved) {
-		t.Fatalf("want a plain error, got preserved: %v", err)
-	}
-	if _, statErr := os.Stat(meta.WorktreeRoot); statErr != nil {
-		t.Fatalf("worktree dir was removed: %v", statErr)
-	}
-	if got := runGit(t, repo, "branch", "--list", meta.Branch); !strings.Contains(got, meta.Branch) {
-		t.Fatalf("branch removed: %q", got)
-	}
 }
 
 // --- T2: worktree listing and home resolution ---
@@ -1572,9 +1417,24 @@ func TestGitNeverGetsShortBranchName(t *testing.T) {
 		}
 	}
 
+	// Fourth path: removing a worktree vibe-remote created, branch included.
+	if err := m.Delete(r.ID); err != nil {
+		t.Fatal(err)
+	}
+	root := filepath.Join(containerOf(okRepo), "fix-login")
+	runGit(t, okRepo, "config", "branch.fix-login.remote", "origin")
+	st, err := m.WorktreeStatus(root, allowAny)
+	if err != nil {
+		t.Fatal(err)
+	}
+	res, err := m.RemoveWorktree(protocol.WorktreeRemoveRequest{Path: st.Path, Head: st.Head, Sessions: st.Sessions, DeleteBranch: true}, allowAny)
+	if err != nil || !res.Removed || !res.BranchDeleted {
+		t.Fatalf("remove = %+v, %v", res, err)
+	}
+
 	calls := loggedGitCalls(t, log)
 	seen := subcommands(calls)
-	for _, want := range []string{"update-ref", "worktree", "symbolic-ref", "check-ref-format", "show-ref", "for-each-ref"} {
+	for _, want := range []string{"update-ref", "worktree", "symbolic-ref", "check-ref-format", "show-ref", "for-each-ref", "rev-list", "config"} {
 		if seen[want] == 0 {
 			t.Errorf("expected a git %s call on these paths; saw %v", want, seen)
 		}
@@ -1592,6 +1452,7 @@ func TestGitNeverGetsShortBranchName(t *testing.T) {
 			}
 			switch {
 			case a == "refs/heads/fix-login", a == "refs/heads/fix-login/":
+			case a == "--exclude=fix-login", a == "branch.fix-login", a == "branch.fix-login.remote":
 			case filepath.IsAbs(a) && filepath.Base(a) == "fix-login":
 			case a == "fix-login" && i >= 2 && c[i-2] == "check-ref-format" && c[i-1] == "--branch":
 			case a == "worktree: attached to refs/heads/fix-login" && i >= 1 && c[i-1] == "-m":

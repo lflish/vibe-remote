@@ -2,6 +2,7 @@ package server
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -9,8 +10,10 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/lflish/vibe-remote/vibe-remoted/internal/config"
 	"github.com/lflish/vibe-remote/vibe-remoted/internal/protocol"
@@ -520,6 +523,8 @@ func TestNewEndpointsRequireToken(t *testing.T) {
 		{http.MethodGet, "/api/v1/projects"},
 		{http.MethodPost, "/api/v1/projects/remove"},
 		{http.MethodGet, "/api/v1/worktrees/plan?workdir=/tmp&name=x"},
+		{http.MethodGet, "/api/v1/worktrees/status?path=/tmp"},
+		{http.MethodPost, "/api/v1/worktrees/remove"},
 	}
 	for _, c := range cases {
 		for _, auth := range []string{"", "Bearer wrong"} {
@@ -818,5 +823,478 @@ func TestPlanWorktreeHTTPErrors(t *testing.T) {
 	_ = json.Unmarshal(w.Body.Bytes(), &body)
 	if w.Code != http.StatusInternalServerError || body["error"] != "git_failed" || body["message"] == "" {
 		t.Fatalf("failing git: status %d body %s, want 500 git_failed", w.Code, w.Body.String())
+	}
+}
+
+// --- T13: GET /api/v1/worktrees/status, POST /api/v1/worktrees/remove ---
+
+// wtEnv is a daemon (no tmux, /bin/cat as the CLI) over a throwaway directory
+// that holds a repository named devflow with a worktree fix-login vibe-remote
+// created, and `sessions` sessions running in that worktree.
+type wtEnv struct {
+	t    *testing.T
+	mgr  *session.Manager
+	s    *Server
+	base string // parent of the repository, canonical
+	repo string
+	root string // the fix-login worktree
+	ids  []string
+}
+
+func newWtEnv(t *testing.T, sessions int, roots ...string) *wtEnv {
+	t.Helper()
+	base, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	e := &wtEnv{t: t, mgr: projMgr(t), base: base, repo: filepath.Join(base, "devflow")}
+	initRepoAt(t, e.repo)
+	if err := os.WriteFile(filepath.Join(e.repo, ".gitignore"), []byte("node_modules/\n.env\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	serverGit(t, e.repo, "add", ".gitignore")
+	serverGit(t, e.repo, "commit", "-m", "ignore")
+	first := mustCreate(t, e.mgr, session.CreateOptions{Workdir: e.repo, Mode: protocol.SessionModeWorktree, WorktreeName: "fix-login"})
+	e.root = first.WorktreeRoot
+	if sessions == 0 {
+		if err := e.mgr.Delete(first.ID); err != nil {
+			t.Fatal(err)
+		}
+	} else {
+		e.ids = []string{first.ID}
+		for len(e.ids) < sessions {
+			e.ids = append(e.ids, mustCreate(t, e.mgr, session.CreateOptions{Workdir: e.root}).ID)
+		}
+	}
+	if len(roots) == 0 {
+		roots = []string{base}
+	}
+	e.s = projServer(t, e.mgr, roots...)
+	return e
+}
+
+func (e *wtEnv) do(method, target string, body any) *httptest.ResponseRecorder {
+	e.t.Helper()
+	var reader *bytes.Reader
+	if body != nil {
+		data, err := json.Marshal(body)
+		if err != nil {
+			e.t.Fatal(err)
+		}
+		reader = bytes.NewReader(data)
+	} else {
+		reader = bytes.NewReader(nil)
+	}
+	req := httptest.NewRequest(method, target, reader)
+	req.Header.Set("Authorization", "Bearer secret")
+	w := httptest.NewRecorder()
+	e.s.mux.ServeHTTP(w, req)
+	return w
+}
+
+func (e *wtEnv) statusRaw(path string) *httptest.ResponseRecorder {
+	e.t.Helper()
+	return e.do(http.MethodGet, "/api/v1/worktrees/status?"+url.Values{"path": {path}}.Encode(), nil)
+}
+
+func (e *wtEnv) status(path string) protocol.WorktreeStatus {
+	e.t.Helper()
+	w := e.statusRaw(path)
+	if w.Code != http.StatusOK {
+		e.t.Fatalf("status(%s) = %d: %s", path, w.Code, w.Body.String())
+	}
+	var st protocol.WorktreeStatus
+	if err := json.Unmarshal(w.Body.Bytes(), &st); err != nil {
+		e.t.Fatal(err)
+	}
+	return st
+}
+
+func (e *wtEnv) remove(req protocol.WorktreeRemoveRequest) *httptest.ResponseRecorder {
+	e.t.Helper()
+	return e.do(http.MethodPost, "/api/v1/worktrees/remove", req)
+}
+
+// removeFailure is the body of a 4xx/5xx answer to a removal.
+type removeFailure struct {
+	Error         string                   `json:"error"`
+	Message       string                   `json:"message"`
+	Status        *protocol.WorktreeStatus `json:"status"`
+	EndedSessions *[]string                `json:"endedSessions"`
+}
+
+func decodeFailure(t *testing.T, w *httptest.ResponseRecorder, status int, code string) removeFailure {
+	t.Helper()
+	if w.Code != status {
+		t.Fatalf("status = %d, want %d: %s", w.Code, status, w.Body.String())
+	}
+	var f removeFailure
+	if err := json.Unmarshal(w.Body.Bytes(), &f); err != nil {
+		t.Fatalf("decode %s: %v", w.Body.String(), err)
+	}
+	if f.Error != code {
+		t.Fatalf("error = %q, want %q: %s", f.Error, code, w.Body.String())
+	}
+	return f
+}
+
+func removeRequest(st protocol.WorktreeStatus) protocol.WorktreeRemoveRequest {
+	return protocol.WorktreeRemoveRequest{Path: st.Path, Head: st.Head, Sessions: st.Sessions}
+}
+
+func (e *wtEnv) sessionListed(id string) bool {
+	for _, s := range e.mgr.List() {
+		if s.ID == id {
+			return true
+		}
+	}
+	return false
+}
+
+// gitWrapper prepends a git that runs body (sh; "$@" are git's arguments, $REAL
+// is the real git) and then, unless body exited, the real git.
+func gitWrapper(t *testing.T, body string) {
+	t.Helper()
+	real, err := exec.LookPath("git")
+	if err != nil {
+		t.Skip("git not found")
+	}
+	dir := t.TempDir()
+	script := "#!/bin/sh\nREAL='" + real + "'\n" + body + "\nexec \"$REAL\" \"$@\"\n"
+	if err := os.WriteFile(filepath.Join(dir, "git"), []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+}
+
+func TestWorktreeStatusEndpoint(t *testing.T) {
+	e := newWtEnv(t, 2)
+	w := e.statusRaw(e.root)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d: %s", w.Code, w.Body.String())
+	}
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(w.Body.Bytes(), &raw); err != nil {
+		t.Fatal(err)
+	}
+	for _, key := range []string{"path", "project", "branch", "head", "main", "managed", "dirtyFiles", "unmergedCommits", "ignoredFiles", "sessions"} {
+		if _, ok := raw[key]; !ok {
+			t.Errorf("status body has no %q: %s", key, w.Body.String())
+		}
+	}
+	if _, ok := raw["detached"]; ok {
+		t.Errorf("detached should be omitted on a branch: %s", w.Body.String())
+	}
+	st := e.status(e.root)
+	want := protocol.WorktreeStatus{Path: e.root, Project: e.repo, Branch: "fix-login", Head: serverGitOut(t, e.root, "rev-parse", "HEAD"),
+		Managed: true, Sessions: e.ids}
+	if !reflect.DeepEqual(st, want) || len(st.Head) != 40 {
+		t.Fatalf("status\n got %+v\nwant %+v", st, want)
+	}
+
+	t.Run("ignored", func(t *testing.T) {
+		for _, name := range []string{"node_modules/a/1.js", "node_modules/a/b/2.js", "node_modules/c/3.js", ".env"} {
+			path := filepath.Join(e.root, name)
+			if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(path, []byte("x"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if st := e.status(e.root); st.DirtyFiles != 0 || st.IgnoredFiles != 4 {
+			t.Fatalf("status = %+v, want 0 dirty and 4 ignored", st)
+		}
+	})
+
+	t.Run("errors", func(t *testing.T) {
+		outside, _ := filepath.EvalSymlinks(t.TempDir())
+		for name, path := range map[string]string{
+			"plain directory":   e.base,
+			"subdirectory":      filepath.Join(e.root, "node_modules"),
+			"outside the roots": outside,
+			"missing":           filepath.Join(e.base, "nope"),
+		} {
+			w := e.statusRaw(path)
+			decodeFailure(t, w, http.StatusNotFound, "worktree_not_found")
+			_ = name
+		}
+		if w := e.do(http.MethodGet, "/api/v1/worktrees/status", nil); w.Code != http.StatusBadRequest {
+			t.Fatalf("no path: status = %d, want 400", w.Code)
+		}
+	})
+
+	// allowed_roots written as a symlink (like /tmp on macOS) while git and the
+	// client use the canonical path.
+	t.Run("symlink_root", func(t *testing.T) {
+		link := filepath.Join(t.TempDir(), "root-link")
+		probe := newWtEnv(t, 0)
+		if err := os.Symlink(probe.base, link); err != nil {
+			t.Skipf("symlinks unsupported: %v", err)
+		}
+		probe.s = projServer(t, probe.mgr, link)
+		st := probe.status(probe.root)
+		if st.Path != probe.root || !st.Managed {
+			t.Fatalf("status = %+v", st)
+		}
+		req := removeRequest(st)
+		req.DeleteBranch = true
+		if w := probe.remove(req); w.Code != http.StatusOK {
+			t.Fatalf("remove = %d: %s", w.Code, w.Body.String())
+		}
+		if pathExists(probe.root) {
+			t.Fatal("the directory is still there")
+		}
+	})
+}
+
+func TestWorktreeRemoveEndpoint(t *testing.T) {
+	t.Run("clean", func(t *testing.T) {
+		e := newWtEnv(t, 0)
+		st := e.status(e.root)
+		if st.DirtyFiles != 0 || st.UnmergedCommits != 0 || st.IgnoredFiles != 0 || !st.Managed {
+			t.Fatalf("status = %+v", st)
+		}
+		req := removeRequest(st)
+		req.DeleteBranch = true
+		w := e.remove(req)
+		if w.Code != http.StatusOK {
+			t.Fatalf("status = %d: %s", w.Code, w.Body.String())
+		}
+		if got := strings.TrimSpace(w.Body.String()); got != `{"removed":true,"branchDeleted":true,"endedSessions":[]}` {
+			t.Fatalf("body = %s", got)
+		}
+		if pathExists(e.root) || branchExists(t, e.repo, "fix-login") {
+			t.Fatal("the directory or the branch is still there")
+		}
+		// Asking again: it is gone.
+		decodeFailure(t, e.remove(req), http.StatusNotFound, "worktree_not_found")
+	})
+
+	t.Run("main", func(t *testing.T) {
+		e := newWtEnv(t, 0)
+		head := serverGitOut(t, e.repo, "rev-parse", "HEAD")
+		w := e.remove(protocol.WorktreeRemoveRequest{Path: e.repo, Head: head, Sessions: []string{}, DiscardFiles: true, DeleteBranch: true, DropCommits: true})
+		decodeFailure(t, w, http.StatusBadRequest, "worktree_is_main")
+		if !pathExists(filepath.Join(e.repo, "README")) {
+			t.Fatal("the main directory was touched")
+		}
+	})
+
+	t.Run("not_found", func(t *testing.T) {
+		e := newWtEnv(t, 0)
+		head := serverGitOut(t, e.root, "rev-parse", "HEAD")
+		for _, path := range []string{e.base, filepath.Join(e.repo, ".git"), e.root + "/", e.root + "/../fix-login"} {
+			w := e.remove(protocol.WorktreeRemoveRequest{Path: path, Head: head, Sessions: []string{}, DiscardFiles: true})
+			decodeFailure(t, w, http.StatusNotFound, "worktree_not_found")
+		}
+		if !pathExists(e.root) || !branchExists(t, e.repo, "fix-login") {
+			t.Fatal("a refused request removed something")
+		}
+		for _, body := range []string{"", "{", `{"head":"x"}`} {
+			req := httptest.NewRequest(http.MethodPost, "/api/v1/worktrees/remove", strings.NewReader(body))
+			req.Header.Set("Authorization", "Bearer secret")
+			w := httptest.NewRecorder()
+			e.s.mux.ServeHTTP(w, req)
+			if w.Code != http.StatusBadRequest {
+				t.Fatalf("body %q: status = %d, want 400", body, w.Code)
+			}
+		}
+	})
+
+	t.Run("changed", func(t *testing.T) {
+		e := newWtEnv(t, 1)
+		req := removeRequest(e.status(e.root))
+		req.DeleteBranch = true
+		if err := os.WriteFile(filepath.Join(e.root, "late.txt"), []byte("x"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		f := decodeFailure(t, e.remove(req), http.StatusConflict, "worktree_changed")
+		if f.Status == nil || f.Status.DirtyFiles != 1 || f.Status.Path != e.root {
+			t.Fatalf("status in the body = %+v", f.Status)
+		}
+		if f.EndedSessions == nil || len(*f.EndedSessions) != 0 {
+			t.Fatalf("endedSessions = %v, want []", f.EndedSessions)
+		}
+		if !e.sessionListed(e.ids[0]) || !pathExists(filepath.Join(e.root, "late.txt")) {
+			t.Fatal("the session or the file is gone")
+		}
+	})
+
+	t.Run("changed_after_sessions_ended", func(t *testing.T) {
+		e := newWtEnv(t, 1)
+		req := removeRequest(e.status(e.root))
+		req.DeleteBranch = true
+		// A commit lands just before the daemon re-reads HEAD, as from a session
+		// that was still working while it was being ended.
+		flag := filepath.Join(t.TempDir(), "armed")
+		gitWrapper(t, `if [ -e '`+flag+`' ] && [ "$3 $4" = "rev-parse HEAD" ]; then rm -f '`+flag+`'; "$REAL" -C "$2" -c user.email=t@example.com -c user.name=T commit -q --allow-empty -m late; fi`)
+		if err := os.WriteFile(flag, nil, 0o644); err != nil {
+			t.Fatal(err)
+		}
+		f := decodeFailure(t, e.remove(req), http.StatusConflict, "worktree_changed")
+		tip := serverGitOut(t, e.root, "rev-parse", "HEAD")
+		if tip == req.Head {
+			t.Fatal("setup: the late commit was not made")
+		}
+		if f.Status == nil || f.Status.Head != tip {
+			t.Fatalf("status in the body = %+v, want head %s", f.Status, tip)
+		}
+		if f.EndedSessions == nil || !reflect.DeepEqual(*f.EndedSessions, e.ids) {
+			t.Fatalf("endedSessions = %v, want %v", f.EndedSessions, e.ids)
+		}
+		if !pathExists(e.root) || serverGitOut(t, e.repo, "rev-parse", "refs/heads/fix-login") != tip {
+			t.Fatal("the directory is gone or the branch lost the commit")
+		}
+	})
+
+	t.Run("git_failure", func(t *testing.T) {
+		e := newWtEnv(t, 1)
+		req := removeRequest(e.status(e.root))
+		req.DeleteBranch = true
+		gitWrapper(t, `case " $* " in *" worktree remove "*) echo 'fatal: simulated failure from the wrapper' >&2; exit 128;; esac`)
+		f := decodeFailure(t, e.remove(req), http.StatusInternalServerError, "worktree_remove_failed")
+		if !strings.Contains(f.Message, "simulated failure from the wrapper") {
+			t.Fatalf("message = %q, want git's output", f.Message)
+		}
+		if f.EndedSessions == nil || !reflect.DeepEqual(*f.EndedSessions, e.ids) {
+			t.Fatalf("endedSessions = %v, want %v", f.EndedSessions, e.ids)
+		}
+		if f.Status != nil {
+			t.Fatalf("a 500 carries no status: %+v", f.Status)
+		}
+		if !pathExists(e.root) || !branchExists(t, e.repo, "fix-login") {
+			t.Fatal("the directory or the branch is gone")
+		}
+	})
+
+	t.Run("locked", func(t *testing.T) {
+		e := newWtEnv(t, 2)
+		serverGit(t, e.repo, "worktree", "lock", "--reason", "usb", e.root)
+		req := removeRequest(e.status(e.root))
+		req.DeleteBranch = true
+		f := decodeFailure(t, e.remove(req), http.StatusInternalServerError, "worktree_remove_failed")
+		if !strings.Contains(f.Message, "locked") {
+			t.Fatalf("message = %q", f.Message)
+		}
+		if f.EndedSessions == nil || len(*f.EndedSessions) != 0 {
+			t.Fatalf("endedSessions = %v, want []", f.EndedSessions)
+		}
+		w := e.do(http.MethodGet, "/api/v1/sessions", nil)
+		var frame protocol.SessionsFrame
+		if err := json.Unmarshal(w.Body.Bytes(), &frame); err != nil {
+			t.Fatal(err)
+		}
+		listed := map[string]bool{}
+		for _, s := range frame.List {
+			listed[s.ID] = true
+		}
+		for _, id := range e.ids {
+			if !listed[id] {
+				t.Fatalf("session %s is gone from /api/v1/sessions", id)
+			}
+		}
+	})
+}
+
+// waitForFile polls until path exists.
+func waitForFile(t *testing.T, path, what string) {
+	t.Helper()
+	deadline := time.Now().Add(15 * time.Second)
+	for time.Now().Before(deadline) {
+		if pathExists(path) {
+			return
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	t.Fatalf("timeout waiting for %s", what)
+}
+
+// holdWorktreeRemove makes `git worktree remove` announce itself by creating
+// the returned started file and then wait for the returned release function.
+func holdWorktreeRemove(t *testing.T) (started string, release func()) {
+	t.Helper()
+	dir := t.TempDir()
+	started, gate := filepath.Join(dir, "started"), filepath.Join(dir, "go")
+	gitWrapper(t, `case " $* " in *" worktree remove "*) : > '`+started+`'; n=0; while [ ! -e '`+gate+`' ] && [ $n -lt 300 ]; do sleep 0.05; n=$((n+1)); done;; esac`)
+	return started, func() {
+		if err := os.WriteFile(gate, nil, 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+// The desktop gives up waiting (timeout, lost connection): the daemon finishes
+// the removal anyway; stopping half-way would be worse.
+func TestRemoveCompletesAfterClientDisconnect(t *testing.T) {
+	e := newWtEnv(t, 1)
+	ts := httptest.NewServer(e.s.mux)
+	defer ts.Close()
+	st := e.status(e.root)
+	body, _ := json.Marshal(protocol.WorktreeRemoveRequest{Path: st.Path, Head: st.Head, Sessions: st.Sessions, DeleteBranch: true})
+	started, release := holdWorktreeRemove(t)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() {
+		req, _ := http.NewRequestWithContext(ctx, http.MethodPost, ts.URL+"/api/v1/worktrees/remove", bytes.NewReader(body))
+		req.Header.Set("Authorization", "Bearer secret")
+		resp, err := http.DefaultClient.Do(req)
+		if err == nil {
+			resp.Body.Close()
+		}
+		done <- err
+	}()
+	waitForFile(t, started, "git worktree remove to start")
+	cancel()
+	if err := <-done; err == nil {
+		t.Fatal("the request was answered before the client went away")
+	}
+	if !pathExists(e.root) {
+		t.Fatal("setup: the directory is already gone")
+	}
+	release()
+	deadline := time.Now().Add(15 * time.Second)
+	for time.Now().Before(deadline) && (pathExists(e.root) || branchExists(t, e.repo, "fix-login")) {
+		time.Sleep(20 * time.Millisecond)
+	}
+	if pathExists(e.root) || branchExists(t, e.repo, "fix-login") {
+		t.Fatal("the removal stopped when the client disconnected")
+	}
+	if e.sessionListed(e.ids[0]) {
+		t.Fatal("the session is still listed")
+	}
+}
+
+// While a worktree is being removed, an attach that would start a session in
+// it is refused for good.
+func TestAttachRefusedWhileWorktreeRemoving(t *testing.T) {
+	c := newChatServer(t, withClaudeCmd("/bin/cat"))
+	c.mgr.SetProjectStore(session.NewMemoryProjectStore())
+	repo := c.repo("devflow")
+	ready := c.attachTerminal(c.connect(), protocol.AttachFrame{NewSessionID: newSID("wtr"), Workdir: repo,
+		Mode: protocol.SessionModeWorktree, WorktreeName: "fix-login"})
+	root := ready.WorktreeRoot
+	st, err := c.mgr.WorktreeStatus(root, c.cfg.ResolveAllowedWorkdir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	started, release := holdWorktreeRemove(t)
+	removed := make(chan error, 1)
+	go func() {
+		_, err := c.mgr.RemoveWorktree(protocol.WorktreeRemoveRequest{Path: st.Path, Head: st.Head, Sessions: st.Sessions, DeleteBranch: true}, c.cfg.ResolveAllowedWorkdir)
+		removed <- err
+	}()
+	waitForFile(t, started, "git worktree remove to start")
+	e := expectAttachError(t, c.connect(), protocol.AttachFrame{NewSessionID: newSID("late"), Workdir: root})
+	if e.Code != protocol.ErrCodeCreateFailed || !e.Fatal || !strings.Contains(e.Message, "being removed") {
+		t.Fatalf("error %+v, want fatal create_failed saying the worktree is being removed", e)
+	}
+	release()
+	if err := <-removed; err != nil {
+		t.Fatalf("removal: %v", err)
+	}
+	if pathExists(root) {
+		t.Fatal("the directory is still there")
 	}
 }
