@@ -108,6 +108,78 @@
   "local": true
  },
  {
+  "name": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+  "ok": false,
+  "reason": "invalid",
+  "local": true
+ },
+ {
+  "name": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+  "ok": false,
+  "reason": "invalid",
+  "local": true
+ },
+ {
+  "name": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+  "ok": false,
+  "reason": "invalid",
+  "local": true
+ },
+ {
+  "name": "\u529f\u529f\u529f\u529f\u529f\u529f\u529f\u529f\u529f\u529f\u529f\u529f\u529f\u529f\u529f\u529f\u529f\u529f\u529f\u529f\u529f\u529f\u529f\u529f\u529f\u529f\u529f\u529f\u529f\u529f\u529f\u529f\u529f\u529f\u529f\u529f\u529f\u529f\u529f\u529f\u529f\u529f\u529f\u529f\u529f\u529f\u529f\u529f\u529f\u529f\u529f\u529f\u529f\u529f\u529f\u529f\u529f\u529f\u529f\u529f\u529f\u529f\u529f\u529f\u529f\u529f\u529f\u529f\u529f\u529f\u529f\u529f\u529f\u529f\u529f\u529f\u529f\u529f\u529f\u529f\u529f\u529f\u529f\u529f",
+  "ok": false,
+  "reason": "invalid",
+  "local": true
+ },
+ {
+  "name": "a\u200bb",
+  "ok": false,
+  "reason": "invalid",
+  "local": true
+ },
+ {
+  "name": "a\u200db",
+  "ok": false,
+  "reason": "invalid",
+  "local": true
+ },
+ {
+  "name": "a\u202eb",
+  "ok": false,
+  "reason": "invalid",
+  "local": true
+ },
+ {
+  "name": "a\u200eb",
+  "ok": false,
+  "reason": "invalid",
+  "local": true
+ },
+ {
+  "name": "a\ufeffb",
+  "ok": false,
+  "reason": "invalid",
+  "local": true
+ },
+ {
+  "name": "a\u00adb",
+  "ok": false,
+  "reason": "invalid",
+  "local": true
+ },
+ {
+  "name": "a\u2060b",
+  "ok": false,
+  "reason": "invalid",
+  "local": true
+ },
+ {
+  "name": "a\udb40\udc41b",
+  "ok": false,
+  "reason": "invalid",
+  "local": true
+ },
+ {
   "name": "a~b",
   "ok": false,
   "reason": "invalid",
@@ -241,6 +313,18 @@
  },
  {
   "name": "x@y",
+  "ok": true
+ },
+ {
+  "name": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+  "ok": true
+ },
+ {
+  "name": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+  "ok": true
+ },
+ {
+  "name": "\u529f\u529f\u529f\u529f\u529f\u529f\u529f\u529f\u529f\u529f\u529f\u529f\u529f\u529f\u529f\u529f\u529f\u529f\u529f\u529f\u529f\u529f\u529f\u529f\u529f\u529f\u529f\u529f\u529f\u529f\u529f\u529f\u529f\u529f\u529f\u529f\u529f\u529f\u529f\u529f\u529f\u529f\u529f\u529f\u529f\u529f\u529f\u529f\u529f\u529f\u529f\u529f\u529f\u529f\u529f\u529f\u529f\u529f\u529f\u529f\u529f\u529f\u529f\u529f\u529f\u529f\u529f\u529f\u529f\u529f\u529f\u529f\u529f\u529f\u529f\u529f\u529f\u529f\u529f\u529f\u529f\u529f\u529f",
   "ok": true
  }
 ]

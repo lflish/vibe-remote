@@ -656,6 +656,16 @@ func TestValidateWorktreeName(t *testing.T) {
 		"fix-login", "change/foo", "功能/登录", "@", "refs/heads/x"} {
 		must[n] = false
 	}
+	// The two rules added after the review (length, invisible characters) are
+	// decided on the desktop too: their cases at the limits are shared.
+	for _, n := range []string{
+		strings.Repeat("x", 250), strings.Repeat("x", 251), strings.Repeat("x", 300),
+		strings.Repeat("a", 125) + "/" + strings.Repeat("b", 124), strings.Repeat("a", 125) + "/" + strings.Repeat("b", 125),
+		strings.Repeat("功", 83), strings.Repeat("功", 84),
+		"a\u200bb", "a\u200db", "a\u202eb", "a\u200eb", "a\ufeffb", "a\u00adb", "a\u2060b", "a\U000e0041b",
+	} {
+		must[n] = false
+	}
 	repo := devflowRepo(t)
 	for _, v := range vectors {
 		if _, ok := must[v.Name]; ok {

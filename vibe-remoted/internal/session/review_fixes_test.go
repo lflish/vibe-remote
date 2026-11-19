@@ -722,9 +722,11 @@ func TestGitEnvKeepsInheritedConfig(t *testing.T) {
 	}
 }
 
-// reviewNameVectors are the names the two rules added after the review decide,
-// in the form of testdata/worktree-names.json (local: the desktop reaches the
-// same reason without asking the daemon).
+// reviewNameVectors are the names the two rules added after the review decide.
+// They are in testdata/worktree-names.json as well (TestValidateWorktreeName
+// requires them there), which holds the desktop to the same answers; this
+// table is kept because its test also asks the pre-check and creates what the
+// pre-check accepts.
 var reviewNameVectors = []struct {
 	label, name string
 	ok          bool
