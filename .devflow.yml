@@ -61,6 +61,22 @@ invariants:
     check: cd vibe-remoted && go test ./internal/session -run TestChatEnvHookTokenOnly
   - rule: 不读取 claude 凭据
     check: cd vibe-remoted && go test ./internal/chat -run TestNoCredentialAccess
+  # 按项目和 worktree 组织会话（docs/changes/2026-11-16-project-worktrees，design 7.1；c3 已确认）
+  # 这几条会起 tmux：一律带独立的 TMUX_TMPDIR，不和本机正在用的 tmux -L vibe-remote 共用 socket
+  - rule: 删会话不删 worktree 目录和分支，协议 4 的 daemon 不返回 worktree_preserved
+    check: cd vibe-remoted && TMUX_TMPDIR=$(mktemp -d) go test -race -timeout 10m ./internal/session ./internal/server -run 'TestDeleteSessionKeepsWorktreeAndBranch|TestDeleteSessionNeverReturnsPreserved'
+  - rule: 只删 daemon 自己读到的、在 allowed_roots 内的、不是主目录的 worktree
+    check: cd vibe-remoted && TMUX_TMPDIR=$(mktemp -d) go test -race -timeout 10m ./internal/session ./internal/server -run 'TestRemoveOnlyListedWorktrees|TestRemoveMainRefused'
+  - rule: 不是 vibe-remote 创建的 worktree，分支永远不删
+    check: cd vibe-remoted && TMUX_TMPDIR=$(mktemp -d) go test -race -timeout 10m ./internal/session -run 'TestRemoveExternalNeverDeletesBranch|TestManagedRequiresPathAndBranch'
+  - rule: 未经同意不丢文件和提交（删除前重查，结束会话之后再核对一次 HEAD，与确认的不一致就 409；里面嵌着别的 worktree、子模块或嵌入式仓库的检出时拒绝删除）
+    check: cd vibe-remoted && TMUX_TMPDIR=$(mktemp -d) go test -race -timeout 10m ./internal/session -run 'TestRemoveDirtyNeedsConsent|TestRemoveUnmergedNeedsConsent|TestRemoveChangedSinceStatus|TestRemoveHeadMovedWhileEndingSessions|TestRemoveRefusedWhenNestedWorktree|TestRemoveSubmoduleCheckoutRefused'
+  - rule: 客户端传的 worktree 名字不经 shell，以 - 开头的在调用 git 前被拒
+    check: cd vibe-remoted && TMUX_TMPDIR=$(mktemp -d) go test -race -timeout 10m ./internal/session -run 'TestWorktreeNameNeverReachesShell|TestValidateWorktreeName'
+  - rule: 对话界面的信任只认目录本身，或「仓库自己列出的 worktree 根 + 主目录这一个路径被信任」
+    check: cd vibe-remoted && TMUX_TMPDIR=$(mktemp -d) go test -race -timeout 10m ./internal/session -run TestChatTrust
+  - rule: daemon 交给 git 的分支只写成完整引用名 refs/heads/<名字>，不调用 git branch、不用 -b / -B；撤销创建只清本次建出来的目录和分支
+    check: cd vibe-remoted && TMUX_TMPDIR=$(mktemp -d) go test -race -timeout 10m ./internal/session -run 'TestGitNeverGetsShortBranchName|TestValidateWorktreeNameRejectsExpansion|TestUndoOnlyRemovesOwnArtifacts|TestRemoveDeletesBranchByFullRef'
 
 rules:
   requirements: []
