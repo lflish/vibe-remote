@@ -41,16 +41,35 @@ var gitStrippedEnv = map[string]bool{
 // gitEnv returns the process environment with the repository-redirecting
 // variables removed and LC_ALL pinned to C, so git's output is stable and
 // always describes the directory passed with -C.
+//
+// It also turns core.fsmonitor off, for every git process the daemon starts
+// and the ones those start (`git worktree remove` runs a status of its own):
+// that setting makes any command that reads the index run a program named in
+// the repository's configuration, and the daemon's looking at a repository
+// must not run one. It is passed as GIT_CONFIG_COUNT/KEY/VALUE, which rank
+// like -c and above the configuration files, after whatever configuration the
+// daemon's own environment already passes that way.
 func gitEnv() []string {
+	environ := os.Environ()
+	inherited := 0
+	for _, kv := range environ {
+		if val, ok := strings.CutPrefix(kv, "GIT_CONFIG_COUNT="); ok {
+			if n, err := strconv.Atoi(val); err == nil && n > 0 {
+				inherited = n
+			}
+		}
+	}
+	ownKey, ownValue := fmt.Sprintf("GIT_CONFIG_KEY_%d", inherited), fmt.Sprintf("GIT_CONFIG_VALUE_%d", inherited)
 	var env []string
-	for _, kv := range os.Environ() {
+	for _, kv := range environ {
 		key, _, _ := strings.Cut(kv, "=")
-		if gitStrippedEnv[key] {
+		if gitStrippedEnv[key] || key == "GIT_CONFIG_COUNT" || key == ownKey || key == ownValue {
 			continue
 		}
 		env = append(env, kv)
 	}
-	return append(env, "LC_ALL=C")
+	return append(env, "LC_ALL=C",
+		fmt.Sprintf("GIT_CONFIG_COUNT=%d", inherited+1), ownKey+"=core.fsmonitor", ownValue+"=false")
 }
 
 func gitAt(dir string, args ...string) ([]byte, error) {
@@ -293,10 +312,10 @@ func nonEmptyLines(out []byte) int {
 }
 
 // DirtyFiles counts the uncommitted and untracked files of a worktree; files
-// git ignores are not counted (H10). core.fsmonitor is the one setting that
-// makes status run a program of the repository's choosing, so it is off.
+// git ignores are not counted (H10). It does not run the repository's
+// core.fsmonitor program: gitEnv turns that off for every call.
 func DirtyFiles(worktreeDir string) (int, error) {
-	out, err := gitAtTimeout(worktreeDir, "-c", "core.fsmonitor=false", "status", "--porcelain", "--untracked-files=all")
+	out, err := gitAtTimeout(worktreeDir, "status", "--porcelain", "--untracked-files=all")
 	if err != nil {
 		return 0, fmt.Errorf("check worktree status: %w", err)
 	}
@@ -308,7 +327,7 @@ func DirtyFiles(worktreeDir string) (int, error) {
 // ignored directory counts once (design 3). It walks everything git ignores,
 // so it can be slow where the tracked content is not.
 func IgnoredFiles(worktreeDir string) (int, error) {
-	out, err := gitAtTimeout(worktreeDir, "-c", "core.fsmonitor=false", "ls-files", "--others", "--ignored", "--exclude-standard")
+	out, err := gitAtTimeout(worktreeDir, "ls-files", "--others", "--ignored", "--exclude-standard")
 	if err != nil {
 		return 0, fmt.Errorf("count ignored files: %w", err)
 	}
@@ -352,7 +371,7 @@ func HasSubmoduleCheckouts(worktreeDir string) (bool, error) {
 // look inside, so whatever is committed in there is in none of the counts.
 // (One nested in an ignored directory is not reported at all.)
 func UntrackedRepositories(worktreeDir string) ([]string, error) {
-	out, err := gitAtTimeout(worktreeDir, "-c", "core.fsmonitor=false", "status", "--porcelain", "-z", "--untracked-files=all")
+	out, err := gitAtTimeout(worktreeDir, "status", "--porcelain", "-z", "--untracked-files=all")
 	if err != nil {
 		return nil, fmt.Errorf("check worktree status: %w", err)
 	}

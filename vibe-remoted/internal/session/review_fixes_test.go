@@ -596,3 +596,125 @@ func TestUntrackedRepositories(t *testing.T) {
 		t.Fatalf("UntrackedRepositories = %v, want %s and %s", got, one, two)
 	}
 }
+
+// fsmonitorProbe configures core.fsmonitor in repo to a program that records
+// each run, and returns how to read and reset the record. The test is skipped
+// where git does not run such a program on status at all.
+func fsmonitorProbe(t *testing.T, repo, worktree string) (ran func() bool, reset func()) {
+	t.Helper()
+	marker := filepath.Join(t.TempDir(), "ran")
+	hook := filepath.Join(t.TempDir(), "fsmonitor.sh")
+	if err := os.WriteFile(hook, []byte("#!/bin/sh\necho run >> '"+marker+"'\nexit 1\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, repo, "config", "core.fsmonitor", hook)
+	ran = func() bool { return pathExists(marker) }
+	reset = func() {
+		if err := os.Remove(marker); err != nil && !os.IsNotExist(err) {
+			t.Fatal(err)
+		}
+	}
+	_ = exec.Command("git", "-C", worktree, "status", "--porcelain").Run()
+	if !ran() {
+		t.Skip("this git does not run a core.fsmonitor program on status")
+	}
+	reset()
+	return ran, reset
+}
+
+// The git calls the daemon makes to look at a repository do not run a program
+// the repository's configuration names (core.fsmonitor is the setting that
+// makes index-reading commands do so). Looking includes the checks of a
+// removal that ends up refused.
+func TestReadOnlyGitRunsNoRepositoryProgram(t *testing.T) {
+	f := newRemoveFixture(t, 1)
+	writeFiles(t, f.root, "untracked.txt", "node_modules/x.js")
+	ran, _ := fsmonitorProbe(t, f.repo, f.root)
+	step := func(name string) {
+		t.Helper()
+		if ran() {
+			t.Fatalf("%s ran the repository's core.fsmonitor program", name)
+		}
+	}
+
+	if _, err := ResolveHome(f.root); err != nil {
+		t.Fatal(err)
+	}
+	step("ResolveHome")
+	if p := findProject(f.m.Projects(allowAny), f.repo); p == nil || p.Error != "" {
+		t.Fatalf("project = %+v", p)
+	}
+	step("Projects")
+	if plan, err := f.m.PlanWorktree(f.root, "another", nil); err != nil || !plan.OK {
+		t.Fatalf("plan = %+v, %v", plan, err)
+	}
+	step("PlanWorktree")
+	ChatTrust(f.root)
+	step("ChatTrust")
+	st := f.status()
+	if st.DirtyFiles != 1 || st.IgnoredFiles != 1 {
+		t.Fatalf("status = %+v, want 1 dirty and 1 ignored", st)
+	}
+	step("WorktreeStatus")
+	if has, err := HasSubmoduleCheckouts(f.root); err != nil || has {
+		t.Fatalf("HasSubmoduleCheckouts = %v, %v", has, err)
+	}
+	step("HasSubmoduleCheckouts")
+	if _, err := UntrackedRepositories(f.root); err != nil {
+		t.Fatal(err)
+	}
+	step("UntrackedRepositories")
+
+	// Refused: the head is not the one confirmed. Nothing changes, and nothing
+	// of the repository's is run on the way to finding that out.
+	stale := request(st)
+	stale.Head = strings.Repeat("0", len(st.Head)-1) + "1"
+	stale.DiscardFiles = true
+	_, err := f.remove(stale)
+	wantChanged(t, err)
+	step("a refused RemoveWorktree")
+	f.intact()
+}
+
+// Creating and removing a worktree do not run it either: the setting is off
+// for every git process the daemon starts, and for the ones those start.
+func TestCreateAndRemoveWorktreeDoNotRunFsmonitor(t *testing.T) {
+	f := newRemoveFixture(t, 0)
+	writeFiles(t, f.root, "untracked.txt")
+	ran, _ := fsmonitorProbe(t, f.repo, f.root)
+
+	req := request(f.status())
+	req.DiscardFiles, req.DeleteBranch = true, true
+	f.mustRemove(req)
+	if ran() {
+		t.Fatal("removing a worktree ran the repository's core.fsmonitor program")
+	}
+	created, err := CreateWorktree(WorktreeSpec{Source: f.repo, SessionID: "s1", Name: "again"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ran() {
+		t.Fatal("creating a worktree ran the repository's core.fsmonitor program")
+	}
+	if err := created.Undo(); err != nil {
+		t.Fatal(err)
+	}
+	if ran() {
+		t.Fatal("undoing a created worktree ran the repository's core.fsmonitor program")
+	}
+}
+
+// Configuration the daemon's own environment passes to git (a container that
+// sets safe.directory this way) is kept; the daemon's setting is added to it.
+func TestGitEnvKeepsInheritedConfig(t *testing.T) {
+	repo := tempRepo(t)
+	t.Setenv("GIT_CONFIG_COUNT", "1")
+	t.Setenv("GIT_CONFIG_KEY_0", "vibe.inherited")
+	t.Setenv("GIT_CONFIG_VALUE_0", "kept")
+	for key, want := range map[string]string{"vibe.inherited": "kept", "core.fsmonitor": "false"} {
+		out, err := gitAtTimeout(repo, "config", "--get", key)
+		if err != nil || strings.TrimSpace(string(out)) != want {
+			t.Fatalf("git config %s = %q, %v; want %q", key, out, err, want)
+		}
+	}
+}
