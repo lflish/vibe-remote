@@ -42,11 +42,12 @@
 //   VR_BASE_DAEMON=<path>        reuse a protocol-3 vibe-remoted build (default: built from VR_BASE_REF)
 //   VR_BASE_REF=<commit>         the commit before this change (default 6d88e45)
 //   VR_RESULTS=<file.json>       write the results as JSON
+//   VR_DESKTOP_DIR=<dir> / VR_DAEMON=<binary>  run against another build (one with a defect put in on purpose: do the cases notice?)
 //   VR_CDP_PORT / VR_INSPECT_PORT  fixed debug ports (with --keep, for poking around)
 // Requires Node 22+, Go, tmux, git; macOS with a display.
 
 import { spawn, spawnSync } from 'node:child_process';
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { join, resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createRequire } from 'node:module';
@@ -58,7 +59,9 @@ import { dialogLayout } from './dialog-layout.mjs';
 import { decodePng, hexRgb, rgbHex, colorDistance, countColor, dominantColors } from './png-pixels.mjs';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../../../..');
-const DESKTOP = join(ROOT, 'desktop');
+// VR_DESKTOP_DIR / VR_DAEMON: another build of the desktop / of the daemon, to
+// check that the cases notice a build with a defect put in on purpose.
+const DESKTOP = process.env.VR_DESKTOP_DIR ? resolve(process.env.VR_DESKTOP_DIR) : join(ROOT, 'desktop');
 const argv = process.argv.slice(2);
 const args = new Set(argv);
 const ONLY = (argv.find((a) => a.startsWith('--only=')) ?? '').slice(7).split(',').filter(Boolean);
@@ -928,6 +931,7 @@ test('R1.6', 'R1.6 a folded project shows that a session inside is waiting', asy
     return `folded: ${folded.dot}; unfolded: session row dot ${row.dot}, "${row.meta}"`;
   } finally {
     other.close();
+    if ((await project(WT, 'devflow'))?.collapsed) await click(toggle, 'unfold devflow').catch(() => {});
   }
 });
 
@@ -1155,7 +1159,6 @@ test('R3.1', 'R3.1 new worktree fix-login with a chat session', async () => {
   eq([s.error, s.target], ['', path], 'verdict on the name');
   await click(`${DLG('new-worktree-dialog')}.querySelector('${tid('picker-ui-chat')}')`, 'chat card');
   await waitFor(() => ev(`${DLG('new-worktree-dialog')}.querySelector('${tid('picker-ui-chat')}').getAttribute('aria-pressed') === 'true' && !${DLG('new-worktree-dialog')}.querySelector('${tid('dialog-confirm')}').disabled`), 5000, 'chat chosen');
-  await evidence('R3.1-dialog');
   await confirmNewWorktree();
   const id = await waitNewSession(LAB, before, 'chat');
   const row = await waitFor(async () => { const r = await worktreeRow(LAB, 'webapp', 'fix-login'); return r?.sessions.some((x) => x.id === id) ? r : null; }, 10000, 'row fix-login with the new session');
@@ -1822,7 +1825,6 @@ test('R5.12', 'R5.12 failures after the sessions were ended are reported as they
   assert(/failed to delete|Permission denied/i.test(f.error), `git's error is not shown: ${f.error}`);
   eq([f.ended, f.buttons], ['已结束 1 个会话。', ['关闭']], 'ended sessions / buttons');
   assert(f.partial.includes(fb) && f.partial.includes('分支没有删除'), `what is left: ${f.partial}`);
-  await evidence('R5.12-partial');
   const small = await fitsSmallWindow('the failure note');
   await click(`${DLG('delete-wt-failed')}.querySelector('${tid('dialog-cancel')}')`, 'close');
   await dialogGone();
@@ -2466,9 +2468,11 @@ test('R8.6', 'R8.6 a cold start shows the theme from the first frame', async () 
   const card = dominantColors(img, { x: w * 0.35, y: h * 0.2, width: w * 0.5, height: h * 0.6 }, 3, 1)[0];
   eq(card.hex, '#FFFFFF', 'the main card of the first frame');
   const whole = { x: 0, y: 0, width: w, height: h };
+  // No area in the previous look's background (a few pixels on the edge of a
+  // colored chip can come out in any color: an area is what would be a flash).
   for (const old of ['#F5F4EF', '#E6E1D8']) {
     const n = countColor(img, whole, hexRgb(old), 2, 3);
-    assert(n.match === 0, `${n.match} sampled pixels of the first frame are the previous background ${old}`);
+    assert(n.match / n.total < 0.005, `${Math.round((n.match / n.total) * 1000) / 10}% of the first frame is the previous background ${old}`);
   }
   let dark = 0;
   let total = 0;
@@ -2531,7 +2535,6 @@ test('R9.1', 'R9.1 this desktop with a protocol-3 daemon', async () => {
   await waitDialog('delete-session-dialog');
   const said = await text(`${DLG('delete-session-dialog')}.querySelector('${tid('delete-session-note')}')`);
   eq(said, '这台机器的 vibe-remoted 是旧版：工作区干净时，worktree 的目录和分支会被一并删除；有未提交改动时会保留。', 'what the confirmation says');
-  await evidence('R9.1-delete');
   await click(`${DLG('delete-session-dialog')}.querySelector('${tid('dialog-confirm')}')`, 'delete session');
   await dialogGone();
   await waitFor(async () => !(await sessions(OLD)).some((s) => s.id === id), 10000, 'session gone');
@@ -2709,7 +2712,8 @@ const wants = (id) => ONLY.length === 0 || ONLY.some((o) => id === o || id.start
 
 async function setup() {
   mkdirSync(join(binDir, 'fake'), { recursive: true });
-  build(daemonBin, './cmd/vibe-remoted');
+  if (process.env.VR_DAEMON) copyFileSync(resolve(process.env.VR_DAEMON), daemonBin);
+  else build(daemonBin, './cmd/vibe-remoted');
   build(fakeClaude, './internal/chat/fakeclaude');
   // `claude` on this-mac and lab-mac: the fake claude for chat sessions and
   // the version probe, a shell for terminal sessions.
@@ -2808,9 +2812,12 @@ async function resetUi() {
   if (!cdp) return;
   await cdp.send('Emulation.clearDeviceMetricsOverride').catch(() => {});
   await ev(`(() => { const n = window.__vrNet; if (n) { n.offline = false; n.cut = null; n.delays = []; } return true; })()`).catch(() => {});
-  for (let i = 0; i < 4 && (await exists(`document.querySelector('.modal-overlay')`).catch(() => false)); i++) {
-    await pressKey('Escape').catch(() => {});
-    await sleep(200);
+  // A dialog a failed case left open: its Cancel button, else Escape sent to
+  // it; one that survives both is taken out, so the next case starts clean.
+  for (let i = 0; i < 6 && (await exists(`document.querySelector('.modal-overlay')`).catch(() => false)); i++) {
+    await ev(`(() => { const o = [...document.querySelectorAll('.modal-overlay')].pop(); const b = o.querySelector('${tid('dialog-cancel')}') ?? o.querySelector('.btn-secondary');
+      if (${i} < 2 && b) b.click(); else if (${i} < 4) o.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true })); else o.remove(); return true; })()`).catch(() => {});
+    await sleep(150);
   }
   await closeMenus().catch(() => {});
   if ((await ev('document.documentElement.lang').catch(() => 'zh-CN')) !== 'zh-CN') await ev(`document.getElementById('btn-lang').click(), true`).catch(() => {});
