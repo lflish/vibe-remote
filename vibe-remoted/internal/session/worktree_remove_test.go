@@ -151,13 +151,32 @@ func wantRemoveError(t *testing.T, err error) *WorktreeRemoveError {
 	return failed
 }
 
+// gitWrapperPreamble names the parts of a git command line of the daemon for a
+// wrapper script, so that the scripts do not count arguments: the daemon runs
+// "git -c core.fsmonitor=false -C <dir> <subcommand> <word> …", and the test's
+// own runGit runs "git -C <dir> <subcommand> <word> …". $GIT_DIR_ARG is <dir>,
+// $GIT_SUB the subcommand and $GIT_SUB2 the word after it ("" when there is
+// none); "$@" stays what git was given.
+const gitWrapperPreamble = `GIT_DIR_ARG= GIT_SUB= GIT_SUB2=
+__n=1
+while [ $__n -le $# ]; do
+  eval "__a=\${$__n}"
+  case "$__a" in
+    -c) __n=$((__n+2));;
+    -C) eval "GIT_DIR_ARG=\${$((__n+1))}"; __n=$((__n+2));;
+    *) GIT_SUB=$__a; [ $__n -lt $# ] && eval "GIT_SUB2=\${$((__n+1))}"; break;;
+  esac
+done
+`
+
 // installGitWrapper prepends a git to PATH that runs body (sh; "$@" are git's
-// arguments, $REAL is the real git) and then, unless body exited, the real git.
+// arguments, $REAL is the real git, and gitWrapperPreamble's variables name
+// the directory and the subcommand) and then, unless body exited, the real git.
 func installGitWrapper(t *testing.T, body string) {
 	t.Helper()
 	real := realGit(t)
 	dir := t.TempDir()
-	writeFakeGit(t, dir, "#!/bin/sh\nREAL='"+real+"'\n"+body+"\nexec \"$REAL\" \"$@\"\n")
+	writeFakeGit(t, dir, "#!/bin/sh\nREAL='"+real+"'\n"+gitWrapperPreamble+body+"\nexec \"$REAL\" \"$@\"\n")
 	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
 }
 
@@ -1456,7 +1475,7 @@ func TestRemoveDeletesBranchByFullRef(t *testing.T) {
 		req := request(f.status())
 		req.DeleteBranch = true
 		origPATH := os.Getenv("PATH")
-		installGitWrapper(t, `case " $* " in *" worktree remove "*) "$REAL" "$@" || exit $?; "$REAL" -C "$2" update-ref refs/heads/fix-login `+later+`; exit 0;; esac`)
+		installGitWrapper(t, `case " $* " in *" worktree remove "*) "$REAL" "$@" || exit $?; "$REAL" -C "$GIT_DIR_ARG" update-ref refs/heads/fix-login `+later+`; exit 0;; esac`)
 		res, err := f.remove(req)
 		t.Setenv("PATH", origPATH)
 		if err != nil {

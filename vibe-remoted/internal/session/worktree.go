@@ -58,37 +58,36 @@ var gitStrippedEnv = map[string]bool{
 
 // gitEnv returns the process environment with the repository-redirecting
 // variables removed and LC_ALL pinned to C, so git's output is stable and
-// always describes the directory passed with -C.
-//
-// It also turns core.fsmonitor off, for every git process the daemon starts
-// and the ones those start (`git worktree remove` runs a status of its own):
-// that setting makes any command that reads the index run a program named in
-// the repository's configuration, and the daemon's looking at a repository
-// must not run one. It is passed as GIT_CONFIG_COUNT/KEY/VALUE, which rank
-// like -c and above the configuration files, after whatever configuration the
-// daemon's own environment already passes that way.
+// always describes the directory passed with -C. Configuration the daemon's
+// own environment passes to git (GIT_CONFIG_COUNT, GIT_CONFIG_PARAMETERS) is
+// left as it is.
 func gitEnv() []string {
-	environ := os.Environ()
-	inherited := 0
-	for _, kv := range environ {
-		if val, ok := strings.CutPrefix(kv, "GIT_CONFIG_COUNT="); ok {
-			if n, err := strconv.Atoi(val); err == nil && n > 0 {
-				inherited = n
-			}
-		}
-	}
-	ownKey, ownValue := fmt.Sprintf("GIT_CONFIG_KEY_%d", inherited), fmt.Sprintf("GIT_CONFIG_VALUE_%d", inherited)
 	var env []string
-	for _, kv := range environ {
+	for _, kv := range os.Environ() {
 		key, _, _ := strings.Cut(kv, "=")
-		if gitStrippedEnv[key] || key == "GIT_CONFIG_COUNT" || key == ownKey || key == ownValue {
+		if gitStrippedEnv[key] {
 			continue
 		}
 		env = append(env, kv)
 	}
-	return append(env, "LC_ALL=C",
-		fmt.Sprintf("GIT_CONFIG_COUNT=%d", inherited+1), ownKey+"=core.fsmonitor", ownValue+"=false")
+	return append(env, "LC_ALL=C")
 }
+
+// gitFixedArgs start every git command line of the daemon, before -C and the
+// subcommand. They turn core.fsmonitor off: that setting makes any command
+// that reads the index run a program named in the repository's configuration,
+// and the daemon does not run that program — not to look at a worktree, and
+// not to create or remove one. It is given as -c, which every git version
+// reads, which ranks above the configuration files and whatever the
+// environment passes, and which git hands on (GIT_CONFIG_PARAMETERS) to the
+// git processes it starts itself: `git worktree remove` runs a status of its
+// own. The environment form, GIT_CONFIG_COUNT, is ignored by git before 2.31.
+//
+// This is about core.fsmonitor only. A repository's clean and smudge filters
+// and its hooks are git's own business and do run: a status re-filters a file
+// whose timestamp changed, and `git worktree add` checks files out and runs
+// post-checkout.
+var gitFixedArgs = []string{"-c", "core.fsmonitor=false"}
 
 // gitAtTimeout runs git under gitTimeout; see gitWithin.
 func gitAtTimeout(dir string, args ...string) ([]byte, error) {
@@ -103,7 +102,8 @@ func gitAtTimeout(dir string, args ...string) ([]byte, error) {
 func gitWithin(timeout time.Duration, dir string, args ...string) ([]byte, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, "git", append([]string{"-C", dir}, args...)...)
+	argv := append(append(append([]string{}, gitFixedArgs...), "-C", dir), args...)
+	cmd := exec.CommandContext(ctx, "git", argv...)
 	cmd.Env = gitEnv()
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	cmd.Cancel = func() error {
@@ -326,7 +326,7 @@ func nonEmptyLines(out []byte) int {
 
 // DirtyFiles counts the uncommitted and untracked files of a worktree; files
 // git ignores are not counted (H10). It does not run the repository's
-// core.fsmonitor program: gitEnv turns that off for every call.
+// core.fsmonitor program: gitFixedArgs turn that off for every call.
 func DirtyFiles(worktreeDir string) (int, error) {
 	out, err := gitAtTimeout(worktreeDir, "status", "--porcelain", "--untracked-files=all")
 	if err != nil {

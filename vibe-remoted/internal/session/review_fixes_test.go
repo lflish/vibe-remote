@@ -162,8 +162,7 @@ func TestUndoUnderSymlinkedContainer(t *testing.T) {
 	}
 	t.Run("create_fails_after_add", func(t *testing.T) {
 		repo, target := symlinkedContainerRepo(t)
-		// $1 $2 are "-C <dir>".
-		installGitWrapper(t, `if [ "$3" = symbolic-ref ]; then echo "fatal: simulated" >&2; exit 128; fi`)
+		installGitWrapper(t, `if [ "$GIT_SUB" = symbolic-ref ]; then echo "fatal: simulated" >&2; exit 128; fi`)
 		_, err := CreateWorktree(WorktreeSpec{Source: repo, SessionID: "s1", Name: "feat"})
 		if err == nil || strings.Contains(err.Error(), "cleanup:") {
 			t.Fatalf("err = %v, want the create to fail with a clean undo", err)
@@ -260,7 +259,7 @@ func TestProjectsKeepsRecordOfExistingWorktree(t *testing.T) {
 		f := newRemoveFixture(t, 1)
 		managedRow(t, f.m, f.root)
 		origPATH := os.Getenv("PATH")
-		installGitWrapper(t, `if [ "$3" = worktree ] && [ "$4" = list ]; then echo "fatal: simulated" >&2; exit 128; fi`)
+		installGitWrapper(t, `if [ "$GIT_SUB" = worktree ] && [ "$GIT_SUB2" = list ]; then echo "fatal: simulated" >&2; exit 128; fi`)
 		p := findProject(f.m.Projects(allowAny), f.repo)
 		if p == nil || p.Error != "git_failed" {
 			t.Fatalf("project while git fails = %+v, want git_failed", p)
@@ -708,18 +707,35 @@ func TestCreateAndRemoveWorktreeDoNotRunFsmonitor(t *testing.T) {
 }
 
 // Configuration the daemon's own environment passes to git (a container that
-// sets safe.directory this way) is kept; the daemon's setting is added to it.
+// sets safe.directory this way) is kept, and the daemon's core.fsmonitor=false
+// comes on top of it — also when the environment sets core.fsmonitor itself.
 func TestGitEnvKeepsInheritedConfig(t *testing.T) {
 	repo := tempRepo(t)
-	t.Setenv("GIT_CONFIG_COUNT", "1")
-	t.Setenv("GIT_CONFIG_KEY_0", "vibe.inherited")
-	t.Setenv("GIT_CONFIG_VALUE_0", "kept")
-	for key, want := range map[string]string{"vibe.inherited": "kept", "core.fsmonitor": "false"} {
-		out, err := gitAtTimeout(repo, "config", "--get", key)
-		if err != nil || strings.TrimSpace(string(out)) != want {
-			t.Fatalf("git config %s = %q, %v; want %q", key, out, err, want)
+	check := func(t *testing.T) {
+		t.Helper()
+		for key, want := range map[string]string{"vibe.inherited": "kept", "core.fsmonitor": "false"} {
+			out, err := gitAtTimeout(repo, "config", "--get", key)
+			if err != nil || strings.TrimSpace(string(out)) != want {
+				t.Fatalf("git config %s = %q, %v; want %q", key, out, err, want)
+			}
 		}
 	}
+	// The form git has had since 1.7.3, and the one -c itself is handed on in.
+	t.Run("GIT_CONFIG_PARAMETERS", func(t *testing.T) {
+		t.Setenv("GIT_CONFIG_PARAMETERS", "'vibe.inherited=kept' 'core.fsmonitor=/nonexistent/fsmonitor'")
+		check(t)
+	})
+	t.Run("GIT_CONFIG_COUNT", func(t *testing.T) {
+		t.Setenv("GIT_CONFIG_COUNT", "2")
+		t.Setenv("GIT_CONFIG_KEY_0", "vibe.inherited")
+		t.Setenv("GIT_CONFIG_VALUE_0", "kept")
+		t.Setenv("GIT_CONFIG_KEY_1", "core.fsmonitor")
+		t.Setenv("GIT_CONFIG_VALUE_1", "/nonexistent/fsmonitor")
+		if out, _ := exec.Command("git", "-C", repo, "config", "--get", "vibe.inherited").Output(); strings.TrimSpace(string(out)) != "kept" {
+			t.Skip("this git does not read GIT_CONFIG_COUNT (it is older than 2.31): there is nothing of this form to keep")
+		}
+		check(t)
+	})
 }
 
 // reviewNameVectors are the names the two rules added after the review decide.
@@ -1001,11 +1017,11 @@ func shortGitLimit(t *testing.T, limit *time.Duration, d time.Duration) {
 // call counts as a failure, and the next create or removal in that repository
 // goes ahead.
 func TestStuckGitReleasesTheRepositoryLock(t *testing.T) {
-	// stuck makes the git subcommand given as "$3 [$4]" sleep far longer than
+	// stuck makes the git subcommand given as "<subcommand> [<its first word>]" sleep far longer than
 	// the test waits; everything else runs normally.
 	stuck := func(t *testing.T, match string) {
 		t.Helper()
-		installGitWrapper(t, `case "$3 $4" in `+match+`) sleep 120;; esac`)
+		installGitWrapper(t, `case "$GIT_SUB $GIT_SUB2" in `+match+`) sleep 120;; esac`)
 	}
 	createOther := func(t *testing.T, f *removeFixture) error {
 		t.Helper()

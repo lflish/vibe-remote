@@ -210,3 +210,85 @@ func TestRemoveWorktreeRefusedWhenTmuxSocketDoesNotAnswer(t *testing.T) {
 		t.Fatal("the directory or the branch was removed without the sessions being known")
 	}
 }
+
+// gitWithoutConfigEnvironment makes the git on PATH behave like git before
+// 2.31 in the one way that matters here: it does not read configuration from
+// GIT_CONFIG_COUNT / GIT_CONFIG_KEY_<n> / GIT_CONFIG_VALUE_<n> (Debian 11 ships
+// 2.30, Ubuntu 20.04 ships 2.25).
+func gitWithoutConfigEnvironment(t *testing.T) {
+	t.Helper()
+	installGitWrapper(t, `for v in $(env | sed -n 's/^\(GIT_CONFIG_COUNT\)=.*/\1/p; s/^\(GIT_CONFIG_KEY_[0-9]*\)=.*/\1/p; s/^\(GIT_CONFIG_VALUE_[0-9]*\)=.*/\1/p'); do unset "$v"; done`)
+}
+
+// core.fsmonitor is turned off in a way every git understands: on the command
+// line (-c), which git has always had and hands on to the git processes it
+// starts itself. The environment form (GIT_CONFIG_COUNT) is ignored by git
+// before 2.31, where looking at a worktree then ran the repository's program.
+func TestFsmonitorStaysOffOnGitWithoutConfigEnvironment(t *testing.T) {
+	f := newRemoveFixture(t, 0)
+	writeFiles(t, f.root, "untracked.txt", "node_modules/x.js")
+	ran, _ := fsmonitorProbe(t, f.repo, f.root)
+	gitWithoutConfigEnvironment(t)
+	step := func(name string) {
+		t.Helper()
+		if ran() {
+			t.Fatalf("%s ran the repository's core.fsmonitor program", name)
+		}
+	}
+
+	st := f.status()
+	if st.DirtyFiles != 1 || st.IgnoredFiles != 1 {
+		t.Fatalf("status = %+v, want 1 dirty and 1 ignored", st)
+	}
+	step("WorktreeStatus")
+	if plan, err := f.m.PlanWorktree(f.root, "another", nil); err != nil || !plan.OK {
+		t.Fatalf("plan = %+v, %v", plan, err)
+	}
+	step("PlanWorktree")
+	req := request(st)
+	req.DiscardFiles, req.DeleteBranch = true, true
+	f.mustRemove(req)
+	step("RemoveWorktree") // git worktree remove runs a status of its own
+	created, err := CreateWorktree(WorktreeSpec{Source: f.repo, SessionID: "s1", Name: "again"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	step("CreateWorktree")
+	if err := created.Undo(); err != nil {
+		t.Fatal(err)
+	}
+	step("Undo")
+}
+
+// Every git command line of the daemon starts with the setting, before -C and
+// the subcommand.
+func TestEveryGitCallTurnsFsmonitorOff(t *testing.T) {
+	f := newRemoveFixture(t, 0)
+	log := installArgLoggingGit(t)
+	st := f.status()
+	if _, err := f.m.PlanWorktree(f.repo, "another", nil); err != nil {
+		t.Fatal(err)
+	}
+	f.m.Projects(allowAny)
+	ChatTrust(f.root)
+	req := request(st)
+	req.DeleteBranch = true
+	f.mustRemove(req)
+	created, err := CreateWorktree(WorktreeSpec{Source: f.repo, SessionID: "s1", Name: "again"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := created.Undo(); err != nil {
+		t.Fatal(err)
+	}
+
+	raw := rawGitCalls(t, log)
+	if len(raw) < 10 {
+		t.Fatalf("only %d git calls were recorded: the check below proves little", len(raw))
+	}
+	for _, call := range raw {
+		if len(call) < 4 || call[0] != "-c" || call[1] != "core.fsmonitor=false" || call[2] != "-C" {
+			t.Fatalf("git was run as %q, want it to start with -c core.fsmonitor=false -C <dir>", call)
+		}
+	}
+}

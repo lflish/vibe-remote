@@ -600,9 +600,8 @@ func installArgLoggingGit(t *testing.T) string {
 	return log
 }
 
-// loggedGitCalls returns the recorded calls with the leading "-C <dir>" removed,
-// so each starts with the git subcommand.
-func loggedGitCalls(t *testing.T, log string) [][]string {
+// rawGitCalls returns the recorded calls, each with every argument git got.
+func rawGitCalls(t *testing.T, log string) [][]string {
 	t.Helper()
 	data, err := os.ReadFile(log)
 	if os.IsNotExist(err) {
@@ -615,14 +614,29 @@ func loggedGitCalls(t *testing.T, log string) [][]string {
 	var cur []string
 	for _, line := range strings.Split(strings.TrimSuffix(string(data), "\n"), "\n") {
 		if line == gitCallEnd {
-			if len(cur) >= 2 && cur[0] == "-C" {
-				cur = cur[2:]
-			}
 			calls = append(calls, cur)
 			cur = nil
 			continue
 		}
 		cur = append(cur, line)
+	}
+	return calls
+}
+
+// loggedGitCalls returns the recorded calls with what every call of the daemon
+// starts with removed (the leading "-c core.fsmonitor=false" and "-C <dir>"),
+// so each starts with the git subcommand.
+func loggedGitCalls(t *testing.T, log string) [][]string {
+	t.Helper()
+	var calls [][]string
+	for _, cur := range rawGitCalls(t, log) {
+		if len(cur) >= 2 && cur[0] == "-c" && cur[1] == "core.fsmonitor=false" {
+			cur = cur[2:]
+		}
+		if len(cur) >= 2 && cur[0] == "-C" {
+			cur = cur[2:]
+		}
+		calls = append(calls, cur)
 	}
 	return calls
 }

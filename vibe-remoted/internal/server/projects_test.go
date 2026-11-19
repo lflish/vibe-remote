@@ -1128,7 +1128,9 @@ func TestWorktreeRemoveEndpoint(t *testing.T) {
 		// A commit lands just before the daemon re-reads HEAD, as from a session
 		// that was still working while it was being ended.
 		flag := filepath.Join(t.TempDir(), "armed")
-		gitWrapper(t, `if [ -e '`+flag+`' ] && [ "$3 $4" = "rev-parse HEAD" ]; then rm -f '`+flag+`'; "$REAL" -C "$2" -c user.email=t@example.com -c user.name=T commit -q --allow-empty -m late; fi`)
+		// The daemon runs "git -c core.fsmonitor=false -C <dir> rev-parse HEAD":
+		// $4 is the directory, $5 and $6 the subcommand and its argument.
+		gitWrapper(t, `if [ -e '`+flag+`' ] && [ "$5 $6" = "rev-parse HEAD" ]; then rm -f '`+flag+`'; "$REAL" -C "$4" -c user.email=t@example.com -c user.name=T commit -q --allow-empty -m late; fi`)
 		if err := os.WriteFile(flag, nil, 0o644); err != nil {
 			t.Fatal(err)
 		}
