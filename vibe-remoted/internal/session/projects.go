@@ -475,12 +475,14 @@ func listedWorktree(home Home, path string) ([]Worktree, int, error) {
 }
 
 // sessionsIn returns the ids of the sessions that lose their directory when
-// the worktree at root goes: those attributed to it, and those with no
-// attribution yet whose workdir is in it (design 6.2 step 3). Oldest first.
+// the worktree at root goes (design 6.2 step 3): those attributed to it, and
+// those whose workdir is in it whatever they are attributed to — no
+// attribution yet, or a repository of its own nested in the worktree. The
+// workdir test is the one beginStart and markRemoving apply. Oldest first.
 func (m *Manager) sessionsIn(root string) []string {
 	var in []sessAttr
 	for _, s := range m.collectSessions() {
-		if s.home == root || (s.project == "" && s.home == "" && within(root, s.workdir)) {
+		if (s.home != "" && within(root, s.home)) || within(root, s.workdir) {
 			in = append(in, s)
 		}
 	}

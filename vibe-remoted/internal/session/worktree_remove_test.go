@@ -931,8 +931,13 @@ func TestRemoveRefusedWhenNestedWorktree(t *testing.T) {
 	log := installArgLoggingGit(t)
 
 	st := f.status()
-	if st.DirtyFiles != 0 || st.UnmergedCommits != 0 || len(st.Sessions) != 0 {
+	if st.DirtyFiles != 0 || st.UnmergedCommits != 0 {
 		t.Fatalf("outer status = %+v: git sees nothing of the nested worktree", st)
+	}
+	// The session's directory is inside the outer worktree, so it is one of
+	// those that would lose it (sessions are found by directory).
+	if !reflect.DeepEqual(st.Sessions, []string{innerSession}) {
+		t.Fatalf("outer status sessions = %v, want the nested worktree's session %s", st.Sessions, innerSession)
 	}
 	req := request(st)
 	req.DeleteBranch = true
