@@ -1,6 +1,7 @@
 package session
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -421,12 +422,40 @@ func locateWorktree(path string, allow AllowFunc) (Home, error) {
 	}
 	home, err := ResolveHome(path)
 	if err != nil {
+		if !errors.Is(err, context.DeadlineExceeded) && orphanedWorktreeDir(path) {
+			return Home{}, ErrWorktreeNotFound
+		}
 		return Home{}, fmt.Errorf("read repository: %w", err)
 	}
 	if !home.Git || home.Path != path {
 		return Home{}, ErrWorktreeNotFound
 	}
 	return home, nil
+}
+
+// orphanedWorktreeDir reports whether dir is what a half-finished removal
+// leaves behind: a linked worktree's directory whose .git file still names an
+// administrative directory that git has already deleted. git cannot read such
+// a directory, and no repository lists it any more.
+func orphanedWorktreeDir(dir string) bool {
+	dotGit := filepath.Join(dir, ".git")
+	info, err := os.Lstat(dotGit)
+	if err != nil || !info.Mode().IsRegular() || info.Size() > 4096 {
+		return false
+	}
+	data, err := os.ReadFile(dotGit)
+	if err != nil {
+		return false
+	}
+	target, ok := strings.CutPrefix(strings.TrimSpace(string(data)), "gitdir: ")
+	if !ok || target == "" {
+		return false
+	}
+	if !filepath.IsAbs(target) {
+		target = filepath.Join(dir, target)
+	}
+	_, err = os.Stat(target)
+	return os.IsNotExist(err)
 }
 
 // listedWorktree reads the repository's worktree list and returns it with the

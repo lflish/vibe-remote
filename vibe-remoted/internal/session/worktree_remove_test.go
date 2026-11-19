@@ -1150,11 +1150,40 @@ func TestRemovePartialFailureReported(t *testing.T) {
 	if branchOID(t, f.repo, "fix-login") != tip {
 		t.Fatal("the branch was removed or moved")
 	}
+	// What is left is a directory whose .git points at nothing: asking about
+	// it again says "no such worktree" (the desktop then explains what is
+	// left), not "git failed".
+	if _, err := f.m.WorktreeStatus(f.root, allowAny); !errors.Is(err, ErrWorktreeNotFound) {
+		t.Fatalf("status of the leftover directory: %v, want ErrWorktreeNotFound", err)
+	}
+	if _, err := f.remove(protocol.WorktreeRemoveRequest{Path: f.root, Head: tip, Sessions: []string{}, DiscardFiles: true}); !errors.Is(err, ErrWorktreeNotFound) {
+		t.Fatalf("removing the leftover directory: %v, want ErrWorktreeNotFound", err)
+	}
+	if !pathExists(filepath.Join(locked, "file.txt")) {
+		t.Fatal("the leftover directory was touched")
+	}
 	if row := worktreeRow(f.m.Projects(nil), f.root); row != nil {
 		t.Fatalf("the row is still listed: %+v", row)
 	}
 	if f.store.Managed(f.repo, f.root, "fix-login") {
 		t.Fatal("the creation record outlived the worktree")
+	}
+}
+
+// A directory that merely contains a broken .git is not mistaken for the
+// leftover of a removed worktree: that stays a git failure.
+func TestWorktreeStatusBrokenRepositoryIsAFailure(t *testing.T) {
+	dir, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(filepath.Join(dir, ".git"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	m := NewManager(false, "/bin/cat", false, "")
+	_, err = m.WorktreeStatus(dir, allowAny)
+	if err == nil || errors.Is(err, ErrWorktreeNotFound) {
+		t.Fatalf("err = %v, want a git failure", err)
 	}
 }
 

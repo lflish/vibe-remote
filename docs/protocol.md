@@ -438,7 +438,7 @@ HTTP 错误：缺 `workdir` → 400 `{"error":"invalid_request"}`；`workdir` �
 | `ignoredFiles` | number | | 被 git 忽略、会随目录一起删除的文件数（逐个文件数，目录不折叠；嵌在被忽略目录里的另一个 git 仓库算 1）。恒有值；`-1` 表示没数出来（这一项超时或失败不影响其它字段）。它只是给人看的说明：没有对应的同意项，删除时 daemon 不比对它 |
 | `sessions` | string[] | | 会随这个 worktree 一起结束的会话：归属它的（含已结束的对话会话），以及还没有归属、工作目录在它下面的。恒为数组 |
 
-错误：缺 `path` → 400 `{"error":"invalid_request"}`；404 `worktree_not_found`（见上；仓库是子模块或用了独立的 git 目录时也是它）；git 执行失败或超时 → 500 `{"error":"git_failed","message"}`。
+错误：缺 `path` → 400 `{"error":"invalid_request"}`；404 `worktree_not_found`（见上；仓库是子模块或用了独立的 git 目录时也是它；删除删到一半、git 已经不再登记而目录还剩一部分时也是它）；git 执行失败或超时 → 500 `{"error":"git_failed","message"}`。
 
 `POST /api/v1/worktrees/remove`，请求体：
 
