@@ -1,6 +1,7 @@
 // worktree-dialogs.ts: the new-worktree dialog (T9), the new-session dialog for
-// an existing worktree (T11) and the delete-session confirmation (T12). Driven
-// through the real REST client against a fake daemon behind fetch.
+// an existing worktree (T11), the delete-session confirmation (T12) and the
+// delete-worktree confirmation and flow (T14). Driven through the real REST
+// client against a fake daemon behind fetch.
 import { strict as assert } from 'node:assert';
 import { indexDom, load, runner } from './chat-test-util.mjs';
 import { INFO_V4, afterDebounce, click, fakeDaemon, overlay, planFor, pressKey, settle, tid, typeInto } from './dialog-test-util.mjs';
@@ -9,7 +10,10 @@ const page = await indexDom();
 localStorage.setItem('vibe-remote.locale', 'zh');
 let sockets = 0;
 globalThis.WebSocket = class { constructor() { sockets++; } };
-const { openNewWorktreeDialog, openWorktreeSessionDialog, confirmDeleteSession } = await load('src/renderer/worktree-dialogs.ts', { platform: 'browser' });
+const {
+  openNewWorktreeDialog, openWorktreeSessionDialog, confirmDeleteSession,
+  confirmDeleteWorktree, showDeleteWorktreeFailure, deleteWorktreeFlow, RestError,
+} = await load('scripts/worktree-dialogs-entry.ts', { platform: 'browser' });
 const { t } = await load('src/renderer/i18n.ts', { platform: 'browser' });
 
 const { test, run } = runner('test-worktree-dialogs');
@@ -399,6 +403,551 @@ test('delete_session_enter_cancels', async () => {
   e.confirm.focus();
   pressKey(e.confirm, 'Enter');
   assert.equal(await e.result, true);
+});
+
+// --- T14: delete-worktree confirmation ---
+
+const HEAD = '9f8e7d6c5b4a39281706f5e4d3c2b1a098765432';
+const status = (over = {}) => ({
+  path: WT_PATH, project: MAIN, branch: 'fix-login', head: HEAD, main: false, managed: true,
+  dirtyFiles: 0, unmergedCommits: 0, ignoredFiles: 0, sessions: [], ...over,
+});
+const EXT_PATH = '/r/devflow/.devflow-tmp/worktrees/general-skills';
+const external = (over = {}) => status({ path: EXT_PATH, branch: 'change/general-skills', managed: false, ...over });
+const detached = (over = {}) => {
+  const st = status({ path: '/r/devflow-worktrees/tmp', managed: false, detached: true, ...over });
+  delete st.branch;
+  return st;
+};
+
+function openWt(st, opts = {}) {
+  const d = openConfirm(confirmDeleteWorktree(st, { label: st.branch ?? st.head.slice(0, 7), changed: false, ...opts }));
+  const dialog = tid('delete-wt-dialog', d.root);
+  return {
+    ...d, dialog, variant: dialog?.dataset.variant,
+    force: tid('delete-wt-force', d.root),
+    text: (id) => tid(id, d.root)?.textContent,
+    has: (id) => tid(id, d.root) !== null,
+    enter: () => pressKey(document.activeElement, 'Enter'),
+  };
+}
+const BASE = { path: WT_PATH, head: HEAD, sessions: [] };
+
+test('delete_wt_clean', async () => {
+  const d = openWt(status({ sessions: ['s1'] }));
+  assertShell(d.root);
+  assert.equal(d.variant, 'clean');
+  assert.equal(d.root.querySelector('.modal-title').textContent, '删除 worktree fix-login？');
+  assert.ok(d.root.querySelector('.modal-body').textContent.includes('工作区是干净的，分支上的提交都已包含在其他分支里。目录和分支都会删除。'));
+  for (const id of ['delete-wt-files', 'delete-wt-commits', 'delete-wt-external', 'delete-wt-keep-branch', 'delete-wt-force', 'delete-wt-changed', 'delete-wt-error', 'delete-wt-ignored', 'delete-wt-ended']) {
+    assert.equal(d.has(id), false, id);
+  }
+  assert.equal(d.confirm.textContent, '删除');
+  assert.equal(d.cancel.textContent, '取消');
+  // Which worktree this is about: its directory and branch, as text.
+  const body = d.root.querySelector('.modal-body').textContent;
+  assert.ok(body.includes(WT_PATH) && body.includes('目录') && body.includes('分支'), body);
+  click(d.confirm);
+  assert.deepEqual(await d.result, { path: WT_PATH, head: HEAD, sessions: ['s1'], deleteBranch: true });
+  assert.equal(overlay(), null);
+
+  const e = openWt(status());
+  click(e.cancel);
+  assert.equal(await e.result, null);
+  const f = openWt(status());
+  pressKey(f.confirm, 'Escape');
+  assert.equal(await f.result, null);
+});
+
+test('delete_wt_files', async () => {
+  const d = openWt(status({ dirtyFiles: 3 }));
+  assert.equal(d.variant, 'files');
+  assert.equal(d.root.querySelector('.modal-title').textContent, 'fix-login 里有还没提交的文件');
+  assert.equal(d.text('delete-wt-files'), '有 3 个文件未提交或未跟踪。删除 worktree 会丢弃它们，无法恢复。');
+  assert.equal(document.activeElement, d.cancel, 'the initial focus is on Cancel');
+  assert.ok(d.force, 'the confirm button is the force button');
+  assert.equal(d.force.textContent, '仍然删除');
+  assert.equal(d.confirm, null, 'no plain delete button next to it');
+  assert.ok(d.root.querySelector('.modal-footer').textContent.includes('回车 = 取消'));
+  click(d.cancel);
+  assert.equal(await d.result, null);
+
+  const e = openWt(status({ dirtyFiles: 3 }));
+  click(e.force);
+  // Clean history on a branch vibe-remote created: the branch goes too (see delete_wt_files_managed_merged).
+  assert.deepEqual(await e.result, { ...BASE, discardFiles: true, deleteBranch: true });
+});
+
+test('delete_wt_commits', async () => {
+  const d = openWt(status({ unmergedCommits: 2 }));
+  assert.equal(d.variant, 'commits');
+  assert.equal(d.root.querySelector('.modal-title').textContent, 'fix-login 有 2 个未合并的提交');
+  assert.equal(d.text('delete-wt-commits'), '这 2 个提交不在其他任何本地分支或远程分支上。');
+  const keep = tid('delete-wt-keep-branch', d.root);
+  const drop = tid('delete-wt-delete-branch', d.root);
+  assert.equal(keep.type, 'radio');
+  assert.equal(keep.checked, true, 'keeping the branch is preselected');
+  assert.equal(drop.checked, false);
+  const options = d.root.querySelector('.modal-body').textContent;
+  assert.ok(options.includes('只删目录、保留分支') && options.includes('提交还在分支 fix-login 上，以后可以再检出'), options);
+  assert.ok(options.includes('目录和分支都删') && options.includes('这 2 个提交将不再属于任何分支'), options);
+  assert.equal(d.has('delete-wt-force'), false);
+  d.enter();
+  assert.deepEqual(await d.result, BASE, 'Enter deletes the directory only');
+
+  const e = openWt(status({ unmergedCommits: 2 }));
+  const drop2 = tid('delete-wt-delete-branch', e.root);
+  drop2.checked = true;
+  drop2.dispatchEvent(new Event('change', { bubbles: true }));
+  click(e.confirm);
+  assert.deepEqual(await e.result, { ...BASE, deleteBranch: true, dropCommits: true });
+});
+
+test('delete_wt_external', async () => {
+  const d = openWt(external({ unmergedCommits: 4 }));
+  assert.equal(d.variant, 'external');
+  assert.equal(d.root.querySelector('.modal-title').textContent, '删除 worktree change/general-skills？');
+  const text = d.text('delete-wt-external');
+  assert.ok(text.includes('不是由 vibe-remote 创建') && text.includes('change/general-skills'), text);
+  assert.equal(d.has('delete-wt-keep-branch'), false, 'no branch choice: the branch always stays');
+  assert.equal(d.has('delete-wt-delete-branch'), false);
+  assert.equal(d.has('delete-wt-commits'), false);
+  click(d.confirm);
+  assert.deepEqual(await d.result, { path: EXT_PATH, head: HEAD, sessions: [] });
+});
+
+test('delete_wt_detached', async () => {
+  const d = openWt(detached({ unmergedCommits: 2 }));
+  assert.equal(d.variant, 'detached');
+  assert.equal(d.root.querySelector('.modal-title').textContent, '9f8e7d6 有 2 个不属于任何分支的提交');
+  assert.equal(d.text('delete-wt-commits'), '这 2 个提交删除后不再属于任何分支，无法恢复。');
+  assert.equal(document.activeElement, d.cancel);
+  assert.equal(d.has('delete-wt-keep-branch'), false);
+  assert.equal(d.text('delete-wt-external'), '这个 worktree 不是由 vibe-remote 创建。');
+  click(d.force);
+  assert.deepEqual(await d.result, { path: '/r/devflow-worktrees/tmp', head: HEAD, sessions: [], dropCommits: true });
+});
+
+test('delete_wt_detached_clean', async () => {
+  // The dialog goes by the status it is given; `managed` keeps the external line out of this case.
+  const d = openWt(detached({ managed: true }));
+  assert.equal(d.variant, 'clean');
+  assert.ok(d.root.querySelector('.modal-body').textContent.includes(t('wt.delete.cleanDetached')));
+  assert.ok(!d.root.querySelector('.modal-body').textContent.includes(t('wt.delete.clean')));
+  assert.equal(d.has('delete-wt-force'), false);
+  click(d.confirm);
+  assert.deepEqual(await d.result, { path: '/r/devflow-worktrees/tmp', head: HEAD, sessions: [] });
+});
+
+test('delete_wt_external_detached', async () => {
+  const d = openWt(detached());
+  assert.equal(d.text('delete-wt-external'), t('wt.delete.externalDetached'));
+  assert.ok(d.root.querySelector('.modal-body').textContent.includes(t('wt.delete.cleanDetached')));
+  assert.equal(d.has('delete-wt-force'), false);
+  d.enter();
+  assert.deepEqual(await d.result, { path: '/r/devflow-worktrees/tmp', head: HEAD, sessions: [] });
+});
+
+test('delete_wt_sessions_line', async () => {
+  const d = openWt(status({ sessions: ['s1', 's2'] }));
+  assert.equal(d.variant, 'clean');
+  assert.equal(d.text('delete-wt-sessions'), '会先结束这 2 个会话。');
+  click(d.confirm);
+  const req = await d.result;
+  assert.deepEqual(req.sessions, ['s1', 's2']);
+  const none = openWt(status());
+  assert.equal(none.has('delete-wt-sessions'), false);
+  click(none.cancel);
+  await none.result;
+});
+
+test('delete_wt_ignored_note', async () => {
+  const d = openWt(status({ ignoredFiles: 4 }));
+  assert.equal(d.variant, 'clean', 'ignored files do not change what kind of dialog this is');
+  assert.equal(d.has('delete-wt-files'), false);
+  assert.equal(d.text('delete-wt-ignored'), '另有 4 个被 git 忽略的文件会一并删除。');
+  d.enter();
+  assert.deepEqual(await d.result, { ...BASE, deleteBranch: true }, 'Enter deletes; no consent goes with the note');
+
+  for (const st of [status({ ignoredFiles: 0 }), (() => { const s = status(); delete s.ignoredFiles; return s; })()]) {
+    const none = openWt(st);
+    assert.equal(none.has('delete-wt-ignored'), false);
+    click(none.cancel);
+    await none.result;
+  }
+
+  const unknown = openWt(status({ ignoredFiles: -1 }));
+  assert.equal(unknown.text('delete-wt-ignored'), t('wt.delete.ignoredUnknown'));
+  assert.ok(!/\d/.test(unknown.text('delete-wt-ignored')), 'no number when it could not be counted');
+  assert.equal(unknown.variant, 'clean');
+  click(unknown.cancel);
+  await unknown.result;
+
+  const files = openWt(status({ dirtyFiles: 3, ignoredFiles: 4 }));
+  assert.equal(files.variant, 'files');
+  assert.ok(files.has('delete-wt-files') && files.has('delete-wt-ignored'));
+  files.enter();
+  assert.equal(await files.result, null, 'Enter still cancels');
+});
+
+test('delete_wt_files_and_commits', async () => {
+  const st = status({ dirtyFiles: 3, unmergedCommits: 2 });
+  const d = openWt(st);
+  assert.equal(d.variant, 'files');
+  assert.ok(d.has('delete-wt-files') && d.has('delete-wt-commits'));
+  assert.equal(document.activeElement, d.cancel);
+  assert.equal(tid('delete-wt-keep-branch', d.root).checked, true);
+  d.enter();
+  assert.equal(await d.result, null, 'Enter cancels');
+
+  const e = openWt(st);
+  click(e.force);
+  assert.deepEqual(await e.result, { ...BASE, discardFiles: true });
+
+  const f = openWt(st);
+  const drop = tid('delete-wt-delete-branch', f.root);
+  drop.checked = true;
+  drop.dispatchEvent(new Event('change', { bubbles: true }));
+  click(f.force);
+  assert.deepEqual(await f.result, { ...BASE, discardFiles: true, deleteBranch: true, dropCommits: true });
+});
+
+test('delete_wt_files_managed_merged', async () => {
+  const d = openWt(status({ dirtyFiles: 3 }));
+  // The branch goes with the directory here, and the dialog says so.
+  assert.ok(d.root.querySelector('.modal-body').textContent.includes(t('wt.delete.branchToo', { branch: 'fix-login' })));
+  assert.ok(!d.root.querySelector('.modal-body').textContent.includes('工作区是干净的'));
+  click(d.force);
+  assert.deepEqual(await d.result, { ...BASE, discardFiles: true, deleteBranch: true });
+
+  const ext = openWt(external({ dirtyFiles: 3 }));
+  assert.equal(ext.variant, 'files');
+  assert.ok(ext.has('delete-wt-external'));
+  click(ext.force);
+  assert.deepEqual(await ext.result, { path: EXT_PATH, head: HEAD, sessions: [], discardFiles: true });
+});
+
+test('delete_wt_enter_key', async () => {
+  const cases = [
+    ['clean', status(), { ...BASE, deleteBranch: true }],
+    ['files', status({ dirtyFiles: 1 }), null],
+    ['detached', detached({ unmergedCommits: 1 }), null],
+    ['commits', status({ unmergedCommits: 2 }), BASE],
+    ['files', status({ dirtyFiles: 1, unmergedCommits: 2 }), null],
+    ['files', detached({ dirtyFiles: 1, unmergedCommits: 1 }), null],
+    ['external', external(), { path: EXT_PATH, head: HEAD, sessions: [] }],
+  ];
+  for (const [variant, st, want] of cases) {
+    const d = openWt(st);
+    assert.equal(d.variant, variant);
+    d.enter();
+    const got = await d.result;
+    if (want === null) assert.equal(got, null, `${variant}: Enter cancels`);
+    else assert.deepEqual(got, { ...want, path: st.path }, `${variant}: Enter deletes`);
+  }
+  // Enter with the focus on a radio runs the default button, not nothing.
+  const d = openWt(status({ unmergedCommits: 2 }));
+  const keep = tid('delete-wt-keep-branch', d.root);
+  keep.focus();
+  pressKey(keep, 'Enter');
+  assert.deepEqual(await d.result, BASE);
+  // Once "delete the branch too" is chosen, Enter no longer deletes: only the button does.
+  const e = openWt(status({ unmergedCommits: 2 }));
+  const drop = tid('delete-wt-delete-branch', e.root);
+  drop.checked = true;
+  drop.dispatchEvent(new Event('change', { bubbles: true }));
+  drop.focus();
+  pressKey(drop, 'Enter');
+  assert.equal(await e.result, null, 'Enter cancels when the choice would drop commits');
+  // A button that has the focus is the one Enter presses.
+  const f = openWt(status({ dirtyFiles: 1 }));
+  f.force.focus();
+  pressKey(f.force, 'Enter');
+  assert.deepEqual(await f.result, { ...BASE, discardFiles: true, deleteBranch: true });
+});
+
+test('delete_wt_text_is_never_markup', async () => {
+  const evil = '<img src=x onerror=alert(1)>';
+  const d = openWt(status({ branch: evil, path: `/r/${evil}`, unmergedCommits: 1 }), { label: evil, changed: true, error: evil, ended: 1 });
+  assert.equal(d.root.querySelector('img'), null);
+  assert.ok(d.text('delete-wt-error').includes(evil));
+  assert.ok(d.root.querySelector('.modal-title').textContent.includes(evil));
+  click(d.cancel);
+  await d.result;
+});
+
+// --- T14: delete-worktree flow ---
+
+const restError = (httpStatus, code, body = {}) => new RestError(httpStatus, code, { error: code, ...body });
+const abortError = () => Object.assign(new Error('The operation timed out.'), { name: 'TimeoutError' });
+
+/**
+ * Runs deleteWorktreeFlow against scripted answers: `statuses` and `removes` are
+ * consumed in order (a value is returned, an Error thrown). Returns helpers to
+ * act on the dialog that is open.
+ */
+function startFlow({ statuses = [], removes = [] }) {
+  const calls = { status: [], remove: [] };
+  const next = (queue, what) => {
+    if (queue.length === 0) throw new Error(`unexpected ${what} call`);
+    const v = queue.shift();
+    if (v instanceof Error) throw v;
+    return v;
+  };
+  const rest = {
+    worktreeStatus: async (path) => { calls.status.push(path); return next(statuses, 'worktreeStatus'); },
+    removeWorktree: async (req) => { calls.remove.push(req); return next(removes, 'removeWorktree'); },
+  };
+  const notices = [];
+  let settled = false;
+  let outcome;
+  const done = deleteWorktreeFlow(rest, { path: WT_PATH, label: 'fix-login' }, (text) => notices.push(text))
+    .then((v) => { settled = true; outcome = v; return v; });
+  const dialog = async () => {
+    await settle(6);
+    page.flushFrames();
+    return overlay();
+  };
+  return {
+    calls, notices, done, settled: () => settled, outcome: () => outcome, dialog,
+    async act(testid) {
+      const root = await dialog();
+      assert.ok(root, `a dialog is open to click ${testid}`);
+      click(tid(testid, root));
+      await settle(6);
+    },
+  };
+}
+
+test('delete_flow_success', async () => {
+  const st = status({ sessions: ['s1', 's2'] });
+  const f = startFlow({ statuses: [st], removes: [{ removed: true, branchDeleted: true, endedSessions: ['s1', 's2'] }] });
+  const root = await f.dialog();
+  assert.equal(tid('delete-wt-dialog', root).dataset.variant, 'clean');
+  assert.equal(tid('delete-wt-changed', root), null);
+  await f.act('dialog-confirm');
+  assert.deepEqual(await f.done, { removed: true, endedSessions: ['s1', 's2'] });
+  assert.deepEqual(f.calls.status, [WT_PATH]);
+  assert.deepEqual(f.calls.remove, [{ path: WT_PATH, head: HEAD, sessions: ['s1', 's2'], deleteBranch: true }]);
+  assert.deepEqual(f.notices, []);
+  assert.equal(overlay(), null);
+});
+
+test('delete_flow_cancel_before_any_request', async () => {
+  const f = startFlow({ statuses: [status()] });
+  await f.act('dialog-cancel');
+  assert.equal(await f.done, null);
+  assert.equal(f.calls.remove.length, 0);
+  assert.deepEqual(f.notices, []);
+});
+
+test('delete_flow_404_notifies_gone', async () => {
+  const f = startFlow({ statuses: [restError(404, 'worktree_not_found')] });
+  assert.equal(await f.done, null);
+  assert.equal(overlay(), null, 'no dialog');
+  assert.deepEqual(f.notices, ['这个 worktree 已经不存在']);
+  assert.equal(f.calls.remove.length, 0);
+
+  // The first look failing some other way: nothing was asked for, say why.
+  const g = startFlow({ statuses: [new Error('offline')] });
+  assert.equal(await g.done, null);
+  assert.equal(overlay(), null);
+  assert.deepEqual(g.notices, [t('wt.delete.failed', { msg: 'offline' })]);
+});
+
+test('delete_flow_409_reconfirms', async () => {
+  const f = startFlow({
+    statuses: [status()],
+    removes: [restError(409, 'worktree_changed', { status: status({ dirtyFiles: 1 }), endedSessions: [] }), { removed: true, branchDeleted: true, endedSessions: [] }],
+  });
+  await f.act('dialog-confirm');
+  const root = await f.dialog();
+  assert.equal(tid('delete-wt-changed', root).textContent, '状态刚刚发生了变化，请按最新的情况重新确认。');
+  assert.equal(tid('delete-wt-dialog', root).dataset.variant, 'files', 'the dialog follows the new state');
+  assert.ok(tid('delete-wt-files', root).textContent.includes('1'));
+  assert.equal(tid('delete-wt-ended', root), null);
+  assert.equal(f.calls.status.length, 1, 'the state comes with the 409, no second query');
+  await f.act('delete-wt-force');
+  assert.deepEqual(await f.done, { removed: true, endedSessions: [] });
+  assert.deepEqual(f.calls.remove[1], { ...BASE, discardFiles: true, deleteBranch: true });
+});
+
+test('delete_flow_409_then_cancel', async () => {
+  const f = startFlow({ statuses: [status()], removes: [restError(409, 'worktree_changed', { status: status({ dirtyFiles: 1 }), endedSessions: [] })] });
+  await f.act('dialog-confirm');
+  await f.act('dialog-cancel');
+  assert.deepEqual(await f.done, { removed: false, endedSessions: [] }, 'not null once a removal was requested');
+});
+
+test('delete_flow_409_after_sessions_ended_then_cancel', async () => {
+  const f = startFlow({
+    statuses: [detached({ sessions: ['s1'] })],
+    removes: [restError(409, 'worktree_changed', { status: detached({ head: 'b'.repeat(40), unmergedCommits: 1 }), endedSessions: ['s1'] })],
+  });
+  await f.act('dialog-confirm');
+  const root = await f.dialog();
+  assert.ok(tid('delete-wt-changed', root));
+  assert.equal(tid('delete-wt-ended', root).textContent, '已结束 1 个会话。');
+  assert.equal(tid('delete-wt-sessions', root), null);
+  assert.equal(tid('delete-wt-dialog', root).dataset.variant, 'detached');
+  await f.act('dialog-cancel');
+  const out = await f.done;
+  assert.notEqual(out, null);
+  assert.deepEqual(out, { removed: false, endedSessions: ['s1'] });
+});
+
+test('delete_flow_500_reopens_with_error', async () => {
+  const st = status({ sessions: ['s1', 's2'] });
+  const f = startFlow({
+    statuses: [st, st],
+    removes: [restError(500, 'worktree_remove_failed', { message: 'this worktree is locked with git worktree lock (reason: usb)', endedSessions: [] })],
+  });
+  await f.act('dialog-confirm');
+  const root = await f.dialog();
+  assert.equal(f.calls.status.length, 2, 'the state is read again after a 500');
+  assert.ok(tid('delete-wt-dialog', root), 'the same confirmation is open again');
+  assert.equal(tid('delete-wt-error', root).textContent, '删除失败：this worktree is locked with git worktree lock (reason: usb)');
+  assert.equal(tid('delete-wt-ended', root), null);
+  assert.equal(tid('delete-wt-changed', root), null);
+  assert.equal(tid('delete-wt-sessions', root).textContent, '会先结束这 2 个会话。');
+  await f.act('dialog-cancel');
+  assert.deepEqual(await f.done, { removed: false, endedSessions: [] });
+  assert.deepEqual(f.notices, []);
+});
+
+test('delete_flow_500_after_sessions_ended', async () => {
+  const f = startFlow({
+    statuses: [status({ sessions: ['s1', 's2'] }), status()],
+    removes: [restError(500, 'worktree_remove_failed', { message: 'fatal: simulated', endedSessions: ['s1', 's2'] })],
+  });
+  await f.act('dialog-confirm');
+  const root = await f.dialog();
+  assert.equal(tid('delete-wt-error', root).textContent, '删除失败：fatal: simulated');
+  assert.equal(tid('delete-wt-ended', root).textContent, '已结束 2 个会话。');
+  assert.equal(tid('delete-wt-sessions', root), null);
+  await f.act('dialog-cancel');
+  assert.deepEqual(await f.done, { removed: false, endedSessions: ['s1', 's2'] });
+});
+
+test('delete_flow_500_then_cancel', async () => {
+  const f = startFlow({ statuses: [status(), status()], removes: [restError(500, 'worktree_remove_failed', { message: 'no', endedSessions: [] })] });
+  await f.act('dialog-confirm');
+  await f.act('dialog-cancel');
+  assert.deepEqual(await f.done, { removed: false, endedSessions: [] }, 'not null');
+});
+
+test('delete_flow_500_partial_shows_failure', async () => {
+  const message = `error: failed to delete '${WT_PATH}': Permission denied`;
+  const f = startFlow({
+    statuses: [status({ sessions: ['s1', 's2'] }), restError(404, 'worktree_not_found')],
+    removes: [restError(500, 'worktree_remove_failed', { message, endedSessions: ['s1', 's2'] })],
+  });
+  await f.act('dialog-confirm');
+  const root = await f.dialog();
+  assert.equal(tid('delete-wt-dialog', root), null, 'not the confirmation');
+  const failed = tid('delete-wt-failed', root);
+  assert.ok(failed);
+  assertShell(root);
+  assert.equal(root.querySelector('.modal-title').textContent, '删除 fix-login 没有完成');
+  assert.equal(tid('delete-wt-error', root).textContent, `删除失败：${message}`);
+  assert.equal(tid('delete-wt-ended', root).textContent, '已结束 2 个会话。');
+  const partial = tid('delete-wt-partial', root).textContent;
+  assert.ok(partial.includes(WT_PATH) && partial.includes('分支没有删除'), partial);
+  const buttons = [...root.querySelectorAll('.modal-footer button')];
+  assert.equal(buttons.length, 1, 'one button only');
+  assert.equal(buttons[0].textContent, '关闭');
+  assert.equal(buttons[0].dataset.testid, 'dialog-cancel');
+  assert.equal(f.settled(), false);
+  await f.act('dialog-cancel');
+  assert.deepEqual(await f.done, { removed: false, endedSessions: ['s1', 's2'] });
+  assert.equal(overlay(), null);
+
+  // The helper on its own: no "ended" line without ended sessions; Enter and Escape close it.
+  let closed = false;
+  showDeleteWorktreeFailure({ label: 'fix-login', message: 'x', ended: 0, path: WT_PATH }).then(() => { closed = true; });
+  page.flushFrames();
+  assert.equal(tid('delete-wt-ended', overlay()), null);
+  pressKey(document.activeElement, 'Enter');
+  await settle();
+  assert.equal(closed, true);
+  assert.equal(overlay(), null);
+});
+
+test('delete_flow_500_status_query_fails', async () => {
+  const f = startFlow({
+    statuses: [status({ sessions: ['s1'] }), new Error('offline')],
+    removes: [restError(500, 'worktree_remove_failed', { message: 'fatal: simulated', endedSessions: ['s1'] })],
+  });
+  await f.act('dialog-confirm');
+  assert.deepEqual(await f.done, { removed: false, endedSessions: ['s1'] });
+  assert.deepEqual(f.notices, [t('wt.delete.failed', { msg: 'fatal: simulated' })]);
+  assert.equal(overlay(), null);
+});
+
+test('delete_flow_branch_error', async () => {
+  const f = startFlow({ statuses: [status({ sessions: ['s1'] })], removes: [{ removed: true, branchDeleted: false, branchError: 'x', endedSessions: ['s1'] }] });
+  await f.act('dialog-confirm');
+  assert.deepEqual(await f.done, { removed: true, endedSessions: ['s1'] });
+  assert.deepEqual(f.notices, ['目录已删除，分支没删掉：x']);
+});
+
+test('delete_flow_remove_404', async () => {
+  const f = startFlow({ statuses: [status({ sessions: ['s1', 's2'] })], removes: [restError(404, 'worktree_not_found')] });
+  await f.act('dialog-confirm');
+  assert.deepEqual(await f.done, { removed: true, endedSessions: ['s1', 's2'] });
+  assert.deepEqual(f.notices, ['这个 worktree 已经不存在']);
+});
+
+test('delete_flow_timeout_then_gone', async () => {
+  const f = startFlow({ statuses: [status({ sessions: ['s1', 's2'] }), restError(404, 'worktree_not_found')], removes: [abortError()] });
+  await f.act('dialog-confirm');
+  assert.deepEqual(await f.done, { removed: true, endedSessions: ['s1', 's2'] });
+  assert.deepEqual(f.notices, [], 'it is simply gone: nothing to report');
+  assert.equal(overlay(), null, 'no error dialog');
+});
+
+test('delete_flow_timeout_still_there', async () => {
+  const timeoutText = '删除请求没有收到结果，这个 worktree 可能还在删除中，稍后以侧边栏显示的为准';
+  for (const second of [status({ sessions: ['s1'] }), new Error('offline')]) {
+    const f = startFlow({ statuses: [status({ sessions: ['s1'] }), second], removes: [abortError()] });
+    await f.act('dialog-confirm');
+    assert.deepEqual(await f.done, { removed: false, endedSessions: [] });
+    assert.deepEqual(f.notices, [timeoutText]);
+    assert.equal(overlay(), null);
+  }
+  // Sessions an earlier answer reported as ended stay in the outcome.
+  const g = startFlow({
+    statuses: [status({ sessions: ['s1'] }), status()],
+    removes: [restError(409, 'worktree_changed', { status: status({ dirtyFiles: 1 }), endedSessions: ['s1'] }), abortError()],
+  });
+  await g.act('dialog-confirm');
+  await g.act('delete-wt-force');
+  assert.deepEqual(await g.done, { removed: false, endedSessions: ['s1'] });
+  assert.deepEqual(g.notices, [timeoutText]);
+});
+
+test('delete_flow_ended_union', async () => {
+  const f = startFlow({
+    statuses: [status({ sessions: ['a', 'b'] }), status()],
+    removes: [
+      restError(409, 'worktree_changed', { status: status({ sessions: ['b'], dirtyFiles: 1 }), endedSessions: ['a'] }),
+      restError(500, 'worktree_remove_failed', { message: 'no', endedSessions: ['b', 'a'] }),
+    ],
+  });
+  await f.act('dialog-confirm');
+  await f.act('delete-wt-force');
+  const root = await f.dialog();
+  assert.equal(tid('delete-wt-ended', root).textContent, '已结束 2 个会话。');
+  await f.act('dialog-cancel');
+  assert.deepEqual(await f.done, { removed: false, endedSessions: ['a', 'b'] });
+});
+
+test('delete_flow_other_refusal', async () => {
+  const f = startFlow({ statuses: [status()], removes: [restError(400, 'worktree_is_main', { message: 'the main directory of a repository cannot be removed' })] });
+  await f.act('dialog-confirm');
+  assert.deepEqual(await f.done, { removed: false, endedSessions: [] });
+  assert.deepEqual(f.notices, [t('wt.delete.failed', { msg: 'the main directory of a repository cannot be removed' })]);
+  assert.equal(overlay(), null);
 });
 
 await run();

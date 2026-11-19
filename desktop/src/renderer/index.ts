@@ -6,7 +6,7 @@ import { PROTOCOL_VERSION } from '../shared/protocol';
 import { VibeRemoteClient, ConnectionState, type AttachOptions } from './client';
 import { VibeRemoteRest, DeleteSessionError, ReloadSessionError, RestError } from './rest';
 import { openDirPicker, type PickedSession } from './dirpicker';
-import { confirmDeleteSession, openNewWorktreeDialog, openWorktreeSessionDialog } from './worktree-dialogs';
+import { confirmDeleteSession, deleteWorktreeFlow, openNewWorktreeDialog, openWorktreeSessionDialog } from './worktree-dialogs';
 import { worktreeErrorText } from './worktree-name';
 import { openMachineManager } from './machines';
 import { t, toggleLocale, getLocale, onLocaleChange } from './i18n';
@@ -1282,8 +1282,24 @@ const sidebarActions: SidebarActions = {
   newSession: (machine, project, worktree) => {
     void startSessionInWorktree(machine, project, worktree);
   },
-  // deleteWorktree is wired in T14.
+  deleteWorktree: (machine, _project, worktree) => {
+    void handleDeleteWorktree(machine, worktree);
+  },
 };
+
+// handleDeleteWorktree runs "Delete worktree" from a worktree row's menu. Once
+// a removal was requested the daemon may have ended sessions even if the
+// worktree is still there, so their views are closed and the machine is
+// refreshed whatever the result; null means nothing was requested.
+async function handleDeleteWorktree(machine: MachineConfig, worktree: TreeWorktree) {
+  const mk = machineKey(machine);
+  const rest = rests.get(mk);
+  if (!rest) return;
+  const outcome = await deleteWorktreeFlow(rest, { path: worktree.path, label: worktree.label }, (text) => updateStatusBar(text));
+  if (!outcome) return;
+  for (const id of outcome.endedSessions) dropSessionView(viewKey(machine, id));
+  await refreshAllMachines(true, mk);
+}
 
 // confirmAndDeleteSession asks before deleting a session. The dialog says what
 // happens to the worktree the session sits in: kept (protocol 4), or removed
@@ -1407,6 +1423,23 @@ function updateStatusBar(extra?: string, attempt?: number) {
   }
 }
 
+// dropSessionView removes the local view of a session that no longer exists on
+// the daemon, and moves on to another open session if it was the active one.
+function dropSessionView(key: string) {
+  // Drop any Reload marker so the key can't linger and disable a future
+  // session that happens to reuse the id.
+  reloadingSessions.delete(key);
+  const view = views.get(key);
+  if (!view) return;
+  disposeView(view);
+  views.delete(key);
+  if (activeKey === key) {
+    activeKey = null;
+    const next = views.keys().next();
+    if (!next.done) setActive(next.value);
+  }
+}
+
 // closeSession kills the remote session (tmux + claude) and removes its view.
 async function closeSession(machine: MachineConfig, sessionId: string) {
   let deletionSucceeded = false;
@@ -1427,20 +1460,7 @@ async function closeSession(machine: MachineConfig, sessionId: string) {
     refreshAllMachines();
     return;
   }
-  const key = viewKey(machine, sessionId);
-  // The session is gone; drop any Reload marker so the key can't linger and
-  // disable a future session that happens to reuse the id.
-  reloadingSessions.delete(key);
-  const view = views.get(key);
-  if (view) {
-    disposeView(view);
-    views.delete(key);
-    if (activeKey === key) {
-      activeKey = null;
-      const next = views.keys().next();
-      if (!next.done) setActive(next.value);
-    }
-  }
+  dropSessionView(viewKey(machine, sessionId));
   refreshAllMachines();
 }
 

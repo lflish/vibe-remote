@@ -1327,3 +1327,71 @@ html, body {
 .modal-footer button[data-default] {
   box-shadow: 0 0 0 2px var(--bg-elevated), 0 0 0 4px color-mix(in srgb, var(--accent) 60%, transparent);
 }
+
+/* --- delete-worktree confirmation (T14) ------------------------------------ */
+.modal-warning, .modal-alert, .modal-notice {
+  padding: 8px 12px;
+  border-radius: var(--radius);
+}
+/* What will be lost for good. */
+.modal-warning {
+  background: color-mix(in srgb, var(--error) 9%, var(--bg-elevated));
+  color: var(--text-primary);
+  font-weight: 500;
+}
+/* The last attempt failed. git's own words can be long: let them wrap. */
+.modal-alert {
+  border: 1px solid color-mix(in srgb, var(--error) 38%, var(--bg-elevated));
+  background: color-mix(in srgb, var(--error) 8%, var(--bg-elevated));
+  color: var(--error);
+  user-select: text;
+  -webkit-user-select: text;
+}
+.modal-notice {
+  border: 1px solid var(--border);
+  background: var(--bg-secondary);
+  color: var(--text-secondary);
+}
+.modal-note { font-size: 11.5px; color: var(--text-secondary); }
+.modal-options { display: flex; flex-direction: column; gap: 6px; }
+.modal-option {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  padding: 8px 12px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  cursor: pointer;
+}
+.modal-option:hover { background: var(--bg-hover); }
+.modal-option:has(input:checked) { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
+.modal-option:has(input:focus-visible) { outline: 2px solid var(--accent); outline-offset: 2px; }
+.modal-option input { flex: none; margin-top: 3px; accent-color: var(--accent); }
+.modal-option-text { display: flex; flex-direction: column; min-width: 0; }
+.modal-option-title { font-size: 12.5px; font-weight: 600; }
+.modal-option-description { font-size: 11.5px; color: var(--text-secondary); overflow-wrap: anywhere; }
+.modal-kv {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 2px 12px;
+  margin-top: 2px;
+  font-size: 11.5px;
+}
+.modal-kv dt { color: var(--text-muted); }
+.modal-kv dd {
+  font-family: 'SF Mono', 'JetBrains Mono', ui-monospace, Menlo, monospace;
+  overflow-wrap: anywhere;
+  user-select: text;
+  -webkit-user-select: text;
+}
+/* "Enter = Cancel", pushed to the far left of the footer. */
+.modal-footer-hint { margin-right: auto; align-self: center; font-size: 11px; color: var(--text-muted); }
+.modal-footer .btn-danger-outline {
+  border-color: color-mix(in srgb, var(--error) 45%, var(--border-strong));
+  color: var(--error);
+}
+.modal-footer .btn-danger-outline:hover {
+  background: color-mix(in srgb, var(--error) 8%, var(--bg-elevated));
+  color: var(--error);
+}
+.modal-footer .btn-primary, .modal-footer .btn-secondary { white-space: nowrap; }

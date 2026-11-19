@@ -397,4 +397,119 @@ test('actions_fire_once', async () => {
   dom.dom.window.close();
 });
 
+// --- T14: the delete-worktree flow's result, as index.ts acts on it ---
+
+test('remove_result_closes_views', async () => {
+  const dom = await indexDom();
+  localStorage.setItem('vibe-remote.locale', 'zh');
+  localStorage.removeItem('vibe-remote.collapsed-machines');
+  localStorage.removeItem('vibe-remote.collapsed-projects');
+  const ROOT = '/r/devflow-worktrees/fix-login';
+  const HEAD = '9f8e7d6c5b4a39281706f5e4d3c2b1a098765432';
+  const sessions = [
+    { id: 'm1', title: 'devflow', workdir: '/r/devflow', created: '2026-01-01T00:00:01Z', mode: 'normal' },
+    { id: 'a', title: 'fix-login', workdir: ROOT, created: '2026-01-01T00:00:02Z', mode: 'normal', ui: 'chat', state: 'running' },
+    { id: 'b', title: 'fix-login', workdir: ROOT, created: '2026-01-01T00:00:03Z', mode: 'normal', ui: 'chat', state: 'running' },
+  ];
+  const projects = [{
+    id: '/r/devflow', name: 'devflow', git: true, sessions: [], worktrees: [
+      { path: '/r/devflow', branch: 'main', head: 'a1b2c3d', main: true, sessions: ['m1'] },
+      { path: ROOT, branch: 'fix-login', head: '9f8e7d6', managed: true, sessions: ['a', 'b'] },
+    ],
+  }];
+  const status = (over = {}) => ({ path: ROOT, project: '/r/devflow', branch: 'fix-login', head: HEAD, main: false, managed: true,
+    dirtyFiles: 0, unmergedCommits: 0, ignoredFiles: 0, sessions: ['a', 'b'], ...over });
+  const json = (code, body) => new Response(JSON.stringify(body), { status: code, headers: { 'Content-Type': 'application/json' } });
+  let calls = [];
+  let removeAnswers = [];
+  let statusAnswers = [];
+  globalThis.fetch = async (url, init = {}) => {
+    const u = new URL(String(url));
+    calls.push(`${init.method || 'GET'} ${u.pathname}`);
+    if (u.pathname === '/api/v1/sessions') return json(200, { list: sessions });
+    if (u.pathname === '/api/v1/projects') return json(200, { proto: 4, projects });
+    if (u.pathname === '/api/v1/worktrees/status') return statusAnswers.shift()();
+    if (u.pathname === '/api/v1/worktrees/remove') return removeAnswers.shift()();
+    return new Response(null, { status: 204 });
+  };
+  const app = await loadIndex();
+  app.setMachines([M]);
+  app.rebuildRests();
+  const settle = async (n = 12) => { for (let i = 0; i < n; i++) await new Promise((r) => setTimeout(r, 0)); };
+  const dialogButton = (id) => document.querySelector(`.modal-overlay [data-testid="${id}"]`);
+  const refreshes = () => ({ sessions: calls.filter((c) => c === 'GET /api/v1/sessions').length, projects: calls.filter((c) => c === 'GET /api/v1/projects').length });
+
+  // Opens both sessions of the worktree as views, then starts "Delete worktree" from its menu.
+  const start = async () => {
+    await app.refreshAllMachines(true, MK);
+    assert.equal(app.machineCaps.get(MK), 'v4');
+    const disposed = [];
+    for (const id of ['a', 'b']) {
+      const container = document.createElement('div');
+      document.getElementById('terminal-container').appendChild(container);
+      app.views.set(`${MK}::${id}`, { ui: 'chat', key: `${MK}::${id}`, sessionId: id, machine: M, container, activity: 'none', client: { state: 'connected' }, show() {}, dispose() { disposed.push(id); container.remove(); } });
+    }
+    app.renderSidebar();
+    const row = [...document.querySelectorAll('[data-testid="worktree-row"]')].find((r) => r.querySelector('.worktree-label').textContent === 'fix-login');
+    click(row.querySelector('[data-testid="worktree-menu"]'));
+    const item = menuItem('worktree-delete');
+    assert.equal(item.disabled, false, 'the entry is usable on a v4 daemon');
+    calls = [];
+    click(item);
+    await settle();
+    assert.ok(document.querySelector('.modal-overlay [data-testid="delete-wt-dialog"]'), 'the confirmation opened');
+    assert.deepEqual(calls, ['GET /api/v1/worktrees/status']);
+    return disposed;
+  };
+  const openViews = () => ['a', 'b'].filter((id) => app.views.has(`${MK}::${id}`));
+
+  // Removed, both sessions ended.
+  statusAnswers = [() => json(200, status())];
+  removeAnswers = [() => json(200, { removed: true, branchDeleted: true, endedSessions: ['a', 'b'] })];
+  let disposed = await start();
+  click(dialogButton('dialog-confirm'));
+  await settle();
+  assert.deepEqual(disposed, ['a', 'b'], 'both views were closed');
+  assert.deepEqual(openViews(), []);
+  assert.deepEqual(refreshes(), { sessions: 1, projects: 1 }, 'one refresh of this machine');
+
+  // Sessions ended, worktree still there (the removal failed afterwards): same.
+  statusAnswers = [() => json(200, status()), () => json(200, status({ sessions: [] }))];
+  removeAnswers = [() => json(500, { error: 'worktree_remove_failed', message: 'fatal: simulated', endedSessions: ['a', 'b'] })];
+  disposed = await start();
+  click(dialogButton('dialog-confirm'));
+  await settle();
+  assert.equal(document.querySelector('.modal-overlay [data-testid="delete-wt-error"]').textContent, '删除失败：fatal: simulated');
+  assert.deepEqual(disposed, [], 'nothing is closed while the flow is still open');
+  click(dialogButton('dialog-cancel'));
+  await settle();
+  assert.deepEqual(disposed, ['a', 'b']);
+  assert.deepEqual(openViews(), []);
+  assert.deepEqual(refreshes(), { sessions: 1, projects: 1 });
+
+  // Requested, nothing ended, not removed: no view is closed, but the machine is refreshed.
+  statusAnswers = [() => json(200, status())];
+  removeAnswers = [() => json(409, { error: 'worktree_changed', message: 'changed', status: status({ dirtyFiles: 1 }), endedSessions: [] })];
+  disposed = await start();
+  click(dialogButton('dialog-confirm'));
+  await settle();
+  assert.ok(document.querySelector('.modal-overlay [data-testid="delete-wt-changed"]'));
+  click(dialogButton('dialog-cancel'));
+  await settle();
+  assert.deepEqual(disposed, []);
+  assert.deepEqual(openViews(), ['a', 'b']);
+  assert.deepEqual(refreshes(), { sessions: 1, projects: 1 });
+
+  // Cancelled before anything was requested: nothing happens at all.
+  statusAnswers = [() => json(200, status())];
+  disposed = await start();
+  click(dialogButton('dialog-cancel'));
+  await settle();
+  assert.deepEqual(disposed, []);
+  assert.deepEqual(openViews(), ['a', 'b']);
+  assert.deepEqual(refreshes(), { sessions: 0, projects: 0 }, 'no refresh');
+  assert.equal(document.querySelector('.modal-overlay'), null);
+  dom.dom.window.close();
+});
+
 await run();
