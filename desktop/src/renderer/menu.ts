@@ -10,7 +10,23 @@ export interface MenuItem {
   onClick?: () => void;
 }
 
-let current: { el: HTMLElement; onKey: (e: KeyboardEvent) => void; onDown: (e: Event) => void } | null = null;
+let current: { el: HTMLElement; anchor: HTMLElement; onKey: (e: KeyboardEvent) => void; onDown: (e: Event) => void } | null = null;
+
+/** The button the open menu belongs to, or null when no menu is open. */
+export function menuAnchor(): HTMLElement | null {
+  return current?.anchor ?? null;
+}
+
+/**
+ * Hands the open menu over to `anchor`: the sidebar rebuilt the row it belongs
+ * to, and this is the same button in the new row. The menu stays open, moves
+ * next to it, and a mousedown on it no longer counts as a click outside.
+ */
+export function moveMenu(anchor: HTMLElement): void {
+  if (!current) return;
+  current.anchor = anchor;
+  placeMenu(current.el, anchor);
+}
 
 export function closeMenu(): void {
   if (!current) return;
@@ -52,10 +68,11 @@ export function openMenu(anchor: HTMLElement, items: MenuItem[]): void {
     if (e.key === 'Escape') { e.preventDefault(); closeMenu(); }
   };
   const onDown = (e: Event) => {
-    if (e.target instanceof Node && (el.contains(e.target) || anchor.contains(e.target))) return;
+    const owner = current && current.el === el ? current.anchor : anchor;
+    if (e.target instanceof Node && (el.contains(e.target) || owner.contains(e.target))) return;
     closeMenu();
   };
-  current = { el, onKey, onDown };
+  current = { el, anchor, onKey, onDown };
   document.addEventListener('keydown', onKey, true);
   // Defer the outside-click listener so the click that opened the menu does not
   // immediately close it.
@@ -73,7 +90,9 @@ const EDGE = 6;
 // gap to the button is the stylesheet's margin-top.
 function placeMenu(el: HTMLElement, anchor: HTMLElement): void {
   const rect = anchor.getBoundingClientRect();
-  const gap = parseFloat(window.getComputedStyle(el).marginTop) || 0;
+  // Read once: the margin is taken over by the computed position below.
+  if (el.dataset.gap === undefined) el.dataset.gap = String(parseFloat(window.getComputedStyle(el).marginTop) || 0);
+  const gap = Number(el.dataset.gap);
   el.style.margin = '0';
   const { width, height } = el.getBoundingClientRect();
   const viewW = window.innerWidth;

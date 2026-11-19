@@ -265,6 +265,105 @@ test('row_menu_stays_inside_the_window', () => {
   }
 });
 
+// The sidebar is rebuilt from scratch on every poll answer (twice per machine
+// every 5 s). The row buttons are visible only while their row is hovered or
+// holds the focus, so a keyboard user must not lose the focus to a rebuild
+// (review D9).
+const DEVFLOW_TWO = [{
+  id: '/r/devflow', name: 'devflow', git: true, worktrees: [
+    { path: '/r/devflow', branch: 'main', head: 'a1b2c3d', main: true, sessions: ['s1'] },
+    { path: '/r/devflow-worktrees/fix-login', branch: 'fix-login', head: '9f8e7d6', managed: true, sessions: ['s2'] },
+    { path: '/r/devflow-worktrees/other', branch: 'other', head: '1f2e3d4', managed: true, sessions: [] },
+  ], sessions: [],
+}];
+const twoSessions = () => [sess('s1', { workdir: '/r/devflow' }), sess('s2', { workdir: '/r/devflow-worktrees/fix-login' })];
+
+test('focus_survives_a_rebuild', () => {
+  const actions = acts({ newWorktree() {}, newSession() {}, deleteWorktree() {} });
+  const second = { machine: { ...M, name: 'other-mac', port: 9000 }, key: '10.0.0.9:9000', online: true, collapsed: false, cap: 'v4', tree: buildTree(twoSessions(), DEVFLOW_TWO) };
+  const build = (projects = DEVFLOW_TWO) => model([machineEntry(buildTree(twoSessions(), projects)), second]);
+  const c = document.createElement('div');
+  document.body.appendChild(c);
+  renderSidebar(c, build(), actions);
+  const group = (root, path) => [...root.querySelectorAll('.worktree-group')].find((g) => g.dataset.path === path);
+  const pickers = {
+    'the "new worktree" button of a project': (root) => tid(root, 'project-new-worktree'),
+    'the menu button of a worktree row': (root) => tid(group(root, '/r/devflow-worktrees/fix-login'), 'worktree-menu'),
+    'the "new session" button of a worktree with no session': (root) => tid(group(root, '/r/devflow-worktrees/other'), 'worktree-empty-new-session'),
+    'the close button of a session': (root) => root.querySelector('.session-item[data-session-id="s2"] .session-close'),
+    'a session label': (root) => root.querySelector('.session-item[data-session-id="s1"] .session-label'),
+    'the arrow of a machine': (root) => root.querySelector('.machine-toggle'),
+    'the same button on the second machine': (root) => tid(root.querySelectorAll('.machine-group')[1], 'project-new-worktree'),
+  };
+  for (const [what, pick] of Object.entries(pickers)) {
+    const before = pick(c);
+    before.focus();
+    assert.equal(document.activeElement, before, `${what} takes the focus`);
+    renderSidebar(c, build(), actions);
+    assert.ok(!before.isConnected, 'the sidebar was rebuilt');
+    assert.equal(document.activeElement, pick(c), `${what} still has the focus after a rebuild`);
+  }
+  // The focus outside the sidebar is left where it is.
+  const outside = document.createElement('button');
+  document.body.appendChild(outside);
+  outside.focus();
+  renderSidebar(c, build(), actions);
+  assert.equal(document.activeElement, outside);
+  // The focused row is gone after the rebuild: nothing to restore, nothing thrown.
+  pickers['the menu button of a worktree row'](c).focus();
+  renderSidebar(c, build([{ ...DEVFLOW_TWO[0], worktrees: [DEVFLOW_TWO[0].worktrees[0], DEVFLOW_TWO[0].worktrees[2]], sessions: ['s2'] }]), actions);
+  assert.ok(!c.contains(document.activeElement) || document.activeElement === c, 'no other row received the focus');
+  outside.remove();
+  c.remove();
+});
+
+// A row menu that is open during a rebuild stays with its row and keeps
+// working; when the row is gone the menu goes too.
+test('open_menu_follows_its_row_through_a_rebuild', async () => {
+  const deleted = [];
+  const actions = acts({ newWorktree() {}, newSession() {}, deleteWorktree: (m, p, wt) => deleted.push(wt.path) });
+  const build = (projects = DEVFLOW_TWO, over = {}) => model([machineEntry(buildTree(twoSessions(), projects), over)]);
+  const c = document.createElement('div');
+  document.body.appendChild(c);
+  renderSidebar(c, build(), actions);
+  const menuButton = () => tid([...c.querySelectorAll('.worktree-group')].find((g) => g.dataset.path === '/r/devflow-worktrees/fix-login'), 'worktree-menu');
+  const openMenus = () => document.querySelectorAll('body > .menu').length;
+  click(menuButton());
+  assert.equal(openMenus(), 1);
+  const item = menuItem('worktree-delete');
+  // The menu starts listening for clicks outside it one tick after it opens.
+  await new Promise((r) => setTimeout(r, 5));
+  renderSidebar(c, build(), actions);
+  assert.equal(openMenus(), 1, 'the menu is still open after a rebuild');
+  assert.equal(menuItem('worktree-delete'), item, 'it is the same menu');
+  // A mousedown on the row's new button is not a click outside the menu.
+  menuButton().dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
+  assert.equal(openMenus(), 1, 'the rebuilt button still belongs to the menu');
+  // (A mousedown anywhere else does close it: the listener is live.)
+  document.body.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
+  assert.equal(openMenus(), 0);
+  click(menuButton());
+  const again = menuItem('worktree-delete');
+  renderSidebar(c, build(), actions);
+  assert.equal(menuItem('worktree-delete'), again);
+  click(again);
+  assert.deepEqual(deleted, ['/r/devflow-worktrees/fix-login'], 'its entry still works after a rebuild');
+  assert.equal(openMenus(), 0);
+
+  // The row disappears while its menu is open.
+  click(menuButton());
+  assert.equal(openMenus(), 1);
+  renderSidebar(c, build([{ ...DEVFLOW_TWO[0], worktrees: [DEVFLOW_TWO[0].worktrees[0], DEVFLOW_TWO[0].worktrees[2]], sessions: ['s2'] }]), actions);
+  assert.equal(openMenus(), 0, 'a menu whose row is gone is closed');
+  // The machine is folded while a menu is open: its rows are hidden, the menu goes.
+  renderSidebar(c, build(), actions);
+  click(menuButton());
+  assert.equal(openMenus(), 1);
+  renderSidebar(c, build(DEVFLOW_TWO, { collapsed: true }), actions);
+  assert.equal(openMenus(), 0, 'a menu whose row is hidden is closed');
+  c.remove();
+});
+
 test('project_remove_disabled_with_sessions', () => {
   const projects = [{ id: '/r/p', name: 'p', git: true, worktrees: [{ path: '/r/p', branch: 'main', head: 'x', main: true, sessions: ['s'] }], sessions: [] }];
   const tree = buildTree([sess('s', { workdir: '/r/p' })], projects);
