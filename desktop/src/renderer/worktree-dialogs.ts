@@ -528,28 +528,36 @@ export type DeleteWorktreeOutcome = { removed: boolean; endedSessions: string[] 
  * result is never null: sessions may have been ended even though the worktree
  * is still there, and the caller has to close their views and refresh.
  * `notify` shows one line of text (the status bar). `onRequest(true)` is called
- * when a removal request goes out and `onRequest(false)` when its outcome is
- * known (it can take the daemon many seconds): the caller shows the worktree
- * as being deleted in between. It is not in flight while a dialog is open.
+ * when a removal request goes out and `onRequest(false, removed)` when its
+ * outcome is known (it can take the daemon many seconds): the caller shows the
+ * worktree as being deleted in between. It is not in flight while a dialog is
+ * open. `removed` says the worktree is gone: the caller's list still has its
+ * row then, and the caller keeps showing it as being deleted until it has
+ * refreshed that list.
  */
 export async function deleteWorktreeFlow(
   rest: Pick<VibeRemoteRest, 'worktreeStatus' | 'removeWorktree'>,
   target: { path: string; label: string },
   notify: (text: string) => void,
-  onRequest?: (inFlight: boolean) => void,
+  onRequest?: (inFlight: boolean, removed?: boolean) => void,
 ): Promise<DeleteWorktreeOutcome | null> {
   let inFlight = false;
+  let removed = false;
   const setInFlight = (value: boolean) => {
     if (inFlight === value) return;
     inFlight = value;
-    onRequest?.(value);
+    onRequest?.(value, removed);
   };
   const ended: string[] = [];
   const addEnded = (ids: unknown) => {
     if (!Array.isArray(ids)) return;
     for (const id of ids) if (typeof id === 'string' && !ended.includes(id)) ended.push(id);
   };
-  const outcome = (removed: boolean): DeleteWorktreeOutcome => ({ removed, endedSessions: [...ended] });
+  const outcome = (isRemoved: boolean): DeleteWorktreeOutcome => {
+    // Read by setInFlight(false) on the way out.
+    removed = isRemoved;
+    return { removed: isRemoved, endedSessions: [...ended] };
+  };
   const gone = (e: unknown) => e instanceof RestError && e.status === 404;
 
   let status: WorktreeStatus;

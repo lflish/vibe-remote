@@ -1370,14 +1370,23 @@ async function handleDeleteWorktree(machine: MachineConfig, worktree: TreeWorktr
   const marker = `${mk}|${worktree.path}`;
   // Already being removed (a menu opened before the request can still be on screen).
   if (removingWorktrees.has(marker)) return;
-  const outcome = await deleteWorktreeFlow(rest, { path: worktree.path, label: worktree.label }, (text) => updateStatusBar(text), (inFlight) => {
+  const outcome = await deleteWorktreeFlow(rest, { path: worktree.path, label: worktree.label }, (text) => updateStatusBar(text), (inFlight, removed) => {
     if (inFlight) removingWorktrees.add(marker);
+    // Gone on the daemon, still a row here: it stays marked until the refresh
+    // below has replaced the list. Unmarked now, it would be an ordinary row
+    // for as long as that refresh takes, offering a new session in a
+    // directory that no longer exists.
+    else if (removed) return;
     else removingWorktrees.delete(marker);
     renderSidebar();
   });
   if (!outcome) return;
   for (const id of outcome.endedSessions) dropSessionView(viewKey(machine, id));
-  await refreshAllMachines(true, mk);
+  try {
+    await refreshAllMachines(true, mk);
+  } finally {
+    if (removingWorktrees.delete(marker)) renderSidebar();
+  }
 }
 
 // confirmAndDeleteSession asks before deleting a session. The dialog says what

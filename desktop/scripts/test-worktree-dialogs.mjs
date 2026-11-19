@@ -1157,6 +1157,42 @@ test('delete_flow_reports_request_in_flight', async () => {
   assert.deepEqual(busy, [true, false, true, false]);
 });
 
+// When the request is over the caller also learns whether the worktree is
+// gone: then it keeps showing the row as being deleted until it has refreshed
+// its list, instead of a row that can be used for a moment (review round 2).
+test('delete_flow_says_whether_the_worktree_is_gone_when_the_request_is_over', async () => {
+  const run = async (statuses, removes, acts) => {
+    const seen = [];
+    const rest = {
+      worktreeStatus: async () => { const next = statuses.shift(); if (next instanceof Error) throw next; return next; },
+      removeWorktree: async () => { const next = removes.shift(); if (next instanceof Error) throw next; return next; },
+    };
+    const done = deleteWorktreeFlow(rest, { path: WT_PATH, label: 'fix-login' }, () => {}, (inFlight, removed) => seen.push([inFlight, removed === true]));
+    for (const id of acts) {
+      await settle(6);
+      page.flushFrames();
+      click(tid(id, overlay()));
+    }
+    const outcome = await done;
+    return { seen, outcome };
+  };
+  // Removed.
+  let r = await run([status()], [{ removed: true, branchDeleted: true, endedSessions: [] }], ['dialog-confirm']);
+  assert.deepEqual(r.seen, [[true, false], [false, true]]);
+  // Already removed by someone else (404), and gone after a request that timed out.
+  r = await run([status()], [restError(404, 'worktree_not_found')], ['dialog-confirm']);
+  assert.deepEqual(r.seen, [[true, false], [false, true]]);
+  r = await run([status(), restError(404, 'worktree_not_found')], [abortError()], ['dialog-confirm']);
+  assert.deepEqual(r.seen, [[true, false], [false, true]]);
+  // Not removed: the state changed (the confirmation comes back, then cancel),
+  // and a request that timed out with the worktree still there.
+  r = await run([status()], [restError(409, 'worktree_changed', { status: status({ dirtyFiles: 1 }), endedSessions: [] })], ['dialog-confirm', 'dialog-cancel']);
+  assert.deepEqual(r.seen, [[true, false], [false, false]]);
+  assert.deepEqual(r.outcome, { removed: false, endedSessions: [] });
+  r = await run([status(), status()], [abortError()], ['dialog-confirm']);
+  assert.deepEqual(r.seen, [[true, false], [false, false]]);
+});
+
 test('delete_flow_branch_error', async () => {
   const f = startFlow({ statuses: [status({ sessions: ['s1'] })], removes: [{ removed: true, branchDeleted: false, branchError: 'x', endedSessions: ['s1'] }] });
   await f.act('dialog-confirm');

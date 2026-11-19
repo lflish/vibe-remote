@@ -850,11 +850,18 @@ test('remove_result_closes_views', async () => {
   let calls = [];
   let removeAnswers = [];
   let statusAnswers = [];
+  // What /api/v1/projects answers, and a promise it waits for first when set
+  // (a daemon whose project list takes a while: one repository's git is slow).
+  let projectsNow = projects;
+  let projectsGate = null;
   globalThis.fetch = async (url, init = {}) => {
     const u = new URL(String(url));
     calls.push(`${init.method || 'GET'} ${u.pathname}`);
     if (u.pathname === '/api/v1/sessions') return json(200, { list: sessions });
-    if (u.pathname === '/api/v1/projects') return json(200, { proto: 4, projects });
+    if (u.pathname === '/api/v1/projects') {
+      if (projectsGate) await projectsGate;
+      return json(200, { proto: 4, projects: projectsNow });
+    }
     if (u.pathname === '/api/v1/worktrees/status') return statusAnswers.shift()();
     if (u.pathname === '/api/v1/worktrees/remove') return removeAnswers.shift()();
     return new Response(null, { status: 204 });
@@ -983,6 +990,41 @@ test('remove_result_closes_views', async () => {
   await settle();
   assert.equal(removingRow().dataset.removing, undefined, 'the marker goes when the request is answered');
   assert.equal(removingRow().querySelector('[data-testid="worktree-removing"]'), null);
+  assert.equal(removingRow().querySelector('[data-testid="worktree-new-session"]').disabled, false);
+
+  // Removed, and the refresh that follows is slow (the daemon's project list
+  // waits for a repository whose git takes its 5 seconds): the worktree is
+  // gone on the daemon, so its row stays "being deleted" and unusable until
+  // the refreshed list has replaced it. It does not turn back into a row that
+  // offers a new session in a directory that no longer exists (review round 2).
+  statusAnswers = [() => json(200, status())];
+  removeAnswers = [() => new Promise((resolve) => { finishRemove = () => resolve(json(200, { removed: true, branchDeleted: true, endedSessions: ['a', 'b'] })); })];
+  disposed = await start();
+  click(dialogButton('dialog-confirm'));
+  await settle();
+  assert.equal(removingRow().dataset.removing, 'true');
+  let releaseProjects;
+  projectsGate = new Promise((resolve) => { releaseProjects = resolve; });
+  projectsNow = [{ ...projects[0], worktrees: [projects[0].worktrees[0]] }];
+  finishRemove();
+  await settle();
+  assert.deepEqual(refreshes(), { sessions: 1, projects: 1 }, 'the refresh is under way');
+  assert.ok(removingRow(), 'the old list is still shown: the refreshed one has not arrived');
+  assert.equal(removingRow().dataset.removing, 'true', 'removed, list not refreshed yet: the row is still being deleted');
+  assert.equal(removingRow().querySelector('[data-testid="worktree-removing"]').textContent, '正在删除…');
+  assert.equal(removingRow().querySelector('[data-testid="worktree-new-session"]').disabled, true, 'no new session in a worktree that is gone');
+  click(removingRow().querySelector('[data-testid="worktree-menu"]'));
+  assert.equal(menuItem('worktree-delete').disabled, true);
+  document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+  releaseProjects();
+  await settle();
+  assert.equal(removingRow(), undefined, 'the refreshed list has no such row');
+  // The marker did not outlive the refresh: a worktree created again at the
+  // same path is an ordinary row.
+  projectsGate = null;
+  projectsNow = projects;
+  await app.refreshAllMachines(true, MK);
+  assert.equal(removingRow().dataset.removing, undefined);
   assert.equal(removingRow().querySelector('[data-testid="worktree-new-session"]').disabled, false);
 
   // Cancelled before anything was requested: nothing happens at all.
