@@ -553,7 +553,7 @@
 - 依赖：T7
 
 ### T9 桌面端：新建 worktree 对话框，目录选择器的 Worktree 模式加名字
-- 状态：待办
+- 状态：进行中
 - 文件：
   - 新建 `desktop/src/renderer/worktree-name.ts`、`desktop/src/renderer/session-form.ts`、`desktop/src/renderer/worktree-dialogs.ts`（本任务只有 `openNewWorktreeDialog`）；新建测试 `desktop/scripts/test-worktree-name.mjs`、`test-session-form.mjs`、`test-worktree-dialogs.mjs`、`test-dialog-layout.mjs`
   - 修改 `desktop/src/renderer/dirpicker.ts`（界面卡片和启动选项改用 `session-form.ts` 的两个段，行为不变；Worktree 模式且 `info.proto >= 4` 时在模式卡片下方加名字段，此时不显示 `picker.modeNote`；`PickedSession` 加可缺省的 `worktreeName`、`worktreePath`）、`desktop/src/renderer/index.ts`（给 `SidebarActions` 传 `newWorktree`；新建会话时把 `picked.worktreeName` 放进 `attach` 的 `AttachOptions`；`client.onError` 收到 4 个新错误码时状态栏用 `worktreeErrorText`）、`desktop/src/renderer/styles.css`（追加「名字段」的规则）、`desktop/src/renderer/i18n.ts`（`wt.new.*`、`wt.name.*`、`wt.error.*`）、`desktop/package.json`（4 个 `test:*`）、`.claude/skills/verify/scripts/gui-smoke.mjs` 和 `gui-chat-smoke.mjs`（目录选择器的选择器有变时同步）
