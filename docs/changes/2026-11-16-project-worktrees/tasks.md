@@ -259,7 +259,7 @@
 
 ## 任务
 
-顺序：T1 是可以单独合并的先行修复；T2–T6b 跑通最小闭环（daemon 下发项目和 worktree → 侧边栏分组显示），其中 T6a 只搬家、不依赖别的任务，可以最先做；T7–T9 新建命名 worktree；T10–T11 在已有 worktree 里开会话；T12–T14 会话与 worktree 分开收尾；T15 `-c` 说明；T16 快捷键；T17 降级核对；T18–T19 视觉 M1；T20 规则文件（等 c3）。
+顺序：T1 是可以单独合并的先行修复；T2–T6b 跑通最小闭环（daemon 下发项目和 worktree → 侧边栏分组显示），其中 T6a 只搬家、不依赖别的任务，可以最先做；T7–T9 新建命名 worktree；T10–T11 在已有 worktree 里开会话；T12–T14 会话与 worktree 分开收尾；T15 `-c` 说明；T16 快捷键；T17 降级核对；T18–T19 视觉 M1；T20 规则文件（c3 已同意，放在最后是因为它引用前面任务写好的测试名）。
 
 `desktop/src/renderer/index.ts` 只在 T6a 做一次结构性改动（把侧边栏原样搬到 `sidebar.ts`），T6b 在搬好的文件里做三层结构，之后的任务每个只往里加一个回调和一小段接线。`desktop/src/renderer/styles.css` 在 T6b–T15 只追加新规则，T18 统一换配色，T19 统一换形态。
 
@@ -702,16 +702,23 @@
 
 ### T14 桌面端：删除 worktree 的确认和流程
 - 状态：待办
-- 文件：修改 `desktop/src/renderer/worktree-dialogs.ts`（加 `confirmDeleteWorktree`、`deleteWorktreeFlow`）、`desktop/src/renderer/index.ts`（给 `SidebarActions` 传 `deleteWorktree`：跑 `deleteWorktreeFlow`，返回不是 `null` 时关闭 `endedSessions` 里各会话的视图并立刻刷新这台机器，不管 `removed` 是真是假）、`desktop/src/renderer/styles.css`（追加确认框里警告段、单选、错误条的规则）、`desktop/src/renderer/i18n.ts`（`wt.delete.*`）；测试 `desktop/scripts/test-worktree-dialogs.mjs`、`test-sidebar.mjs`
+- 文件：修改 `desktop/src/renderer/worktree-dialogs.ts`（加 `confirmDeleteWorktree`、`showDeleteWorktreeFailure`、`deleteWorktreeFlow`）、`desktop/src/renderer/index.ts`（给 `SidebarActions` 传 `deleteWorktree`：跑 `deleteWorktreeFlow`，返回不是 `null` 时关闭 `endedSessions` 里各会话的视图并立刻刷新这台机器，不管 `removed` 是真是假）、`desktop/src/renderer/styles.css`（追加确认框里警告段、单选、错误条的规则）、`desktop/src/renderer/i18n.ts`（`wt.delete.*`）；测试 `desktop/scripts/test-worktree-dialogs.mjs`、`test-sidebar.mjs`
 - 接口：
   - 使用：`worktreeStatus`、`removeWorktree`（超时已随会话数放大）、`WorktreeStatus`、`WorktreeRemoveRequest`、`WorktreeRemoveResult`、`RestError`（T13、T4）；`SidebarActions.deleteWorktree`、`TreeWorktree`（T6b、T5）；`activateModal`（现有）
-  - 提供：`confirmDeleteWorktree(status: WorktreeStatus, opts: { label: string; changed: boolean; error?: string }): Promise<WorktreeRemoveRequest | null>`；`type DeleteWorktreeOutcome = { removed: boolean; endedSessions: string[] }`；`deleteWorktreeFlow(rest, target: { path: string; label: string }, notify: (text: string) => void): Promise<DeleteWorktreeOutcome | null>`
-  - 确认框的形态、默认按钮、同意项照 design 6.2 的表和它下面那一段：`data-variant` 按 `files` > `detached` > `commits` > `external` > `clean` 取第一个成立的；显示了 `files` 或 `detached`（有提交）的警告时初始焦点在 `dialog-cancel`、确认按钮是 `delete-wt-force`；`commits` 的两个单选预选 `delete-wt-keep-branch`；几种情况同时成立时各段都显示、同意项取并集；只要显示了 `files` 或 `detached`（有提交）的警告，回车 = 取消，H22 对 R5.5 的约定只在单独的 `commits` 形态成立（d25）；请求里的 `path`、`head`、`sessions` 原样取自传入的 `status`
-  - 流程照 design 6.2 末尾的表：`worktreeStatus` → 确认 → `removeWorktree`。200 → `{removed:true, endedSessions}`，带 `branchError` 时 `notify(wt.delete.branchKept)`；409 `worktree_changed` → 用响应里的 `status` 再弹一次确认（`changed:true`）；500 → 带着 `message` 重新打开同一个确认框，这时用户取消返回 `{removed:false, endedSessions:[]}`（会话可能已被结束，调用方要刷新）；查状态时 404 → `notify(wt.delete.gone)` 并返回 `null`，删除时 404 → 同样提示并返回 `{removed:true, endedSessions: 请求里的 sessions}`；请求超时或断网（抛出的不是 `RestError`）→ 再调一次 `worktreeStatus`：404 → `{removed:true, endedSessions: 请求里的 sessions}`，否则 `notify(wt.delete.timeout)` 并返回 `{removed:false, endedSessions:[]}`；从未发出删除请求就取消 → `null`
+  - 提供：`confirmDeleteWorktree(status: WorktreeStatus, opts: { label: string; changed: boolean; error?: string; ended?: number }): Promise<WorktreeRemoveRequest | null>`；`showDeleteWorktreeFailure(opts: { label: string; message: string; ended: number; path: string }): Promise<void>`；`type DeleteWorktreeOutcome = { removed: boolean; endedSessions: string[] }`；`deleteWorktreeFlow(rest, target: { path: string; label: string }, notify: (text: string) => void): Promise<DeleteWorktreeOutcome | null>`
+  - 确认框的形态、默认按钮、同意项照 design 6.2 的表和它下面那一段：`data-variant` 按 `files` > `detached` > `commits` > `external` > `clean` 取第一个成立的；显示了 `files` 或 `detached`（有提交）的警告时初始焦点在 `dialog-cancel`、确认按钮是 `delete-wt-force`；`commits` 的两个单选预选 `delete-wt-keep-branch`；几种情况同时成立时各段都显示、同意项取并集；只要显示了 `files` 或 `detached`（有提交）的警告，回车 = 取消，H22 对 R5.5 的约定只在单独的 `commits` 形态成立（d25）；请求里的 `path`、`head`、`sessions` 原样取自传入的 `status`。两行叠加的说明都不影响形态、默认按钮、回车和同意项：`status.ignoredFiles > 0` 时多一行 `delete-wt-ignored`（`wt.delete.ignored`，R5.4；字段是 0 或缺省时没有）；`opts.ended > 0` 时多一行 `delete-wt-ended`（`wt.delete.ended`，R5.12）
+  - 流程照 design 6.2 的表（decisions #32）：`worktreeStatus` → 确认 → `removeWorktree`。流程里记着「有没有发出过删除请求」和 `ended`（各次响应里 `endedSessions` 的并集；删除时 404、超时后确认已删除的，并上那次请求里的 `sessions`）
+    - 200 → `{removed:true, endedSessions: ended}`，带 `branchError` 时 `notify(wt.delete.branchKept)`
+    - 409 `worktree_changed` → 用响应里的 `status` 再弹一次确认（`changed:true`，`ended` 的个数）
+    - 500 `worktree_remove_failed` → 再调一次 `worktreeStatus(path)`：返回了状态 → 用这份最新状态重新打开确认框（`error` 是响应的 `message`，带 `ended` 的个数）；404 → `showDeleteWorktreeFailure`（响应的 `message`、`ended` 的个数、`path`），关闭后返回 `{removed:false, endedSessions: ended}`；这次查询也失败 → `notify(wt.delete.failed)` 并返回同样的值
+    - 查状态时 404（还没发出过删除请求）→ `notify(wt.delete.gone)` 并返回 `null`；删除时 404 → 同样提示并返回 `{removed:true, endedSessions: ended}`
+    - 请求超时或断网（抛出的不是 `RestError`）→ 再调一次 `worktreeStatus`：404 → `{removed:true, endedSessions: ended}`，否则 `notify(wt.delete.timeout)` 并返回 `{removed:false, endedSessions: ended}`
+    - 用户在确认框里取消：从未发出过删除请求 → `null`；发出过 → `{removed:false, endedSessions: ended}`（会话可能已被结束，调用方要关视图并刷新）
+  - `showDeleteWorktreeFailure`（design 7.4）：`data-testid="delete-wt-failed"`，标题 `wt.delete.failedTitle`；正文是 `delete-wt-error`（「删除失败：<git 的输出>」）、`delete-wt-ended`（`ended > 0` 时）、`delete-wt-partial`（`wt.delete.partial`，带路径，写明分支没有删除）；只有一个按钮 `dialog-cancel`（`wt.delete.close`），结构同其它对话框（标题、`.modal-body`、`.modal-footer`）
 - 场景：R5.2–R5.9、R5.11（界面一侧）、R8.5（对话框结构）
-- data-testid：`delete-wt-dialog`（带 `data-variant`）、`delete-wt-files`、`delete-wt-commits`、`delete-wt-sessions`、`delete-wt-external`、`delete-wt-keep-branch`、`delete-wt-delete-branch`、`delete-wt-force`、`delete-wt-changed`、`delete-wt-error`、`dialog-confirm`、`dialog-cancel`
+- data-testid：`delete-wt-dialog`（带 `data-variant`）、`delete-wt-files`、`delete-wt-commits`、`delete-wt-sessions`、`delete-wt-external`、`delete-wt-keep-branch`、`delete-wt-delete-branch`、`delete-wt-force`、`delete-wt-changed`、`delete-wt-error`、`delete-wt-ignored`、`delete-wt-ended`、`delete-wt-failed`、`delete-wt-partial`、`dialog-confirm`、`dialog-cancel`
 - 测试（`test-worktree-dialogs.mjs`，除最后一个）：
-  - `delete_wt_clean`、`delete_wt_files`、`delete_wt_commits`、`delete_wt_external`、`delete_wt_detached`、`delete_wt_detached_clean`、`delete_wt_sessions_line`、`delete_flow_500_reopens_with_error`、`delete_flow_409_reconfirms`：断言见测试计划 R5.2、R5.3、R5.5、R5.8、R5.11、R5.6、R5.9 和「容易出问题的情况」各行
+  - `delete_wt_clean`、`delete_wt_files`、`delete_wt_commits`、`delete_wt_external`、`delete_wt_detached`、`delete_wt_detached_clean`、`delete_wt_sessions_line`、`delete_wt_ignored_note`、`delete_flow_500_reopens_with_error`、`delete_flow_500_after_sessions_ended`、`delete_flow_500_partial_shows_failure`、`delete_flow_409_after_sessions_ended_then_cancel`、`delete_flow_409_reconfirms`：断言见测试计划 R5.2、R5.3、R5.5、R5.8、R5.11、R5.6、R5.4、R5.9、R5.12 和「容易出问题的情况」各行
   - `delete_wt_files_and_commits`：`managed`、`dirtyFiles:3`、`unmergedCommits:2` → `data-variant` 是 `files`，`delete-wt-files` 和 `delete-wt-commits` 都在，初始焦点在 `dialog-cancel`，单选预选保留分支；对话框打开后直接按回车 → 返回 `null`，`removeWorktree` 没有被调用（d25）；点 `delete-wt-force` → 请求是 `discardFiles:true`，没有 `deleteBranch`；改选删分支后再点 → `discardFiles:true, deleteBranch:true, dropCommits:true`
   - `delete_wt_files_managed_merged`：`managed`、`dirtyFiles:3`、`unmergedCommits:0` → 点 `delete-wt-force` 的请求是 `discardFiles:true, deleteBranch:true`
   - `delete_wt_external_detached`：不是 `managed`、detached、干净 → `delete-wt-external` 的文字是 `wt.delete.externalDetached`，请求没有同意项
@@ -719,9 +726,11 @@
   - `delete_flow_404_notifies_gone`：`worktreeStatus` 返回 404 → 没有弹确认框，`notify` 收到「这个 worktree 已经不存在」，返回 `null`
   - `delete_flow_branch_error`：结果带 `branchError:"x"` → `notify` 收到「目录已删除，分支没删掉：x」，返回 `{removed:true, endedSessions}`
   - `delete_flow_timeout_then_gone`：`removeWorktree` 抛 `AbortError`（不是 `RestError`），随后的 `worktreeStatus` 返回 404 → 返回 `{removed:true, endedSessions: 请求里的 2 个 id}`，没有弹错误框
-  - `delete_flow_timeout_still_there`：`removeWorktree` 抛 `AbortError`，随后的 `worktreeStatus` 返回 200（或也抛错）→ `notify` 收到 `wt.delete.timeout` 的文字，返回 `{removed:false, endedSessions:[]}`
-  - `delete_flow_500_then_cancel`：500 之后在重新打开的确认框里点取消 → 返回 `{removed:false, endedSessions:[]}`（不是 `null`）
-  - `test-sidebar.mjs › remove_result_closes_views`（经 `loadIndex()`）：`fix-login` 下打开着 2 个会话，流程返回 `endedSessions` 含这 2 个 id → 两个视图都被关闭，`views` 里没有它们，随后发出了一次 `listProjects` 和 `listSessions`；流程返回 `{removed:false, endedSessions:[]}` 时不关任何视图，但同样发出一次刷新；返回 `null` 时不刷新
+  - `delete_flow_timeout_still_there`：`removeWorktree` 抛 `AbortError`，随后的 `worktreeStatus` 返回 200（或也抛错）→ `notify` 收到 `wt.delete.timeout` 的文字，返回 `{removed:false, endedSessions:[]}`（之前的响应里有已结束的会话时是它们的并集）
+  - `delete_flow_500_then_cancel`：500（`endedSessions:[]`）之后在重新打开的确认框里点取消 → 返回 `{removed:false, endedSessions:[]}`（不是 `null`）；`delete_flow_500_status_query_fails`：500 之后的 `worktreeStatus` 抛网络错误 → `notify` 收到 `wt.delete.failed` 的文字，返回 `{removed:false, endedSessions: 响应里的 id}`
+  - `delete_flow_cancel_before_any_request`：第一次确认框就取消 → 返回 `null`，`removeWorktree` 没有被调用；`delete_flow_409_then_cancel`：一次 409（`endedSessions:[]`）之后取消 → 返回 `{removed:false, endedSessions:[]}`（发出过删除请求就不返回 `null`）
+  - `delete_flow_ended_union`：第一次请求 409 带 `endedSessions:["a"]`，第二次 500 带 `endedSessions:["b"]`，之后取消 → 返回的 `endedSessions` 是 `["a","b"]`（不重复）
+  - `test-sidebar.mjs › remove_result_closes_views`（经 `loadIndex()`）：`fix-login` 下打开着 2 个会话，流程返回 `endedSessions` 含这 2 个 id → 两个视图都被关闭，`views` 里没有它们，随后发出了一次 `listProjects` 和 `listSessions`；流程返回 `{removed:false, endedSessions: 这 2 个 id}`（会话已结束、worktree 没删成）时同样关闭这两个视图并刷新；流程返回 `{removed:false, endedSessions:[]}` 时不关任何视图，但同样发出一次刷新；返回 `null` 时不刷新
 - 完成定义：
   - `cd desktop && npm run typecheck && npm run test:worktree-dialogs && npm run test:sidebar && npm run test:dialog-layout && npm run test:i18n-parity` 退出码 0
   - 在仓库根执行 `TMUX_TMPDIR=$(mktemp -d /tmp/vr-XXXXXX) node .claude/skills/verify/scripts/gui-smoke.mjs`，以退出码 0 结束、没有 FAIL 行
@@ -748,7 +757,7 @@
 
 ### T16 切换会话的快捷键（⌘1–9、⌘⇧[、⌘⇧]）
 - 状态：待办
-- 文件：新建 `desktop/src/renderer/shortcuts.ts`、`desktop/scripts/test-shortcuts.mjs`；修改 `desktop/src/renderer/index.ts`（启动时 `installShortcuts(window, …)`：`blocked` = 页面上有 `.modal-overlay` 或正在内联重命名；`count` 和 `activeIndex` 来自 `visibleSessions(…)`；`open` 调 `openExisting`）、`desktop/package.json`（`test:shortcuts`）
+- 文件：新建 `desktop/src/renderer/shortcuts.ts`、`desktop/scripts/test-shortcuts.mjs`；修改 `desktop/src/renderer/index.ts`（启动时 `installShortcuts(window, …)`：`blocked` = 页面上有 `.modal-overlay` 或正在内联重命名；`count` 和 `activeIndex` 来自 `visibleSessions(…)`；`open` 调 `openExisting`）、`desktop/package.json`（`test:shortcuts`）、`.claude/skills/verify/scripts/gui-smoke.mjs`（只在 `--keep` 分支多打印一行 `--keep: Electron pid <pid>`，值是脚本自己 `spawn` 的 Electron 子进程的 pid，供下面的真实键盘确认核对前台应用。这一行不是断言，不改任何检查）
 - 接口：
   - 使用：`visibleSessions`（T5）；`machineTrees`、`collapsedProjects`、折叠的机器集合、`renamingActive`、`openExisting`（`index.ts`，T6b 和现有）
   - 提供：`type ShortcutAction`；`matchShortcut(e)`；`pickTarget(count, activeIndex, action)`；`installShortcuts(target: Window, deps: { blocked(): boolean; count(): number; activeIndex(): number; open(index: number): void }): () => void`。签名见 design 4.10，规则见 6.5：只在 `window` 的 keydown 捕获阶段监听；匹配且没有被 `blocked` 时 `preventDefault()` 加 `stopPropagation()`；被 `blocked` 时不切换也不拦截
@@ -761,7 +770,7 @@
   - `skips_collapsed_via_index`（经 `loadIndex()`）：2 个项目各 2 个会话，折叠第 1 个项目，当前打开第 2 个项目的第 2 个会话，派发 ⌘⇧] → 打开的是第 2 个项目的第 1 个会话
 - 完成定义：
   - `cd desktop && npm run typecheck && npm run test:shortcuts && npm run test:tree && npm run test:terminal-clipboard` 退出码 0
-  - 真实键盘确认一次（design V7 留下的风险：CDP 注入的按键不经过 macOS 的原生菜单分发）：在仓库根执行 `TMUX_TMPDIR=$(mktemp -d /tmp/vr-XXXXXX) node .claude/skills/verify/scripts/gui-smoke.mjs --keep`，用它留下的临时实例（临时 daemon、临时 userData、`--use-mock-keychain`、独立的 tmux；不另起应用，不连本机真实的 daemon），结束后对脚本按 Ctrl+C 让它清理。先确认它是最前面的应用（`osascript -e 'tell application "System Events" to get name of first process whose frontmost is true'` 输出 `Electron`），再执行 `osascript -e 'tell application "System Events" to keystroke "2" using command down'` 和 `osascript -e 'tell application "System Events" to key code 30 using {command down, shift down}'`；期望会话切换、终端里没有多出字符。结果写进 design.md 第 10 节「变更」。最前面的应用不是它，或 `osascript` 因为没有辅助功能权限报错时，不发按键，在第 10 节记「真实键盘待人工确认」并交给 dev-test 的测试报告，不算本任务未完成
+  - 真实键盘确认一次（design V7 留下的风险：CDP 注入的按键不经过 macOS 的原生菜单分发）：在仓库根执行 `TMUX_TMPDIR=$(mktemp -d /tmp/vr-XXXXXX) node .claude/skills/verify/scripts/gui-smoke.mjs --keep`，用它留下的临时实例（临时 daemon、临时 userData、`--use-mock-keychain`、独立的 tmux；不另起应用，不连本机真实的 daemon），结束后对脚本按 Ctrl+C 让它清理。发按键之前必须确认最前面的应用就是这个临时实例，按 pid 比，不按进程名比（用户自己用 `npm run dev` 开着的 vibe-remote 进程名同样是 `Electron`，按键会发给他真实的应用）：`osascript -e 'tell application "System Events" to get unix id of first process whose frontmost is true'` 的输出必须等于脚本打印的 `--keep: Electron pid <pid>` 里的 pid。相等才执行 `osascript -e 'tell application "System Events" to keystroke "2" using command down'` 和 `osascript -e 'tell application "System Events" to key code 30 using {command down, shift down}'`，每条之前都重新比一次 pid；期望会话切换、终端里没有多出字符。结果写进 design.md 第 10 节「变更」。pid 不相等（最前面的不是它），或 `osascript` 因为没有辅助功能权限报错时，不发按键，在第 10 节记「真实键盘待人工确认」并交给 dev-test 的测试报告，不算本任务未完成
 - 依赖：T5、T6b
 
 ### T17 新旧版本互连：整体核对（R9）
@@ -829,13 +838,12 @@
   - `git diff --stat HEAD~1 -- desktop/src/renderer/chat/ desktop/src/renderer/index.html` 没有输出
   - 在仓库根执行 `TMUX_TMPDIR=$(mktemp -d /tmp/vr-XXXXXX) node .claude/skills/verify/scripts/gui-smoke.mjs` 和 `TMUX_TMPDIR=$(mktemp -d /tmp/vr-XXXXXX) node .claude/skills/verify/scripts/gui-chat-smoke.mjs`，都以退出码 0 结束、没有 FAIL 行（两者内含 `picker-layout.mjs` 和 `slash-menu-layout.mjs` 的测量）；`grep -c "^test(" .claude/skills/verify/scripts/gui-chat-smoke.mjs` 仍是 26；`git diff $(git merge-base HEAD change/dual-mode) -- .claude/skills/verify/scripts/gui-smoke.mjs .claude/skills/verify/scripts/gui-chat-smoke.mjs` 里没有被删掉或放宽的断言
   - `sed -n 12p CLAUDE.md` 含「M1 方案为准」；`git diff HEAD~1 -- CLAUDE.md` 只有这一行
-  - 截图只用临时实例（decisions #18）：在仓库根执行 `TMUX_TMPDIR=$(mktemp -d /tmp/vr-XXXXXX) node .claude/skills/verify/scripts/gui-smoke.mjs --keep`，它起的是临时 daemon（随机端口、临时 `state_dir`）、临时 userData、`--use-mock-keychain` 和随机的调试端口；从输出的 `--keep: CDP 127.0.0.1:<端口>` 读出端口，经 CDP 的 `Page.captureScreenshot` 截 3 张图（有三层的侧边栏加终端会话、对话会话、删除 worktree 确认框），和效果页 M1 并排存进 `evidence/m1-*.png`；截完对脚本按 Ctrl+C 让它清理。三层侧边栏用的仓库建在脚本打印的 `work dir` 下面（临时 daemon 的 `allowed_roots` 之内），随它一起删除。不用固定端口 9222，不直接启动构建产物（那样会读真实的 userData、machines.json 和钥匙串），不连 127.0.0.1:8765。没有显示器、脚本起不来时不截图，在 design.md 第 10 节记「M1 截图待 dev-test」，不算本任务未完成
+  - 截图只用临时实例（decisions #18）：在仓库根执行 `TMUX_TMPDIR=$(mktemp -d /tmp/vr-XXXXXX) node .claude/skills/verify/scripts/gui-smoke.mjs --keep`，它起的是临时 daemon（随机端口、临时 `state_dir`）、临时 userData、`--use-mock-keychain` 和随机的调试端口；从输出的 `--keep: CDP 127.0.0.1:<端口>` 读出端口，经 CDP 的 `Page.captureScreenshot` 截 3 张图（有三层的侧边栏加终端会话、对话会话、删除 worktree 确认框），和效果页 M1 并排存进 `evidence/m1-*.png`；截完对脚本按 Ctrl+C 让它清理。截图用的仓库放在哪（decisions #37）：脚本起了两个临时 daemon，终端 daemon 的配置来自 `vibe-remoted.tmux.json`，`allowed_roots` 是 `["/tmp"]`；只有对话 daemon 的根在脚本打印的 `work dir` 下（`<work dir>/chat-proj`）。所以「三层侧边栏加终端会话」用的仓库建在 `R=$(mktemp -d /tmp/vr-shot-XXXXXX)` 下（例如 `$R/devflow`，它的 worktree 容器 `$R/devflow-worktrees` 也在 `$R` 里），在终端 daemon 那台临时机器上开会话；对话会话直接开在 `<work dir>/chat-proj`（对话 daemon 唯一被信任的目录）。截完先在应用里（或经临时 daemon 的 `DELETE /api/v1/sessions/{id}`）删掉这次建的会话，再对脚本按 Ctrl+C，最后 `rm -rf "$R"`；`<work dir>` 由脚本自己删除。这一步不直接执行任何 `tmux` 命令。不用固定端口 9222，不直接启动构建产物（那样会读真实的 userData、machines.json 和钥匙串），不连 127.0.0.1:8765。没有显示器、脚本起不来时不截图，在 design.md 第 10 节记「M1 截图待 dev-test」，不算本任务未完成
 - 依赖：T18
 
 ### T20 更新约束 AI 的规则文件（CLAUDE.md、`.devflow.yml`、protocol-sync skill）
-- 状态：阻塞
-- 阻塞原因：等 c3
-- 文件：修改 `CLAUDE.md`（除 T19 改的那一句以外：协议版本 4 与 5 个新端点、`attach.worktreeName` 和 4 个错误码；会话归属和 `projects.json`；终端会话的创建时间存在 `@vibe_remote_created`；删会话不再动 worktree 和分支；交给 git 的分支只写完整引用名、git 环境固定 `LC_ALL=C`；`allowed_roots` 的检查一律用解析符号链接的 `ResolveAllowedWorkdir`（安全模型一节里「`config.IsAllowedWorkdir` 用 `filepath.Rel`」那句改掉）；对话界面信任规则的 worktree 条款；客户端侧边栏的三层模型、`tree.ts` / `sidebar.ts`、`/api/v1/projects` 轮询与能力状态；`state_dir` 一节加 `projects.json`）、`.devflow.yml`（`invariants` 新增 7 条，规则原文和检查命令照 design 7.1「本次新增 7 条」的表；涉及 Go 测试的命令前带 `TMUX_TMPDIR=$(mktemp -d)`）、`.claude/skills/protocol-sync/SKILL.md`（第 4 步后面加一段 v4 的核对项：`attach.worktreeName`；`Project`、`ProjectWorktree`、`WorktreePlan`、`WorktreeStatus`、`WorktreeRemoveRequest`、`WorktreeRemoveResult`；5 个新端点的方法、路径、错误码（含 plan 的 `unsupported_repo`、remove 的 `worktree_remove_failed` 两种来源）；4 个新的 error 帧代码都是 fatal；版本表第 4 行和 `Version` / `PROTOCOL_VERSION` = 4、`CHAT_MIN_PROTO` = 3）
+- 状态：待办
+- 文件：修改 `CLAUDE.md`（除 T19 改的那一句以外：协议版本 4 与 5 个新端点、`attach.worktreeName` 和 4 个错误码；会话归属和 `projects.json`；终端会话的创建时间存在 `@vibe_remote_created`；删会话不再动 worktree 和分支；交给 git 的分支只写完整引用名、git 环境固定 `LC_ALL=C`；`allowed_roots` 的检查一律用解析符号链接的 `ResolveAllowedWorkdir`（安全模型一节里「`config.IsAllowedWorkdir` 用 `filepath.Rel`」那句改掉）；对话界面信任规则的 worktree 条款；客户端侧边栏的三层模型、`tree.ts` / `sidebar.ts`、`/api/v1/projects` 轮询与能力状态；`state_dir` 一节加 `projects.json`；删除 worktree 的规矩：结束会话之前拦下锁定、子模块或嵌入式仓库、嵌套 worktree 三种，之后的失败带 `endedSessions` 如实报告；worktree 模式的工作目录白名单在建之前和建之后各查一次）。用户已同意改这三个规则文件（c3，decisions #28）、`.devflow.yml`（`invariants` 新增 7 条，规则原文和检查命令照 design 7.1「本次新增 7 条」的表；涉及 Go 测试的命令前带 `TMUX_TMPDIR=$(mktemp -d)`）、`.claude/skills/protocol-sync/SKILL.md`（第 4 步后面加一段 v4 的核对项：`attach.worktreeName`；`Project`、`ProjectWorktree`、`WorktreePlan`、`WorktreeStatus`、`WorktreeRemoveRequest`、`WorktreeRemoveResult`；5 个新端点的方法、路径、错误码（含 plan 的 `unsupported_repo` 和可缺省的 `conflict`、status 的 `ignoredFiles`、remove 的 409 和 500 响应体里的 `endedSessions`、`worktree_remove_failed` 的两类来源）；4 个新的 error 帧代码都是 fatal；版本表第 4 行和 `Version` / `PROTOCOL_VERSION` = 4、`CHAT_MIN_PROTO` = 3）
 - 接口：
   - 使用：T3、T7、T10、T12、T13 写好的测试名（7 条规则的检查命令里引用）
   - 提供：无
@@ -868,11 +876,11 @@ spec「推迟到以后」的条目：
 
 设计中发现、不在本次范围的改进：
 
-- daemon 在 `git worktree add` 成功之后、会话登记之前崩溃：重放会得到 `worktree_branch_exists`，那个 worktree 以「没有会话」的行留在侧边栏（design 6.1 的已知窄窗口）。以后可以在启动时对账，或让重放认领自己刚建的 worktree。
-- 等 c4（用户决定，不阻塞任何任务）：删除「干净」的 worktree 时，被 git 忽略的文件（`.env`、本地配置）会一并删除，而 R5.4 的确认框说的是「工作区是干净的」。建议在确认框里加一句不拦截的说明「另有 N 个被 git 忽略的文件会一并删除」，判定仍按「干净」，`GET /api/v1/worktrees/status` 多返回这个数量。用户同意后是一个小任务：改 R5.4 的文案（spec）、status 加一个字段（三处协议）、确认框加一行和一个用例。决定之前按原 spec 做：不加说明，status 不返回该数量。
-- 有初始化过的子模块的 worktree 不能从界面删除（d26），只能在终端里 `git worktree remove --force`。以后可以把子模块里未推送的提交数也查出来放进确认框，再放开。
-- 子模块和 `--separate-git-dir` 的仓库里不能新建命名 worktree（decisions #19）；它们已有的链接 worktree 在侧边栏里各自显示成一个单独的项目，也不能从界面删除。以后可以认出这类仓库真正的工作目录，把它们的 worktree 归到同一个项目下。
-- 被锁定的 worktree、有子模块的 worktree 现在要点了删除才知道删不了；可以让 status 带上这两个标志，在确认框打开时就说明。
+- daemon 在 `git worktree add` 成功之后、会话登记之前崩溃：重放会得到 `worktree_branch_exists`，那个 worktree 以「没有会话」的行留在侧边栏；在 `worktree add` 和 `symbolic-ref` 两条命令之间崩溃，则留下一个 detached 的 worktree（按「外部」显示）和一个没被检出的同名分支（design 6.1 的已知窄窗口）。以后可以在启动时对账，或让重放认领自己刚建的 worktree。
+- 有初始化过的子模块或嵌入式仓库的 worktree 不能从界面删除（d26、decisions #31），只能在终端里 `git worktree remove --force`。以后可以把子模块里未推送的提交数也查出来放进确认框，再放开。
+- 里面嵌着同一仓库另一个 worktree 的 worktree，要先删里层才能删外层（decisions #29）。别的仓库的 worktree、或一个普通的 git 仓库嵌在被忽略的目录里时，daemon 认不出来：它在「被忽略的文件」那句说明里只算 1 个，会随外层一起删除。以后可以在被忽略的目录里找 `.git`，单独列出来。
+- 子模块和 `--separate-git-dir` 的仓库里不能新建命名 worktree（decisions #19，spec H27）；它们的链接 worktree（包括旧的自动命名 Worktree 模式在其中建出来的）在侧边栏里各自显示成一个单独的项目，不能从界面删除，目录和 `vibe/<会话id>` 分支要手动清理。以后可以认出这类仓库真正的工作目录，把它们的 worktree 归到同一个项目下。
+- 被锁定的 worktree、有子模块的 worktree、里面嵌着别的 worktree 的 worktree，现在要点了删除才知道删不了；可以让 status 带上这几个标志，在确认框打开时就说明。
 - 会话行显示「最近活动的相对时间」（效果页 M1 上有，d10 去掉了）：需要协议给会话加最近活动时间，终端会话目前没有来源。
 - 折叠的项目行把三种状态都上卷、取最紧急的一种（d11 只上卷「等你处理」）。
 - 重载、交接、删除机器的系统 `confirm` 也换成应用内对话框（d15 只换了删除会话）。
@@ -880,4 +888,6 @@ spec「推迟到以后」的条目：
 - `/api/v1/info` 给每个启动选项下发「是否续接」字段，`-c` 说明就不必依赖 id 恰好叫 `continue`（d13）。
 - `state_dir` 不可写时，命名 worktree 的创建记录重启后丢失、按「外部」处理（方向安全但会留下分支）。可以把记录另存一份到仓库的 git 配置，或在界面上提示 `state_dir` 不可写。
 - 把 `/protocol-sync` 的三处比对做成脚本并接进 `make check`，协议漂移就能自动发现。
-- 新建 worktree 对话框确认之后才出现的竞态错误（另一台桌面刚建了同名分支）只显示在状态栏（design 第 1 节方案 A 的代价）。以后可以把这类错误带回对话框。
+- 新建 worktree 对话框确认之后才出现的竞态错误（另一台桌面刚建了同名分支）只显示在状态栏（design 第 1 节方案 A 的代价）；其中「目录/文件」冲突的那一种，error 帧不带 `conflict`，状态栏只能写成「分支 … 已存在」。以后可以把这类错误带回对话框，并给 error 帧加上冲突的分支。
+- 新流程建出的分支不跟随 `branch.autoSetupMerge`，`post-checkout` 钩子运行时 HEAD 还是 detached（design 6.1 第 9 步，d28）。有用户依赖这两点时，可以在 `symbolic-ref` 之后补写上游配置，或再触发一次钩子。
+- `/api/v1/projects` 的补归属对一直失败的会话每轮重试、没有退避（design 5.4）。实际遇到大量这种会话时再加。
