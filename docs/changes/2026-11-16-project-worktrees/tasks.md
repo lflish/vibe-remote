@@ -722,7 +722,7 @@
 
 ### T14 桌面端：删除 worktree 的确认和流程
 - 状态：进行中
-- 文件：修改 `desktop/src/renderer/worktree-dialogs.ts`（加 `confirmDeleteWorktree`、`showDeleteWorktreeFailure`、`deleteWorktreeFlow`）、`desktop/src/renderer/index.ts`（给 `SidebarActions` 传 `deleteWorktree`：跑 `deleteWorktreeFlow`，返回不是 `null` 时关闭 `endedSessions` 里各会话的视图并立刻刷新这台机器，不管 `removed` 是真是假）、`desktop/src/renderer/styles.css`（追加确认框里警告段、单选、错误条的规则）、`desktop/src/renderer/i18n.ts`（`wt.delete.*`）；测试 `desktop/scripts/test-worktree-dialogs.mjs`、`test-sidebar.mjs`
+- 文件：修改 `desktop/src/renderer/worktree-dialogs.ts`（加 `confirmDeleteWorktree`、`showDeleteWorktreeFailure`、`deleteWorktreeFlow`）、`desktop/src/renderer/index.ts`（给 `SidebarActions` 传 `deleteWorktree`：跑 `deleteWorktreeFlow`，返回不是 `null` 时关闭 `endedSessions` 里各会话的视图并立刻刷新这台机器，不管 `removed` 是真是假）、`desktop/src/renderer/styles.css`（追加确认框里警告段、单选、错误条的规则）、`desktop/src/renderer/i18n.ts`（`wt.delete.*`）；测试 `desktop/scripts/test-worktree-dialogs.mjs`、`test-sidebar.mjs`，以及开发中加的测试入口 `desktop/scripts/worktree-dialogs-entry.ts`（decisions #69）
 - 接口：
   - 使用：`worktreeStatus`、`removeWorktree`（超时已随会话数放大）、`WorktreeStatus`、`WorktreeRemoveRequest`、`WorktreeRemoveResult`、`RestError`（T13、T4）；`SidebarActions.deleteWorktree`、`TreeWorktree`（T6b、T5）；`activateModal`（现有）
   - 提供：`confirmDeleteWorktree(status: WorktreeStatus, opts: { label: string; changed: boolean; error?: string; ended?: number }): Promise<WorktreeRemoveRequest | null>`；`showDeleteWorktreeFailure(opts: { label: string; message: string; ended: number; path: string }): Promise<void>`；`type DeleteWorktreeOutcome = { removed: boolean; endedSessions: string[] }`；`deleteWorktreeFlow(rest, target: { path: string; label: string }, notify: (text: string) => void): Promise<DeleteWorktreeOutcome | null>`
@@ -936,4 +936,7 @@ spec「推迟到以后」的条目：
 - 查 `internal/chat` 的 `TestStopAccountsForEveryQueuedMessage/restart` 偶发失败的原因（T10 时 `make check` 里出现 1 次：`claude exited during startup (code 139)`，假 claude 在重启后以 SIGSEGV 退出；单独跑 3 次和重跑 `make check` 都通过，decisions #60）。
 - `UnmergedCommits`（T1 写的）走的是不带超时的 `gitAt`：查状态和删除前重查时，这一条 `git rev-list` 卡住会让请求一直不返回（其余几条都有 5 秒超时）。可以改走 `gitAtTimeout`，超时按 `git_failed` 处理。
 - 并发用例 `TestConcurrentRemoveAndCreateOneWins` 发现不了「去掉删除与新建的互斥」这种改动（窗口太窄，12 轮撞不上），那一条现在靠两个卡时序的用例守着（decisions #67）。可以给它加一个只在测试里生效的让步点，把窗口撑开。
+- 当前打开的会话被删除（删会话或删它所在的 worktree）而又没有别的已打开会话时，主区域是空白的，没有回到机器概览或空状态（`closeSession` 原来就是这样，T14 的收尾沿用了它）。
+- 「删到一半失败」的说明框里，daemon 的 `message` 已经写了「目录还剩一部分、分支没删」，下面 `wt.delete.partial` 又说了一遍。可以让 daemon 的 `message` 只带 git 的输出，或在界面上合成一段。
+- 删除 worktree 的确认框只写「会先结束这 N 个会话」，没有列出是哪几个（效果页上列了名字和类型）。可以把会话名列出来。
 - 查 `gui-chat-smoke` R7 偶发失败的原因（AskUserQuestion 表单：`answers echoed: on": "Pick a fruit"`；T6b 提交后 3 次里失败 1 次，decisions #47）。
