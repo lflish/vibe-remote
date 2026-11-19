@@ -357,6 +357,83 @@ test('tmux: no tmux program on PATH but its socket is there', async () => {
   }
 });
 
+test('tmux: the server has exited and left its socket file', async () => {
+  const d = defineDaemon('exited');
+  const repo = makeRepo(join(d.root, 'repo'));
+  const wt = join(d.root, 'wt', 'a');
+  git(repo, 'worktree', 'add', '-q', '-b', 'topic-a', wt);
+  await startDaemon(d);
+  try {
+    // the only session ends: the tmux server exits with it
+    const s = await createSession(d, { workdir: repo });
+    eq((await rest(d, 'DELETE', `/api/v1/sessions/${s.sessionId}`)).status, 204, 'deleting the only session');
+    const answer = await waitFor(() => { const r = tmux(d, 'list-sessions'); return r.status !== 0 ? r.stderr.trim() : null; }, 8000, 'the tmux server to exit');
+    const left = existsSync(d.socket);
+    const r = await remove(d, wt);
+    eq([r.status, r.json], [200, { removed: true, branchDeleted: false, endedSessions: [] }], 'removing a worktree without sessions');
+    eq(disk(repo, wt, 'topic-a'), { dir: false, listed: false, branch: true }, 'on disk');
+    return `tmux says "${answer.replaceAll(work, '<work>')}" (socket file ${left ? 'left behind' : 'gone'}): 200 ${J(r.json)}`;
+  } finally {
+    await stopDaemon(d);
+    tmux(d, 'kill-server');
+  }
+});
+
+test('a repository whose main directory git does not name (--separate-git-dir, a submodule)', async () => {
+  const d = defineDaemon('single');
+  // --separate-git-dir: `git worktree list` starts with the git directory, not the work tree
+  const sep = join(d.root, 'sep');
+  mkdirSync(sep, { recursive: true });
+  git(d.root, 'init', '-q', '--separate-git-dir', join(d.root, 'sep.git'), sep);
+  git(sep, 'symbolic-ref', 'HEAD', 'refs/heads/main');
+  writeFileSync(join(sep, 'README.md'), 'sep\n');
+  git(sep, 'add', 'README.md');
+  git(sep, 'commit', '-q', '-m', 'init');
+  // a submodule of another repository
+  const lib = makeRepo(join(d.root, 'lib'));
+  const sup = makeRepo(join(d.root, 'super'));
+  git(sup, '-c', 'protocol.file.allow=always', 'submodule', 'add', '-q', lib, 'sub');
+  git(sup, 'commit', '-q', '-m', 'add sub');
+  const sub = join(sup, 'sub');
+  await startDaemon(d);
+  try {
+    const a = (await createSession(d, { workdir: sep })).sessionId;
+    const b = (await createSession(d, { workdir: sub })).sessionId;
+    const tree = (await rest(d, 'GET', '/api/v1/projects')).json.projects;
+    const out = [];
+    for (const [dir, id, what] of [[sep, a, '--separate-git-dir'], [sub, b, 'submodule']]) {
+      const p = tree.find((x) => x.id === dir);
+      assert(p, `${what}: no project with the work tree as its id; projects are ${J(tree.map((x) => x.id.replace(d.root, '')))}`);
+      eq([p.git, p.error ?? null, p.worktrees.map((w) => [w.path, w.main === true, w.sessions]), p.sessions], [true, null, [[dir, true, [id]]], []], `${what}: the project in /api/v1/projects`);
+      // no named worktree can be started there, and the dialog can say so before anything is typed
+      const plan = (await rest(d, 'GET', `/api/v1/worktrees/plan?workdir=${encodeURIComponent(dir)}&name=fix-login`)).json;
+      eq([plan.ok, plan.error], [false, 'unsupported_repo'], `${what}: plan for a named worktree`);
+      let refused = '';
+      try { await createSession(d, { workdir: dir, mode: 'worktree', worktreeName: 'fix-login', newSessionId: newId() }); } catch (e) { refused = e.message.split(':')[0]; }
+      eq(refused, 'create_failed', `${what}: creating a named worktree`);
+      out.push(`${what}: one project, one worktree (main) holding the session; named worktree refused (unsupported_repo / create_failed)`);
+    }
+    assert(!existsSync(join(d.root, 'sep-worktrees')) && !existsSync(join(sup, 'sub-worktrees')), 'a refused create left a directory behind');
+    // The old, nameless Worktree mode still works there; what it makes is a project of its own that the app cannot delete.
+    const c = await createSession(d, { workdir: sep, mode: 'worktree' });
+    const made = (await sessions(d)).find((s) => s.id === c.sessionId);
+    assert(made.worktreeRoot && existsSync(made.worktreeRoot), `nameless worktree mode: ${J(made)}`);
+    const after = (await rest(d, 'GET', '/api/v1/projects')).json.projects;
+    const own = after.find((x) => x.id === made.worktreeRoot);
+    assert(own, `the worktree made by the nameless mode is not a project of its own: ${J(after.map((x) => x.id.replace(d.root, '')))}`);
+    eq(own.worktrees.map((w) => [w.path, w.main === true, w.sessions]), [[made.worktreeRoot, true, [c.sessionId]]], 'that project');
+    const st = await status(d, made.worktreeRoot);
+    const rm = await rest(d, 'POST', '/api/v1/worktrees/remove', { path: made.worktreeRoot, head: git(made.worktreeRoot, 'rev-parse', 'HEAD'), sessions: [c.sessionId] });
+    assert((rm.status === 400 && rm.json.error === 'worktree_is_main') || (rm.status === 404 && rm.json.error === 'worktree_not_found'), `removing it: ${rm.status} ${rm.text}`);
+    assert(existsSync(made.worktreeRoot) && (await sessions(d)).some((s) => s.id === c.sessionId), 'the refused removal touched the worktree or its session');
+    out.push(`nameless worktree mode: ${made.worktreeRoot.replace(d.root, '<root>')} is its own project; status ${st.status}, remove ${rm.status} ${rm.json.error}`);
+    return out.join('; ');
+  } finally {
+    await stopDaemon(d);
+    tmux(d, 'kill-server');
+  }
+});
+
 test('a terminal session from before the upgrade is counted and ended', async () => {
   const d = defineDaemon('legacy');
   const repo = makeRepo(join(d.root, 'repo'));

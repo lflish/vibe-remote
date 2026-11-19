@@ -37,7 +37,8 @@
 // (Input.dispatchKeyEvent), never to the system.
 //
 // Usage (from the repo root):
-//   node .claude/skills/verify/scripts/gui-worktree-smoke.mjs [--no-build] [--keep] [--list] [--only=R3,R5.2]
+//   node .claude/skills/verify/scripts/gui-worktree-smoke.mjs [--no-build] [--keep] [--list] [--only=R3,R5.2] [--with-existing]
+//   --with-existing              R8.3 also runs gui-smoke.mjs and gui-chat-smoke.mjs (otherwise it only compares them with the version before)
 //   DEVFLOW_EVIDENCE_DIR=<dir>   save one PNG per case (<case>.png)
 //   VR_BASE_DAEMON=<path>        reuse a protocol-3 vibe-remoted build (default: built from VR_BASE_REF)
 //   VR_BASE_REF=<commit>         the commit before this change (default 6d88e45)
@@ -56,7 +57,7 @@ import { sidebarLayout } from './sidebar-layout.mjs';
 import { atWindowSize, MIN_WINDOW } from './shell-layout.mjs';
 import { slashMenuLayout } from './slash-menu-layout.mjs';
 import { dialogLayout } from './dialog-layout.mjs';
-import { decodePng, hexRgb, rgbHex, colorDistance, countColor, dominantColors } from './png-pixels.mjs';
+import { decodePng, hexRgb, countColor, dominantColors } from './png-pixels.mjs';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../../../..');
 // VR_DESKTOP_DIR / VR_DAEMON: another build of the desktop / of the daemon, to
@@ -920,7 +921,7 @@ test('R1.6', 'R1.6 a folded project shows that a session inside is waiting', asy
     const folded = await project(WT, 'devflow');
     assert(folded.dot.includes('waiting'), `the folded row's dot is not the "needs you" one: ${folded.dot}`);
     eq(folded.worktrees.length + folded.sessions.length, 0, 'rows showing under a folded project');
-    await evidence('R1.6');
+    await evidence('R1.6', '#sidebar', pg(WT, 'devflow'));
     await click(toggle, 'unfold devflow');
     const row = await waitFor(async () => (await worktreeRow(WT, 'devflow', 'main'))?.sessions.find((s) => s.id === fx.mainChat), 5000, 'the session row after unfolding');
     eq(row.dot, 'waiting', 'dot of the session row');
@@ -1051,7 +1052,7 @@ test('R2.4', 'R2.4 a project with sessions cannot be removed', async () => {
     await click(`${pg(KEEP, 'rm')}.querySelector(':scope > .project-row ${tid('project-menu')}')`, 'menu of rm');
     const item = await waitFor(() => ev(`(() => { const m = document.querySelector('body > .menu'); const b = m?.querySelector('${tid('project-remove')}'); return b ? { disabled: b.disabled, note: m.querySelector('.menu-note')?.textContent ?? '' } : null; })()`), 5000, 'the menu');
     eq(item, { disabled: true, note: '这个项目下还有会话，先结束会话才能移除' }, 'the menu item');
-    await evidence('R2.4');
+    await evidence('R2.4', '#sidebar', pg(KEEP, 'rm'));
     // a click on it does nothing
     await ev(`document.querySelector('body > .menu ${tid('project-remove')}').click(), true`);
     await sleep(400);
@@ -1371,7 +1372,7 @@ test('R3.9', 'R3.9 Worktree mode from the machine overview asks for the name too
   eq([taken.error, taken.confirm], ['分支 taken-branch 已存在', false], 'an existing branch');
   const good = await typeName('from-overview');
   eq([good.error, good.target, good.confirm], ['', join(L, 'webapp-worktrees', 'from-overview'), true], 'a usable name');
-  await evidence('R3.9');
+  await evidence('R3.9', '.modal-overlay .modal');
   await click(`${modal}.querySelector('${tid('dialog-confirm')}')`, 'confirm');
   await dialogGone(15000);
   const id = await waitNewSession(LAB, before);
@@ -1410,7 +1411,7 @@ test('R4.1', 'R4.1 "new session" on a worktree row', async () => {
   eq(d.ui, ['terminal:true', 'chat:false'], 'interface cards');
   eq(d.flags, ['claude-flag-continue'], 'launch options');
   assert(!d.text.includes('创建隔离 Worktree') && !d.text.includes('打开现有目录'), 'the dialog offers session modes');
-  await evidence('R4.1');
+  await evidence('R4.1', '.modal-overlay .modal');
   await cancelDialog();
   return `"${d.title}" · ${d.where}`;
 });
@@ -1447,7 +1448,7 @@ test('R4.4', 'R4.4 neither the main directory nor the worktree is trusted', asyn
   eq(st, { chatDisabled: true, reason: `先用终端界面在项目主目录 ${fx.untrusted} 打开一次 claude，信任这个项目后才能用对话界面。`, terminal: 'true', terminalDisabled: false, confirm: true }, 'the interface cards');
   await ev(`${dlg}.querySelector('${tid('picker-ui-chat')}').click(), true`);
   eq(await ev(`${dlg}.querySelector('${tid('picker-ui-chat')}').getAttribute('aria-pressed')`), 'false', 'chat card after a click');
-  await evidence('R4.4');
+  await evidence('R4.4', '.modal-overlay .modal');
   // the terminal interface does work there
   await click(`${dlg}.querySelector('${tid('dialog-confirm')}')`, 'confirm');
   await dialogGone();
@@ -1507,7 +1508,7 @@ test('R5.1', 'R5.1 deleting a session keeps its worktree, branch and commits', a
   const d = await ev(`(() => { const d = ${DLG('delete-session-dialog')}; return { title: d.querySelector('.modal-title').textContent, note: d.querySelector('${tid('delete-session-note')}')?.textContent ?? null, focus: document.activeElement?.dataset.testid ?? null }; })()`);
   eq(d.note, 'worktree r51 的目录和分支都会保留，之后可以在侧边栏继续使用，或者单独删除。', 'what the confirmation says about the worktree');
   eq(d.focus, 'dialog-cancel', 'button with the focus');
-  await evidence('R5.1');
+  await evidence('R5.1', '.modal-overlay .modal');
   await click(`${DLG('delete-session-dialog')}.querySelector('${tid('dialog-confirm')}')`, 'delete session');
   await dialogGone();
   await waitFor(async () => !(await sessions(LAB)).some((s) => s.id === w.id), 10000, 'session gone on the daemon');
@@ -1527,7 +1528,7 @@ test('R5.2', 'R5.2 deleting a clean, merged worktree removes the directory and t
   eq([d.variant, d.title, d.files, d.commits, d.sessions, d.ignored], ['clean', '删除 worktree r52？', null, null, null, null], 'the confirmation');
   assert(d.text.includes('目录和分支都会删除'), `the confirmation does not say what goes: ${d.text}`);
   eq(d.default, 'dialog-confirm', 'default button');
-  await evidence('R5.2');
+  await evidence('R5.2', '.modal-overlay .modal');
   await confirmDelete();
   await dialogGone(20000);
   await rowGone(LAB, 'del', 'r52');
@@ -1551,7 +1552,7 @@ test('R5.3', 'R5.3 uncommitted and untracked files: Enter cancels, "delete anywa
   eq([d.focus, d.default], ['dialog-cancel', 'dialog-cancel'], 'focused / default button');
   assert(d.buttons.includes('delete-wt-force=仍然删除'), `buttons: ${J(d.buttons)}`);
   eq(d.hint, '回车 = 取消', 'what the footer says about Enter');
-  await evidence('R5.3');
+  await evidence('R5.3', '.modal-overlay .modal');
   await pressKey('Enter');
   await dialogGone();
   await refresh();
@@ -1579,7 +1580,7 @@ test('R5.4', 'R5.4 only ignored files: treated as clean, with their number', asy
   const d = await deleteDialog();
   eq([d.variant, d.files, d.ignored], ['clean', null, `另有 ${ignored} 个被 git 忽略的文件会一并删除。`], 'the confirmation');
   eq(d.default, 'dialog-confirm', 'default button');
-  await evidence('R5.4');
+  await evidence('R5.4', '.modal-overlay .modal');
   await confirmDelete();
   await dialogGone(20000);
   await rowGone(LAB, 'del', 'r54');
@@ -1599,7 +1600,7 @@ test('R5.5', 'R5.5 unmerged commits: keep the branch (default) or delete it too'
   eq([d.variant, d.title, d.commits], ['commits', 'r55 有 2 个未合并的提交', '这 2 个提交不在其他任何本地分支或远程分支上。'], 'the confirmation');
   eq([d.keep, d.drop, d.default], [true, false, 'dialog-confirm'], 'preselected choice and default button');
   assert(d.text.includes('只删目录、保留分支') && d.text.includes('目录和分支都删'), `the two choices: ${d.text}`);
-  await evidence('R5.5');
+  await evidence('R5.5', '.modal-overlay .modal');
   await pressKey('Enter'); // the default: directory only
   await dialogGone(20000);
   await rowGone(LAB, 'del', 'r55');
@@ -1629,14 +1630,16 @@ test('R5.6', 'R5.6 a worktree with two running sessions', async () => {
   await openDeleteWorktree(LAB, 'del', 'r56');
   const d = await deleteDialog();
   eq([d.variant, d.sessions], ['clean', '会先结束这 2 个会话。'], 'the confirmation');
-  await evidence('R5.6');
+  await evidence('R5.6', '.modal-overlay .modal');
   await confirmDelete();
   await dialogGone(30000);
   await waitFor(async () => !(await sessions(LAB)).some((s) => [w.id, chat].includes(s.id)), 20000, 'both sessions ended');
   await rowGone(LAB, 'del', 'r56');
   eq(disk(fx.del, w.path, 'r56'), { dir: false, listed: false, branch: false }, 'on disk');
-  const viewsAfter = await ev(`document.querySelectorAll('#terminal-container .term-instance, #terminal-container .chat-instance').length`);
-  eq(viewsBefore - viewsAfter, 2, 'session views closed');
+  // (the views go when the desktop has the daemon's answer, a moment after the directory is gone)
+  const views = () => ev(`document.querySelectorAll('#terminal-container .term-instance, #terminal-container .chat-instance').length`);
+  await waitFor(async () => viewsBefore - (await views()) === 2, 8000, 'the two session views closed').catch(() => {});
+  eq(viewsBefore - (await views()), 2, 'session views closed');
   assert(![w.id, chat].includes(await activeId()), 'an ended session is still the one shown');
   return `"${d.sessions}"; both ended, their views closed, worktree removed as a clean one`;
 });
@@ -1679,7 +1682,7 @@ test('R5.8', 'R5.8 a worktree vibe-remote did not create: directory only, the br
   await openDeleteWorktree(LAB, 'del', 'ext/tool');
   const d = await deleteDialog();
   eq([d.variant, d.external, d.keep, d.drop], ['external', '这个 worktree 不是由 vibe-remote 创建：只删目录，分支 ext/tool 保留。', null, null], 'the confirmation (no branch choice)');
-  await evidence('R5.8');
+  await evidence('R5.8', '.modal-overlay .modal');
   await confirmDelete();
   await dialogGone(20000);
   await rowGone(LAB, 'del', 'ext/tool');
@@ -1708,7 +1711,7 @@ test('R5.9', 'R5.9 failures found before anything is touched: locked, nested wor
     const d = await waitFor(async () => { const x = await deleteDialog(); return x?.error ? x : null; }, 20000, 'the reason in the dialog');
     assert(d.error.startsWith('删除失败：') && /lock/i.test(d.error) && d.error.includes('usb'), `the reason: ${d.error}`);
     eq([d.ended, d.sessions], [null, '会先结束这 1 个会话。'], 'what the dialog says about sessions');
-    await evidence('R5.9');
+    await evidence('R5.9', '.modal-overlay .modal');
     const small = await fitsSmallWindow('the confirmation with an error');
     await cancelDialog();
     assert((await sessions(LAB)).some((s) => s.id === w.id), 'the session was ended');
@@ -1763,7 +1766,7 @@ test('R5.11', 'R5.11 a worktree on no branch', async () => {
   const d = await deleteDialog();
   eq([d.variant, d.commits], ['detached', '这 2 个提交删除后不再属于任何分支，无法恢复。'], 'the warning');
   eq([d.focus, d.default], ['dialog-cancel', 'dialog-cancel'], 'focused / default button');
-  await evidence('R5.11');
+  await evidence('R5.11', '.modal-overlay .modal');
   await pressKey('Enter');
   await dialogGone();
   eq([disk(fx.del, path), head(path)], [{ dir: true, listed: true, branch: null }, tip], 'on disk after Enter');
@@ -1807,7 +1810,7 @@ test('R5.12', 'R5.12 failures after the sessions were ended are reported as they
   const d = await waitFor(async () => { const x = await deleteDialog(); return x?.error ? x : null; }, 30000, 'the error in the dialog');
   assert(d.error.includes('simulated failure of worktree remove'), `git's error is not shown: ${d.error}`);
   eq([d.ended, d.sessions], ['已结束 2 个会话。', null], 'what the dialog says about sessions');
-  await evidence('R5.12');
+  await evidence('R5.12', '.modal-overlay .modal');
   await cancelDialog();
   rmSync(gitFailFlag, { force: true });
   assert(!(await sessions(KEEP)).some((s) => [s1, s2].includes(s.id)), 'a session the dialog reported as ended is still running');
@@ -1848,7 +1851,7 @@ test('R6.1', 'R6.1 -c where a session already runs: the note, and Confirm stays 
   const said = await waitFor(continueNote, 5000, 'the note');
   eq(said, '这个目录已有会话正在用最近那段对话：对话界面会切到已有的那个会话，终端界面可能无法启动。不勾选即可开一段新对话。', 'the note');
   eq(await ev(`document.querySelector('.modal-overlay ${tid('dialog-confirm')}').disabled`), false, 'Confirm disabled');
-  await evidence('R6.1');
+  await evidence('R6.1', '.modal-overlay .modal');
   await click(CONTINUE, 'the continue option again');
   eq(await continueNote(), null, 'the note once the option is unticked');
   await cancelDialog();
@@ -2479,7 +2482,7 @@ test('R8.6', 'R8.6 a cold start shows the theme from the first frame', async () 
   for (let y = 0; y < h; y += 3) for (let x = 0; x < w; x += 3) { const p = img.at(x, y); total++; if (p[0] + p[1] + p[2] < 180) dark++; }
   assert(dark / total < 0.03, `${Math.round((dark / total) * 100)}% of the first frame is dark`);
   const t = Object.fromEntries(f.events);
-  return `window background ${f.backgroundAtShow ?? f.backgroundAfterCreate} ${f.backgroundAtShow ? 'when shown' : `right after it was created (visible: ${f.visibleAfterCreate})`}, first paint ${t['ready-to-show'] - t.created} ms after the window was created: ${t['ready-to-show']} ms: gutters and sidebar #EFEFF4, card ${card.hex}, ${Math.round((dark / total) * 1000) / 10}% dark pixels (text), none of the previous beige`;
+  return `window background ${f.backgroundAtShow ?? f.backgroundAfterCreate} ${f.backgroundAtShow ? 'when shown' : `right after it was created (visible: ${f.visibleAfterCreate})`}, first paint ${t['ready-to-show'] - t.created} ms after the window was created: gutters and sidebar #EFEFF4, card ${card.hex}, ${Math.round((dark / total) * 1000) / 10}% dark pixels (text), none of the previous beige`;
 });
 
 // ---- R9 新旧版本互连 ---------------------------------------------------------------------
