@@ -1,10 +1,10 @@
 import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import '@xterm/xterm/css/xterm.css';
-import type { MachineConfig, SessionInfo, SessionMode } from '../shared/protocol';
+import type { MachineConfig, Project, SessionInfo, SessionMode } from '../shared/protocol';
 import { PROTOCOL_VERSION } from '../shared/protocol';
 import { VibeRemoteClient, ConnectionState, type AttachOptions } from './client';
-import { VibeRemoteRest, DeleteSessionError, ReloadSessionError } from './rest';
+import { VibeRemoteRest, DeleteSessionError, ReloadSessionError, RestError } from './rest';
 import { openDirPicker } from './dirpicker';
 import { openMachineManager } from './machines';
 import { t, toggleLocale, getLocale, onLocaleChange } from './i18n';
@@ -13,7 +13,8 @@ import { attachMacClipboardShortcuts } from './terminal-clipboard';
 import { ChatView } from './chat/view';
 import { nextDot, type ActivityEvent, type Dot, type RestSnapshot } from './chat/activity';
 import type { Prompt } from './chat/types';
-import { renderSidebar as renderSidebarView, rendererIcon, type SidebarModel, type SidebarActions } from './sidebar';
+import { renderSidebar as renderSidebarView, renderToolbarTitle, rendererIcon, type SidebarModel, type SidebarActions } from './sidebar';
+import { buildTree, nextCapability, sessionContext, notificationTitle, type Capability, type TreeProject } from './tree';
 
 // Declared by preload
 
@@ -59,6 +60,14 @@ const rests = new Map<string, VibeRemoteRest>(); // machineKey -> REST client
 const views = new Map<string, AnyView>(); // view key -> open session view
 const machineSessions = new Map<string, SessionInfo[]>(); // machineKey -> sessions (REST)
 const machineOnline = new Map<string, boolean>(); // machineKey -> reachable
+// Last GET /api/v1/projects result per machine: a project array (v4 daemon), or
+// null (old daemon, 404). A failed request keeps the previous value (d7). The
+// built tree and capability are derived from this (design 6.4).
+const machineProjects = new Map<string, Project[] | null>();
+const machineCaps = new Map<string, Capability>(); // machineKey -> 'v4' | 'legacy' | 'unknown'
+const machineTrees = new Map<string, TreeProject[]>(); // machineKey -> last built tree
+const COLLAPSED_PROJECTS_KEY = 'vibe-remote.collapsed-projects';
+const collapsedProjects = loadCollapsedProjects(); // elements: `${machineKey}|${projectId}`
 type MachineIssue = 'auth' | 'version' | 'unreachable';
 const machineIssues = new Map<string, MachineIssue>();
 const machineFailures = new Map<string, number>();
@@ -107,6 +116,19 @@ function loadCollapsedMachines(): Set<string> {
 
 function persistCollapsedMachines() {
   localStorage.setItem(COLLAPSED_MACHINES_KEY, JSON.stringify([...collapsedMachines]));
+}
+
+function loadCollapsedProjects(): Set<string> {
+  try {
+    const value = JSON.parse(localStorage.getItem(COLLAPSED_PROJECTS_KEY) ?? '[]');
+    return new Set(Array.isArray(value) ? value.filter((item): item is string => typeof item === 'string') : []);
+  } catch {
+    return new Set();
+  }
+}
+
+function persistCollapsedProjects() {
+  localStorage.setItem(COLLAPSED_PROJECTS_KEY, JSON.stringify([...collapsedProjects]));
 }
 
 // --- base64 <-> bytes helpers (UTF-8 safe) ---
@@ -248,13 +270,19 @@ function wireManageMachinesButton() {
           machineFailures.delete(rk);
           machineRetryAt.delete(rk);
           collapsedMachines.delete(rk);
+          machineProjects.delete(rk);
+          machineCaps.delete(rk);
+          machineTrees.delete(rk);
+          for (const pk of [...collapsedProjects]) {
+            if (pk.startsWith(`${rk}|`)) collapsedProjects.delete(pk);
+          }
           // Reload markers are keyed "<machineKey>::<sessionId>"; drop the
           // machine's entries so they can't outlive it.
           for (const marker of [...reloadingSessions]) {
             if (marker.startsWith(`${rk}::`)) reloadingSessions.delete(marker);
           }
         }
-        if (removedKeys.length > 0) persistCollapsedMachines();
+        if (removedKeys.length > 0) { persistCollapsedMachines(); persistCollapsedProjects(); }
         if (overviewMachineKey && !machines.some((m) => machineKey(m) === overviewMachineKey)) {
           overviewMachineKey = null;
         }
@@ -381,7 +409,21 @@ async function refreshAllMachines(force = false, targetMachineKey?: string) {
           machineRetryAt.set(mk, Date.now() + Math.min(5000 * (2 ** (failures - 1)), 60000));
         })
         .finally(() => publish(m));
-      return [sessionsRequest];
+      // The project tree is published independently (design 6.4): a success sets
+      // v4 and stores the tree, a 404 marks the machine legacy, and a transient
+      // failure keeps the previous capability and tree (nextCapability, d7).
+      const projectsRequest = rest.listProjects()
+        .then((projects) => {
+          if (!isCurrent(m)) return;
+          machineCaps.set(mk, nextCapability(machineCaps.get(mk) ?? 'unknown', projects));
+          machineProjects.set(mk, projects);
+        })
+        .catch((error: unknown) => {
+          if (!isCurrent(m)) return;
+          machineCaps.set(mk, nextCapability(machineCaps.get(mk) ?? 'unknown', error instanceof Error ? error : new Error(String(error))));
+        })
+        .finally(() => publish(m));
+      return [sessionsRequest, projectsRequest];
     }),
   );
 }
@@ -402,7 +444,7 @@ function trackChatActivity(machine: MachineConfig, sessions: SessionInfo[]) {
     const r = nextDot(sessionDots.get(key) ?? 'none', { kind: 'rest', prev, next }, { isActive: false, windowFocused: document.hasFocus() });
     sessionDots.set(key, r.dot);
     if (r.notify && notificationsEnabled()) {
-      const title = `${machine.name} · ${s.title || s.id}`;
+      const title = notifyTitleFor(machine, s.id);
       notifyDesktop(title, t('session.waitingFallback'), key, (result) => {
         const after = nextDot(sessionDots.get(key) ?? 'none', { kind: 'notifyResult', result }, { isActive: key === activeKey, windowFocused: document.hasFocus() });
         sessionDots.set(key, after.dot);
@@ -431,7 +473,7 @@ function applyViewActivity(view: ChatView, ev: ActivityEvent, prompt?: Prompt) {
       : prompt?.kind === 'question'
         ? t('chat.notify.question')
         : prompt?.toolName ? t('chat.notify.tool', { tool: prompt.toolName }) : t('session.waitingFallback');
-    notifyDesktop(`${view.machine.name} · ${sessionDisplayTitle(view.machine, view.sessionId)}`, body, view.key, (result) => {
+    notifyDesktop(notifyTitleFor(view.machine, view.sessionId), body, view.key, (result) => {
       applyViewActivity(view, { kind: 'notifyResult', result });
     });
   }
@@ -921,7 +963,7 @@ function openSession(machine: MachineConfig, sessionId: string, workdir?: string
       }
       // waiting = 需要用户介入，可选弹桌面通知。
       if (kind === 'waiting' && notificationsEnabled()) {
-        notifyDesktop(`${machine.name} · ${sessionDisplayTitle(machine, view.sessionId)}`, message || t('session.waitingFallback'));
+        notifyDesktop(notifyTitleFor(machine, view.sessionId), message || t('session.waitingFallback'));
       }
     }
   };
@@ -1035,12 +1077,24 @@ async function recheckChat(view: ChatView) {
   }
 }
 
-// sessionDisplayTitle is the name the sidebar shows for a session (custom
-// name, else the workdir-derived default from the server), falling back to the
-// raw id when the session list hasn't caught up yet (e.g. a brand-new session).
+// sessionDisplayTitle is the name the sidebar shows for a session: the tree's
+// display name (custom name or workdir-derived default, with duplicate numbering
+// like "fix-login 2"), falling back to the server title, then the raw id when
+// the session list hasn't caught up yet (e.g. a brand-new session).
 function sessionDisplayTitle(machine: MachineConfig, sessionId: string): string {
+  const ctx = sessionContext(treeFor(machineKey(machine)), sessionId);
+  if (ctx) return ctx.name;
   const session = machineSessions.get(machineKey(machine))?.find((s) => s.id === sessionId);
   return session?.title || sessionId || 'vibe-remote';
+}
+
+// notifyTitleFor builds the notification title "<machine> · <project> / <branch>
+// · <session>" (design 7.4), falling back to the machine + session name when the
+// session is not yet in the tree.
+function notifyTitleFor(machine: MachineConfig, sessionId: string): string {
+  const ctx = sessionContext(treeFor(machineKey(machine)), sessionId);
+  if (ctx) return notificationTitle(machine.name, ctx);
+  return `${machine.name} · ${sessionDisplayTitle(machine, sessionId)}`;
 }
 
 // setActive shows one session view and hides the rest, then fits + focuses it.
@@ -1058,6 +1112,7 @@ function setActive(key: string) {
     const activeMachineKey = machineKey(activeView.machine);
     if (collapsedMachines.delete(activeMachineKey)) persistCollapsedMachines();
   }
+  expandActiveProject(key);
   for (const [k, v] of views) {
     v.container.style.display = k === key ? 'block' : 'none';
   }
@@ -1086,17 +1141,46 @@ function renderSidebar() {
   renderSidebarView(container, buildSidebarModel(), sidebarActions);
 }
 
-// buildSidebarModel snapshots the module state the sidebar reads; sidebarActions
+// treeFor returns the latest tree for a machine, building it if the sidebar has
+// not rendered since the last data change.
+function treeFor(mk: string): TreeProject[] {
+  return machineTrees.get(mk)
+    ?? buildTree(machineSessions.get(mk) || [], machineProjects.has(mk) ? machineProjects.get(mk)! : null);
+}
+
+// expandActiveProject uncollapses the project that holds the session being shown
+// so it is visible after setActive (design 7.4).
+function expandActiveProject(key: string) {
+  const sep = key.indexOf('::');
+  if (sep < 0) return;
+  const mk = key.slice(0, sep);
+  const sid = key.slice(sep + 2);
+  for (const p of treeFor(mk)) {
+    const here = p.sessions.some((s) => s.id === sid) || p.worktrees.some((w) => w.sessions.some((s) => s.id === sid));
+    if (here) {
+      if (collapsedProjects.delete(`${mk}|${p.id}`)) persistCollapsedProjects();
+      return;
+    }
+  }
+}
+
+// buildSidebarModel snapshots the module state the sidebar reads and rebuilds
+// each machine's tree from its sessions and last projects result; sidebarActions
 // routes every side effect back here (the window.confirm dialogs for reload and
 // delete stay in these callbacks).
 function buildSidebarModel(): SidebarModel {
   return {
     machines: machines.map((machine) => {
       const key = machineKey(machine);
-      return { machine, key, online: machineOnline.get(key), collapsed: collapsedMachines.has(key), sessions: machineSessions.get(key) || [] };
+      const sessions = machineSessions.get(key) || [];
+      const projects = machineProjects.has(key) ? machineProjects.get(key)! : null;
+      const tree = buildTree(sessions, projects);
+      machineTrees.set(key, tree);
+      return { machine, key, online: machineOnline.get(key), collapsed: collapsedMachines.has(key), cap: machineCaps.get(key) ?? 'unknown', tree };
     }),
     activeKey,
     overviewMachineKey,
+    collapsedProjects,
     dotOf: (mk, id) => {
       const key = `${mk}::${id}`;
       return views.get(key)?.activity ?? sessionDots.get(key) ?? 'none';
@@ -1147,7 +1231,34 @@ const sidebarActions: SidebarActions = {
     persistCollapsedMachines();
     renderSidebar();
   },
+  toggleProject: (mk, projectId) => {
+    const key = `${mk}|${projectId}`;
+    if (collapsedProjects.has(key)) collapsedProjects.delete(key);
+    else collapsedProjects.add(key);
+    persistCollapsedProjects();
+    renderSidebar();
+  },
+  removeProject: (machine, project) => {
+    void handleRemoveProject(machine, project.id);
+  },
+  // newSession / newWorktree / deleteWorktree are wired in T11 / T9 / T14.
 };
+
+// handleRemoveProject drops a project from the sidebar (disk untouched). A 409
+// means it still has sessions; show the reason in the status bar (R2.4).
+async function handleRemoveProject(machine: MachineConfig, id: string) {
+  const mk = machineKey(machine);
+  try {
+    await rests.get(mk)!.removeProject(id);
+    await refreshAllMachines(true, mk);
+  } catch (error) {
+    if (error instanceof RestError && error.code === 'project_has_sessions') {
+      updateStatusBar(t('sidebar.project.removeBlocked'));
+    } else {
+      updateStatusBar(t('status.error', { msg: error instanceof Error ? error.message : String(error) }));
+    }
+  }
+}
 
 // handleReload runs a session Reload: terminal sessions block the button while
 // the respawn-pane request is in flight (reloadingSessions, reflected on the
@@ -1203,7 +1314,7 @@ function updateStatusBar(extra?: string, attempt?: number) {
 
   if (overviewMachine) {
     const state = machineOnline.get(overviewMachineKey!);
-    tbTitle.textContent = overviewMachine.name;
+    renderToolbarTitle(tbTitle, null, overviewMachine.name);
     tbStatus.className = state === true ? 'connected' : state === false ? 'error' : 'checking';
     tbStatusText.textContent = state === true
       ? t('status.connected')
@@ -1212,10 +1323,11 @@ function updateStatusBar(extra?: string, attempt?: number) {
   }
 
   if (view) {
-    // Toolbar title: machine name · short session code (SessionView holds no
-    // display name; short code is enough to locate the active session).
+    // Toolbar title: project / branch · session (design 7.4). A brand-new
+    // session not yet in the tree falls back to machine · short session code.
+    const ctx = view.sessionId ? sessionContext(treeFor(machineKey(view.machine)), view.sessionId) : null;
     const shortId = view.sessionId ? view.sessionId.slice(-6) : 'new';
-    tbTitle.textContent = `${view.machine.name} · ${shortId}`;
+    renderToolbarTitle(tbTitle, ctx, `${view.machine.name} · ${shortId}`);
 
     const st = view.client.state;
     if (st === ConnectionState.Connected) {
@@ -1230,7 +1342,7 @@ function updateStatusBar(extra?: string, attempt?: number) {
       tbStatusText.textContent = t('status.disconnected');
     }
   } else {
-    tbTitle.textContent = 'vibe-remote';
+    renderToolbarTitle(tbTitle, null, 'vibe-remote');
     const anyOnline = [...machineOnline.values()].some(Boolean);
     tbStatus.className = anyOnline ? 'connected' : '';
     tbStatusText.textContent = anyOnline ? t('status.ready') : t('status.noConnection');

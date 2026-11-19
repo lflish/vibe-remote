@@ -928,6 +928,7 @@ CSS 变量：保留现有变量名（`styles.css` 里到处在用），换成 M1
 
 - T4：worktree 模式的 `AddWorktree` 在会话登记成功后调用、仅成功时写入（回滚路径无需 `RemoveWorktree`），「立刻写入」的时序到 T7 统一落地（decisions #44）。
 - T6a：`index.ts` 净减少 155 行（完成定义估计 ≥200）。model/actions 接线和 `handleReload`（用到 `rests`/`updateStatusBar`/`refreshAllMachines`/`reloadChat`，不能移出 index）比估计大；搬家本身完整（快照逐字节不变、两份 gui 冒烟全绿）（decisions #45）。
+- T6b：侧边栏树在 `buildSidebarModel`（渲染处）现算并写入 `machineTrees`，而非在 `refreshAllMachines` 里建；为此多存原始 `machineProjects`。对外行为与 7.4 一致（decisions #46）。
 - T2：list-sessions 扩到 13 列后，现有测试 `TestParseTmuxSessionLineReadsClaudeU` 的「10 列含 tab 仍接受」一段改为断言 10 列被拒绝（decisions #43）。
 
 ## 11. 方案验证（机器关口 B）

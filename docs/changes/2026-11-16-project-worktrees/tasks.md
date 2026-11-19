@@ -432,7 +432,7 @@
 - 依赖：无
 
 ### T6b 桌面端：三层侧边栏、标题和通知标题（最小闭环完成）
-- 状态：待办
+- 状态：完成
 - 文件：
   - 修改 `desktop/src/renderer/sidebar.ts`（T6a 搬好的 `renderSidebar` 改成三层结构；新增 `renderToolbarTitle`）、`desktop/scripts/test-sidebar.mjs`（T6a 的快照用例 `flat_dom_snapshot_unchanged` 和它的快照文件在这里删除：DOM 按 design 7.4 改成三层，由下面的用例接替；T6a 的另外 3 个用例保留并保持通过）；新建 `desktop/src/renderer/menu.ts`（定位在按钮下方的列表，Esc 和点外面关闭）
   - 修改 `desktop/src/renderer/index.ts`：`renderSidebar` 这个薄函数改为拼新的 `SidebarModel`；新增模块状态 `machineTrees`、`machineCaps`、`collapsedProjects`（存 `localStorage` 的 `vibe-remote.collapsed-projects`）；`refreshAllMachines` 每台机器并行多发一个 `listProjects()`，结果经 `nextCapability` 和 `buildTree` 更新状态（design 6.4）；`setActive` 同时展开当前会话所在的项目；`updateStatusBar` 的标题改用 `renderToolbarTitle`；3 处 `notifyDesktop` 的标题改用 `notificationTitle`；`sessionDisplayTitle` 优先取树里的 `name`
@@ -869,6 +869,7 @@
 | T4 | 2026-11-19 12:40 | b60351d | 三组完成命令全绿（Go `-race` 三包 `ok`、`test:chat-availability`+`test:rest-projects` 退出 0、golden/IsAllowedWorkdir 核对通过）；`make check` exit 0 |
 | T5 | 2026-11-19 14:35 | 28f6d19 | `npm run typecheck` 退出 0；`npm run test:tree` 18 个用例 `ok`；`TMUX_TMPDIR=… make check` exit 0 |
 | T6a | 2026-11-19 15:40 | 57413e3（快照）、b746d2b（搬家） | `npm run typecheck`+`npm test` 退出 0（`test:sidebar` 4 用例 `ok`，快照逐字节不变）；`gui-smoke.mjs`、`gui-chat-smoke.mjs` 全绿、无 FAIL（两脚本 vs merge-base 无 diff）；`TMUX_TMPDIR=… make check` exit 0。`index.ts` 净减少 155 行（完成定义估计 ≥200，见 decisions #45） |
+| T6b | 2026-11-19 16:30 | (本提交) | `typecheck`+`test:sidebar`(19)+`test:i18n-parity`(266)+`test:chat-activity`(6)+`test:chat-render-guard`(15) 全退出 0；`npm test` 退出 0；`TMUX_TMPDIR=… make check` exit 0；`gui-smoke.mjs`、`gui-chat-smoke.mjs` 全绿无 FAIL（两脚本未改、`^test(`=26、`check(`=14） |
 
 ## 后续
 
