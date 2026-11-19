@@ -180,6 +180,53 @@ test('legacy_groups_by_session_fields', () => {
   assert.ok(notes.sessions.some((s) => s.id === 'n'));
 });
 
+// Found by the T17 walk-through against a protocol 3 daemon, which lists its
+// sessions in a different order on every poll.
+test('legacy_grouping_ignores_input_order', () => {
+  const sessions = [
+    sess('n1', { workdir: '/tmp/notes' }),
+    sess('n2', { workdir: '/tmp/notes' }),
+    sess('n3', { workdir: '/tmp/notes' }),
+    sess('sub', { workdir: '/tmp/notes/sub' }),
+    sess('m1', { workdir: '/r/devflow' }),
+    sess('w', { mode: 'worktree', sourceRepo: '/r/devflow', worktreeRoot: '/r/devflow-worktrees/x', branch: 'vibe/x', workdir: '/r/devflow-worktrees/x' }),
+    sess('m2', { workdir: '/r/devflow/src' }),
+  ];
+  const shape = (list) => JSON.stringify(buildTree(list, null).map((p) => ({
+    id: p.id, git: p.git, flat: p.flat,
+    worktrees: p.worktrees.map((w) => [w.path, w.main, w.sessions.map((x) => `${x.id}=${x.name}`)]),
+    sessions: p.sessions.map((x) => `${x.id}=${x.name}`),
+  })));
+  const tree = buildTree(sessions, null);
+  const notes = tree.find((p) => p.id === '/tmp/notes');
+  assert.equal(notes.git, false);
+  assert.deepEqual(notes.worktrees, [], 'a plain folder never gets a worktree row');
+  assert.deepEqual(notes.sessions.map((x) => x.id), ['n1', 'n2', 'n3'], 'creation order');
+  assert.deepEqual(notes.sessions.map((x) => x.name), ['notes', 'notes 2', 'notes 3'], 'numbered within the one folder (R1.4)');
+  assert.ok(tree.some((p) => p.id === '/tmp/notes/sub' && !p.git), 'a subfolder of a plain folder is its own project');
+  const dev = tree.find((p) => p.id === '/r/devflow');
+  assert.deepEqual(dev.worktrees.find((w) => w.main).sessions.map((x) => x.id), ['m1', 'm2'], 'a git project still takes its subfolders');
+  assert.equal(allIds(tree).length, sessions.length);
+
+  const canonical = shape(sessions);
+  let seed = 11;
+  const rand = () => { seed = (seed * 1103515245 + 12345) & 0x7fffffff; return seed / 0x7fffffff; };
+  for (let i = 0; i < 40; i++) {
+    const shuffled = sessions.map((x) => [rand(), x]).sort((a, b) => a[0] - b[0]).map((x) => x[1]);
+    assert.equal(shape(shuffled), canonical, `order ${shuffled.map((x) => x.id).join(',')}`);
+  }
+});
+
+// The same rule places a session the daemon's tree has not caught up with.
+test('unreferenced_session_in_plain_folder_joins_its_project', () => {
+  const projects = [{ id: '/tmp/notes', name: 'notes', git: false, worktrees: [], sessions: ['n1'] }];
+  const tree = buildTree([sess('n1', { workdir: '/tmp/notes' }), sess('n2', { workdir: '/tmp/notes' })], projects);
+  assert.equal(tree.length, 1);
+  assert.deepEqual(tree[0].worktrees, []);
+  assert.deepEqual(tree[0].sessions.map((x) => x.id), ['n1', 'n2']);
+  assert.deepEqual(tree[0].sessions.map((x) => x.name), ['notes', 'notes 2']);
+});
+
 test('tolerates_stale_ids', () => {
   const projects = [{ id: '/r/s', name: 's', git: true, worktrees: [{ path: '/r/s', branch: 'main', head: 'x', main: true, sessions: ['ghost', 'real'] }], sessions: [] }];
   const tree = buildTree([sess('real', { workdir: '/r/s' })], projects);

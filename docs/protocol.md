@@ -21,6 +21,38 @@ PTY 字节数据使用 base64 编码传输（`data` 帧）。
 
 兼容规则：新增字段在接收端一律可选；未知帧类型、未知 `notify.kind`、未知 `error.code` 均忽略（未知 code 只按 `fatal` 处理）。客户端发现 `proto` 低于自身版本时应提示用户更新 daemon——旧 daemon 会接受请求但**静默忽略**不认识的字段。
 
+### 版本互连
+
+桌面端和 daemon 可以各自升级，相邻的两个版本（3 和 4）互连时降级工作，不报错。
+
+**协议 4 的桌面端 + 协议 3 的 daemon**
+
+桌面端怎么认出旧 daemon：每轮轮询请求 `GET /api/v1/projects`，旧 daemon 没有这个路径，返回 404；新建会话的对话框另看 `/api/v1/info.proto`。daemon 原地升级或降级后，下一轮轮询就会发现，不需要重连。请求失败（断网、超时、5xx）不算旧 daemon：保持上一轮的判断。
+
+| 功能 | 协议 3 的 daemon 上怎么表现 |
+|------|------------------------------|
+| 侧边栏分组 | 没有项目树，改用 `sessions[]` 自带的字段分组：`mode:"worktree"` 的会话归到项目 `sourceRepo` 下的 worktree `worktreeRoot`（显示 `branch`）；其余会话，工作目录在某个 `worktreeRoot` 之下的归到那个 worktree，等于某个 `sourceRepo` 或在它之下的归到该项目的主目录一行，都不是的按工作目录各成一个项目。结果不依赖 `sessions[]` 的先后（旧 daemon 每次返回的顺序不同）。没有会话的 worktree 无从得知，不显示；主目录一行没有分支名 |
+| 新建命名 worktree、删除 worktree | 入口置灰，提示升级 vibe-remoted；桌面端不向旧 daemon 发 `attach.worktreeName`（会被静默忽略，建出自动命名的 worktree），也不请求 `/api/v1/worktrees/*` |
+| 目录选择器的 Worktree 模式 | 没有名字输入框；attach 只带 `mode:"worktree"`，分支和目录由 daemon 自动命名（`vibe/<会话id>`） |
+| 删除 worktree 模式的会话 | daemon 会在工作区干净时一并删除 worktree 和分支，否则保留并返回 409 `worktree_preserved`（会话已关闭）。桌面端在确认框里如实写明，并照常处理这个 409 |
+| 对话界面 | 照常可用（它是协议 3 的功能）；`chatTrust` 是旧规则：只看目录本身的信任记录，不认「主目录已被信任的 worktree 根」 |
+| 其余（新建、接入、输入、重命名、重载、交接、通知、重连） | 与协议 3 的桌面端相同 |
+
+桌面端在目录选择器里和收到 `proto` 较低的 `ready` 之后各提示一次「daemon 的协议版本低于桌面端」。
+
+**协议 3 的桌面端 + 协议 4 的 daemon**
+
+协议 4 没有改动任何已有的帧：S→C 帧的字段与协议 3 相同（终端会话的帧除 `proto` 的值外逐字节相同），`attach` 只多了一个可缺省的字段，原有 REST 端点的请求和成功响应不变。旧桌面端不知道新端点，也不需要它们。
+
+| 旧桌面端的操作 | 协议 4 的 daemon 上的结果 |
+|----------------|----------------------------|
+| 新建、接入、输入、重命名、重载 | 不变 |
+| 用 Worktree 模式新建（attach 没有 `worktreeName`） | 照常成功，分支仍是 `vibe/<会话id>`，目录仍是 `<根目录名>-worktrees/<会话id>` |
+| 删除会话 | 一律 204，不再返回 409 `worktree_preserved`。**行为变了**：worktree 的目录和分支都保留（旧 daemon 会在工作区干净时一并删除）。留下的 worktree 旧桌面端看不到，可以用协议 4 的桌面端或手动 `git worktree remove` 清理 |
+| 在某个目录新建对话会话 | 多放行一种目录：主目录已被 claude 信任的 worktree 根（`chatTrust` 和 attach 用同一条规则） |
+
+旧桌面端看到 `proto: 4` 高于自身版本时不提示（它只在对方更旧时提示）。
+
 ## 连接生命周期
 
 ```

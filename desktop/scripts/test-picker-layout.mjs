@@ -36,4 +36,8 @@ assert.match(rule('.modal-footer'), /flex:\s*none/, 'the dialog footer must neve
 assert.match(rule('.modal-path'), /flex-shrink:\s*0/, 'the path bar must keep its height');
 assert.match(rule('.modal'), /max-height:[^;]*100vh/, 'the dialog height must be capped by the window height');
 
+// The older-daemon note is the one piece of text placed straight into the body.
+assert.match(picker, /body\.insertBefore\(warn, modesBox\)/, 'the older-daemon note goes into the picker body');
+assert.match(rule('.modal-body > .modal-mode-note'), /padding:\s*\d+px 16px/, 'a note placed straight into the body needs the side padding the sections have');
+
 console.log('picker layout regression checks passed');

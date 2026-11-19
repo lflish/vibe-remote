@@ -1412,3 +1412,7 @@ html, body {
   line-height: 1.5;
   overflow-wrap: anywhere;
 }
+
+/* The picker's "this daemon is older" note sits between two sections of the
+   scrolling body, which has no side padding of its own (T17). */
+.modal-body > .modal-mode-note { padding: 8px 16px 0; }

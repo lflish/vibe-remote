@@ -161,10 +161,13 @@ function legacyPlace(iprojects: IProject[], sessions: SessionInfo[], byId: Map<s
       }
     }
     if (best) { best.ids.push(s.id); continue; }
-    // Then by project id (its main row).
+    // Then by the id of a git project (its main row). A plain folder takes only
+    // the sessions started in the folder itself, further down: were it to
+    // catch its subfolders too, the grouping would depend on the order the
+    // sessions are listed in, which a protocol 3 daemon changes on every poll.
     let bestProj: IProject | null = null;
     for (const p of iprojects) {
-      if (underOrEqual(wd, p.id) && (!bestProj || p.id.length > bestProj.id.length)) bestProj = p;
+      if (p.git && underOrEqual(wd, p.id) && (!bestProj || p.id.length > bestProj.id.length)) bestProj = p;
     }
     if (bestProj) {
       let main = bestProj.worktrees.find((w) => w.main) ?? bestProj.worktrees.find((w) => w.path === bestProj!.id);

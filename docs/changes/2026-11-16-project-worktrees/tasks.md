@@ -795,7 +795,7 @@
 - 依赖：T5、T6b
 
 ### T17 新旧版本互连：整体核对（R9）
-- 状态：待办
+- 状态：完成
 - 文件：新建 `desktop/scripts/test-legacy-daemon.mjs`、`vibe-remoted/internal/server/compat_test.go`；修改 `desktop/package.json`（`test:legacy-daemon`）、`docs/protocol.md`（在「协议版本」一节下加「版本互连」小节：新桌面端连协议 3 的 daemon 时怎么降级、旧桌面端连协议 4 的 daemon 时哪些行为变了，内容照 spec R9.1、R9.2 和 design 4.1、4.7、6.4）。各个降级分支已经写在 T4（`CHAT_MIN_PROTO`）、T5（分组）、T6b（说明条和置灰）、T9（名字段）、T11（置灰原因）、T12（删除文案）里（d20）；这两个测试发现缺口时，在对应的文件里补上
 - 接口：
   - 使用：`loadIndex()`、`indexDom()`（`desktop/scripts/chat-test-util.mjs`，T6b 扩过）；`nextCapability`、`buildTree`（T5）；`confirmDeleteSession`（T12）；`CHAT_MIN_PROTO`（T4）；`closeSession` 里的 409 处理（现有）
@@ -817,6 +817,12 @@
   - `cd desktop && npm run typecheck && npm run test:legacy-daemon` 退出码 0
   - `cd vibe-remoted && TMUX_TMPDIR=$(mktemp -d) go test -race -count=1 ./internal/server -run 'TestV3ClientFlowAgainstV4Daemon|TestTerminalFramesUnchangedV3'` 输出 `ok`
   - `git diff --stat $(git merge-base HEAD change/dual-mode) -- vibe-remoted/internal/server/testdata vibe-remoted/internal/server/golden_test.go` 没有输出
+- 执行记录（2026-11-19，decisions #72、#73、d39）：
+  - 旧 daemon 的来源：`git worktree add --detach <mktemp 目录> 6d88e45`（本分支与 `change/dual-mode` 的 merge-base，协议 3），在里面 `go build` 出 daemon 和假 claude，随后 `git worktree remove --force`。二进制只放在 `/tmp` 下的临时目录里，没有提交。
+  - 新桌面端 + 旧 daemon（真实 Electron 临时实例连两台旧 daemon，一台 `/bin/bash`、一台假 claude；39 项检查全过）：`/api/v1/info.proto` 是 3，`/api/v1/projects`、`/api/v1/worktrees/*` 是 404；侧边栏按会话字段分成 `devflow`（主目录一行加 worktree 会话的一行）和 `notes`，没有「没有会话」的 worktree，机器行下有说明条（中英文都不溢出）；「新建 worktree」和「删除 worktree」置灰并提示升级；机器概览的 Worktree 模式没有名字输入框、有「daemon 较旧」的说明，确认后分支是 `vibe/<会话id>`，状态栏提示协议 3 低于 4；输入、daemon 重启后重连、⌘1 切换照常；worktree 行上「新建会话」照常；删除 worktree 会话的确认框是旧版文案，旧 daemon 随后确实删掉了干净的 worktree 和分支；有未提交文件时返回 409，状态栏显示「Worktree 已保留 · 路径 · 分支」；对话会话照常新建并收到回复。截图 `.devflow-tmp/build-shots/t17-legacy-*.png`。
+  - 只用协议 3 的帧走新 daemon：`TestV3ClientFlowAgainstV4Daemon`（帧和请求都写成字面 JSON，不用协议 4 的 Go 类型）加一轮 `change/dual-mode` 基线的 `ws-smoke.mjs` 连本分支构建的临时 daemon（12 行 PASS）。
+  - 核对发现并修掉的两处：(1) 旧版分组依赖 `sessions[]` 的先后，而旧 daemon 每次返回的顺序不同：同一个非 git 目录的第二个会话被放进一个假的「主目录」节点，侧边栏里先后颠倒、同名会话不加序号，子目录的会话归不归过来随顺序变（修在 T5 的 `tree.ts`，#72）；(2) 目录选择器里「daemon 较旧」的说明贴着对话框左边缘，协议升到 4 之后每台还没升级的 daemon 都会显示它（`styles.css` 追加一条规则，#73）。
+  - 没有改的一处：旧 daemon 下主目录一行没有分支名，只显示「主目录」标签（d39）。
 - 依赖：T9、T11、T12、T14
 
 ### T18 视觉 M1（一）：配色变量、终端主题、窗口底色
@@ -944,4 +950,6 @@ spec「推迟到以后」的条目：
 - 「删到一半失败」的说明框里，daemon 的 `message` 已经写了「目录还剩一部分、分支没删」，下面 `wt.delete.partial` 又说了一遍。可以让 daemon 的 `message` 只带 git 的输出，或在界面上合成一段。
 - 删除 worktree 的确认框只写「会先结束这 N 个会话」，没有列出是哪几个（效果页上列了名字和类型）。可以把会话名列出来。
 - **待人工确认（交给 dev-test，写进测试报告）**：切换会话的快捷键在打包后的 app 里用真实键盘按一遍：⌘1–⌘9、⌘⇧[、⌘⇧]，焦点分别在终端里和对话输入框里；期望会话切换、终端和输入框里没有多出字符，系统菜单没有抢走这些键。T16 只用 CDP 向临时实例发键验证过（`gui-smoke.mjs` 第 11 步），CDP 的按键不经过 macOS 的原生菜单分发（design V7）；开发时没有向系统前台发按键（decisions #70）。
+- 连着协议 3 的 daemon 时，项目的主目录一行没有分支名，只有「主目录」标签（旧 daemon 的会话列表不带主目录的分支，d39）。可以在这一行显示项目名，或改成「主目录」不带标签的样式。
+- 状态栏的浮层（如「协议版本 3 低于桌面端 4」）出现的 6 秒里盖住对话输入框下方的提示行右半边（T17 的截图 `t17-legacy-chat-zh.png`）；原来就是这样。
 - 查 `gui-chat-smoke` R7 偶发失败的原因（AskUserQuestion 表单：`answers echoed: on": "Pick a fruit"`；T6b 提交后 3 次里失败 1 次，decisions #47）。
