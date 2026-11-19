@@ -2,11 +2,13 @@
 package server
 
 import (
+	"bytes"
 	"context"
 	"crypto/subtle"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"os"
@@ -500,6 +502,29 @@ func decodeJSONBody(w http.ResponseWriter, r *http.Request, v any) (int, error) 
 			return http.StatusRequestEntityTooLarge, fmt.Errorf("body exceeds %d bytes", maxRESTBody)
 		}
 		return http.StatusBadRequest, errors.New("invalid body")
+	}
+	return 0, nil
+}
+
+// decodeSingleJSONBody is decodeJSONBody for a request that acts on what the
+// body says: the whole body is read first, so the size limit holds for all of
+// it (413), and it must be exactly one JSON value — anything but white space
+// after it is 400, not ignored.
+func decodeSingleJSONBody(w http.ResponseWriter, r *http.Request, v any) (int, error) {
+	data, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxRESTBody))
+	if err != nil {
+		var tooLarge *http.MaxBytesError
+		if errors.As(err, &tooLarge) {
+			return http.StatusRequestEntityTooLarge, fmt.Errorf("body exceeds %d bytes", maxRESTBody)
+		}
+		return http.StatusBadRequest, errors.New("invalid body")
+	}
+	dec := json.NewDecoder(bytes.NewReader(data))
+	if err := dec.Decode(v); err != nil {
+		return http.StatusBadRequest, errors.New("invalid body")
+	}
+	if _, err := dec.Token(); err != io.EOF {
+		return http.StatusBadRequest, errors.New("invalid body: data after the JSON object")
 	}
 	return 0, nil
 }

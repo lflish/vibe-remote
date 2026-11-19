@@ -401,7 +401,7 @@ v3 对话会话的条目另带（终端条目一律省略）：
 | GET | `/api/v1/fs?path=<dir>` | 列目录（仅目录项），供远程目录选择器用。返回 `{path, parent, entries, chatTrust}`：`chatTrust`（v3）为能否在该目录新建对话会话：`trusted` / `untrusted` / `unknown`，只有 `trusted` 可以。v3 只看 claude 对该目录本身的信任记录；v4 起另认一种情况：该目录是某个仓库的 worktree 根（以该仓库自己的 `git worktree list` 为准，不看目录里的 `.git` 文件），且仓库主目录（精确到这一个路径）被 claude 信任。主目录本身、worktree 里的子目录、裸仓库 / 子模块 / `--separate-git-dir` 仓库的 worktree 仍只看自己的记录；信任文件缺失或损坏是 `unknown`。新建对话会话的 attach 用同一条规则（worktree 模式查所选的源目录），不满足时是 fatal 的 `chat_unsupported`（`workdir_untrusted`）；`parent` 是规范化后的上级目录，**仅在其本身也可列出时才返回**，已在 `allowed_roots` 顶层时为空串。客户端据此隐藏「上一级」，避免点出必然的 403（`allowed_roots` 配的是符号链接解析前的路径如 `/tmp`，而 `path` 是规范化后的 `/private/tmp`，客户端无法自行比较） |
 | POST | `/api/v1/events` | 带外事件上报，body `{sessionId,kind,message?}`，路由为该会话的 notify 帧。鉴权见下文，与其它端点不同 |
 
-请求体（rename、events、worktrees/remove）上限 64 KiB，超出返回 413。rename：会话不存在返回 404，tmux 设置失败等其它错误返回 500。
+请求体（rename、events、worktrees/remove）上限 64 KiB，超出返回 413。worktrees/remove 的请求体必须恰好是一个 JSON 对象：整个请求体（含对象之后的内容）都计入上限，对象之后除空白外还有别的内容返回 400 `invalid_request`。rename：会话不存在返回 404，tmux 设置失败等其它错误返回 500。
 
 ### `/api/v1/info` 的 `chat`（v3）
 

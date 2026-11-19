@@ -48,3 +48,37 @@ func TestWorktreeRemoveRequiresConfirmedFields(t *testing.T) {
 		t.Fatalf("complete request: status = %d: %s", w.Code, w.Body.String())
 	}
 }
+
+// The body limit holds for the whole body, and the body is one JSON object:
+// a valid request followed by anything else is not acted on.
+func TestWorktreeRemoveBodyLimitAndTrailingData(t *testing.T) {
+	e := newWtEnv(t, 0)
+	head := serverGitOut(t, e.root, "rev-parse", "HEAD")
+	valid := `{"path":"` + e.root + `","head":"` + head + `","sessions":[]}`
+	untouched := func(label string) {
+		t.Helper()
+		if !pathExists(e.root) || !branchExists(t, e.repo, "fix-login") {
+			t.Fatalf("%s: the worktree was removed", label)
+		}
+	}
+
+	w := e.removeBody(valid + strings.Repeat(" ", maxRESTBody))
+	if w.Code != http.StatusRequestEntityTooLarge {
+		t.Fatalf("valid object + %d bytes of padding: status = %d, want 413: %s", maxRESTBody, w.Code, w.Body.String())
+	}
+	untouched("oversized body")
+
+	w = e.removeBody(valid + valid)
+	decodeFailure(t, w, http.StatusBadRequest, "invalid_request")
+	untouched("two objects")
+
+	w = e.removeBody(valid + " trailing")
+	decodeFailure(t, w, http.StatusBadRequest, "invalid_request")
+	untouched("trailing text")
+
+	// Trailing whitespace within the limit is still one object.
+	w = e.removeBody(valid + "\n  \n")
+	if w.Code != http.StatusOK || pathExists(e.root) {
+		t.Fatalf("valid object + newline: status = %d: %s", w.Code, w.Body.String())
+	}
+}

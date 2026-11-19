@@ -105,7 +105,7 @@ func (s *Server) handleWorktreeRemove(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req protocol.WorktreeRemoveRequest
-	if status, err := decodeJSONBody(w, r, &req); err != nil {
+	if status, err := decodeSingleJSONBody(w, r, &req); err != nil {
 		writeJSON(w, status, map[string]string{"error": "invalid_request", "message": err.Error()})
 		return
 	}
