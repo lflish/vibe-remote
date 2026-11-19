@@ -319,7 +319,7 @@
 - 依赖：无
 
 ### T3 daemon：项目清单和创建记录（projects.json）
-- 状态：待办
+- 状态：完成
 - 文件：新建 `vibe-remoted/internal/session/projects_store.go`、`vibe-remoted/internal/session/projects_store_test.go`
 - 接口：
   - 使用：写盘方式照 `vibe-remoted/internal/chat/store.go`（临时文件、fsync、rename，文件 0600）
@@ -865,6 +865,7 @@
 |------|----------|------|------|
 | T1 | 2026-11-19 11:01 | 948a65b | `go test -race ./internal/session ./internal/server -run 'TestUnmergedCommits\|TestCleanup\|TestWorktree\|TestDelete'` 两行 `ok`；`make check` exit 0；cherry-pick 到 change/dual-mode 后 `make check` exit 0 |
 | T2 | 2026-11-19 11:40 | eb6143b | 三条完成命令全 `ok`（含 `-race`、`TZ=Asia/Shanghai`、golden 未动）；`make check` exit 0 |
+| T3 | 2026-11-19 11:52 | _pending_ | `go test -race ./internal/session -run 'TestProjectStore\|TestManaged\|TestOpenProjectStore\|TestMemoryProjectStore'` `ok`；`grep ValidSessionID` 无输出；`make check` exit 0 |
 
 ## 后续
 
