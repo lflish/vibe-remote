@@ -79,3 +79,24 @@ func TestFSRejectsPathOutsideAllowedRoots(t *testing.T) {
 		t.Errorf("error = %v, want %q", body["error"], "path not in allowed roots")
 	}
 }
+
+// R4.3: the fs listing reports a worktree root of a trusted main directory as
+// usable for chat; a directory inside the worktree still only counts by itself.
+func TestFSChatTrustWorktree(t *testing.T) {
+	c := newChatServer(t)
+	repo, wt, hidden := trustedRepoWithWorktrees(t, c)
+	for _, dir := range []string{repo, wt, hidden} {
+		if _, body := c.rest("GET", "/api/v1/fs?path="+dir); body["chatTrust"] != "trusted" {
+			t.Fatalf("chatTrust for %s = %v, want trusted", dir, body["chatTrust"])
+		}
+	}
+	src := filepath.Join(wt, "src")
+	if err := os.Mkdir(src, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, dir := range []string{src, filepath.Join(repo, ".devflow-tmp")} {
+		if _, body := c.rest("GET", "/api/v1/fs?path="+dir); body["chatTrust"] != "untrusted" {
+			t.Fatalf("chatTrust for %s = %v, want untrusted", dir, body["chatTrust"])
+		}
+	}
+}

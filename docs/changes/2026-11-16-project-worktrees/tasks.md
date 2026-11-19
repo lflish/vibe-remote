@@ -578,7 +578,7 @@
 - 依赖：T6b、T7、T8
 
 ### T10 daemon：对话界面的信任规则认「主目录已被信任的 worktree 根」
-- 状态：待办
+- 状态：进行中
 - 文件：新建 `vibe-remoted/internal/session/trust.go`、`vibe-remoted/internal/session/trust_test.go`；修改 `vibe-remoted/internal/server/ws_chat.go`（`wsCreateChat` 里的 `chat.WorkdirTrusted(workdir)` 换成 `session.ChatTrust(workdir)`）、`vibe-remoted/internal/server/server.go`（`handleFS` 的 `chatTrust` 同样换）、`docs/protocol.md`（`/api/v1/fs` 的 `chatTrust` 说明改成 design 7.3 的规则，版本表第 4 行补「`/api/v1/fs.chatTrust` 的 worktree 规则」）；测试 `vibe-remoted/internal/server/ws_chat_test.go`、`fs_test.go`。`protocol.go`、`protocol.ts`、`rest.ts` 里 `chatTrust` 的取值不变，核对后不需要改
 - 接口：
   - 使用：`chat.WorkdirTrusted(dir)`、`chat.TrustState`（现有，`vibe-remoted/internal/chat/trust.go`，不改）；`ListWorktrees`（T2）
