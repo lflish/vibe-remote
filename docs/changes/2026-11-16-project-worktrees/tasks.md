@@ -264,7 +264,7 @@
 `desktop/src/renderer/index.ts` 只在 T6a 做一次结构性改动（把侧边栏原样搬到 `sidebar.ts`），T6b 在搬好的文件里做三层结构，之后的任务每个只往里加一个回调和一小段接线。`desktop/src/renderer/styles.css` 在 T6b–T15 只追加新规则，T18 统一换配色，T19 统一换形态。
 
 ### T1 先行修复：分支有未合并提交时，删会话不删分支
-- 状态：待办
+- 状态：完成
 - 文件：修改 `vibe-remoted/internal/session/worktree.go`（新增 `UnmergedCommits`；`CleanupWorktree` 里两处会执行 `git branch -D` 的路径之前先查）；测试 `vibe-remoted/internal/session/worktree_test.go`、`vibe-remoted/internal/server/worktree_test.go`。不改桌面端、不改协议、不改任何现有测试。
 - 接口：
   - 使用：`gitAt(dir, args...)`、`WorktreePreservedError`、`RollbackWorktree(meta)`（都是现有的）
@@ -863,6 +863,7 @@
 
 | 任务 | 完成时间 | 提交 | 测试 |
 |------|----------|------|------|
+| T1 | 2026-11-19 11:01 | 948a65b | `go test -race ./internal/session ./internal/server -run 'TestUnmergedCommits\|TestCleanup\|TestWorktree\|TestDelete'` 两行 `ok`；`make check` exit 0；cherry-pick 到 change/dual-mode 后 `make check` exit 0 |
 
 ## 后续
 
@@ -875,6 +876,8 @@ spec「推迟到以后」的条目：
 - 新建 worktree 时选择基于哪个分支（本次固定基于发起处当前 HEAD）。
 
 设计中发现、不在本次范围的改进：
+
+- `internal/server` 的现有测试 `TestAttachIgnoresCommandFields`（`ws_chat_test.go`）在 `-race` 全包并发下偶发 panic（`argv[0]` index out of range）：它 `os.Stat` 看到假 claude 的 ArgvLog 文件存在后立即 `ReadFile`，存在「文件已建、内容还没写完」的读竞态。与本次改动无关（T1 单独跑 3 次全包、`make check` 复跑均通过）。以后可以在读取前等日志首行非空再解析。
 
 - daemon 在 `git worktree add` 成功之后、会话登记之前崩溃：重放会得到 `worktree_branch_exists`，那个 worktree 以「没有会话」的行留在侧边栏；在 `worktree add` 和 `symbolic-ref` 两条命令之间崩溃，则留下一个 detached 的 worktree（按「外部」显示）和一个没被检出的同名分支（design 6.1 的已知窄窗口）。以后可以在启动时对账，或让重放认领自己刚建的 worktree。
 - 有初始化过的子模块或嵌入式仓库的 worktree 不能从界面删除（d26、decisions #31），只能在终端里 `git worktree remove --force`。以后可以把子模块里未推送的提交数也查出来放进确认框，再放开。
