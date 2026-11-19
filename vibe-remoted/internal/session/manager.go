@@ -203,10 +203,12 @@ type CreateOptions struct {
 	// ClaudeArgv, when set, is the command as argv (handoff); it takes
 	// precedence over ClaudeCmdOverride.
 	ClaudeArgv []string
-	// ValidateWorkdir, when set, re-checks the workdir a worktree session will
-	// actually run in. The caller validated the source directory, but the
-	// worktree is created next to the repo root — possibly outside the allowed
-	// roots — so the derived path needs the same check.
+	// ValidateWorkdir, when set, vets the paths a worktree session derives.
+	// The caller validated the source directory, but the worktree is created
+	// next to the repo root — possibly outside the allowed roots. It is asked
+	// about the new worktree's root before that exists (so it must accept a
+	// path that is not there yet) and about the workdir the session will
+	// actually run in once it does.
 	ValidateWorkdir func(string) (string, error)
 	// ClaudeU, when set, is a claude conversation the caller already claimed
 	// for this session (handoff); the command must already open it.

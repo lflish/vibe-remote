@@ -17,7 +17,7 @@ PTY 字节数据使用 base64 编码传输（`data` 帧）。
 | 1 | 初始版本（隐式） |
 | 2 | `attach.newSessionId`（新建会话幂等）、`error.code` / `error.fatal`、`proto` 字段本身、服务端 WebSocket 心跳 |
 | 3 | 对话界面：`attach.ui` / `epoch` / `since` / `handoffFrom`，`chat` / `chat_sync` / `chat_state` / `chat_ack`（含 send 的 `duplicate` / `completed`）/ `chat_send` / `chat_respond` / `chat_interrupt` / `chat_set_mode` 帧，`ready.ui` / `claudeSessionId` / `existing` / `handoffFrom`，`sessions[].ui` / `state` / `activitySeq` / `epoch` / `endReason`，`/api/v1/info.chat`（含 `?recheck=1`），`/api/v1/fs` 的 `chatTrust`，对话会话 reload 返回 202，错误码 `ui_mismatch` / `chat_unsupported` / `claude_session_busy` / `shutting_down`。终端会话的 `ready` / `sessions` / `data` / `exit` / `error` 帧除 `proto` 值外与 v2 逐字节相同 |
-| 4 | `GET /api/v1/projects`、`POST /api/v1/projects/remove`。所有 S→C 帧的字段与 v3 相同 |
+| 4 | `attach.worktreeName`，错误码 `invalid_worktree_name` / `worktree_branch_exists` / `worktree_path_exists` / `worktree_path_not_allowed`；`GET /api/v1/projects`、`POST /api/v1/projects/remove`。所有 S→C 帧的字段与 v3 相同 |
 
 兼容规则：新增字段在接收端一律可选；未知帧类型、未知 `notify.kind`、未知 `error.code` 均忽略（未知 code 只按 `fatal` 处理）。客户端发现 `proto` 低于自身版本时应提示用户更新 daemon——旧 daemon 会接受请求但**静默忽略**不认识的字段。
 
@@ -90,6 +90,7 @@ Client                              Server (vibe-remoted)
 - `ui`（v3）：`"terminal"` 或 `"chat"`，省略 = `terminal`（旧客户端）。新建时决定会话类型；接入已有会话时必须与会话类型一致，否则返回 `ui_mismatch`。客户端在 `ready` 之后的自动重连与手动重试里继续带上 `ui:"chat"`
 - `epoch` / `since`（v3）：仅 `ui:"chat"` 接入已有会话。客户端上次**完整收到**的位置（某个 epoch 的同步结束标志 `chat_state` 之后才有资格报告），在每次发送 attach 的那一刻读取。两者都给出、`epoch` 等于当前 epoch、且 `since` ≥ 缓冲区最早 `seq`−1 时走增量补发，否则走整体重同步（`reset`）
 - `handoffFrom`（v3）：仅新建且 `ui:"terminal"`。要交接的对话会话 id：daemon 停掉该对话进程，再新建一个终端会话以 `--resume <claude 会话 id>`（无对话记录时 `--session-id`）接上。此时 `workdir`/`flags`/`mode` 被忽略，全部取自对话会话。只属于创建意图，`ready` 之后的重放只用 `sessionId`
+- `worktreeName`（v4）：可选，仅新建且 `mode:"worktree"` 时有效，其余情况忽略（含带 `handoffFrom` 时）。非空：新分支名就是它，基于 `workdir` 当前的 HEAD（不含未提交的改动），目录是 `<项目主目录的父目录>/<主目录名>-worktrees/<名字，/ 换成 ->`。空或省略：v3 的行为，分支 `vibe/<会话 id>`，目录 `<workdir 所在 worktree 根的父目录>/<根目录名>-worktrees/<会话 id>`。名字的规则：非空；不含空白和控制字符；不含 `..`；不以 `-` 开头；不含 `@{`；并且 `git check-ref-format --branch <名字>` 接受它、输出与输入逐字相等。不满足 → `invalid_worktree_name`。`ready` 之前的重放要带同一个 `newSessionId` 和同一个 `worktreeName`；`ready` 之后的重放只用 `sessionId`。`ready` / `sessions` 没有新字段：命名 worktree 的会话用已有的 `mode` / `sourceWorkdir` / `sourceRepo` / `worktreeRoot` / `branch`，`branch` 的值就是名字。v3 的 daemon 会静默忽略这个字段（建出 `vibe/<会话 id>`），客户端要先看 `proto`
 
 客户端可能夹带的其它字段（如 `command`、`args`）一律忽略：启动命令只由服务端配置拼成。
 
@@ -224,13 +225,19 @@ v3 对话会话的条目另带（终端条目一律省略）：
 | `invalid_workdir` | ✓ | workdir 不在 `allowed_roots` 内 |
 | `invalid_mode` | ✓ | 未知的 `mode` |
 | `invalid_session_id` | ✓ | `newSessionId` 格式非法 |
-| `create_failed` | ✓ | 新建失败（如 worktree 模式选了非 Git 目录） |
+| `create_failed` | ✓ | 新建失败（如 worktree 模式选了非 Git 目录；git 执行失败，`message` 含 git 的错误输出；带 `worktreeName` 而仓库是子模块或用了独立的 git 目录） |
 | `session_not_found` | ✓ | 要恢复的会话已不存在（被删除、tmux 被杀，或 daemon 未启用 tmux） |
 | `attach_failed` | | 会话存在但接入失败（PTY/tmux 暂时故障） |
 | `ui_mismatch` | ✓ | v3：接入的会话类型与 `attach.ui` 不符（含旧桌面接入对话会话）；`attach.ui` 不是 `terminal` / `chat`；交接（`handoffFrom`）却带 `ui:"chat"` |
 | `chat_unsupported` | ✓ | v3：新建对话但不可用；`message` 含原因（取值同 `/api/v1/info` 的 `chat.reason`，另有 `workdir_untrusted`） |
 | `claude_session_busy` | ✓ | v3：要启动的 claude 会话正在另一个会话里运行（对话 `-c`、交接、重启，或终端会话带 continue 时被运行中的对话会话占用）；`message` 写明持有者会话名 |
 | `shutting_down` | | v3：daemon 正在退出，不再新建对话会话；客户端保留 attach（同一个 `newSessionId`）退避重连，daemon 重启后照常新建 |
+| `invalid_worktree_name` | ✓ | v4：`worktreeName` 不满足名字的规则 |
+| `worktree_branch_exists` | ✓ | v4：仓库已有同名本地分支，或名字与已有分支不能并存（已有 `fix` 时建 `fix/login`，已有 `change/foo` 时建 `change`）；`message` 写明与哪个分支冲突 |
+| `worktree_path_exists` | ✓ | v4：新 worktree 的目标目录已存在（空目录也算） |
+| `worktree_path_not_allowed` | ✓ | v4：目标目录不在 `allowed_roots` 内；或 worktree 建好之后，会话实际的工作目录（`workdir` 是仓库子目录时映射到新 worktree 里的那个）解析符号链接后不在 `allowed_roots` 内。`message` 含完整路径。不带 `worktreeName` 的 worktree 模式遇到这种情况同样返回这个代码（v3 是 `create_failed`） |
+
+以上四个 v4 的错误发生时，daemon 不留下这次创建的目录和分支。
 
 对话会话运行中的失败（版本过旧、进程崩溃、重启失败）不走 `error` 帧，而是 `chat_state.ended` + `vr_exit` 消息 + `exit` 帧，连接保持，客户端不重连。
 

@@ -16,7 +16,9 @@ import "encoding/json"
 //	   sessions[].ui/state/activitySeq/epoch/endReason, /api/v1/info.chat
 //	   (+?recheck=1), /api/v1/fs chatTrust, chat reload 202,
 //	   errors ui_mismatch/chat_unsupported/claude_session_busy)
-//	4: GET /api/v1/projects, POST /api/v1/projects/remove (all S→C frames
+//	4: attach.worktreeName, errors invalid_worktree_name/
+//	   worktree_branch_exists/worktree_path_exists/worktree_path_not_allowed,
+//	   GET /api/v1/projects, POST /api/v1/projects/remove (all S→C frames
 //	   unchanged from v3)
 const Version = 4
 
@@ -195,7 +197,7 @@ const (
 	ErrCodeInvalidWorkdir  = "invalid_workdir"    // fatal: outside allowed_roots
 	ErrCodeInvalidMode     = "invalid_mode"       // fatal: unknown session mode
 	ErrCodeInvalidID       = "invalid_session_id" // fatal: malformed newSessionId
-	ErrCodeCreateFailed    = "create_failed"      // fatal: e.g. worktree in a non-git dir
+	ErrCodeCreateFailed    = "create_failed"      // fatal: e.g. worktree in a non-git dir, or git failed
 	ErrCodeSessionNotFound = "session_not_found"  // fatal: the session is gone
 	ErrCodeAttachFailed    = "attach_failed"      // transient: PTY/tmux trouble, retry
 

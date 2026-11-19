@@ -9,7 +9,9 @@
  *      sessions[].ui/state/activitySeq/epoch/endReason, info.chat (+?recheck=1),
  *      fs chatTrust, chat reload 202, errors ui_mismatch/chat_unsupported/
  *      claude_session_busy (fatal), shutting_down (transient: retry))
- *   4: GET /api/v1/projects, POST /api/v1/projects/remove (S→C frames unchanged)
+ *   4: attach.worktreeName, errors invalid_worktree_name/worktree_branch_exists/
+ *      worktree_path_exists/worktree_path_not_allowed (fatal),
+ *      GET /api/v1/projects, POST /api/v1/projects/remove (S→C frames unchanged)
  */
 export const PROTOCOL_VERSION = 4;
 
@@ -102,6 +104,10 @@ export interface AttachFrame {
   // v3, create with ui terminal only: hand this chat session over to the new
   // terminal session (workdir/flags/mode are then ignored).
   handoffFrom?: string;
+  // v4, create with mode worktree only (ignored otherwise and with
+  // handoffFrom): the new branch's name. Omitted = the v3 naming,
+  // vibe/<session id>. A v3 daemon ignores it silently, so check proto first.
+  worktreeName?: string;
 }
 
 export interface DataFrameC2S {
