@@ -2,7 +2,7 @@
 
 对应需求：spec.md（R1–R9，H1–H27）　更新：2026-11-19
 
-文中的决定编号（6–40、d5–d30、c1–c5）见 decisions.md；实验输出在 `evidence/`。任务编号（T1–T20，其中 T6 拆成 T6a 和 T6b）见 tasks.md。2026-11-18 按工程评审（3 个严重、12 个一般）修订，依据见第 9 节 V10–V17。2026-11-19 按第二轮工程评审（1 个严重、12 个一般）和用户的三个决定（c3 同意、c4 采纳、R5.9 改写）修订，依据见 V18–V24。
+文中的决定编号（6–40、d5–d31、c1–c5）见 decisions.md；实验输出在 `evidence/`。任务编号（T1–T20，其中 T6 拆成 T6a 和 T6b）见 tasks.md。2026-11-18 按工程评审（3 个严重、12 个一般）修订，依据见第 9 节 V10–V17。2026-11-19 按第二轮工程评审（1 个严重、12 个一般）和用户的三个决定（c3 同意、c4 采纳、R5.9 改写）修订，依据见 V18–V24。
 
 ## 1. 方案
 
@@ -55,7 +55,7 @@ graph TD
 | 未合并提交数 | `git rev-list --count refs/heads/<分支> --not --exclude=<分支> --branches --remotes`；detached 时在该 worktree 里执行 `git rev-list --count HEAD --not --branches --remotes` | 与 H9 的定义一致（V2）。分支写完整引用名：短名遇到同名 tag 会被解析成 tag，数成 0（V10） | `git branch --merged` | 只和一个基准比，已推送未合并的分支会被误报 |
 | 建分支、删分支 | `git update-ref refs/heads/<名字> <提交> ""`（不存在才创建）、`git update-ref -d refs/heads/<名字> <旧值>`（仍指向旧值才删） | 完整引用名不会被展开成别的分支，也不会被当成选项；每一步都知道是不是自己建的（V10、V14） | `git worktree add -b <名字>`、`git branch -D <名字>` | `@{-1}` 会被展开成上一个检出的分支，`-D` 强删的是那个分支（V10）；`worktree add -b` 失败时分不清留下的分支是谁建的（V3） |
 | 未提交文件数 | `git -c core.fsmonitor=false status --porcelain --untracked-files=all` 的行数 | 不含被忽略的文件（H10，V2）；`core.fsmonitor` 是 status 唯一会执行外部程序的配置，关掉 | 现有的 `--ignored` | 与 H10 相反 |
-| 被忽略的文件数 | `git -c core.fsmonitor=false ls-files --others --ignored --exclude-standard` 的行数 | 只用来在确认框里多说一句（R5.4，c4），不参与「干净」的判定。逐个文件数，目录不折叠；嵌在被忽略目录里的另一个 git 仓库算 1 行；3 万个文件约 0.1 秒（V23） | `git status --porcelain --ignored` | 不带 `--untracked-files=all` 时整个 `node_modules/` 折叠成 1 行，「N 个文件」就成了 1 |
+| 被忽略的文件数 | `git -c core.fsmonitor=false ls-files --others --ignored --exclude-standard` 的行数 | 只用来在确认框里多说一句（R5.4，c4），不参与「干净」的判定。逐个文件数，目录不折叠；嵌在被忽略目录里的另一个 git 仓库算 1 行；3 万个文件约 0.1 秒（V23）。它要走遍被忽略的目录，这些目录可以比受跟踪的内容大得多（数据集、构建缓存），所以超时或失败时不让查状态失败，只把这个数记成「没数出来」（4.5，d31） | `git status --porcelain --ignored` | 不带 `--untracked-files=all` 时整个 `node_modules/` 折叠成 1 行，「N 个文件」就成了 1 |
 | 归属的持久化 | 终端：tmux 用户选项；对话：`chat-sessions.json` 的记录 | 跟随各自已有的事实来源 | 全放进 `projects.json` | 会话没了记录还在，要另做清理 |
 | 项目清单与创建记录 | `<state_dir>/projects.json`（d6） | 沿用现有的原子写做法 | 仓库的 git 配置 | 会改用户仓库的配置 |
 | 识别旧 daemon | `/api/v1/projects` 返回 404（d7） | 每轮自带判断，没有缓存过期 | 缓存 `/info.proto` | daemon 原地升级后缓存会过期 |
@@ -209,7 +209,7 @@ HTTP 错误：403 `workdir` 不在 `allowed_roots` 内（响应体同 `/api/v1/f
 | `head` | 完整的 40 位提交哈希，删除时原样带回 |
 | `branch` / `detached` | 同 4.2 |
 | `dirtyFiles` | 未提交或未跟踪的文件数，不含被忽略的（H10） |
-| `ignoredFiles` | 被 git 忽略、会随目录一起删除的文件数（R5.4，c4 已采纳）。口径见第 3 节：逐个文件数，`node_modules/` 里有 1200 个文件就是 1200；嵌在被忽略目录里的另一个 git 仓库算 1。恒有值，没有时是 0。它只是给人看的说明：不参与「干净」的判定，不需要同意项，删除时 daemon 不拿它做比对。它和其它几个数一样是「查状态」的一部分，走 `gitAtTimeout`：查询失败或超时，status 返回 500 `git_failed` |
+| `ignoredFiles` | 被 git 忽略、会随目录一起删除的文件数（R5.4，c4 已采纳）。口径见第 3 节：逐个文件数，`node_modules/` 里有 1200 个文件就是 1200；嵌在被忽略目录里的另一个 git 仓库算 1。恒有值，没有时是 0。它只是给人看的说明：不参与「干净」的判定，不需要同意项，删除时 daemon 不拿它做比对。这一项查询失败或超过 `gitTimeout` 时 status 照常返回，`ignoredFiles` 是 `-1`（没数出来），确认框改用不带数字的一句；不能因为一句说明数不出来，就让这个 worktree 从界面上删不掉（d31） |
 | `unmergedCommits` | 有分支：该分支上不被任何其他本地分支或远程跟踪分支包含的提交数（H9）。detached：`HEAD` 上不被任何本地分支或远程跟踪分支包含的提交数（R5.11） |
 | `sessions` | 归属这个 worktree 的会话 id（含已结束的对话会话），以及还没有归属、工作目录在它下面的会话 |
 
@@ -286,7 +286,7 @@ func ValidateWorktreeName(repoDir, name string) error     // errors.Is(err, ErrI
 func WorktreeDirName(name string) string                  // "/" → "-"
 func BranchConflict(repoDir, name string) (string, error) // 挡住这个名字的已有分支：同名的、它的某个 "/" 前缀、或 refs/heads/<name>/ 下的第一个；没有则 ""（6.1 第 4 步）
 func DirtyFiles(worktreeDir string) (int, error)
-func IgnoredFiles(worktreeDir string) (int, error)        // 被忽略的文件数，口径见第 3 节（c4）
+func IgnoredFiles(worktreeDir string) (int, error)        // 被忽略的文件数，口径见第 3 节（c4）；走 gitAtTimeout，出错时由 WorktreeStatus 记成 -1
 func UnmergedCommits(dir, branch string) (int, error)     // branch 非空：数 refs/heads/<branch>；为空：数 dir 的 HEAD（detached）
 // 与 git 自己拒绝删除时的两段判断相同（builtin/worktree.c 的 validate_no_submodules）：
 // 该 worktree 的 git 目录下有 modules/（初始化过的子模块，V13）；
@@ -579,7 +579,7 @@ function terminalTheme(): ITheme     // 底色、前景、光标、选区读 CSS
 | detached，`unmergedCommits>0` | 警告「这 N 个提交删除后不再属于任何分支」，默认按钮是取消，另一个是「仍然删除」（R5.11） | `dropCommits:true` |
 | detached，`dirtyFiles=0`，`unmergedCommits=0` | 「工作区是干净的，只删除目录」，按钮 取消 / 删除（R5.11 后半句） | 无 |
 | `sessions` 非空（叠加在以上任一种上） | 多一句「会先结束这 N 个会话」（R5.6） | `sessions` 原样带回 |
-| `ignoredFiles>0`（叠加在以上任一种上） | 多一句「另有 N 个被 git 忽略的文件会一并删除」（R5.4，c4）。只是说明：不改变形态（`data-variant`）、默认按钮和回车的行为；`ignoredFiles` 是 0 或缺省时没有这一句 | 无 |
+| `ignoredFiles>0`（叠加在以上任一种上） | 多一句「另有 N 个被 git 忽略的文件会一并删除」（R5.4，c4）。`ignoredFiles` 是 `-1`（没数出来）时换成不带数字的「被 git 忽略的文件也会一并删除」。只是说明：不改变形态（`data-variant`）、默认按钮和回车的行为；`ignoredFiles` 是 0 或缺省时没有这一句 | 无 |
 | 本次流程里已经结束过会话（`ended>0`，叠加） | 多一句「已结束 N 个会话」（R5.12）；此时最新状态的 `sessions` 通常已经是空的 | 无 |
 
 几种情况同时成立时（例如有未提交文件，分支又有未合并提交），确认框把各自的那一段都显示出来，同意项取并集。`data-variant` 按 `files` > `detached` > `commits` > `external` > `clean` 取第一个成立的。只要显示了 `files` 或 `detached`（有提交）的警告，默认按钮就是取消、确认按钮是「仍然删除」；`commits` 的两个单选在这种情况下照常显示、仍预选「只删目录、保留分支」。此时回车 = 取消：H22 对 R5.5 的约定（回车执行保留分支的删除）让位给 R5.3、R5.11 的约定，因为同一个确认框里只要有一项是不可恢复的丢失，回车就不应该执行删除（d25）。只有单独的 `commits` 形态回车才是「只删目录、保留分支」。不是 `managed` 也不是主目录的 worktree 一律显示「不是由 vibe-remote 创建」这一行。
@@ -753,7 +753,7 @@ DOM（现有 class 保留，gui 冒烟脚本的选择器因此大多不用动）
   - `openNewWorktreeDialog`（R3）：标题「在 <项目> 新建 worktree」，副标题「<机器> · 从 <分支> 发起」；名字段、界面段、启动选项段。发起处是项目的主目录行；主目录不在列表里（被白名单滤掉）时项目行的按钮置灰。对话框一打开就用空名字调一次 `planWorktree` 取 `base`；返回 `unsupported_repo`（子模块、`--separate-git-dir`）或 `not_git` 时，名字下方显示对应的 `wt.error.*`，输入框和确认按钮都不可用。点确认时再调一次 `planWorktree`，不通过就把原因显示在名字下方、对话框保持打开（R3.4、R3.5、R3.10）；通过才关闭并发 attach（`mode:"worktree"`，`workdir` = 主目录，带 `worktreeName`）。
   - `openWorktreeSessionDialog`（R4.1）：标题「在 <worktree 名> 新建会话」，副标题「<项目名> · <完整路径>」；只有界面段和启动选项段。信任状态来自 `rest.listDir(路径)` 的 `chatTrust`。确认后发普通 attach（`mode:"normal"`，`workdir` = worktree 路径）。
   - `confirmDeleteSession`（d15）：初始焦点在「取消」（d18）。`worktreeLabel` 只在会话挂在非主目录的 worktree 行下时传，对应 `session.delete.keepsWorktree`；`legacyWorktree` = 这台机器的能力状态不是 `v4` 且会话的 `mode` 是 `worktree`，对应 `session.delete.legacyWorktree`（R9.1），两句不同时出现，`legacyWorktree` 优先。
-  - `confirmDeleteWorktree`（6.2 的表）：`status.ignoredFiles > 0` 时多一行 `delete-wt-ignored`（`wt.delete.ignored`）；`opts.ended > 0` 时多一行 `delete-wt-ended`（`wt.delete.ended`）。两行都只是说明，不影响形态和默认按钮。
+  - `confirmDeleteWorktree`（6.2 的表）：`status.ignoredFiles > 0` 时多一行 `delete-wt-ignored`（`wt.delete.ignored`），是 `-1` 时这一行的文字是 `wt.delete.ignoredUnknown`；`opts.ended > 0` 时多一行 `delete-wt-ended`（`wt.delete.ended`）。两行都只是说明，不影响形态和默认按钮。
   - `showDeleteWorktreeFailure`（R5.12）：删到一半失败、worktree 已经不在列表里时用。`data-testid="delete-wt-failed"`，标题 `wt.delete.failedTitle`，正文依次是 `delete-wt-error`（`wt.delete.failed`，git 的错误）、`delete-wt-ended`（`ended > 0` 时）、`delete-wt-partial`（`wt.delete.partial`，带路径）；只有一个按钮 `dialog-cancel`（文字 `wt.delete.close`）。
 - 所有对话框沿用 `.modal-overlay > .modal > 标题 + .modal-body + .modal-footer` 的结构和 `activateModal`，所以现有的「矮窗口下按钮不被挤出」的样式保证对它们同样成立。
 
@@ -804,6 +804,7 @@ DOM（现有 class 保留，gui 冒烟脚本的选择器因此大多不用动）
 | `wt.delete.externalDetached` | 这个 worktree 不是由 vibe-remote 创建。 |
 | `wt.delete.sessions` | 会先结束这 {n} 个会话。 |
 | `wt.delete.ignored` | 另有 {n} 个被 git 忽略的文件会一并删除。 |
+| `wt.delete.ignoredUnknown` | 被 git 忽略的文件也会一并删除（数量没有统计出来）。 |
 | `wt.delete.ended` | 已结束 {n} 个会话。 |
 | `wt.delete.failedTitle` / `close` | 删除 {name} 没有完成 / 关闭 |
 | `wt.delete.partial` | git 已经不再登记这个 worktree，但目录没有删完，还剩一部分在 {path}。分支没有删除。 |
