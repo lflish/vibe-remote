@@ -42,8 +42,9 @@ export interface ProjectWorktree {
 // anything is created passes right now.
 export interface WorktreePlan {
   ok: boolean;
-  // not_git | unsupported_repo | invalid_worktree_name | worktree_branch_exists |
-  // worktree_path_exists | worktree_path_not_allowed
+  // not_git | unsupported_repo | no_commits | invalid_worktree_name |
+  // worktree_branch_exists | worktree_path_exists | worktree_path_not_allowed.
+  // The first three are not about the name: no other name would do.
   error?: string;
   message?: string;
   // worktree_branch_exists only: the existing branch in the way — equal to
@@ -51,9 +52,9 @@ export interface WorktreePlan {
   conflict?: string;
   project?: string; // absent for not_git
   projectName?: string; // absent for not_git
-  base?: WorktreeBase; // absent for not_git
-  branch?: string; // present once the name is valid
-  path?: string; // present once the name is valid
+  base?: WorktreeBase; // absent for not_git; for no_commits its head is 0000000
+  branch?: string; // present once the name is valid (and not for unsupported_repo, no_commits)
+  path?: string; // present once the name is valid (and not for unsupported_repo, no_commits)
 }
 
 // The branch and commit a new worktree would be based on.
@@ -68,7 +69,9 @@ export interface WorktreeStatus {
   path: string;
   project: string;
   branch?: string; // omitted when detached
-  head: string; // the full commit hash; sent back with the removal
+  // The full commit hash; sent back with the removal. All zeros when the
+  // branch has no commit yet (unmergedCommits is 0 then; it can be removed).
+  head: string;
   detached?: boolean;
   main: boolean;
   managed: boolean; // created by vibe-remote
@@ -77,11 +80,15 @@ export interface WorktreeStatus {
   // Ignored by git, removed with the directory. Only a note: -1 = could not
   // be counted; a removal never compares it.
   ignoredFiles: number;
+  // The sessions that end with this worktree: those attributed to it, and
+  // those whose directory is inside it wherever the tree lists them.
   sessions: string[];
 }
 
 // v4, body of POST /api/v1/worktrees/remove: the worktree, what the user saw
-// of it (head, sessions) and what they agreed to lose.
+// of it (head, sessions, branch) and what they agreed to lose. path, head and
+// sessions are required (sessions is [] when there are none): without one of
+// them the daemon answers 400 invalid_request.
 export interface WorktreeRemoveRequest {
   path: string;
   head: string;
@@ -91,7 +98,10 @@ export interface WorktreeRemoveRequest {
   // on another branch by now; one that does not know the field ignores it.
   branch?: string;
   discardFiles?: boolean;
-  deleteBranch?: boolean; // honored only for a worktree vibe-remote created, on a branch
+  // Only for a worktree vibe-remote created that is on a branch. Sent for any
+  // other (it was switched or detached since the confirmation), the daemon
+  // answers 409 worktree_changed and removes nothing.
+  deleteBranch?: boolean;
   dropCommits?: boolean;
 }
 

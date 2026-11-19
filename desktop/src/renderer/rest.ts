@@ -144,8 +144,8 @@ export class VibeRemoteRest {
   }
 
   /**
-   * Remove a worktree (v4). `req` carries what the user saw (head, sessions)
-   * and agreed to. A refusal is a RestError whose body has `endedSessions`
+   * Remove a worktree (v4). `req` carries what the user saw (head, sessions,
+   * branch) and agreed to. A refusal is a RestError whose body has `endedSessions`
    * for 409 `worktree_changed` (with the current `status`) and 500
    * `worktree_remove_failed`. A timeout or network failure is not a RestError:
    * the daemon carries the removal through regardless, so the outcome is then
