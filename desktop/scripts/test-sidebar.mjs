@@ -399,8 +399,6 @@ test('focus_survives_a_rebuild', () => {
   c.remove();
 });
 
-// A row menu that is open during a rebuild stays with its row and keeps
-// working; when the row is gone the menu goes too.
 // A double click reaches the page as click, click (detail 2), dblclick. Opening
 // a session rebuilds the sidebar, so each of them goes to the label that is
 // under the pointer at that moment; a label taken out by the second click
@@ -435,6 +433,43 @@ test('double_click_renames_a_session_that_is_open', () => {
   c.remove();
 });
 
+// While its menu is open the button says so (aria-expanded). The stylesheet
+// keeps the row's buttons in place for as long as it does: they otherwise show
+// only while the row is hovered or holds the focus, and a rebuilt row is
+// neither at the moment the menu is put next to its new button
+// (gui-worktree-smoke X8.menu measures that with real pointer events).
+test('menu_button_is_marked_expanded_while_its_menu_is_open', async () => {
+  const actions = acts({ newWorktree() {}, newSession() {}, deleteWorktree() {} });
+  const build = () => model([machineEntry(buildTree(twoSessions(), DEVFLOW_TWO))]);
+  const c = document.createElement('div');
+  document.body.appendChild(c);
+  renderSidebar(c, build(), actions);
+  const menuButton = () => tid([...c.querySelectorAll('.worktree-group')].find((g) => g.dataset.path === '/r/devflow-worktrees/fix-login'), 'worktree-menu');
+  const expanded = () => [...c.querySelectorAll('[aria-expanded="true"]')].filter((e) => e.dataset.testid === 'worktree-menu' || e.dataset.testid === 'project-menu');
+  assert.deepEqual(expanded(), []);
+  click(menuButton());
+  assert.deepEqual(expanded(), [menuButton()], 'the button of the open menu');
+  await new Promise((r) => setTimeout(r, 5));
+  const old = menuButton();
+  renderSidebar(c, build(), actions);
+  assert.notEqual(menuButton(), old, 'the row was rebuilt');
+  assert.deepEqual(expanded(), [menuButton()], 'the same button of the rebuilt row');
+  // another menu: only its button is marked
+  click(tid(c, 'project-menu'));
+  assert.deepEqual(expanded(), [tid(c, 'project-menu')]);
+  document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+  assert.equal(document.querySelectorAll('body > .menu').length, 0);
+  assert.deepEqual(expanded(), [], 'nothing is marked once the menu is closed');
+  // the rule that keeps the buttons where they are while a menu is open
+  const css = readFileSync(new URL('../src/renderer/styles.css', import.meta.url), 'utf-8');
+  for (const row of ['.project-row', '.worktree-row']) {
+    assert.ok(css.includes(`${row} > .row-actions:has([aria-expanded='true'])`), `styles.css keeps the buttons of ${row} shown while one of them has its menu open`);
+  }
+  c.remove();
+});
+
+// A row menu that is open during a rebuild stays with its row and keeps
+// working; when the row is gone the menu goes too.
 test('open_menu_follows_its_row_through_a_rebuild', async () => {
   const deleted = [];
   const actions = acts({ newWorktree() {}, newSession() {}, deleteWorktree: (m, p, wt) => deleted.push(wt.path) });

@@ -292,7 +292,9 @@ html, body {
 .project-row > .session-unread ~ .row-actions { margin-left: 0; }
 /* Row actions take no room until the row is hovered or holds the focus (the
    buttons stay reachable with Tab), so they never cost a name its width. The
-   rows have a fixed height, so nothing moves when they appear. */
+   rows have a fixed height, so nothing moves when they appear. They also stay
+   while the menu of one of them is open (menu.ts marks the button): the menu
+   is placed next to that button, also on a row the sidebar has just rebuilt. */
 .row-actions {
   display: inline-flex;
   gap: 1px;
@@ -304,8 +306,10 @@ html, body {
 }
 .project-row:hover > .row-actions,
 .project-row:focus-within > .row-actions,
+.project-row > .row-actions:has([aria-expanded='true']),
 .worktree-row:hover > .row-actions,
-.worktree-row:focus-within > .row-actions {
+.worktree-row:focus-within > .row-actions,
+.worktree-row > .row-actions:has([aria-expanded='true']) {
   position: static;
   opacity: 1;
   pointer-events: auto;

@@ -25,6 +25,8 @@ export function menuAnchor(): HTMLElement | null {
 export function moveMenu(anchor: HTMLElement): void {
   if (!current) return;
   current.anchor = anchor;
+  // Marked before it is measured: see openMenu.
+  anchor.setAttribute('aria-expanded', 'true');
   placeMenu(current.el, anchor);
 }
 
@@ -32,6 +34,7 @@ export function closeMenu(): void {
   if (!current) return;
   document.removeEventListener('keydown', current.onKey, true);
   document.removeEventListener('mousedown', current.onDown, true);
+  current.anchor.removeAttribute('aria-expanded');
   current.el.remove();
   current = null;
 }
@@ -62,6 +65,11 @@ export function openMenu(anchor: HTMLElement, items: MenuItem[]): void {
   }
   el.style.position = 'fixed';
   document.body.appendChild(el);
+  // The button says its menu is open. The stylesheet keeps a row's buttons in
+  // place while one of them does: they otherwise show only while the row is
+  // hovered or holds the focus, and the row the sidebar has just rebuilt is
+  // neither yet — the menu would be put where the hidden button collapses to.
+  anchor.setAttribute('aria-expanded', 'true');
   placeMenu(el, anchor);
 
   const onKey = (e: KeyboardEvent) => {

@@ -2723,6 +2723,37 @@ test('X2.rename', 'double-clicking the name of a session that is open here renam
   }
 });
 
+test('X8.menu', 'a row menu opened with the pointer stays at its button when the sidebar is rebuilt (exploration X8)', async () => {
+  await managedWorktree(LAB, fx.del, 'x8m');
+  await rowShown(LAB, 'del', 'x8m');
+  const row = wg(LAB, 'del', 'x8m');
+  const button = `${row}?.querySelector('.worktree-row ${tid('worktree-menu')}')`;
+  await ev(`${row}.scrollIntoView({ block: 'center' }), true`);
+  await pointerClick(button, 'the "more" button of x8m');
+  await waitFor(() => exists(`document.querySelector('body > .menu ${tid('worktree-delete')}')`), 5000, 'the menu');
+  // where the menu is, relative to its button, and whether the button is showing
+  const place = () => ev(`(() => { const menu = document.querySelector('body > .menu'); const btn = ${button}; if (!menu || !btn) return null; const a = btn.getBoundingClientRect(); const r = menu.getBoundingClientRect();
+    return { left: Math.round(r.left - a.left), gap: Math.round(Math.min(Math.abs(r.top - a.bottom), Math.abs(a.top - r.bottom))), buttonShown: getComputedStyle(btn.parentElement).opacity === '1' }; })()`);
+  const before = await place();
+  assert(before && before.gap <= 12 && Math.abs(before.left) <= 2 && before.buttonShown, `the menu did not open at its button: ${J(before)}`);
+  const rebuilt = async () => {
+    await ev(`${row}.dataset.vrMark = '1', true`);
+    await refresh();
+    return ev(`!${row}.dataset.vrMark`);
+  };
+  assert(await rebuilt(), 'the refresh did not rebuild the row');
+  eq(await place(), before, 'where the menu is after a rebuild, the pointer still on the button');
+  // the pointer goes to the item, as it does on the way to clicking it: the row is no longer hovered
+  await pointerOver(`document.querySelector('body > .menu ${tid('worktree-delete')}')`, 'the menu item');
+  assert(await rebuilt(), 'the second refresh did not rebuild the row');
+  eq(await place(), before, 'where the menu is after a rebuild, the pointer on the item');
+  await pointerClick(`document.querySelector('body > .menu ${tid('worktree-delete')}')`, '"delete worktree"');
+  await waitDialog('delete-wt-dialog');
+  eq((await deleteDialog()).title, '删除 worktree x8m？', 'the confirmation the menu item opened');
+  await cancelDialog();
+  return `opened with the pointer: ${before.gap}px under its button; still there after two rebuilds (pointer on the button, then on the item); the item opens the confirmation`;
+});
+
 test('NFR.perf', 'performance: 20 projects × 5 worktrees add at most 200 ms to the lists', async () => {
   const P = join(work, 'p');
   const perf = defineDaemon('perf', { cfg: { default_workdir: P, allowed_roots: [P], claude_cmd: '/bin/bash', claude_reload_cmd: '/bin/bash' } });
