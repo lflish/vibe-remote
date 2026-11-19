@@ -361,8 +361,8 @@ export function confirmDeleteSession(opts: { name: string; worktreeLabel?: strin
 /**
  * Confirms deleting a worktree (design 6.2). `status` is what the daemon just
  * reported; the dialog shows every part of it that means something is lost and
- * resolves with the request to send — what the user saw (`head`, `sessions`)
- * plus what they agreed to — or null when cancelled.
+ * resolves with the request to send — what the user saw (`head`, `sessions`,
+ * `branch`) plus what they agreed to — or null when cancelled.
  *
  * Uncommitted files, or commits of a detached worktree that are on no branch,
  * are lost for good: the dialog then warns, its confirm button is "Delete
@@ -450,6 +450,8 @@ export function confirmDeleteWorktree(
 
     const request = (): WorktreeRemoveRequest => {
       const req: WorktreeRemoveRequest = { path: status.path, head: status.head, sessions: [...status.sessions] };
+      // What the dialog showed: the daemon refuses if it is another branch by now.
+      if (branch) req.branch = branch;
       if (files) req.discardFiles = true;
       if (branch && status.managed) {
         if (unmerged === 0) {

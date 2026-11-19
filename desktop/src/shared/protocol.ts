@@ -86,6 +86,10 @@ export interface WorktreeRemoveRequest {
   path: string;
   head: string;
   sessions: string[];
+  // The branch the confirmation showed; left out for a detached worktree. A
+  // daemon that checks it answers 409 worktree_changed when the worktree is
+  // on another branch by now; one that does not know the field ignores it.
+  branch?: string;
   discardFiles?: boolean;
   deleteBranch?: boolean; // honored only for a worktree vibe-remote created, on a branch
   dropCommits?: boolean;

@@ -562,7 +562,8 @@ function openWt(st, opts = {}) {
     enter: () => pressKey(document.activeElement, 'Enter'),
   };
 }
-const BASE = { path: WT_PATH, head: HEAD, sessions: [] };
+// Every request for the worktree on fix-login names that branch (the one the dialog showed).
+const BASE = { path: WT_PATH, head: HEAD, sessions: [], branch: 'fix-login' };
 
 test('delete_wt_clean', async () => {
   const d = openWt(status({ sessions: ['s1'] }));
@@ -579,7 +580,7 @@ test('delete_wt_clean', async () => {
   const body = d.root.querySelector('.modal-body').textContent;
   assert.ok(body.includes(WT_PATH) && body.includes('目录') && body.includes('分支'), body);
   click(d.confirm);
-  assert.deepEqual(await d.result, { path: WT_PATH, head: HEAD, sessions: ['s1'], deleteBranch: true });
+  assert.deepEqual(await d.result, { path: WT_PATH, head: HEAD, sessions: ['s1'], branch: 'fix-login', deleteBranch: true });
   assert.equal(overlay(), null);
 
   const e = openWt(status());
@@ -644,7 +645,7 @@ test('delete_wt_external', async () => {
   assert.equal(d.has('delete-wt-delete-branch'), false);
   assert.equal(d.has('delete-wt-commits'), false);
   click(d.confirm);
-  assert.deepEqual(await d.result, { path: EXT_PATH, head: HEAD, sessions: [] });
+  assert.deepEqual(await d.result, { path: EXT_PATH, head: HEAD, sessions: [], branch: 'change/general-skills' });
 });
 
 test('delete_wt_detached', async () => {
@@ -677,6 +678,37 @@ test('delete_wt_external_detached', async () => {
   assert.equal(d.has('delete-wt-force'), false);
   d.enter();
   assert.deepEqual(await d.result, { path: '/r/devflow-worktrees/tmp', head: HEAD, sessions: [] });
+});
+
+// The request says which branch the confirmation showed, so that the daemon can
+// refuse (409 worktree_changed) when the worktree was switched to another
+// branch in between: "delete the directory and the branch" was agreed for this
+// branch, not for whichever one is checked out by then.
+test('delete_wt_request_carries_the_branch_shown', async () => {
+  const managed = openWt(status({ sessions: ['s1'] }));
+  click(managed.confirm);
+  assert.equal((await managed.result).branch, 'fix-login');
+  const ext = openWt(external());
+  click(ext.confirm);
+  assert.equal((await ext.result).branch, 'change/general-skills', 'an external worktree too: what was shown is what is sent');
+  // Detached: there is no branch to name, the field is left out.
+  const det = openWt(detached());
+  click(det.confirm);
+  assert.ok(!('branch' in (await det.result)));
+  // A status that says detached wins over a stray branch value.
+  const odd = openWt(status({ detached: true }));
+  click(odd.confirm);
+  assert.ok(!('branch' in (await odd.result)));
+  // What every request has, whatever the dialog looked like (the daemon refuses a request without them).
+  for (const st of [status(), status({ dirtyFiles: 2 }), status({ unmergedCommits: 1 }), external({ dirtyFiles: 1, unmergedCommits: 3 }), detached({ unmergedCommits: 1 }), status({ sessions: ['a', 'b'] })]) {
+    const d = openWt(st);
+    click(d.confirm ?? d.force);
+    const req = await d.result;
+    assert.equal(req.path, st.path);
+    assert.equal(req.head, st.head);
+    assert.deepEqual(req.sessions, st.sessions);
+    assert.ok(Array.isArray(req.sessions));
+  }
 });
 
 test('delete_wt_sessions_line', async () => {
@@ -755,7 +787,7 @@ test('delete_wt_files_managed_merged', async () => {
   assert.equal(ext.variant, 'files');
   assert.ok(ext.has('delete-wt-external'));
   click(ext.force);
-  assert.deepEqual(await ext.result, { path: EXT_PATH, head: HEAD, sessions: [], discardFiles: true });
+  assert.deepEqual(await ext.result, { path: EXT_PATH, head: HEAD, sessions: [], branch: 'change/general-skills', discardFiles: true });
 });
 
 test('delete_wt_enter_key', async () => {
@@ -766,7 +798,7 @@ test('delete_wt_enter_key', async () => {
     ['commits', status({ unmergedCommits: 2 }), BASE],
     ['files', status({ dirtyFiles: 1, unmergedCommits: 2 }), null],
     ['files', detached({ dirtyFiles: 1, unmergedCommits: 1 }), null],
-    ['external', external(), { path: EXT_PATH, head: HEAD, sessions: [] }],
+    ['external', external(), { path: EXT_PATH, head: HEAD, sessions: [], branch: 'change/general-skills' }],
   ];
   for (const [variant, st, want] of cases) {
     const d = openWt(st);
@@ -859,7 +891,7 @@ test('delete_flow_success', async () => {
   await f.act('dialog-confirm');
   assert.deepEqual(await f.done, { removed: true, endedSessions: ['s1', 's2'] });
   assert.deepEqual(f.calls.status, [WT_PATH]);
-  assert.deepEqual(f.calls.remove, [{ path: WT_PATH, head: HEAD, sessions: ['s1', 's2'], deleteBranch: true }]);
+  assert.deepEqual(f.calls.remove, [{ path: WT_PATH, head: HEAD, sessions: ['s1', 's2'], branch: 'fix-login', deleteBranch: true }]);
   assert.deepEqual(f.notices, []);
   assert.equal(overlay(), null);
 });
@@ -901,6 +933,26 @@ test('delete_flow_409_reconfirms', async () => {
   await f.act('delete-wt-force');
   assert.deepEqual(await f.done, { removed: true, endedSessions: [] });
   assert.deepEqual(f.calls.remove[1], { ...BASE, discardFiles: true, deleteBranch: true });
+});
+
+test('delete_flow_409_branch_switched', async () => {
+  // Confirmed for fix-login; by the time the request arrives the worktree is on another branch.
+  const f = startFlow({
+    statuses: [status()],
+    removes: [
+      restError(409, 'worktree_changed', { message: 'the worktree is on another branch now', status: status({ branch: 'other', managed: false }), endedSessions: [] }),
+      { removed: true, branchDeleted: false, endedSessions: [] },
+    ],
+  });
+  await f.act('dialog-confirm');
+  assert.equal(f.calls.remove[0].branch, 'fix-login');
+  const root = await f.dialog();
+  assert.ok(tid('delete-wt-changed', root), 'the confirmation comes back with the new state');
+  assert.equal(tid('delete-wt-dialog', root).dataset.variant, 'external');
+  assert.ok(tid('delete-wt-external', root).textContent.includes('other'));
+  await f.act('dialog-confirm');
+  assert.deepEqual(f.calls.remove[1], { path: WT_PATH, head: HEAD, sessions: [], branch: 'other' }, 'the second request names the branch now shown, and no longer asks for the branch to go');
+  assert.deepEqual(await f.done, { removed: true, endedSessions: [] });
 });
 
 test('delete_flow_409_then_cancel', async () => {
