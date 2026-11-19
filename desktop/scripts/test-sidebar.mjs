@@ -196,6 +196,51 @@ test('project_menu_remove', () => {
   assert.equal(removed[0].id, '/r/p');
 });
 
+// jsdom has no layout: the boxes are given, the arithmetic is what is tested.
+// The real geometry is measured by shell-layout.mjs in the running app.
+test('row_menu_stays_inside_the_window', () => {
+  const projects = [{ id: '/r/p', name: 'p', git: true, worktrees: [{ path: '/r/p', branch: 'main', head: 'x', main: true, sessions: [] }], sessions: [] }];
+  const c = render([machineEntry(buildTree([], projects))]);
+  const btn = tid(c, 'project-menu');
+  const box = (left, top, width, height) => ({ left, top, width, height, right: left + width, bottom: top + height, x: left, y: top });
+  const proto = window.HTMLElement.prototype;
+  const original = proto.getBoundingClientRect;
+  const sizes = { innerWidth: window.innerWidth, innerHeight: window.innerHeight };
+  const place = (anchor) => {
+    proto.getBoundingClientRect = function () {
+      if (this === btn) return anchor;
+      if (this.classList.contains('menu')) return box(parseFloat(this.style.left) || 0, parseFloat(this.style.top) || 0, 180, 42);
+      return original.call(this);
+    };
+    click(btn);
+    const menu = document.querySelector('body > .menu');
+    return { top: parseFloat(menu.style.top), left: parseFloat(menu.style.left) };
+  };
+  try {
+    Object.defineProperty(window, 'innerWidth', { value: 800, configurable: true });
+    Object.defineProperty(window, 'innerHeight', { value: 500, configurable: true });
+    // Room below: right under the button, left edges aligned.
+    assert.deepEqual(place(box(60, 200, 22, 22)), { top: 222, left: 60 });
+    // The last row of an 800×500 window: the menu would end at 537, below the window.
+    const flipped = place(box(60, 473, 22, 22));
+    assert.ok(flipped.top + 42 <= 473, `the menu opens above its button (top ${flipped.top})`);
+    assert.ok(flipped.top >= 0);
+    // No room on either side of the button: still inside the window.
+    Object.defineProperty(window, 'innerHeight', { value: 60, configurable: true });
+    const squeezed = place(box(60, 20, 22, 22));
+    assert.ok(squeezed.top >= 0 && squeezed.top + 42 <= 60, `inside a 60px-high window (top ${squeezed.top})`);
+    // A button at the right edge: the menu is pulled back in.
+    Object.defineProperty(window, 'innerHeight', { value: 500, configurable: true });
+    const right = place(box(770, 200, 22, 22));
+    assert.ok(right.left + 180 <= 800, `inside the window's width (left ${right.left})`);
+  } finally {
+    proto.getBoundingClientRect = original;
+    Object.defineProperty(window, 'innerWidth', { value: sizes.innerWidth, configurable: true });
+    Object.defineProperty(window, 'innerHeight', { value: sizes.innerHeight, configurable: true });
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+  }
+});
+
 test('project_remove_disabled_with_sessions', () => {
   const projects = [{ id: '/r/p', name: 'p', git: true, worktrees: [{ path: '/r/p', branch: 'main', head: 'x', main: true, sessions: ['s'] }], sessions: [] }];
   const tree = buildTree([sess('s', { workdir: '/r/p' })], projects);

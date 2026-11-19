@@ -10,7 +10,8 @@
 //   navigation / window.open blocked; hook event → desktop notification
 //   daemon restart → reconnect banner → session recovered
 //   three-level sidebar (throwaway repositories with several worktrees) →
-//   every row's name, badge, state text and dot are readable at the default width
+//   every row's name, badge, state text and dot are readable at the default width;
+//   at 800×500 the "more" menu of a row at the bottom of the sidebar is usable
 //   chat (second daemon, fake claude): new chat session via the picker →
 //   reply rendered → permission prompt allowed once → turn resumes
 //   session-switching keys (⌘1–9, ⌘⇧[, ⌘⇧]) with the focus in the terminal and
@@ -40,6 +41,7 @@ import { createRequire } from 'node:module';
 import { randomBytes } from 'node:crypto';
 import { pickerLayout } from './picker-layout.mjs';
 import { sidebarLayout, makeSidebarRepos, startSession, LONG_BRANCH } from './sidebar-layout.mjs';
+import { rowMenuLayout } from './shell-layout.mjs';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../../../..');
 const DESKTOP = join(ROOT, 'desktop');
@@ -475,6 +477,11 @@ async function sidebarCase(firstSessionId) {
     console.log(`NOTE sidebar ${l.width}px wide: ${l.rows} rows (${l.hovered} also measured under the mouse), ${l.sessions} sessions; names ending in "…": ${l.truncated.length ? l.truncated.join(' | ') : 'none'}`);
     check(l.sessions >= 9 && labels.includes(LONG_BRANCH) && labels.includes('fix-login'), 'sidebar shows the projects, worktrees and sessions under test', `${l.sessions} sessions, worktrees ${JSON.stringify(labels)}`);
     check(l.problems.length === 0, 'sidebar rows are readable at the default width (names, badges, state text, dots)', l.problems.join('; '));
+    // The smallest window: a row at the bottom of the sidebar still gets a menu that can be used.
+    const menus = await rowMenuLayout(cdp);
+    console.log(`NOTE row menus in an 800×500 window: ${(menus.measured ?? []).join(' | ')}`);
+    check(menus.problems.length === 0 && menus.nearBottom > 0, 'the "more" menu of a project row and of a worktree row at the bottom of the sidebar stays inside an 800×500 window and takes a click',
+      menus.problems.length ? menus.problems.join('; ') : 'no row sat near the bottom of the window: nothing was exercised');
   } catch (e) {
     fail(`three-level sidebar layout — ${e.message}`);
   }

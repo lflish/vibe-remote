@@ -1,6 +1,7 @@
-// menu.ts — a small dropdown list anchored under a button, used by the project
-// and worktree "more" buttons in the sidebar (design 7.4). Esc or a click
-// outside closes it; only one menu is open at a time.
+// menu.ts — a small dropdown list anchored to a button, used by the project
+// and worktree "more" buttons in the sidebar (design 7.4). It opens under the
+// button, or above it when there is no room below. Esc or a click outside
+// closes it; only one menu is open at a time.
 export interface MenuItem {
   label: string;
   testid: string;
@@ -43,11 +44,9 @@ export function openMenu(anchor: HTMLElement, items: MenuItem[]): void {
       el.appendChild(note);
     }
   }
-  const rect = anchor.getBoundingClientRect();
   el.style.position = 'fixed';
-  el.style.top = `${rect.bottom}px`;
-  el.style.left = `${rect.left}px`;
   document.body.appendChild(el);
+  placeMenu(el, anchor);
 
   const onKey = (e: KeyboardEvent) => {
     if (e.key === 'Escape') { e.preventDefault(); closeMenu(); }
@@ -63,4 +62,26 @@ export function openMenu(anchor: HTMLElement, items: MenuItem[]): void {
   setTimeout(() => {
     if (current && current.el === el) document.addEventListener('mousedown', onDown, true);
   }, 0);
+}
+
+// Keeps the menu this far from the window's edges.
+const EDGE = 6;
+
+// placeMenu puts the (already attached) menu next to its button: below it,
+// left edges aligned; above it when the window ends before the menu does (a
+// row at the bottom of the sidebar); and never past an edge of the window. The
+// gap to the button is the stylesheet's margin-top.
+function placeMenu(el: HTMLElement, anchor: HTMLElement): void {
+  const rect = anchor.getBoundingClientRect();
+  const gap = parseFloat(window.getComputedStyle(el).marginTop) || 0;
+  el.style.margin = '0';
+  const { width, height } = el.getBoundingClientRect();
+  const viewW = window.innerWidth;
+  const viewH = window.innerHeight;
+  let top = rect.bottom + gap;
+  if (top + height > viewH - EDGE && rect.top - gap - height >= EDGE) top = rect.top - gap - height;
+  top = Math.max(EDGE, Math.min(top, viewH - EDGE - height));
+  const left = Math.max(EDGE, Math.min(rect.left, viewW - EDGE - width));
+  el.style.top = `${top}px`;
+  el.style.left = `${left}px`;
 }
