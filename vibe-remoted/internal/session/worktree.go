@@ -231,7 +231,75 @@ func hasGitAncestor(dir string) bool {
 
 var safeSessionID = regexp.MustCompile(`^[A-Za-z0-9_-]+$`)
 
-func CreateWorktree(sourceWorkdir, sessionID string) (WorktreeMetadata, string, error) {
+// Errors of the worktree-creating path (design 4.1, 4.9). Each maps to its own
+// fatal attach error code; anything else is create_failed.
+var (
+	ErrInvalidWorktreeName    = errors.New("invalid worktree name")
+	ErrWorktreeBranchExists   = errors.New("branch already exists")
+	ErrWorktreePathExists     = errors.New("worktree directory already exists")
+	ErrWorktreePathNotAllowed = errors.New("worktree directory is not in the allowed roots")
+	ErrUnsupportedRepo        = errors.New("this repository is a submodule or uses a separate git directory; named worktrees are not supported here")
+)
+
+// BranchExistsError says which existing branch blocks the new one: the branch
+// itself, or one git cannot keep next to it (fix blocks fix/login, change/foo
+// blocks change). errors.Is(err, ErrWorktreeBranchExists) is true.
+type BranchExistsError struct{ Branch, Conflict string }
+
+func (e *BranchExistsError) Error() string {
+	if e.Conflict == e.Branch {
+		return fmt.Sprintf("branch %q already exists", e.Branch)
+	}
+	return fmt.Sprintf("branch %q cannot be created: branch %q already exists", e.Branch, e.Conflict)
+}
+
+func (e *BranchExistsError) Is(target error) bool { return target == ErrWorktreeBranchExists }
+
+// WorktreeSpec describes the worktree to create. Name empty keeps the original
+// naming (branch vibe/<SessionID>). AllowPath, when set, vets the new worktree
+// root before anything is created and the session's final workdir afterwards.
+type WorktreeSpec struct {
+	Source, SessionID, Name string
+	AllowPath               func(string) error
+}
+
+// CreatedWorktree is what CreateWorktree made; Undo removes exactly that.
+type CreatedWorktree struct {
+	Meta         WorktreeMetadata
+	Workdir      string // the session's workdir (Source mapped into the new worktree)
+	Home         Home
+	OID          string // the commit the new branch was created at
+	NewContainer bool   // the <repo>-worktrees directory was created by this call
+}
+
+// Test seams: after the pre-checks and before anything is claimed; after the
+// directory and branch are claimed and before git worktree add.
+var (
+	testAfterCreateChecks func()
+	testBeforeWorktreeAdd func()
+)
+
+func ValidateWorktreeName(repoDir, name string) error { return nil }
+
+func worktreeNameProblem(name string) string { return "" }
+
+func checkRefFormatBranch(repoDir, name string) error { return nil }
+
+func WorktreeDirName(name string) string { return name }
+
+func BranchConflict(repoDir, name string) (string, error) { return "", nil }
+
+func CreateWorktree(spec WorktreeSpec) (CreatedWorktree, error) {
+	if spec.Name != "" {
+		return CreatedWorktree{}, errors.New("named worktrees are not implemented")
+	}
+	meta, mapped, err := createLegacyWorktree(spec.Source, spec.SessionID)
+	return CreatedWorktree{Meta: meta, Workdir: mapped}, err
+}
+
+func (c CreatedWorktree) Undo() error { return RollbackWorktree(c.Meta) }
+
+func createLegacyWorktree(sourceWorkdir, sessionID string) (WorktreeMetadata, string, error) {
 	if !safeSessionID.MatchString(sessionID) {
 		return WorktreeMetadata{}, "", fmt.Errorf("invalid session ID")
 	}

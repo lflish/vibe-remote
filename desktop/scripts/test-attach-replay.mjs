@@ -122,5 +122,48 @@ if (client.unconfirmedAttach !== null || client.pendingAttach !== null) {
   fail('disconnect() left attach state behind, so a later connect() would resurrect the session');
 }
 
+// replay_carries_worktree_name: a named worktree create that drops before
+// `ready` is replayed with the same newSessionId *and* the same worktreeName
+// (automatic reconnect and manual retry), so the daemon lands on the one
+// session instead of answering worktree_branch_exists. Once `ready` arrived the
+// re-attach is a plain attach to the session and carries no name.
+{
+  const named = new VibeRemoteClient({ name: 'm', addr: '127.0.0.1', port: 1, token: 't' });
+  named.connect();
+  await new Promise((r) => setTimeout(r, 30));
+  const from = attaches().length;
+  named.attach('', 100, 30, '/r/devflow', [], 'worktree', { ui: 'chat', worktreeName: 'fix-login' });
+  const create = attaches().at(-1);
+  if (attaches().length !== from + 1 || create.worktreeName !== 'fix-login' || create.mode !== 'worktree') {
+    fail('create attach does not carry worktreeName: ' + JSON.stringify(create));
+  }
+  named.ws.close();
+  await settle();
+  const auto = attaches().at(-1);
+  if (attaches().length < from + 2) fail('no automatic replay of the named worktree create');
+  if (auto.worktreeName !== 'fix-login' || auto.newSessionId !== create.newSessionId || auto.sessionId) {
+    fail('automatic replay lost worktreeName or newSessionId: ' + JSON.stringify(auto));
+  }
+  const beforeRetry = attaches().length;
+  named.reconnectNow();
+  await new Promise((r) => setTimeout(r, 30));
+  const manual = attaches().at(-1);
+  if (attaches().length <= beforeRetry) fail('reconnectNow() sent no attach for the named worktree create');
+  if (manual.worktreeName !== 'fix-login' || manual.newSessionId !== create.newSessionId) {
+    fail('manual retry lost worktreeName or newSessionId: ' + JSON.stringify(manual));
+  }
+  named.handleMessage(JSON.stringify({ type: 'ready', sessionId: create.newSessionId, workdir: '/r/devflow-worktrees/fix-login', ui: 'chat', branch: 'fix-login' }));
+  const beforeDrop = attaches().length;
+  named.ws.close();
+  await settle();
+  const resume = attaches().at(-1);
+  if (attaches().length <= beforeDrop) fail('no re-attach after ready');
+  if (resume.sessionId !== create.newSessionId || 'worktreeName' in resume || resume.newSessionId) {
+    fail('re-attach after ready must name the session only: ' + JSON.stringify(resume));
+  }
+  named.disconnect();
+  console.log('ok - test-attach-replay: replay_carries_worktree_name');
+}
+
 console.log('attach-replay regression checks passed');
 process.exit(0);

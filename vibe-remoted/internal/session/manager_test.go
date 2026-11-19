@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/lflish/vibe-remote/vibe-remoted/internal/chat"
 	"github.com/lflish/vibe-remote/vibe-remoted/internal/protocol"
 )
 
@@ -82,7 +83,8 @@ func TestManagerDeleteRecoversLiveTmuxSessionBeforeLookup(t *testing.T) {
 
 func TestManagerDeleteRecoveredCleanWorktreeRemovesGitResources(t *testing.T) {
 	repo := tempRepo(t)
-	meta, mapped, err := CreateWorktree(repo, "recovered-clean")
+	created, err := CreateWorktree(WorktreeSpec{Source: repo, SessionID: "recovered-clean"})
+	meta, mapped := created.Meta, created.Workdir
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -726,4 +728,217 @@ func TestHomeDoesNotFollowCd(t *testing.T) {
 	if _, h := r2.Home(); h != homeBefore {
 		t.Fatalf("home = %q, want %q (must not follow cd)", h, homeBefore)
 	}
+}
+
+// --- T7: named worktrees through the Manager ---
+
+func TestConcurrentCreateSameNameOneWins(t *testing.T) {
+	for round := 0; round < 20; round++ {
+		repo := devflowRepo(t)
+		m := NewManager(false, "/bin/cat", false, "")
+		m.SetProjectStore(NewMemoryProjectStore())
+		var wg sync.WaitGroup
+		runners := make([]*Runner, 2)
+		errs := make([]error, 2)
+		for i := range runners {
+			wg.Add(1)
+			go func(i int) {
+				defer wg.Done()
+				runners[i], errs[i] = m.Create(CreateOptions{ID: "race-" + string(rune('a'+i)), Workdir: repo,
+					Mode: protocol.SessionModeWorktree, WorktreeName: "fix-login", Cols: 80, Rows: 24})
+			}(i)
+		}
+		wg.Wait()
+		won := 0
+		for i, err := range errs {
+			if err == nil {
+				won++
+				r := runners[i]
+				t.Cleanup(func() { r.Kill() })
+				continue
+			}
+			if !errors.Is(err, ErrWorktreeBranchExists) {
+				t.Fatalf("round %d: loser got %v, want ErrWorktreeBranchExists", round, err)
+			}
+		}
+		if won != 1 {
+			t.Fatalf("round %d: %d creates succeeded (%v), want exactly one", round, won, errs)
+		}
+		root := filepath.Join(containerOf(repo), "fix-login")
+		if got := runGit(t, root, "symbolic-ref", "HEAD"); got != "refs/heads/fix-login" {
+			t.Fatalf("round %d: winner's worktree HEAD = %q", round, got)
+		}
+		if got := runGit(t, root, "status", "--porcelain"); got != "" {
+			t.Fatalf("round %d: winner's worktree is not clean:\n%s", round, got)
+		}
+		if n := strings.Count(runGit(t, repo, "worktree", "list", "--porcelain"), "branch refs/heads/fix-login"); n != 1 {
+			t.Fatalf("round %d: %d worktrees on fix-login, want 1", round, n)
+		}
+		if entries, _ := os.ReadDir(containerOf(repo)); len(entries) != 1 {
+			t.Fatalf("round %d: container holds %d entries, want 1", round, len(entries))
+		}
+	}
+}
+
+func TestNamedWorktreeRolledBackWhenSessionStartFails(t *testing.T) {
+	assertNothingLeft := func(t *testing.T, repo string, store *ProjectStore, name string) {
+		t.Helper()
+		root := filepath.Join(containerOf(repo), name)
+		if pathExists(root) || worktreeListed(t, repo, root) || branchOID(t, repo, name) != "" {
+			t.Fatalf("%s: the directory, registration or branch is left", name)
+		}
+		if store.Managed(repo, root, name) {
+			t.Fatalf("%s: the creation record is left", name)
+		}
+	}
+
+	t.Run("terminal", func(t *testing.T) {
+		repo := devflowRepo(t)
+		store := NewMemoryProjectStore()
+		m := NewManager(false, "/definitely/missing-command", false, "")
+		m.SetProjectStore(store)
+		if _, err := m.Create(CreateOptions{Workdir: repo, Mode: protocol.SessionModeWorktree, WorktreeName: "fix-login", Cols: 80, Rows: 24}); err == nil {
+			t.Fatal("expected the session start to fail")
+		}
+		assertNothingLeft(t, repo, store, "fix-login")
+		if pathExists(containerOf(repo)) {
+			t.Fatal("the container created for this worktree is left")
+		}
+	})
+
+	t.Run("chat", func(t *testing.T) {
+		f := newChatFixture(t, false)
+		repo := devflowRepo(t)
+		store := NewMemoryProjectStore()
+		f.m.SetProjectStore(store)
+		_, err := f.m.CreateChat(ChatCreateOptions{ID: newID("wtfail"), Workdir: repo, Mode: protocol.SessionModeWorktree,
+			WorktreeName: "fix-login", Parsed: chat.Parsed{Exe: "/definitely/missing/claude"}})
+		if err == nil {
+			t.Fatal("expected the chat process start to fail")
+		}
+		assertNothingLeft(t, repo, store, "fix-login")
+	})
+
+	// The undo runs inside the repository lock: a create of another name that
+	// arrives meanwhile waits, then finds its container intact.
+	t.Run("concurrent_create", func(t *testing.T) {
+		for round := 0; round < 20; round++ {
+			repo := devflowRepo(t)
+			store := NewMemoryProjectStore()
+			broken := NewManager(false, "/definitely/missing-command", false, "")
+			broken.SetProjectStore(store)
+			var other *Runner
+			var otherErr error
+			done := make(chan struct{})
+			broken.testUndoLocked = func() {
+				go func() {
+					defer close(done)
+					// Same Manager (same lock table), a command that does start.
+					other, otherErr = broken.Create(CreateOptions{Workdir: repo, Mode: protocol.SessionModeWorktree, WorktreeName: "other",
+						ClaudeCmdOverride: "/bin/cat", Cols: 80, Rows: 24})
+				}()
+				time.Sleep(30 * time.Millisecond) // let it reach the lock
+			}
+			if _, err := broken.Create(CreateOptions{Workdir: repo, Mode: protocol.SessionModeWorktree, WorktreeName: "fix-login", Cols: 80, Rows: 24}); err == nil {
+				t.Fatal("expected the session start to fail")
+			}
+			select {
+			case <-done:
+			case <-time.After(20 * time.Second):
+				t.Fatalf("round %d: the undo never ran inside the repository lock, or the concurrent create never finished", round)
+			}
+			if otherErr != nil {
+				t.Fatalf("round %d: the concurrent create failed: %v", round, otherErr)
+			}
+			t.Cleanup(func() { other.Kill() })
+			assertNothingLeft(t, repo, store, "fix-login")
+			root := filepath.Join(containerOf(repo), "other")
+			if got := runGit(t, root, "symbolic-ref", "HEAD"); got != "refs/heads/other" {
+				t.Fatalf("round %d: other's worktree HEAD = %q", round, got)
+			}
+			if !store.Managed(repo, root, "other") {
+				t.Fatalf("round %d: other is not recorded as created here", round)
+			}
+		}
+	})
+}
+
+func TestNamedWorktreeWithMemoryStore(t *testing.T) {
+	repo := devflowRepo(t)
+	store := NewMemoryProjectStore()
+	m := NewManager(false, "/bin/cat", false, "")
+	m.SetProjectStore(store)
+	r, err := m.Create(CreateOptions{Workdir: repo, Mode: protocol.SessionModeWorktree, WorktreeName: "fix-login", Cols: 80, Rows: 24})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { r.Kill() })
+	root := filepath.Join(containerOf(repo), "fix-login")
+	if p, h := r.Home(); p != repo || h != root {
+		t.Fatalf("home = %q / %q, want %q / %q", p, h, repo, root)
+	}
+	if !store.Managed(repo, root, "fix-login") {
+		t.Fatal("the worktree is not recorded as created by vibe-remote")
+	}
+	// A new in-memory store is what a restart with an unwritable state_dir has.
+	if NewMemoryProjectStore().Managed(repo, root, "fix-login") {
+		t.Fatal("a fresh store should not know the worktree")
+	}
+}
+
+func TestCreateNamedWorktreeGitFailureLeavesNothing(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("needs a non-writable directory")
+	}
+	create := func(repo string) (*ProjectStore, error) {
+		store := NewMemoryProjectStore()
+		m := NewManager(false, "/bin/cat", false, "")
+		m.SetProjectStore(store)
+		_, err := m.Create(CreateOptions{Workdir: repo, Mode: protocol.SessionModeWorktree, WorktreeName: "fix-login", Cols: 80, Rows: 24})
+		return store, err
+	}
+
+	repo := devflowRepo(t)
+	admin := filepath.Join(repo, ".git", "worktrees")
+	if err := os.Mkdir(admin, 0o555); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.Chmod(admin, 0o755) })
+	store, err := create(repo)
+	if err == nil {
+		t.Fatal("expected git worktree add to fail")
+	}
+	if errors.Is(err, ErrWorktreeBranchExists) || errors.Is(err, ErrWorktreePathExists) || errors.Is(err, ErrWorktreePathNotAllowed) {
+		t.Fatalf("err = %v, want a plain create failure", err)
+	}
+	if !strings.Contains(err.Error(), "fatal:") {
+		t.Fatalf("message %q should carry git's output", err)
+	}
+	if branchOID(t, repo, "fix-login") != "" || pathExists(filepath.Join(containerOf(repo), "fix-login")) || pathExists(containerOf(repo)) {
+		t.Fatal("the branch, the directory or the new container is left")
+	}
+	if len(store.Worktrees()) != 0 {
+		t.Fatalf("store keeps %v", store.Worktrees())
+	}
+
+	t.Run("container_readonly", func(t *testing.T) {
+		repo := devflowRepo(t)
+		if err := os.Mkdir(containerOf(repo), 0o555); err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { os.Chmod(containerOf(repo), 0o755) })
+		store, err := create(repo)
+		if err == nil || errors.Is(err, ErrWorktreePathExists) {
+			t.Fatalf("err = %v, want a plain create failure", err)
+		}
+		if branchOID(t, repo, "fix-login") != "" || pathExists(filepath.Join(containerOf(repo), "fix-login")) {
+			t.Fatal("the branch or the directory is left")
+		}
+		if !pathExists(containerOf(repo)) {
+			t.Fatal("the pre-existing container was removed")
+		}
+		if len(store.Worktrees()) != 0 {
+			t.Fatalf("store keeps %v", store.Worktrees())
+		}
+	})
 }

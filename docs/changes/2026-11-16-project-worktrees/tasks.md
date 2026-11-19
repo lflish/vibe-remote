@@ -481,7 +481,7 @@
 - 依赖：T6b
 
 ### T7 daemon 和客户端连接层：attach 带 `worktreeName` 新建命名 worktree
-- 状态：待办
+- 状态：进行中
 - 文件：
   - 修改 `vibe-remoted/internal/session/worktree.go`（`ValidateWorktreeName`、`WorktreeDirName`、`WorktreeSpec`、`CreatedWorktree` 和它的 `Undo`、`CreateWorktree` 换成新签名并按 design 6.1 的 10 步重写、`BranchConflict`、`BranchExistsError`、5 个错误变量）；新建 `vibe-remoted/internal/session/testdata/worktree-names.json`（名字规则的共用向量，每条 `{name, ok, reason, local}`，`reason` 取桌面端的 `empty` / `whitespace` / `dotdot` / `leading_dash` / `invalid`；`local:true` 表示桌面端不问 daemon 也必须得到同一个 `reason`）
   - 修改 `vibe-remoted/internal/session/manager.go`（`CreateOptions.WorktreeName`；按仓库取的互斥锁，键是 `Home.Repo`，锁的先后照 6.1；`AddWorktree` 挪到 6.1 第 10 步；会话启动失败时重新取仓库锁，在锁内调 `Undo` 并删记录，再放锁（design 6.1，decisions #34）；现有的 3 处 `RollbackWorktree(meta)` 都换成 `created.Undo()`）、`vibe-remoted/internal/session/chat_manager.go`（`ChatCreateOptions.WorktreeName`，同样的锁和撤销，现有的 3 处 `RollbackWorktree(meta)` 同样换掉）、`vibe-remoted/internal/config/config.go`（`ResolveAllowedNewPath`）、`vibe-remoted/internal/server/ws.go` 和 `ws_chat.go`（把 `frame.WorktreeName` 传下去；`ValidateWorkdir` 改传 `cfg.ResolveAllowedNewPath`；4 个错误映射成 fatal 的 error 帧；带 `handoffFrom` 时忽略 `worktreeName`）

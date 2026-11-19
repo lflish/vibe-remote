@@ -1,0 +1,246 @@
+[
+ {
+  "name": "",
+  "ok": false,
+  "reason": "empty",
+  "local": true
+ },
+ {
+  "name": "a b",
+  "ok": false,
+  "reason": "whitespace",
+  "local": true
+ },
+ {
+  "name": "a\tb",
+  "ok": false,
+  "reason": "whitespace",
+  "local": true
+ },
+ {
+  "name": " lead",
+  "ok": false,
+  "reason": "whitespace",
+  "local": true
+ },
+ {
+  "name": "trail ",
+  "ok": false,
+  "reason": "whitespace",
+  "local": true
+ },
+ {
+  "name": "a\nb",
+  "ok": false,
+  "reason": "whitespace",
+  "local": true
+ },
+ {
+  "name": "a\u3000b",
+  "ok": false,
+  "reason": "whitespace",
+  "local": true
+ },
+ {
+  "name": "a..b",
+  "ok": false,
+  "reason": "dotdot",
+  "local": true
+ },
+ {
+  "name": "..",
+  "ok": false,
+  "reason": "dotdot",
+  "local": true
+ },
+ {
+  "name": "-x",
+  "ok": false,
+  "reason": "leading_dash",
+  "local": true
+ },
+ {
+  "name": "-",
+  "ok": false,
+  "reason": "leading_dash",
+  "local": true
+ },
+ {
+  "name": "--force",
+  "ok": false,
+  "reason": "leading_dash",
+  "local": true
+ },
+ {
+  "name": "@{-1}",
+  "ok": false,
+  "reason": "invalid",
+  "local": true
+ },
+ {
+  "name": "@{-2}",
+  "ok": false,
+  "reason": "invalid",
+  "local": true
+ },
+ {
+  "name": "@{u}",
+  "ok": false,
+  "reason": "invalid",
+  "local": true
+ },
+ {
+  "name": "a@{b",
+  "ok": false,
+  "reason": "invalid",
+  "local": true
+ },
+ {
+  "name": "a\u0007b",
+  "ok": false,
+  "reason": "invalid",
+  "local": true
+ },
+ {
+  "name": "a\u007fb",
+  "ok": false,
+  "reason": "invalid",
+  "local": true
+ },
+ {
+  "name": "a~b",
+  "ok": false,
+  "reason": "invalid",
+  "local": false
+ },
+ {
+  "name": "a^b",
+  "ok": false,
+  "reason": "invalid",
+  "local": false
+ },
+ {
+  "name": "a:b",
+  "ok": false,
+  "reason": "invalid",
+  "local": false
+ },
+ {
+  "name": "a?b",
+  "ok": false,
+  "reason": "invalid",
+  "local": false
+ },
+ {
+  "name": "a*b",
+  "ok": false,
+  "reason": "invalid",
+  "local": false
+ },
+ {
+  "name": "a[b",
+  "ok": false,
+  "reason": "invalid",
+  "local": false
+ },
+ {
+  "name": "a\\b",
+  "ok": false,
+  "reason": "invalid",
+  "local": false
+ },
+ {
+  "name": "a.lock",
+  "ok": false,
+  "reason": "invalid",
+  "local": false
+ },
+ {
+  "name": "a/b.lock",
+  "ok": false,
+  "reason": "invalid",
+  "local": false
+ },
+ {
+  "name": "HEAD",
+  "ok": false,
+  "reason": "invalid",
+  "local": false
+ },
+ {
+  "name": ".a",
+  "ok": false,
+  "reason": "invalid",
+  "local": false
+ },
+ {
+  "name": "a/.b",
+  "ok": false,
+  "reason": "invalid",
+  "local": false
+ },
+ {
+  "name": "a.",
+  "ok": false,
+  "reason": "invalid",
+  "local": false
+ },
+ {
+  "name": "/a",
+  "ok": false,
+  "reason": "invalid",
+  "local": false
+ },
+ {
+  "name": "a/",
+  "ok": false,
+  "reason": "invalid",
+  "local": false
+ },
+ {
+  "name": "a//b",
+  "ok": false,
+  "reason": "invalid",
+  "local": false
+ },
+ {
+  "name": "fix-login",
+  "ok": true
+ },
+ {
+  "name": "change/foo",
+  "ok": true
+ },
+ {
+  "name": "\u529f\u80fd/\u767b\u5f55",
+  "ok": true
+ },
+ {
+  "name": "@",
+  "ok": true
+ },
+ {
+  "name": "refs/heads/x",
+  "ok": true
+ },
+ {
+  "name": "a.b",
+  "ok": true
+ },
+ {
+  "name": "v1.0",
+  "ok": true
+ },
+ {
+  "name": "feature/JIRA-123_x",
+  "ok": true
+ },
+ {
+  "name": "a-",
+  "ok": true
+ },
+ {
+  "name": "x@y",
+  "ok": true
+ }
+]

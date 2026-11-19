@@ -160,6 +160,8 @@ type ChatCreateOptions struct {
 	Parsed  chat.Parsed // claude_cmd plus flags, parsed and checked by the caller
 	// ValidateWorkdir re-checks a worktree's path (see CreateOptions).
 	ValidateWorkdir func(string) (string, error)
+	// WorktreeName: see CreateOptions.
+	WorktreeName string
 }
 
 // ChatAttachment is the result of CreateChat.
@@ -264,12 +266,12 @@ func (m *Manager) CreateChat(opts ChatCreateOptions) (ChatAttachment, error) {
 	workdir := opts.Workdir
 	var meta WorktreeMetadata
 	if mode == protocol.SessionModeWorktree {
-		var err error
-		meta, workdir, err = CreateWorktree(opts.Workdir, id)
+		created, err := CreateWorktree(WorktreeSpec{Source: opts.Workdir, SessionID: id, Name: opts.WorktreeName})
 		if err != nil {
 			m.releaseClaude(u, id)
 			return ChatAttachment{}, err
 		}
+		meta, workdir = created.Meta, created.Workdir
 		if opts.ValidateWorkdir != nil {
 			if _, err := opts.ValidateWorkdir(workdir); err != nil {
 				m.releaseClaude(u, id)

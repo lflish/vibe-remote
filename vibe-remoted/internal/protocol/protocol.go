@@ -110,6 +110,10 @@ type AttachFrame struct {
 	// HandoffFrom (create only, ui terminal) names the chat session to hand
 	// over to a new terminal session; workdir/flags/mode are then ignored.
 	HandoffFrom string `json:"handoffFrom,omitempty"`
+	// WorktreeName (v4; create with mode worktree only, ignored otherwise and
+	// with handoffFrom) is the new branch's name. Empty keeps the v3 naming,
+	// vibe/<session id>.
+	WorktreeName string `json:"worktreeName,omitempty"`
 }
 
 // ReadyFrame confirms attach success.
@@ -200,6 +204,12 @@ const (
 	ErrCodeChatUnsupported   = "chat_unsupported"    // fatal: chat cannot run here (message carries the ChatReason*)
 	ErrCodeClaudeSessionBusy = "claude_session_busy" // fatal: that claude conversation runs in another session
 	ErrCodeShuttingDown      = "shutting_down"       // transient: the daemon is stopping, retry (it restarts)
+
+	// v4: creating a worktree (all fatal; nothing is left behind)
+	ErrCodeInvalidWorktreeName    = "invalid_worktree_name"     // the name is not usable as a branch name
+	ErrCodeWorktreeBranchExists   = "worktree_branch_exists"    // that branch, or one git cannot keep next to it, exists
+	ErrCodeWorktreePathExists     = "worktree_path_exists"      // the target directory exists (even if empty)
+	ErrCodeWorktreePathNotAllowed = "worktree_path_not_allowed" // the target directory or final workdir is outside allowed_roots
 )
 
 // NotifyFrame carries an out-of-band session event to the client (e.g. from a

@@ -74,6 +74,7 @@ type Manager struct {
 	testAfterResolve          func(workdir string) // after a -c terminal resolved its conversation
 	testFailRespawn           error                // makes the next fixed-identity reload fail to start
 	testAfterWorktreeSnapshot func()               // Projects: after the worktree-record snapshot, before reading lists
+	testUndoLocked            func()               // undoing a created worktree: repository lock held, nothing removed yet
 }
 
 // NewManager creates a session manager.
@@ -209,6 +210,9 @@ type CreateOptions struct {
 	// Home, when set, is the attribution to record verbatim (a handoff copies
 	// the chat session's); when nil, Create resolves it from the workdir.
 	Home *Home
+	// WorktreeName (worktree mode only) names the new branch; empty keeps the
+	// original naming, vibe/<session id>.
+	WorktreeName string
 }
 
 // Create starts a new session and registers it. Worktree resources are created
@@ -296,10 +300,11 @@ func (m *Manager) createTerminalLocked(id string, opts CreateOptions) (*Runner, 
 	if opts.Worktree != nil {
 		meta = *opts.Worktree
 	} else if mode == protocol.SessionModeWorktree {
-		meta, workdir, err = CreateWorktree(opts.Workdir, id)
-		if err != nil {
-			return nil, err
+		created, cerr := CreateWorktree(WorktreeSpec{Source: opts.Workdir, SessionID: id, Name: opts.WorktreeName})
+		if cerr != nil {
+			return nil, cerr
 		}
+		meta, workdir = created.Meta, created.Workdir
 		if opts.ValidateWorkdir != nil {
 			if _, err := opts.ValidateWorkdir(workdir); err != nil {
 				err = fmt.Errorf("worktree workdir %q: %w", workdir, err)

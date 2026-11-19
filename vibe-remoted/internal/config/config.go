@@ -287,6 +287,12 @@ func (c *Config) ResolveAllowedWorkdir(dir string) (string, error) {
 	return "", fmt.Errorf("workdir not in allowed roots")
 }
 
+// ResolveAllowedNewPath is ResolveAllowedWorkdir for a path that may not exist
+// yet (a worktree about to be created).
+func (c *Config) ResolveAllowedNewPath(path string) (string, error) {
+	return c.ResolveAllowedWorkdir(path)
+}
+
 // IsAllowedWorkdir checks if a path falls within the allowed roots using
 // lexical containment. Call ResolveAllowedWorkdir for filesystem access.
 func (c *Config) IsAllowedWorkdir(dir string) bool {
