@@ -871,6 +871,8 @@
 | T6a | 2026-11-19 15:40 | 57413e3（快照）、b746d2b（搬家） | `npm run typecheck`+`npm test` 退出 0（`test:sidebar` 4 用例 `ok`，快照逐字节不变）；`gui-smoke.mjs`、`gui-chat-smoke.mjs` 全绿、无 FAIL（两脚本 vs merge-base 无 diff）；`TMUX_TMPDIR=… make check` exit 0。`index.ts` 净减少 155 行（完成定义估计 ≥200，见 decisions #45） |
 | T6b | 2026-11-19 16:30 | fac25a9 | `typecheck`+`test:sidebar`(19)+`test:i18n-parity`(266)+`test:chat-activity`(6)+`test:chat-render-guard`(15) 全退出 0；`npm test` 退出 0；`TMUX_TMPDIR=… make check` exit 0；`gui-smoke.mjs`、`gui-chat-smoke.mjs` 全绿无 FAIL（两脚本未改、`^test(`=26、`check(`=14） |
 
+更正：T5 实际完成于 2026-11-19 12:39，T6a 13:11，T6b 14:04（以提交时间为准）。此后各行的时间用 `date '+%F %H:%M'` 取。
+
 ## 后续
 
 spec「推迟到以后」的条目：
@@ -900,3 +902,4 @@ spec「推迟到以后」的条目：
 - 新建 worktree 对话框确认之后才出现的竞态错误（另一台桌面刚建了同名分支）只显示在状态栏（design 第 1 节方案 A 的代价）；其中「目录/文件」冲突的那一种，error 帧不带 `conflict`，状态栏只能写成「分支 … 已存在」。以后可以把这类错误带回对话框，并给 error 帧加上冲突的分支。
 - 新流程建出的分支不跟随 `branch.autoSetupMerge`，`post-checkout` 钩子运行时 HEAD 还是 detached（design 6.1 第 9 步，d28）。有用户依赖这两点时，可以在 `symbolic-ref` 之后补写上游配置，或再触发一次钩子。
 - `/api/v1/projects` 的补归属对一直失败的会话每轮重试、没有退避（design 5.4）。实际遇到大量这种会话时再加。
+- 查 `gui-chat-smoke` R7 偶发失败的原因（AskUserQuestion 表单：`answers echoed: on": "Pick a fruit"`；T6b 提交后 3 次里失败 1 次，decisions #47）。
