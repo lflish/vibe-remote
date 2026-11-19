@@ -517,3 +517,213 @@ func TestListKeepsSessionsWhenTmuxQueryFails(t *testing.T) {
 		t.Error("session was evicted from the table despite an inconclusive tmux query")
 	}
 }
+
+// --- T2: session attribution (home) and creation time ---
+
+func createdByID(list []protocol.SessionInfo) map[string]string {
+	m := map[string]string{}
+	for _, s := range list {
+		m[s.ID] = s.Created
+	}
+	return m
+}
+
+func TestCreateSessionWhenGitFailsLeavesHomeEmpty(t *testing.T) {
+	dir := t.TempDir()
+	writeFakeGit(t, dir, "#!/bin/sh\nexec sleep 5\n")
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	old := gitTimeout
+	gitTimeout = 50 * time.Millisecond
+	defer func() { gitTimeout = old }()
+
+	m := NewManager(false, "/bin/cat", false, "")
+	r, err := m.Create(CreateOptions{Workdir: t.TempDir(), Cols: 80, Rows: 24})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { r.Kill() })
+	if p, h := r.Home(); p != "" || h != "" {
+		t.Fatalf("home should be empty on git failure, got project=%q home=%q", p, h)
+	}
+}
+
+func TestWorktreeModeHome(t *testing.T) {
+	repo := tempRepo(t)
+	m := NewManager(false, "/bin/cat", false, "")
+	r, err := m.Create(CreateOptions{Workdir: repo, Mode: protocol.SessionModeWorktree, Cols: 80, Rows: 24})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { r.Kill() })
+	canon := runGit(t, repo, "rev-parse", "--show-toplevel")
+	p, h := r.Home()
+	if p != canon {
+		t.Fatalf("project=%q want %q", p, canon)
+	}
+	if h != r.WorktreeRoot {
+		t.Fatalf("home=%q want %q (worktree root)", h, r.WorktreeRoot)
+	}
+
+	t.Run("single", func(t *testing.T) {
+		root := t.TempDir()
+		gitDir := filepath.Join(root, "gd")
+		wt := filepath.Join(root, "wt")
+		runGit(t, root, "init", "--separate-git-dir="+gitDir, wt)
+		runGit(t, wt, "config", "user.email", "a@b.c")
+		runGit(t, wt, "config", "user.name", "a")
+		runGit(t, wt, "commit", "--allow-empty", "-m", "init")
+
+		m := NewManager(false, "/bin/cat", false, "")
+		r, err := m.Create(CreateOptions{Workdir: wt, Mode: protocol.SessionModeWorktree, Cols: 80, Rows: 24})
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { r.Kill() })
+		p, h := r.Home()
+		if p != r.WorktreeRoot || h != r.WorktreeRoot {
+			t.Fatalf("single repo: project=%q home=%q both want worktree root %q", p, h, r.WorktreeRoot)
+		}
+	})
+}
+
+func TestCreateInHiddenWorktreeDir(t *testing.T) {
+	repo := tempRepo(t)
+	base := runGit(t, repo, "rev-parse", "HEAD")
+	hidden := filepath.Join(repo, ".devflow-tmp", "worktrees", "general-skills")
+	runGit(t, repo, "worktree", "add", "-b", "change/general-skills", hidden, base)
+	canonHidden := runGit(t, hidden, "rev-parse", "--show-toplevel")
+
+	m := NewManager(false, "/bin/cat", false, "")
+	r, err := m.Create(CreateOptions{Workdir: hidden, Cols: 80, Rows: 24})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { r.Kill() })
+	if _, h := r.Home(); h != canonHidden {
+		t.Fatalf("home=%q want %q", h, canonHidden)
+	}
+}
+
+func TestCreatedSurvivesRestartTmux(t *testing.T) {
+	requireTmux(t)
+	repo := tempRepo(t)
+	m1 := NewManager(true, "sleep 30", false, "")
+	var ids []string
+	for i := 0; i < 2; i++ {
+		r, err := m1.Create(CreateOptions{Workdir: repo, Cols: 80, Rows: 24})
+		if err != nil {
+			t.Fatal(err)
+		}
+		id := r.ID
+		ids = append(ids, id)
+		t.Cleanup(func() { m1.Delete(id) })
+	}
+	before := createdByID(m1.List())
+
+	m2 := NewManager(true, "sleep 30", false, "")
+	after := createdByID(m2.List())
+	for _, id := range ids {
+		if before[id] == "" || before[id] != after[id] {
+			t.Fatalf("created for %s: before=%q after=%q", id, before[id], after[id])
+		}
+		r1, _ := m1.Get(id)
+		r2, ok := m2.Get(id)
+		if !ok {
+			t.Fatalf("%s not recovered", id)
+		}
+		if d := r1.Created.Sub(r2.Created); d != 0 {
+			t.Fatalf("created delta for %s = %v, want 0", id, d)
+		}
+	}
+}
+
+func TestCreatedFallsBackToTmuxSessionCreated(t *testing.T) {
+	requireTmux(t)
+	repo := tempRepo(t)
+	m1 := NewManager(true, "sleep 30", false, "")
+	r, err := m1.Create(CreateOptions{Workdir: repo, Cols: 80, Rows: 24})
+	if err != nil {
+		t.Fatal(err)
+	}
+	id := r.ID
+	t.Cleanup(func() { m1.Delete(id) })
+	// Simulate a pre-upgrade session that never recorded @vibe_remote_created.
+	if err := tmuxCmd("set-option", "-t", "vibe-remote-"+id, "-u", "@vibe_remote_created").Run(); err != nil {
+		t.Fatalf("unset created option: %v", err)
+	}
+	time.Sleep(2 * time.Second)
+
+	m2 := NewManager(true, "sleep 30", false, "")
+	m2.List()
+	r2, ok := m2.Get(id)
+	if !ok {
+		t.Fatalf("%s not recovered", id)
+	}
+	if since := time.Since(r2.Created); since < time.Second {
+		t.Fatalf("recovered created is %v ago, want >= 1s (should come from session_created)", since)
+	}
+}
+
+func TestHomeSurvivesRestartTmux(t *testing.T) {
+	requireTmux(t)
+	repo := tempRepo(t)
+	m1 := NewManager(true, "sleep 30", false, "")
+	r, err := m1.Create(CreateOptions{Workdir: repo, Cols: 80, Rows: 24})
+	if err != nil {
+		t.Fatal(err)
+	}
+	id := r.ID
+	t.Cleanup(func() { m1.Delete(id) })
+	p1, h1 := r.Home()
+
+	m2 := NewManager(true, "sleep 30", false, "")
+	m2.List()
+	r2, ok := m2.Get(id)
+	if !ok {
+		t.Fatalf("%s not recovered", id)
+	}
+	p2, h2 := r2.Home()
+	if p1 == "" || p1 != p2 || h1 != h2 {
+		t.Fatalf("home before=(%q,%q) after=(%q,%q)", p1, h1, p2, h2)
+	}
+}
+
+func TestHomeDoesNotFollowCd(t *testing.T) {
+	requireTmux(t)
+	repo := tempRepo(t)
+	other := t.TempDir()
+	canonOther, _ := filepath.EvalSymlinks(other)
+	m1 := NewManager(true, "/bin/sh", false, "")
+	r, err := m1.Create(CreateOptions{Workdir: repo, Cols: 80, Rows: 24})
+	if err != nil {
+		t.Fatal(err)
+	}
+	id := r.ID
+	t.Cleanup(func() { m1.Delete(id) })
+	_, homeBefore := r.Home()
+
+	if err := tmuxCmd("send-keys", "-t", "vibe-remote-"+id, "cd "+canonOther, "Enter").Run(); err != nil {
+		t.Fatalf("send-keys: %v", err)
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		out, _ := tmuxCmd("display-message", "-p", "-t", "vibe-remote-"+id, "#{pane_current_path}").Output()
+		if strings.TrimSpace(string(out)) == canonOther {
+			break
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+
+	m2 := NewManager(true, "/bin/sh", false, "")
+	m2.List()
+	r2, ok := m2.Get(id)
+	if !ok {
+		t.Fatalf("%s not recovered", id)
+	}
+	if got := r2.CurrentWorkdir(); got != canonOther {
+		t.Fatalf("workdir = %q, want %q (should follow cd)", got, canonOther)
+	}
+	if _, h := r2.Home(); h != homeBefore {
+		t.Fatalf("home = %q, want %q (must not follow cd)", h, homeBefore)
+	}
+}

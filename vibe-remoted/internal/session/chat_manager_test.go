@@ -1158,8 +1158,37 @@ func TestParseTmuxSessionLineReadsClaudeU(t *testing.T) {
 	if !ok || got.claudeU != "" {
 		t.Fatalf("empty column: %#v ok=%v", got, ok)
 	}
-	if _, ok := parseTmuxSessionLine("vibe-remote-s1\t/src\t\t\t\t\t\t\tu\textra"); !ok {
-		// A tab inside the last value stays in that value (SplitN).
-		t.Fatal("rejected a value containing a tab")
+	if _, ok := parseTmuxSessionLine("vibe-remote-s1\t/src\t\t\t\t\t\t\tu\textra"); ok {
+		// Ten columns is neither the 9- nor the 13-column format (T2); it is
+		// rejected rather than silently folding the extra field into claudeU.
+		t.Fatal("accepted a 10-column line")
+	}
+}
+
+// TestHandoffCopiesHome checks that a terminal session created by handing off a
+// worktree chat session inherits the chat's attribution verbatim (design 5.1).
+func TestHandoffCopiesHome(t *testing.T) {
+	f := newChatFixture(t, true)
+	repo := tempRepo(t)
+	id := newID("hoh")
+	if _, err := f.m.CreateChat(ChatCreateOptions{ID: id, Workdir: repo,
+		Mode: protocol.SessionModeWorktree, Parsed: parsed(t, f.exe)}); err != nil {
+		t.Fatal(err)
+	}
+	f.m.mu.RLock()
+	rec := f.m.chats[id].rec
+	f.m.mu.RUnlock()
+	if rec.Home == "" || rec.Project == "" {
+		t.Fatalf("chat record has no attribution: %+v", rec)
+	}
+
+	termID := newID("hoht")
+	r, err := f.m.Handoff(id, termID, 80, 24)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { f.m.Delete(termID) })
+	if p, h := r.Home(); p != rec.Project || h != rec.Home {
+		t.Fatalf("handoff home=(%q,%q), want (%q,%q)", p, h, rec.Project, rec.Home)
 	}
 }

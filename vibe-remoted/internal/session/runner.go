@@ -78,12 +78,20 @@ type tmuxSessionInfo struct {
 	// claudeU is @vibe_remote_claude_u: the claude conversation this terminal
 	// session holds (handed off from a chat session, or started with -c).
 	claudeU string
+	// project and home are the session's attribution (@vibe_remote_project,
+	// @vibe_remote_home); created/sessionCreated recover its creation time
+	// (@vibe_remote_created as RFC 3339 nanos, then tmux's session_created).
+	project        string
+	home           string
+	created        string
+	sessionCreated string
 }
 
 func parseTmuxSessionLine(line string) (tmuxSessionInfo, bool) {
-	// Eight columns is the format before @vibe_remote_claude_u was added.
-	parts := strings.SplitN(line, "\t", 9)
-	if (len(parts) != 8 && len(parts) != 9) || !strings.HasPrefix(parts[0], "vibe-remote-") || strings.TrimPrefix(parts[0], "vibe-remote-") == "" {
+	// Eight columns is the format before @vibe_remote_claude_u was added; nine
+	// adds it; thirteen adds project/home/created/session_created (design 5.1).
+	parts := strings.SplitN(line, "\t", 13)
+	if (len(parts) != 8 && len(parts) != 9 && len(parts) != 13) || !strings.HasPrefix(parts[0], "vibe-remote-") || strings.TrimPrefix(parts[0], "vibe-remote-") == "" {
 		return tmuxSessionInfo{}, false
 	}
 	info := tmuxSessionInfo{}
@@ -111,6 +119,12 @@ func parseTmuxSessionLine(line string) (tmuxSessionInfo, bool) {
 	if len(parts) > 8 {
 		info.claudeU = strings.TrimSpace(parts[8])
 	}
+	if len(parts) > 12 {
+		info.project = parts[9]
+		info.home = parts[10]
+		info.created = strings.TrimSpace(parts[11])
+		info.sessionCreated = strings.TrimSpace(parts[12])
+	}
 	return info, true
 }
 
@@ -132,7 +146,7 @@ func isNoTmuxServer(stderr []byte) bool {
 }
 
 func liveTmuxSessions() (map[string]tmuxSessionInfo, bool) {
-	out, err := tmuxCmd("list-sessions", "-F", "#{session_name}\t#{pane_current_path}\t#{@vibe_remote_name}\t#{@vibe_remote_mode}\t#{@vibe_remote_source_workdir}\t#{@vibe_remote_source_repo}\t#{@vibe_remote_worktree_root}\t#{@vibe_remote_branch}\t#{@vibe_remote_claude_u}").Output()
+	out, err := tmuxCmd("list-sessions", "-F", "#{session_name}\t#{pane_current_path}\t#{@vibe_remote_name}\t#{@vibe_remote_mode}\t#{@vibe_remote_source_workdir}\t#{@vibe_remote_source_repo}\t#{@vibe_remote_worktree_root}\t#{@vibe_remote_branch}\t#{@vibe_remote_claude_u}\t#{@vibe_remote_project}\t#{@vibe_remote_home}\t#{@vibe_remote_created}\t#{session_created}").Output()
 	if err != nil {
 		// tmux exits non-zero both when there genuinely are no sessions and when
 		// the query could not run at all, and only stderr tells them apart.
@@ -186,6 +200,11 @@ type Runner struct {
 	// claudeU (guarded by metaMu) is the claude conversation this session
 	// holds in the Manager's claudeOwners table; "" = none.
 	claudeU string
+	// project and home (guarded by metaMu) are the session's attribution
+	// (design 5.1); fixed at creation, recovered from tmux options, never
+	// following a later cd. Read them through Home().
+	project string
+	home    string
 
 	ptmx    *os.File // PTY master (guarded by mu)
 	cmd     *exec.Cmd
@@ -228,7 +247,13 @@ type RunnerConfig struct {
 	EventsURL  string
 	HookToken  string // injected as VIBE_REMOTE_TOKEN; see HookToken
 	ClaudeU    string // claude conversation the session holds (@vibe_remote_claude_u)
-	ExtraEnv   []string
+	// Project and Home are the session's attribution (design 5.1); empty when
+	// it could not be resolved (git failure), to be backfilled later.
+	Project string
+	Home    string
+	// Created is the session's creation time; the zero value means now.
+	Created  time.Time
+	ExtraEnv []string
 }
 
 // NewRunner creates and starts a new session.
@@ -241,7 +266,7 @@ func NewRunner(cfg RunnerConfig) (*Runner, error) {
 		SourceRepo:    cfg.SourceRepo,
 		WorktreeRoot:  cfg.WorktreeRoot,
 		Branch:        cfg.Branch,
-		Created:       time.Now(),
+		Created:       cfg.Created,
 		useTmux:       cfg.UseTmux,
 		claudeCmd:     cfg.ClaudeCmd,
 		claudeArgv:    cfg.ClaudeArgv,
@@ -250,7 +275,12 @@ func NewRunner(cfg RunnerConfig) (*Runner, error) {
 		eventsURL:     cfg.EventsURL,
 		hookToken:     cfg.HookToken,
 		claudeU:       cfg.ClaudeU,
+		project:       cfg.Project,
+		home:          cfg.Home,
 		extraEnv:      cfg.ExtraEnv,
+	}
+	if r.Created.IsZero() {
+		r.Created = time.Now()
 	}
 
 	if err := r.start(cfg.Cols, cfg.Rows); err != nil {
@@ -280,6 +310,14 @@ func (r *Runner) setClaudeUMeta(u string) {
 	r.metaMu.Lock()
 	r.claudeU = u
 	r.metaMu.Unlock()
+}
+
+// Home returns the session's attribution (project id and the root of the
+// worktree it sits in). Both are empty when attribution was not resolved.
+func (r *Runner) Home() (project, home string) {
+	r.metaMu.Lock()
+	defer r.metaMu.Unlock()
+	return r.project, r.home
 }
 
 // CurrentWorkdir returns the session's working directory under metaMu, since a
@@ -409,6 +447,7 @@ func (r *Runner) start(cols, rows uint16) error {
 			return fmt.Errorf("tmux session %s did not become ready", tmuxSessionName)
 		}
 		meta := r.Metadata()
+		project, home := r.Home()
 		options := []struct{ key, value string }{
 			{"@vibe_remote_mode", string(meta.Mode)},
 			{"@vibe_remote_source_workdir", meta.SourceWorkdir},
@@ -416,6 +455,9 @@ func (r *Runner) start(cols, rows uint16) error {
 			{"@vibe_remote_worktree_root", meta.WorktreeRoot},
 			{"@vibe_remote_branch", meta.Branch},
 			{"@vibe_remote_claude_u", r.ClaudeU()},
+			{"@vibe_remote_project", project},
+			{"@vibe_remote_home", home},
+			{"@vibe_remote_created", r.Created.UTC().Format(time.RFC3339Nano)},
 		}
 		for _, option := range options {
 			if err := setTmuxOption(tmuxSessionName, option.key, option.value); err != nil {

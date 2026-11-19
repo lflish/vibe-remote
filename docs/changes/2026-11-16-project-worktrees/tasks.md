@@ -283,7 +283,7 @@
 - 依赖：无
 
 ### T2 daemon：读 worktree 列表，创建会话时记下归属
-- 状态：待办
+- 状态：完成
 - 文件：修改 `vibe-remoted/internal/session/worktree.go`（`Worktree`、`ListWorktrees`、`Home`、`ResolveHome`、`gitAtTimeout`、包级变量 `gitTimeout`；`gitAt` 和 `gitAtTimeout` 共用一个建命令的函数，固定 git 的运行环境）；`vibe-remoted/internal/session/runner.go`（`RunnerConfig.Project/Home/Created`、`Runner.Home()`、`start` 里写 tmux 用户选项 `@vibe_remote_project`、`@vibe_remote_home`、`@vibe_remote_created`、`list-sessions` 格式串加到 13 列、`parseTmuxSessionLine` 接受 8、9、13 列）；`vibe-remoted/internal/session/manager.go`（`CreateOptions.Home`、创建时算归属、reconcile 找回会话时读回归属和创建时间）；`vibe-remoted/internal/session/chat_manager.go`（创建对话会话时算归属并写进记录，`Handoff` 把对话会话的归属传给新终端会话）；`vibe-remoted/internal/chat/store.go`（`Record.Project`、`Record.Home`，`omitempty`，`version` 仍是 1）。测试 `worktree_test.go`、`runner_test.go`、`manager_test.go`、`chat_manager_test.go`、`vibe-remoted/internal/chat/store_test.go`
 - 接口：
   - 使用：`gitAt`、`CreateWorktree(sourceWorkdir, sessionID)`（现有签名，本任务不改）、`WorktreeMetadata`
@@ -864,6 +864,7 @@
 | 任务 | 完成时间 | 提交 | 测试 |
 |------|----------|------|------|
 | T1 | 2026-11-19 11:01 | 948a65b | `go test -race ./internal/session ./internal/server -run 'TestUnmergedCommits\|TestCleanup\|TestWorktree\|TestDelete'` 两行 `ok`；`make check` exit 0；cherry-pick 到 change/dual-mode 后 `make check` exit 0 |
+| T2 | 2026-11-19 11:40 | _pending_ | 三条完成命令全 `ok`（含 `-race`、`TZ=Asia/Shanghai`、golden 未动）；`make check` exit 0 |
 
 ## 后续
 

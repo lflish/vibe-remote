@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"strconv"
 	"sync"
 	"time"
 
@@ -133,7 +134,7 @@ func (m *Manager) recoveredRunner(id string, info tmuxSessionInfo, now time.Time
 		SourceRepo:    info.sourceRepo,
 		WorktreeRoot:  info.worktreeRoot,
 		Branch:        info.branch,
-		Created:       now,
+		Created:       recoveredCreated(info, now),
 		useTmux:       m.useTmux,
 		claudeCmd:     m.claudeCmd,
 		loginShell:    m.loginShell,
@@ -141,8 +142,29 @@ func (m *Manager) recoveredRunner(id string, info tmuxSessionInfo, now time.Time
 		eventsURL:     m.eventsURL,
 		hookToken:     m.hookTokenFor(id),
 		claudeU:       info.claudeU,
+		project:       info.project,
+		home:          info.home,
 		extraEnv:      m.chatCfg.Env,
 	}
+}
+
+// recoveredCreated reconstructs a recovered session's creation time: the
+// RFC 3339 @vibe_remote_created option if it parses, else tmux's own
+// session_created (unix seconds), else the recovery moment (design 5.1). The
+// value is converted to local time so /api/v1/sessions formats it identically
+// across restarts.
+func recoveredCreated(info tmuxSessionInfo, now time.Time) time.Time {
+	if info.created != "" {
+		if t, err := time.Parse(time.RFC3339Nano, info.created); err == nil {
+			return t.Local()
+		}
+	}
+	if info.sessionCreated != "" {
+		if secs, err := strconv.ParseInt(info.sessionCreated, 10, 64); err == nil {
+			return time.Unix(secs, 0).Local()
+		}
+	}
+	return now
 }
 
 // ErrInvalidSessionID rejects a client-chosen session id that could not be
@@ -182,6 +204,9 @@ type CreateOptions struct {
 	// Worktree, when set, is an existing worktree the session takes over
 	// (handoff) instead of creating one; Workdir is then used as is.
 	Worktree *WorktreeMetadata
+	// Home, when set, is the attribution to record verbatim (a handoff copies
+	// the chat session's); when nil, Create resolves it from the workdir.
+	Home *Home
 }
 
 // Create starts a new session and registers it. Worktree resources are created
@@ -225,6 +250,33 @@ func (m *Manager) Create(opts CreateOptions) (*Runner, error) {
 // first (design 6.9, c4): the conversation is resolved and claimed, and -c is
 // replaced by --resume U (or --session-id U for a new one), so the process
 // that runs is exactly the one the claim table knows about.
+// resolveSessionHome computes the attribution to record for a new session
+// (design 5.1). A handoff supplies it directly (opts.Home). A worktree session
+// sits in the new worktree root and takes its project from the source repo
+// (itself when the repo has no recognizable main worktree). Otherwise it is
+// ResolveHome(workdir). A git failure leaves both empty for later backfill.
+func resolveSessionHome(opts CreateOptions, mode protocol.SessionMode, workdir string, meta WorktreeMetadata, ownWorktree bool) (project, home string) {
+	if opts.Home != nil {
+		return opts.Home.Project, opts.Home.Path
+	}
+	if ownWorktree {
+		h, err := ResolveHome(meta.SourceRepo)
+		if err != nil {
+			return "", ""
+		}
+		project = h.Project
+		if h.Single {
+			project = meta.WorktreeRoot
+		}
+		return project, meta.WorktreeRoot
+	}
+	h, err := ResolveHome(workdir)
+	if err != nil {
+		return "", ""
+	}
+	return h.Project, h.Path
+}
+
 func (m *Manager) createTerminalLocked(id string, opts CreateOptions) (*Runner, error) {
 	mode := opts.Mode
 	if mode == "" {
@@ -288,6 +340,7 @@ func (m *Manager) createTerminalLocked(id string, opts CreateOptions) (*Runner, 
 			claudeU, claimedHere = u, true
 		}
 	}
+	project, home := resolveSessionHome(opts, mode, workdir, meta, ownWorktree)
 	runner, err := NewRunner(RunnerConfig{
 		ID:            id,
 		Workdir:       workdir,
@@ -306,6 +359,8 @@ func (m *Manager) createTerminalLocked(id string, opts CreateOptions) (*Runner, 
 		EventsURL:     m.eventsURL,
 		HookToken:     m.hookTokenFor(id),
 		ClaudeU:       claudeU,
+		Project:       project,
+		Home:          home,
 		ExtraEnv:      m.chatCfg.Env,
 	})
 	if err != nil {

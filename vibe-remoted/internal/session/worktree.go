@@ -1,6 +1,8 @@
 package session
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -8,6 +10,8 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"syscall"
+	"time"
 )
 
 type WorktreeMetadata struct {
@@ -23,13 +27,206 @@ func (e *WorktreePreservedError) Error() string {
 	return fmt.Sprintf("worktree %q is dirty; preserved branch %q", e.WorktreeRoot, e.Branch)
 }
 
+// gitTimeout bounds the git calls used for read-only discovery (ListWorktrees,
+// ResolveHome, worktree pre-checks). Tests may lower it. gitAt (the creation
+// and cleanup path) is not time-bounded.
+var gitTimeout = 5 * time.Second
+
+// gitStrippedEnv are environment variables that would redirect git at another
+// repository or index; a daemon started under one of them must not leak it into
+// the worktree queries (design 4.9, V12).
+var gitStrippedEnv = map[string]bool{
+	"GIT_DIR": true, "GIT_WORK_TREE": true, "GIT_INDEX_FILE": true,
+	"GIT_COMMON_DIR": true, "GIT_OBJECT_DIRECTORY": true, "GIT_NAMESPACE": true,
+	"LC_ALL": true,
+}
+
+// gitEnv returns the process environment with the repository-redirecting
+// variables removed and LC_ALL pinned to C, so git's output is stable and
+// always describes the directory passed with -C.
+func gitEnv() []string {
+	var env []string
+	for _, kv := range os.Environ() {
+		key, _, _ := strings.Cut(kv, "=")
+		if gitStrippedEnv[key] {
+			continue
+		}
+		env = append(env, kv)
+	}
+	return append(env, "LC_ALL=C")
+}
+
 func gitAt(dir string, args ...string) ([]byte, error) {
 	cmd := exec.Command("git", append([]string{"-C", dir}, args...)...)
+	cmd.Env = gitEnv()
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return out, fmt.Errorf("git %s: %w: %s", strings.Join(args, " "), err, strings.TrimSpace(string(out)))
 	}
 	return out, nil
+}
+
+// gitAtTimeout runs git under gitTimeout. A deadline hit wraps
+// context.DeadlineExceeded so callers can tell a timeout apart from a non-zero
+// exit without matching git's message text. The child runs in its own process
+// group, which is killed on timeout so a slow git (or its children) cannot
+// linger.
+func gitAtTimeout(dir string, args ...string) ([]byte, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), gitTimeout)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "git", append([]string{"-C", dir}, args...)...)
+	cmd.Env = gitEnv()
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	cmd.Cancel = func() error {
+		if cmd.Process != nil {
+			_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+		}
+		return nil
+	}
+	cmd.WaitDelay = time.Second
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		if ctx.Err() == context.DeadlineExceeded {
+			return out, fmt.Errorf("git %s: %w", strings.Join(args, " "), context.DeadlineExceeded)
+		}
+		return out, fmt.Errorf("git %s: %w: %s", strings.Join(args, " "), err, strings.TrimSpace(string(out)))
+	}
+	return out, nil
+}
+
+// Worktree is one entry of `git worktree list --porcelain`. Head is the 40-hex
+// commit; Branch is the short name (empty when detached or bare).
+type Worktree struct {
+	Path, Branch, Head               string
+	Detached, Bare, Prunable, Locked bool
+	LockReason                       string
+}
+
+// ListWorktrees returns the worktrees of the repository that contains dir. The
+// first entry is the main worktree (or, for a bare repo, the bare entry); paths
+// are git's canonical paths.
+func ListWorktrees(dir string) ([]Worktree, error) {
+	out, err := gitAtTimeout(dir, "worktree", "list", "--porcelain")
+	if err != nil {
+		return nil, err
+	}
+	var list []Worktree
+	var cur *Worktree
+	flush := func() {
+		if cur != nil {
+			list = append(list, *cur)
+			cur = nil
+		}
+	}
+	for _, line := range strings.Split(string(out), "\n") {
+		if line == "" {
+			flush()
+			continue
+		}
+		key, val, _ := strings.Cut(line, " ")
+		switch key {
+		case "worktree":
+			flush()
+			cur = &Worktree{Path: val}
+		case "HEAD":
+			if cur != nil {
+				cur.Head = val
+			}
+		case "branch":
+			if cur != nil {
+				cur.Branch = strings.TrimPrefix(val, "refs/heads/")
+			}
+		case "detached":
+			if cur != nil {
+				cur.Detached = true
+			}
+		case "bare":
+			if cur != nil {
+				cur.Bare = true
+			}
+		case "locked":
+			if cur != nil {
+				cur.Locked = true
+				cur.LockReason = val
+			}
+		case "prunable":
+			if cur != nil {
+				cur.Prunable = true
+			}
+		}
+	}
+	flush()
+	return list, nil
+}
+
+// Home is a session's project attribution (design 4.9, 5.1). For a non-git
+// directory Project and Path are the directory itself and Repo is empty.
+type Home struct {
+	Project string // project id
+	Path    string // root of the worktree the session sits in
+	Repo    string // the directory git -C is run against = the first list entry
+	Git     bool
+	Single  bool // no recognizable main worktree (submodule, --separate-git-dir)
+}
+
+// ResolveHome computes the project attribution of dir. A directory that is not
+// a git repository returns Home{Git:false} and a nil error; a git failure or
+// timeout returns an error (the caller then records no attribution and retries
+// later).
+func ResolveHome(dir string) (Home, error) {
+	abs, err := filepath.Abs(dir)
+	if err != nil {
+		return Home{}, err
+	}
+	out, err := gitAtTimeout(abs, "rev-parse", "--show-toplevel")
+	if err != nil {
+		if errors.Is(err, context.DeadlineExceeded) {
+			return Home{}, err
+		}
+		// Not a repo vs. a real failure is decided by git exit codes and the
+		// filesystem, never by matching message text (design 4.9).
+		if inside, ierr := gitAtTimeout(abs, "rev-parse", "--is-inside-git-dir"); ierr == nil && strings.TrimSpace(string(inside)) == "true" {
+			return Home{Project: abs, Path: abs, Git: false}, nil
+		}
+		if !hasGitAncestor(abs) {
+			return Home{Project: abs, Path: abs, Git: false}, nil
+		}
+		return Home{}, err
+	}
+	top := filepath.Clean(strings.TrimSpace(string(out)))
+	wts, err := ListWorktrees(top)
+	if err != nil {
+		return Home{}, err
+	}
+	if len(wts) == 0 {
+		return Home{Project: top, Path: top, Repo: top, Git: true}, nil
+	}
+	first := wts[0]
+	if first.Bare || hasDotGit(first.Path) {
+		// Normal repository: the first entry is the main worktree.
+		return Home{Project: first.Path, Path: top, Repo: first.Path, Git: true}, nil
+	}
+	// The first entry is a git directory (submodule, --separate-git-dir): there
+	// is no main worktree to group under, so the project is this toplevel alone.
+	return Home{Project: top, Path: top, Repo: first.Path, Git: true, Single: true}, nil
+}
+
+func hasDotGit(path string) bool {
+	_, err := os.Stat(filepath.Join(path, ".git"))
+	return err == nil
+}
+
+func hasGitAncestor(dir string) bool {
+	for {
+		if _, err := os.Lstat(filepath.Join(dir, ".git")); err == nil {
+			return true
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			return false
+		}
+		dir = parent
+	}
 }
 
 var safeSessionID = regexp.MustCompile(`^[A-Za-z0-9_-]+$`)

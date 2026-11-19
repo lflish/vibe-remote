@@ -20,16 +20,20 @@ const (
 // Record is one chat session in chat-sessions.json (design 5.1). Messages
 // are not stored: claude's own transcript is the history.
 type Record struct {
-	ID                string   `json:"id"`
-	Name              string   `json:"name"`
-	Workdir           string   `json:"workdir"`
-	Mode              string   `json:"mode"`
-	SourceWorkdir     string   `json:"sourceWorkdir,omitempty"`
-	SourceRepo        string   `json:"sourceRepo,omitempty"`
-	WorktreeRoot      string   `json:"worktreeRoot,omitempty"`
-	Branch            string   `json:"branch,omitempty"`
-	WorktreeHandedOff bool     `json:"worktreeHandedOff"`
-	Flags             []string `json:"flags"`
+	ID                string `json:"id"`
+	Name              string `json:"name"`
+	Workdir           string `json:"workdir"`
+	Mode              string `json:"mode"`
+	SourceWorkdir     string `json:"sourceWorkdir,omitempty"`
+	SourceRepo        string `json:"sourceRepo,omitempty"`
+	WorktreeRoot      string `json:"worktreeRoot,omitempty"`
+	Branch            string `json:"branch,omitempty"`
+	WorktreeHandedOff bool   `json:"worktreeHandedOff"`
+	// Project and Home are the session's attribution (design 5.1), omitted when
+	// not yet resolved (older files, or git failure at creation).
+	Project string   `json:"project,omitempty"`
+	Home    string   `json:"home,omitempty"`
+	Flags   []string `json:"flags"`
 	// Exe and Args are what the session was created with (claude_cmd and the
 	// selected flags, parsed, without -c); restarts and handoff use them so a
 	// later config change does not alter an existing session.

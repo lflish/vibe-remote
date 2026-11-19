@@ -137,3 +137,42 @@ func TestStoreAtomicWrite(t *testing.T) {
 		}
 	}
 }
+
+func TestChatRecordHomeRoundTrip(t *testing.T) {
+	t.Parallel()
+	st, err := NewStore(filepath.Join(t.TempDir(), "state"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec := Record{ID: "1763000000000-9f3a1c2e", Workdir: "/home/u/p", Mode: "normal",
+		Project: "/home/u/p", Home: "/home/u/p", Exe: "claude",
+		ClaudeSessionID: "0b6c0000-0000-4000-8000-000000000000",
+		CreatedAt:       "2026-11-13T10:00:00Z", Status: StatusRunning}
+	if err := st.Save([]Record{rec}); err != nil {
+		t.Fatal(err)
+	}
+	got, err := st.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || got[0].Project != "/home/u/p" || got[0].Home != "/home/u/p" {
+		t.Fatalf("round trip = %+v", got)
+	}
+
+	// An older file without the two fields loads with them empty.
+	old := `{"version":1,"sessions":[{"id":"x","workdir":"/w","mode":"normal","status":"running"}]}`
+	st2, err := NewStore(filepath.Join(t.TempDir(), "state2"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(st2.Path(), []byte(old), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	got2, err := st2.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got2) != 1 || got2[0].Project != "" || got2[0].Home != "" {
+		t.Fatalf("legacy load = %+v", got2)
+	}
+}

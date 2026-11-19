@@ -291,3 +291,36 @@ func TestReconnectReapsRetiredAttachProcesses(t *testing.T) {
 			leaked, reconnects)
 	}
 }
+
+// TestParseTmuxSessionLineColumns pins the accepted column counts: 8 (pre
+// claude_u), 9 (claude_u), 13 (project/home/created/session_created). Counts in
+// between are rejected rather than silently mis-parsed.
+func TestParseTmuxSessionLineColumns(t *testing.T) {
+	mk := func(n int) string {
+		parts := make([]string, n)
+		parts[0] = "vibe-remote-s1"
+		for i := 1; i < n; i++ {
+			parts[i] = fmt.Sprintf("c%d", i)
+		}
+		return strings.Join(parts, "\t")
+	}
+	for _, n := range []int{8, 9, 13} {
+		if _, ok := parseTmuxSessionLine(mk(n)); !ok {
+			t.Fatalf("%d columns should parse", n)
+		}
+	}
+	for _, n := range []int{10, 11, 12} {
+		if _, ok := parseTmuxSessionLine(mk(n)); ok {
+			t.Fatalf("%d columns should be rejected", n)
+		}
+	}
+	line := strings.Join([]string{
+		"vibe-remote-s1", "/w", "name", "normal", "", "", "", "", "",
+		"/proj", "/home", "2026-01-02T03:04:05Z", "1700000000",
+	}, "\t")
+	info, ok := parseTmuxSessionLine(line)
+	if !ok || info.project != "/proj" || info.home != "/home" ||
+		info.created != "2026-01-02T03:04:05Z" || info.sessionCreated != "1700000000" {
+		t.Fatalf("info=%+v ok=%v", info, ok)
+	}
+}

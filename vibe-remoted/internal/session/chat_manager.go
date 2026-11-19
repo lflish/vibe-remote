@@ -294,9 +294,13 @@ func (m *Manager) CreateChat(opts ChatCreateOptions) (ChatAttachment, error) {
 		}
 		return ChatAttachment{}, ErrShuttingDown
 	}
+	project, home := resolveSessionHome(
+		CreateOptions{Workdir: opts.Workdir, Mode: mode},
+		mode, workdir, meta, mode == protocol.SessionModeWorktree)
 	rec := chat.Record{
 		ID: id, Workdir: workdir, Mode: string(mode),
 		SourceWorkdir: meta.SourceWorkdir, SourceRepo: meta.SourceRepo, WorktreeRoot: meta.WorktreeRoot, Branch: meta.Branch,
+		Project: project, Home: home,
 		Flags: opts.Flags, Exe: opts.Parsed.Exe, Args: opts.Parsed.Args, ClaudeSessionID: u,
 		PermissionLocked: opts.Parsed.Bypass, PermissionMode: opts.Parsed.PermissionMode,
 		CreatedAt: time.Now().UTC().Format(time.RFC3339), Status: chat.StatusRunning,
@@ -782,6 +786,7 @@ func (m *Manager) Handoff(chatID, newID string, cols, rows uint16) (*Runner, err
 		opts := CreateOptions{
 			Workdir: rec.Workdir, Mode: protocol.SessionMode(rec.Mode), Cols: cols, Rows: rows,
 			ClaudeArgv: chat.HandoffArgv(rec.Exe, rec.Args, u, found), ClaudeU: u,
+			Home: &Home{Project: rec.Project, Path: rec.Home},
 		}
 		worktree := protocol.SessionMode(rec.Mode) == protocol.SessionModeWorktree
 		if worktree {
