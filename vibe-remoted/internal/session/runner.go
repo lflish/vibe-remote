@@ -822,24 +822,48 @@ func (r *Runner) bareProcessGone() bool {
 	return !pidAlive(r.cmd.Process.Pid)
 }
 
-// Kill terminates the session entirely (including the tmux session).
+// Kill terminates the session entirely (including the tmux session). A tmux
+// session that could not be killed is only logged: whoever needs to know that
+// the session is gone uses killTmuxSession and reads tmux again.
 func (r *Runner) Kill() {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	if err := r.killTmuxSessionLocked(); err != nil {
+		log.Printf("warning: failed to kill tmux session vibe-remote-%s: %v", r.ID, err)
+	}
+	r.releaseLocked()
+}
 
+// killTmuxSession asks tmux to end the session and returns tmux's failure.
+// Nothing else about the runner changes, so one whose session is still
+// running stays usable. Without tmux there is nothing to ask.
+func (r *Runner) killTmuxSession() error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.killTmuxSessionLocked()
+}
+
+// release gives up the runner's PTY and marks it stopped: with tmux that ends
+// the attach client, without it the CLI itself.
+func (r *Runner) release() {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.releaseLocked()
+}
+
+func (r *Runner) killTmuxSessionLocked() error {
+	if !r.useTmux {
+		return nil
+	}
+	return tmuxCmd("kill-session", "-t", fmt.Sprintf("vibe-remote-%s", r.ID)).Run()
+}
+
+func (r *Runner) releaseLocked() {
 	oldPTY, oldCmd := r.ptmx, r.cmd
 	r.ptmx, r.cmd = nil, nil
-
-	if r.useTmux {
-		tmuxSessionName := fmt.Sprintf("vibe-remote-%s", r.ID)
-		if err := tmuxCmd("kill-session", "-t", tmuxSessionName).Run(); err != nil {
-			log.Printf("warning: failed to kill tmux session %s: %v", tmuxSessionName, err)
-		}
-	}
 	// reap kills the process and waits for it, which covers both cases: the
-	// tmux attach client above, or the directly-spawned CLI when tmux is off.
+	// tmux attach client, or the directly-spawned CLI when tmux is off.
 	reap(oldPTY, oldCmd)
-
 	r.stopped = true
 }
 

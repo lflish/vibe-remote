@@ -98,7 +98,7 @@ type Manager struct {
 	testAfterRemovingMarked   func()                // removing a worktree: marked as being removed, no session ended yet
 	testAfterSessionsEnded    func()                // removing a worktree: its sessions are ended, HEAD not yet re-read
 	testBeforeWorktreeRemove  func()                // removing a worktree: every check passed, git worktree remove not yet run
-	testEndSession            func(id string) error // removing a worktree: ends a session instead of Delete
+	testEndSession            func(id string) error // removing a worktree: ends a session instead of endSessionConfirmed
 }
 
 // NewManager creates a session manager.
@@ -680,6 +680,81 @@ func (m *Manager) Delete(id string) error {
 	}
 
 	runner.Kill()
+	m.mu.Lock()
+	delete(m.sessions, id)
+	m.releaseOwnerLocked(id) // its claude process is gone with the tmux session
+	m.gen++
+	m.mu.Unlock()
+	return nil
+}
+
+// How often, and how far apart, endSessionConfirmed reads tmux before it gives
+// up on learning whether a session ended.
+const (
+	endConfirmReadings = 3
+	endConfirmPause    = 100 * time.Millisecond
+)
+
+// endSessionConfirmed ends session id for the removal of its worktree, and
+// returns nil only when the session is known to be gone. Delete does not ask
+// that much of a terminal session: it takes the session out of the table
+// whether or not tmux killed it, which is all a deleted session needs and is
+// the way out when tmux itself is gone. A worktree is another matter: its
+// directory must not go while a session in it may still be running. So here
+// tmux is read again after the kill, by the same rules as every reconcile
+// (readTmuxSessions): a reading that fails, or one that still has the session,
+// is a session that was not ended. It then stays in the table, with its PTY,
+// as it was.
+func (m *Manager) endSessionConfirmed(id string) error {
+	m.mu.RLock()
+	entry := m.chats[id]
+	m.mu.RUnlock()
+	if entry != nil || !m.useTmux {
+		// A chat process is stopped and waited for by its own supervisor, and a
+		// terminal session without tmux is the daemon's own child, killed and
+		// reaped by Kill.
+		return m.Delete(id)
+	}
+	m.syncFromTmux()
+	m.mu.RLock()
+	runner, ok := m.sessions[id]
+	m.mu.RUnlock()
+	if !ok {
+		return sessionNotFound(id)
+	}
+	killErr := runner.killTmuxSession()
+	// The session is still in the table, so a socket file that is gone reads as
+	// a failure here, not as "no sessions". A tmux server that has just lost its
+	// last session is on its way out, and for a moment answers neither with a
+	// list nor with "no server running" ("server exited unexpectedly"): a
+	// reading that fails is tried again, briefly.
+	var live map[string]tmuxSessionInfo
+	read := false
+	for attempt := 0; attempt < endConfirmReadings; attempt++ {
+		if attempt > 0 {
+			time.Sleep(endConfirmPause)
+		}
+		if live, read = m.liveTmuxSessions(); read {
+			break
+		}
+	}
+	if !read {
+		msg := "tmux could not be read after it was asked to end the session, so it is not known whether the session ended"
+		if killErr != nil {
+			msg = fmt.Sprintf("tmux kill-session failed (%v), and tmux could not be read to see whether the session is still running", killErr)
+		}
+		if why := m.tmuxFailure(); why != "" {
+			msg += ": " + why
+		}
+		return errors.New(msg)
+	}
+	if _, alive := live[id]; alive {
+		if killErr != nil {
+			return fmt.Errorf("tmux kill-session failed (%v) and the session is still running", killErr)
+		}
+		return errors.New("tmux still lists the session after it was asked to end it")
+	}
+	runner.release()
 	m.mu.Lock()
 	delete(m.sessions, id)
 	m.releaseOwnerLocked(id) // its claude process is gone with the tmux session

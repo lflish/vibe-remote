@@ -808,14 +808,18 @@ func (m *Manager) RemoveWorktree(req protocol.WorktreeRemoveRequest, allow Allow
 		return none, changed(st)
 	}
 
-	end := m.Delete
+	// Each session is ended and confirmed gone before the next one is touched:
+	// one that may still be running keeps the directory, and is not reported as
+	// ended.
+	end := m.endSessionConfirmed
 	if m.testEndSession != nil {
 		end = m.testEndSession
 	}
 	for _, id := range st.Sessions {
 		// A session that is already gone ended on its own just now.
 		if err := end(id); err != nil && !errors.Is(err, ErrSessionNotFound) {
-			return none, &WorktreeRemoveError{EndedSessions: ended, Message: fmt.Sprintf("could not end session %s: %v", id, err)}
+			return none, &WorktreeRemoveError{EndedSessions: ended,
+				Message: fmt.Sprintf("could not end session %s: %v. The worktree was not removed", id, err)}
 		}
 		ended = append(ended, id)
 	}

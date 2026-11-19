@@ -902,7 +902,7 @@
 - 依赖：无
 
 ### T22 返工（X10）：删除 worktree 时确认每个会话确实结束了
-- 状态：待办
+- 状态：完成
 - 来源：X10（验证结论 P2，严重）。删除 worktree 的途中 tmux 的 socket 文件被删：`kill-session` 失败只记了一条日志，会话从表里去掉、目录照删，没结束的会话被报成已结束
 - 文件：修改 `vibe-remoted/internal/session/projects.go`（`RemoveWorktree` 结束会话之后的确认）、`manager.go`（删除 worktree 用的结束会话函数）、`runner.go`（`Kill` 把 `kill-session` 的失败交还调用方）；测试 `gate_c_test.go`
 - 场景：R5.6、R5.12
@@ -1086,7 +1086,7 @@ spec「推迟到以后」的条目：
 第三轮核对（评审对象 c74e715..3b01cf3）之后留下的：
 
 - 反方向的一种：会话表里有终端会话，而 tmux server 和它的 socket 文件都已经没了（server 退出后 socket 文件又被清掉，期间没有任何客户端轮询过）。现在每次对账都算失败（decisions #121）：这些会话一直留在列表里，所在 worktree 的删除一直返回 500，要重启 daemon 或把这些会话逐个删掉。本机 tmux 3.6a 的 server 退出时不删 socket 文件，所以要另有东西去删它才会出现。可以在这种状态持续一段时间后提示用户，或核对 server 进程是否还在（同样需要记下 pid）。
-- `Manager.Delete` 不看 `tmux kill-session` 有没有成功（`Runner.Kill` 只记一条警告）：socket 文件被删而 server 还活着时删除终端会话，会话从表里去掉、tmux 里还在运行；表因此变空，之后的对账又会把「socket 不存在」当成没有会话。原有写法，这次没有改；可以让删除在连不上 tmux 时返回失败。
+- `Manager.Delete` 不看 `tmux kill-session` 有没有成功（`Runner.Kill` 只记一条警告）：socket 文件被删而 server 还活着时删除终端会话，会话从表里去掉、tmux 里还在运行；表因此变空，之后的对账又会把「socket 不存在」当成没有会话。原有写法，这次没有改；可以让删除在连不上 tmux 时返回失败。（关口 C 第 1 轮返工补充，d68：删除 worktree 的途中已经改成结束一个确认一个；单独删会话仍是原样，因为它是 tmux 没了之后清掉表里会话的出路。）
 - 500 的 `message` 里「对 tmux server 进程发 SIGUSR1」没有给出 pid：daemon 不记 server 的 pid，用户要自己找（`pgrep -u $USER tmux` 可能列出不止一个 server）。
 
 测试阶段后半（探索式检查，真实指针和键盘事件；test-report.md 的 X1–X8）之后留下的：

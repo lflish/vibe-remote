@@ -980,6 +980,8 @@ CSS 变量：保留现有变量名（`styles.css` 里到处在用），换成 M1
   - 4.1：名字的两条本地规则各有原因码，不再是 `invalid`：不显示的字符是 `invisible`，超过 250 字节是 `too_long`；新增文案键 `wt.name.invisible`、`wt.name.too_long`（d61，改上面 G9 那条的「原因都是 `invalid`」）。
 - 第三轮核对修复（评审对象 c74e715..3b01cf3；decisions #121–#124、d62）：4.9 与 tmux 的对账，上一条第一项的「socket 文件不存在、或机器上没有 tmux 程序，都算没有任何 tmux 会话」收窄为：tmux 运行失败或找不到 tmux 程序，并且 socket 文件不存在，并且会话表里没有终端会话，才算没有会话；socket 文件不见了而表里有终端会话（server 可能还活着，SIGUSR1 能让它重建 socket）、找不到 tmux 程序而 socket 文件在，都按对账失败处理，500 的 `message` 写明是哪一种（#121、#122）。`tmuxSocketPath` 先解析 `TMUX_TMPDIR`，解析不了用 `/tmp`（#123）。已知限制：daemon 重启后（表为空）socket 文件被外部删掉而 server 还活着，仍算没有会话（d62）。
 - 测试阶段的修复（探索式检查 X2、X3、X6、X8，test-report.md；decisions #134、#135、d66、d67）：7.4 的四处补充，对外的结构和文案不变。(1) 会话行：双击的第二次点击（`detail > 1`）不再触发「打开」，否则已经打开过的会话在第一次点击时重建侧边栏、第二次点击又重建一次，浏览器的 `dblclick` 无处可发，改名只对还没在本窗口打开过的会话有效。(2) `menu.ts`：菜单开着时按钮带 `aria-expanded="true"`，样式表在此期间让这一行的操作按钮保持显示（`.row-actions:has([aria-expanded='true'])`）——重建出来的行既没有悬停也没有焦点，菜单原来会被放到隐藏按钮塌缩的位置（按钮左边约 180px）。(3) `menu.ts`：打开菜单时焦点移到第一个可选的菜单项，方向键 / Home / End 在可选项之间移动，Esc 和 Tab 关闭菜单，菜单关闭时焦点若在菜单里就还给按钮；菜单项的动作在菜单关闭之后才执行（对话框关闭后焦点回到按钮）。(4) `setActive` 在重建侧边栏之后把当前会话的行滚进可见区（`scrollIntoView({ block: 'nearest' })`）；轮询刷新不滚动。
+- 关口 C 第 1 轮返工（验证者 codex，评审对象 91e0fab；X9–X15，decisions #140 起）：
+  - X10（decisions #140、d68）：6.2 第 8 步「逐个结束会话」改为逐个结束**并确认**。终端会话：`kill-session` 之后按 4.9 的四条规则再读一次 tmux（读失败再试，共 3 次、间隔 100 ms），读不到或它还在都算没结束，此时返回 500 `worktree_remove_failed`，`message` 写明是哪个会话、为什么，目录和分支不动，`endedSessions` 只含已确认结束的；没结束的会话留在会话表里，PTY 不动。对话会话和不用 tmux 的终端会话照旧（进程是 daemon 自己的子进程，结束时已经等到它退出）。单独删会话不改。
 
 ### 升级步骤
 
