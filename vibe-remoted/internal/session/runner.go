@@ -203,16 +203,23 @@ func parseTmuxSessions(out string, k tmuxListMarks) (map[string]tmuxSessionInfo,
 }
 
 // isNoTmuxServer reports whether tmux's stderr means "there is nothing running"
-// (an honest empty set) rather than "the query failed". tmux prints
-// "no server running on <socket>" for the former and "error connecting to
-// <socket> (...)" for the latter, both with a non-zero exit. A socket file that
-// is not there also gets the second message, whether no server was ever started
-// or a running server lost its file; readTmuxSessions tells those apart without
-// reading the message.
+// (an honest empty set) rather than "the query failed". tmux has two sentences
+// for the former, "no server running on <socket>" and "no sessions", and
+// prints "error connecting to <socket> (...)" for the latter, all with a
+// non-zero exit. Only the sentences themselves count — a line that starts with
+// the first, or is the second — and not their words anywhere in the output:
+// the socket path is part of every one of these messages, and a directory can
+// be called anything. A socket file that is not there also gets the error
+// message, whether no server was ever started or a running server lost its
+// file; readTmuxSessions tells those apart without reading the message.
 func isNoTmuxServer(stderr []byte) bool {
-	msg := strings.ToLower(string(stderr))
-	return strings.Contains(msg, "no server running") ||
-		strings.Contains(msg, "no sessions")
+	for _, line := range strings.Split(string(stderr), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "no sessions" || strings.HasPrefix(line, "no server running on ") {
+			return true
+		}
+	}
+	return false
 }
 
 // tmuxSocketGone reports whether the socket file of the vibe-remote tmux

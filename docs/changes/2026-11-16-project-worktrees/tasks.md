@@ -927,7 +927,7 @@
 - 实现时的调整（d69、decisions #141、#142）：没有采用「按行解析、把 `pane_current_path` 挪到最后一列」。字段和记录改用每次读取现造的随机标记分隔，制表符和换行在哪一列都能原样读回，所以换行的反例不再是「删除被拒」而是「归属不变、删除时把它结束」；「有一条读不了就整次失败」的规则保留，用 tmux 多答一行的用例守着。实际的用例名：`TestSessionWhoseProcessIsInAnOddlyNamedDirectoryIsStillRead`（5 种目录名 × 重启与否）、`TestSessionCreatedInAnOddlyNamedDirectoryIsStillRead`、`TestTmuxReadFailsWhenARecordDoesNotParse`，以及改写的 `TestParseTmuxSessionLine*` 5 个
 
 ### T24 返工（X12）：`isNoTmuxServer` 只认 tmux 的那两句话
-- 状态：待办
+- 状态：完成
 - 来源：X12（验证结论 P4）。tmux 报错里的 socket 路径含 `no sessions` 字样（`TMUX_TMPDIR` 的目录名）时被当成「没有会话」，绕过第 ④ 条
 - 文件：修改 `vibe-remoted/internal/session/runner.go`（`isNoTmuxServer` 按行比较：以 `no server running on ` 开头，或整行等于 `no sessions`）；`CLAUDE.md`（第 ② 条）；测试 `gate_c_test.go`
 - 场景：R5.6
@@ -1003,6 +1003,7 @@
 | T23 | 2026-11-20 04:43 | 44c049d、本行之后的记录提交 | 修复前 `TestSessionWhoseProcessIsInAnOddlyNamedDirectoryIsStillRead`（10 个子用例）和 `TestSessionCreatedInAnOddlyNamedDirectoryIsStillRead` 全部 FAIL（换行：`liveTmuxSessions() = map[], true`；制表符：字段错位 `name:wrap … sourceWorkdir:normal`）；修复后连同 `TestTmuxReadFailsWhenARecordDoesNotParse`、`TestParseTmux*` `-count=2` `ok`；`go test -race -count=1 -timeout 15m ./internal/session ./internal/server` 两行 `ok`（292 s、64 s）；`.devflow.yml` 第 15 条原样执行 exit 0；变异核对两种：解析失败改成跳过 → 4 个用例 FAIL；标记改回固定的制表符 → 目录名用例 FAIL |
 | T21 | 2026-11-20 04:55 | 本行所在的提交 | 修复前 `TestUndoLeavesAWorktreeSomeoneElseAddedAtTheSamePath` 3 个子用例 FAIL（`their file: "" … no such file or directory; a failed create deleted someone else's work`）、`TestUndoAfterWorktreeAddFailedOnItsOwn/file_in_the_directory_and_branch_checked_out_elsewhere` FAIL（`branch fix-login is at ""`）；修复后 `-run 'TestUndo\|TestCreate\|TestWorktreeAddKilled\|TestGitNeverGetsShortBranchName'` `ok`；`go test -race -count=1 -timeout 15m ./internal/session ./internal/server` 两行 `ok`（296 s、63 s）；`.devflow.yml` 第 18 条原样执行 exit 0；变异核对：去掉 `c.added` → 4 个子用例 FAIL，去掉分支被检出的判断 → 2 个子用例 FAIL |
 | T25 | 2026-11-20 05:07 | 本行所在的提交 | 修复前 `TestRemoveBranchSwitchedWhileEndingSessions` 2 个子用例 FAIL（`err = <nil>, want *WorktreeChangedError`）；修复后 `-run TestRemove` `ok`；`go test -race -count=1 -timeout 15m ./internal/session` `ok`（301 s）、`./internal/server` `ok`（61 s，其中 `TestWorktreeRemoveEndpoint/changed_after_sessions_ended` 的触发点从 daemon 的 `rev-parse HEAD` 改成结束会话后的那次 `worktree list`，断言没动）；`.devflow.yml` 第 15 条原样执行 exit 0；变异核对：复核里去掉分支和 detached → 2 个新子用例 FAIL，去掉 HEAD → 原有的 `TestRemoveHeadMovedWhileEndingSessions` 和上面那个 server 用例 FAIL |
+| T24 | 2026-11-20 05:14 | 本行所在的提交 | 修复前 `TestIsNoTmuxServerGoesByTheWholeLine` FAIL（5 行，如 `isNoTmuxServer("error connecting to /private/tmp/vr-no sessions-1/… (No such file or directory)") = true, want false`）、`TestSocketPathSayingNoSessionsIsNotAnEmptySet` FAIL（`liveTmuxSessions() = map[], true`）；修复后连同 `TestMissingSocket…`、`TestNoTmuxProgram…`、`TestSocketFileGone…`、`TestTmuxSocketPath…` `ok`；`go test -race -count=1 -timeout 15m ./internal/session ./internal/server` 两行 `ok`（304 s、69 s）；`.devflow.yml` 第 15 条原样执行 exit 0；变异核对：「整行等于」改回「包含」→ 两个用例 FAIL |
 
 更正：T5 实际完成于 2026-11-19 12:39，T6a 13:11，T6b 14:04（以提交时间为准）。此后各行的时间用 `date '+%F %H:%M'` 取。
 

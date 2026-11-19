@@ -680,3 +680,87 @@ func TestRemoveBranchSwitchedWhileEndingSessions(t *testing.T) {
 		})
 	}
 }
+
+// X12. What tmux says when nothing is running is one of two sentences. The
+// words of those sentences inside a socket path — in an error that is about
+// something else — are not that.
+func TestIsNoTmuxServerGoesByTheWholeLine(t *testing.T) {
+	cases := []struct {
+		name   string
+		stderr string
+		want   bool
+	}{
+		{"no server running", "no server running on /tmp/tmux-501/vibe-remote\n", true},
+		{"no sessions", "no sessions\n", true},
+		{"no sessions, without the newline", "no sessions", true},
+		{"no sessions, after a warning line", "warning: something\n  no sessions  \n", true},
+		{"no server running, on a path that says no sessions", "no server running on /tmp/vr-no sessions-1/tmux-501/vibe-remote\n", true},
+		{"socket missing, on a path that says no sessions", "error connecting to /private/tmp/vr-no sessions-1/tmux-501/vibe-remote (No such file or directory)\n", false},
+		{"socket missing, on a path that says no server running", "error connecting to /tmp/no server running on x/tmux-501/vibe-remote (No such file or directory)\n", false},
+		{"permission denied, on a path that says no sessions", "error connecting to /tmp/no sessions/tmux-501/vibe-remote (Permission denied)\n", false},
+		{"a line that only ends in no sessions", "lost server: no sessions\n", false},
+		{"no sessions and more", "no sessions found in /tmp/x\n", false},
+		{"empty", "", false},
+	}
+	for _, c := range cases {
+		if got := isNoTmuxServer([]byte(c.stderr)); got != c.want {
+			t.Errorf("%s: isNoTmuxServer(%q) = %v, want %v", c.name, c.stderr, got, c.want)
+		}
+	}
+}
+
+// X12. The socket directory has "no sessions" in its name, a session is
+// running, and the socket file is deleted. tmux's error names the path; that
+// is not tmux saying that there are no sessions, and the worktree of the
+// session stays.
+func TestSocketPathSayingNoSessionsIsNotAnEmptySet(t *testing.T) {
+	requireTmux(t)
+	dir, err := os.MkdirTemp("/tmp", "vr-no sessions-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("TMUX_TMPDIR", dir)
+	// As in freshTmuxDir: registered after Setenv, so only the server this
+	// test started on its own socket is stopped.
+	t.Cleanup(func() {
+		_ = tmuxCmd("kill-server").Run()
+		_ = os.RemoveAll(dir)
+	})
+	repo := devflowRepo(t)
+	root := externalWorktree(t, repo, "feat")
+	m := NewManager(true, "sleep 120", false, "")
+	m.SetProjectStore(NewMemoryProjectStore())
+	id := terminalSessionIn(t, m, root)
+	st, err := m.WorktreeStatus(root, allowAny)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pid := ownTmuxServerPID(t)
+	sock := ownTmuxSocket(t, dir)
+	if !strings.Contains(sock, "no sessions") {
+		t.Fatalf("socket path %q does not have the words in it", sock)
+	}
+	t.Cleanup(func() { restoreOwnTmuxSocket(t, pid, sock) })
+	if err := os.Remove(sock); err != nil {
+		t.Fatal(err)
+	}
+
+	if live, ok := m.liveTmuxSessions(); ok {
+		t.Fatalf("liveTmuxSessions() = %v, true; want a failed reading: the server runs and its socket file is gone", live)
+	}
+	res, err := m.RemoveWorktree(request(st), allowAny)
+	failed := wantRemoveError(t, err)
+	if res.Removed || len(failed.EndedSessions) != 0 || !strings.Contains(failed.Message, "socket") {
+		t.Fatalf("result = %+v, failed = %+v; want a refusal that names the socket and ends nobody", res, failed)
+	}
+	if !pathExists(root) || branchOID(t, repo, "feat") == "" {
+		t.Fatal("the directory or the branch was removed")
+	}
+	if _, ok := m.Get(id); !ok {
+		t.Fatal("the session was dropped from the table")
+	}
+	restoreOwnTmuxSocket(t, pid, sock)
+	if !tmuxSessionAlive(id) {
+		t.Fatal("the tmux session did not survive")
+	}
+}
