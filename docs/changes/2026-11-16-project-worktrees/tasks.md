@@ -936,7 +936,7 @@
 - 依赖：T23（同一个文件）
 
 ### T25 返工（X13）：结束会话之后连分支一起复核
-- 状态：待办
+- 状态：完成
 - 来源：X13（验证结论 P5）。结束会话之后只比较 HEAD 的提交：期间切到同一提交的另一个分支或 detached，仍删目录和原分支
 - 文件：修改 `vibe-remoted/internal/session/projects.go`（结束会话后重读列表里的这一项，分支、detached 与否、HEAD 都与确认时一致才继续）；`docs/protocol.md`（409 的条件）、`CLAUDE.md`、`.devflow.yml`；测试 `gate_c_test.go`
 - 场景：R5.9、设计 4.6 / 6.2
@@ -1002,6 +1002,7 @@
 | T22 | 2026-11-20 04:31 | 6282332、本行所在的提交（记录） | 修复前 3 个新用例 FAIL（`err = <nil>, want *WorktreeRemoveError`）；修复后 `go test -count=3 … -run 'TestRemoveWorktreeStopsWhenASessionDidNotEnd\|TestRemoveWorktreeConfirmsSessionsAgainstTmux'` `ok`；`go test -race -count=1 -timeout 10m ./internal/session ./internal/server` 两行 `ok`；`.devflow.yml` 第 15 条原样执行 exit 0；变异核对（去掉读失败 / 还在两个判断）3 个用例都 FAIL |
 | T23 | 2026-11-20 04:43 | 44c049d、本行之后的记录提交 | 修复前 `TestSessionWhoseProcessIsInAnOddlyNamedDirectoryIsStillRead`（10 个子用例）和 `TestSessionCreatedInAnOddlyNamedDirectoryIsStillRead` 全部 FAIL（换行：`liveTmuxSessions() = map[], true`；制表符：字段错位 `name:wrap … sourceWorkdir:normal`）；修复后连同 `TestTmuxReadFailsWhenARecordDoesNotParse`、`TestParseTmux*` `-count=2` `ok`；`go test -race -count=1 -timeout 15m ./internal/session ./internal/server` 两行 `ok`（292 s、64 s）；`.devflow.yml` 第 15 条原样执行 exit 0；变异核对两种：解析失败改成跳过 → 4 个用例 FAIL；标记改回固定的制表符 → 目录名用例 FAIL |
 | T21 | 2026-11-20 04:55 | 本行所在的提交 | 修复前 `TestUndoLeavesAWorktreeSomeoneElseAddedAtTheSamePath` 3 个子用例 FAIL（`their file: "" … no such file or directory; a failed create deleted someone else's work`）、`TestUndoAfterWorktreeAddFailedOnItsOwn/file_in_the_directory_and_branch_checked_out_elsewhere` FAIL（`branch fix-login is at ""`）；修复后 `-run 'TestUndo\|TestCreate\|TestWorktreeAddKilled\|TestGitNeverGetsShortBranchName'` `ok`；`go test -race -count=1 -timeout 15m ./internal/session ./internal/server` 两行 `ok`（296 s、63 s）；`.devflow.yml` 第 18 条原样执行 exit 0；变异核对：去掉 `c.added` → 4 个子用例 FAIL，去掉分支被检出的判断 → 2 个子用例 FAIL |
+| T25 | 2026-11-20 05:07 | 本行所在的提交 | 修复前 `TestRemoveBranchSwitchedWhileEndingSessions` 2 个子用例 FAIL（`err = <nil>, want *WorktreeChangedError`）；修复后 `-run TestRemove` `ok`；`go test -race -count=1 -timeout 15m ./internal/session` `ok`（301 s）、`./internal/server` `ok`（61 s，其中 `TestWorktreeRemoveEndpoint/changed_after_sessions_ended` 的触发点从 daemon 的 `rev-parse HEAD` 改成结束会话后的那次 `worktree list`，断言没动）；`.devflow.yml` 第 15 条原样执行 exit 0；变异核对：复核里去掉分支和 detached → 2 个新子用例 FAIL，去掉 HEAD → 原有的 `TestRemoveHeadMovedWhileEndingSessions` 和上面那个 server 用例 FAIL |
 
 更正：T5 实际完成于 2026-11-19 12:39，T6a 13:11，T6b 14:04（以提交时间为准）。此后各行的时间用 `date '+%F %H:%M'` 取。
 

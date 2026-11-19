@@ -827,17 +827,25 @@ func (m *Manager) RemoveWorktree(req protocol.WorktreeRemoveRequest, allow Allow
 		m.testAfterSessionsEnded()
 	}
 	// The sessions were still running when the state was read, and they are
-	// the likeliest thing to have committed since. On a detached worktree such
-	// a commit would be on no branch and go unnoticed with the directory.
-	headNow, out, err := headAgain(wt.Path, req.Head)
-	if err != nil {
-		return none, &WorktreeRemoveError{EndedSessions: ended, Message: "could not read HEAD again: " + gitOutput(out, err)}
+	// the likeliest thing to have changed it since: a commit (on a detached
+	// worktree it would be on no branch and go unnoticed with the directory),
+	// or a checkout of another branch — which can leave HEAD at the very commit
+	// that was confirmed. So the worktree's entry in git's list is read again,
+	// and both its commit and what it is on (the branch, or no branch) must
+	// still be what the confirmation showed.
+	again, j, err := listedWorktree(home, path)
+	if errors.Is(err, ErrWorktreeNotFound) {
+		return none, &WorktreeRemoveError{EndedSessions: ended, Message: "git no longer lists this worktree after its sessions were ended; nothing more was removed"}
 	}
-	if headNow != req.Head {
-		cur, listed, err := current()
-		if err != nil || !listed {
-			return none, &WorktreeRemoveError{EndedSessions: ended, Message: "HEAD moved while the sessions were being ended, and the worktree could not be read again"}
+	if err != nil {
+		return none, &WorktreeRemoveError{EndedSessions: ended, Message: "could not read the worktree again after its sessions were ended: " + firstLine(err)}
+	}
+	if now := again[j]; now.Head != req.Head || now.Branch != wt.Branch || now.Detached != wt.Detached {
+		cur, err := m.worktreeState(home, now, false)
+		if err != nil {
+			return none, &WorktreeRemoveError{EndedSessions: ended, Message: "the worktree changed while the sessions were being ended, and its state could not be read again: " + firstLine(err)}
 		}
+		cur.Sessions = m.sessionsIn(path)
 		return none, changed(cur)
 	}
 	if m.testBeforeWorktreeRemove != nil {
@@ -878,23 +886,6 @@ func (m *Manager) RemoveWorktree(req protocol.WorktreeRemoveRequest, allow Allow
 		_ = os.Remove(container) // stays unless empty
 	}
 	return res, nil
-}
-
-// headAgain re-reads HEAD of the worktree at dir, to compare with the head the
-// user confirmed. A worktree confirmed with no commit yet (the null object
-// name) that still has none reads as confirmed.
-func headAgain(dir, confirmed string) (head string, out []byte, err error) {
-	if !isZeroOID(confirmed) {
-		out, err = gitAtTimeout(dir, "rev-parse", "HEAD")
-		return strings.TrimSpace(string(out)), out, err
-	}
-	// `rev-parse HEAD` cannot tell "no commit yet" from a failure; the quiet
-	// form exits with status 1 for it.
-	out, err = gitAtTimeout(dir, "rev-parse", "--verify", "--quiet", "HEAD^{commit}")
-	if code, exited := gitExitCode(err); exited && code == 1 {
-		return confirmed, nil, nil
-	}
-	return strings.TrimSpace(string(out)), out, err
 }
 
 // deleteWorktreeBranch deletes refs/heads/<branch> after its worktree is gone,

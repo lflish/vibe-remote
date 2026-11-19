@@ -1278,13 +1278,20 @@ func TestWorktreeRemoveEndpoint(t *testing.T) {
 		e := newWtEnv(t, 1)
 		req := removeRequest(e.status(e.root))
 		req.DeleteBranch = true
-		// A commit lands just before the daemon re-reads HEAD, as from a session
-		// that was still working while it was being ended.
+		// A commit lands just before the daemon reads the worktree again, as from
+		// a session that was still working while it was being ended.
 		flag := filepath.Join(t.TempDir(), "armed")
-		// The daemon runs "git -c core.fsmonitor=false -C <dir> rev-parse HEAD":
-		// $4 is the directory, $5 and $6 the subcommand and its argument.
-		gitWrapper(t, `if [ -e '`+flag+`' ] && [ "$5 $6" = "rev-parse HEAD" ]; then rm -f '`+flag+`'; "$REAL" -C "$4" -c user.email=t@example.com -c user.name=T commit -q --allow-empty -m late; fi`)
-		if err := os.WriteFile(flag, nil, 0o644); err != nil {
+		// The daemon runs "git -c core.fsmonitor=false -C <dir> worktree list …":
+		// $5 and $6 are the subcommand and its argument. A removal reads the list
+		// to find the worktree, again under the repository's lock, and a third
+		// time once the sessions are ended: that third reading is the one the
+		// commit has to come before. (The checks below fail if it comes anywhere
+		// else: before the sessions are ended, endedSessions is empty.)
+		gitWrapper(t, `if [ -e '`+flag+`' ] && [ "$5 $6" = "worktree list" ]; then
+  n=$(cat '`+flag+`'); n=$((n+1)); echo $n > '`+flag+`'
+  if [ $n -eq 3 ]; then rm -f '`+flag+`'; "$REAL" -C '`+e.root+`' -c user.email=t@example.com -c user.name=T commit -q --allow-empty -m late; fi
+fi`)
+		if err := os.WriteFile(flag, []byte("0\n"), 0o644); err != nil {
 			t.Fatal(err)
 		}
 		f := decodeFailure(t, e.remove(req), http.StatusConflict, "worktree_changed")

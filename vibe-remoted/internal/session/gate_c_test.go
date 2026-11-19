@@ -622,3 +622,61 @@ func TestUndoAfterWorktreeAddFailedOnItsOwn(t *testing.T) {
 		}
 	})
 }
+
+// X13. While the sessions are being ended, the worktree is switched to another
+// branch that is at the very same commit, or detached at it. The commit is
+// what was confirmed; the branch is not. Nothing more is removed: the request
+// was to remove the worktree of fix-login and delete that branch.
+func TestRemoveBranchSwitchedWhileEndingSessions(t *testing.T) {
+	for _, target := range []string{"other_branch_at_the_same_commit", "detached_at_the_same_commit"} {
+		t.Run(target, func(t *testing.T) {
+			f := newRemoveFixture(t, 1)
+			runGit(t, f.repo, "branch", "other", "fix-login")
+			st := f.status()
+			if st.Branch != "fix-login" || !st.Managed {
+				t.Fatalf("status = %+v, want the managed worktree of fix-login", st)
+			}
+			req := request(st)
+			req.Branch = st.Branch
+			req.DeleteBranch = true
+			f.m.testAfterSessionsEnded = func() {
+				if target == "detached_at_the_same_commit" {
+					runGit(t, f.root, "checkout", "--detach", st.Head)
+				} else {
+					runGit(t, f.root, "checkout", "other")
+				}
+				if got := runGit(t, f.root, "rev-parse", "HEAD"); got != st.Head {
+					t.Errorf("HEAD after the switch = %s, want it unchanged at %s", got, st.Head)
+				}
+			}
+			res, err := f.remove(req)
+			changed := wantChanged(t, err)
+			if res.Removed || res.BranchDeleted {
+				t.Fatalf("result = %+v, want nothing removed", res)
+			}
+			if !reflect.DeepEqual(changed.EndedSessions, f.ids) {
+				t.Fatalf("endedSessions = %v, want %v: the session was ended before the switch was noticed", changed.EndedSessions, f.ids)
+			}
+			cur := changed.Status
+			if target == "detached_at_the_same_commit" {
+				if cur.Branch != "" || !cur.Detached || cur.Head != st.Head {
+					t.Fatalf("status in the answer = %+v, want detached at %s", cur, st.Head)
+				}
+			} else if cur.Branch != "other" || cur.Detached || cur.Head != st.Head || cur.Managed {
+				t.Fatalf("status in the answer = %+v, want branch other at %s, not managed", cur, st.Head)
+			}
+			if len(cur.Sessions) != 0 {
+				t.Fatalf("status in the answer lists sessions %v; they were ended", cur.Sessions)
+			}
+			if !pathExists(f.root) || !worktreeListed(t, f.repo, f.root) {
+				t.Fatal("the worktree was removed although it is no longer on the confirmed branch")
+			}
+			if got := branchOID(t, f.repo, "fix-login"); got != st.Head {
+				t.Fatalf("branch fix-login is at %q, want it kept at %s", got, st.Head)
+			}
+			if got := branchOID(t, f.repo, "other"); got != st.Head {
+				t.Fatalf("branch other is at %q, want %s", got, st.Head)
+			}
+		})
+	}
+}
