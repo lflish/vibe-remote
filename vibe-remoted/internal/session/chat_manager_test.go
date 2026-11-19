@@ -1153,18 +1153,18 @@ func TestLoadChatsReclaimsHandoff(t *testing.T) {
 }
 
 func TestParseTmuxSessionLineReadsClaudeU(t *testing.T) {
-	got, ok := parseTmuxSessionLine("vibe-remote-s1\t/src\tname\tnormal\t\t\t\t\t0b6c0000-0000-4000-8000-000000000000")
-	if !ok || got.claudeU != "0b6c0000-0000-4000-8000-000000000000" || got.workdir != "/src" {
-		t.Fatalf("parsed %#v ok=%v", got, ok)
+	sessions, err := parseTmuxSessions(tmuxAnswer(tmuxFields("vibe-remote-s1", "/src", "name", "normal", "", "", "", "", "0b6c0000-0000-4000-8000-000000000000")), testMarks)
+	if got := sessions["s1"]; err != nil || got.claudeU != "0b6c0000-0000-4000-8000-000000000000" || got.workdir != "/src" {
+		t.Fatalf("parsed %#v err=%v", got, err)
 	}
-	got, ok = parseTmuxSessionLine("vibe-remote-s1\t/src\t\t\t\t\t\t\t")
-	if !ok || got.claudeU != "" {
-		t.Fatalf("empty column: %#v ok=%v", got, ok)
+	sessions, err = parseTmuxSessions(tmuxAnswer(tmuxFields("vibe-remote-s1", "/src")), testMarks)
+	if got, ok := sessions["s1"]; err != nil || !ok || got.claudeU != "" {
+		t.Fatalf("empty column: %#v err=%v", got, err)
 	}
-	if _, ok := parseTmuxSessionLine("vibe-remote-s1\t/src\t\t\t\t\t\t\tu\textra"); ok {
-		// Ten columns is neither the 9- nor the 13-column format (T2); it is
-		// rejected rather than silently folding the extra field into claudeU.
-		t.Fatal("accepted a 10-column line")
+	if sessions, err := parseTmuxSessions(tmuxAnswer([]string{"vibe-remote-s1", "/src", "", "", "", "", "", "", "u", "extra"}), testMarks); err == nil {
+		// Ten columns is not what list-sessions was asked for; it is rejected
+		// rather than silently folding the extra field into claudeU.
+		t.Fatalf("accepted a 10-column record: %#v", sessions)
 	}
 }
 

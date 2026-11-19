@@ -2,6 +2,8 @@
 package session
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -62,10 +64,11 @@ func tmuxSocketPath() string {
 //
 // tmux decides whether it is in UTF-8 mode from LC_ALL/LC_CTYPE/LANG. With none
 // set it assumes non-UTF-8 and rewrites every byte it deems unprintable as "_",
-// which corrupts two things at once: the tab delimiters in our `-F` format
-// strings (breaking list-sessions parsing) and the box-drawing/CJK bytes in the
-// attached PTY stream (breaking the byte-passthrough guarantee). launchd-started
-// daemons inherit no locale at all, so this is the default path in production.
+// which corrupts two things at once: the fields list-sessions answers with
+// (directory and session names outside ASCII, and any tab in them) and the
+// box-drawing/CJK bytes in the attached PTY stream (breaking the
+// byte-passthrough guarantee). launchd-started daemons inherit no locale at
+// all, so this is the default path in production.
 //
 // An inherited locale is left untouched — the user's own setting wins.
 //
@@ -113,49 +116,90 @@ type tmuxSessionInfo struct {
 	startDir string
 }
 
-func parseTmuxSessionLine(line string) (tmuxSessionInfo, bool) {
-	// Eight columns is the format before @vibe_remote_claude_u was added; nine
-	// adds it; thirteen adds project/home/created/session_created (design 5.1);
-	// fourteen adds the start directory (@vibe_remote_workdir).
-	parts := strings.SplitN(line, "\t", 14)
-	if (len(parts) != 8 && len(parts) != 9 && len(parts) != 13 && len(parts) != 14) || !strings.HasPrefix(parts[0], "vibe-remote-") || strings.TrimPrefix(parts[0], "vibe-remote-") == "" {
-		return tmuxSessionInfo{}, false
+// tmuxListColumns are the fields of one session in the answer to
+// `tmux list-sessions`, in the order tmuxSessionRecord reads them. Adding one
+// means adding it here and there.
+var tmuxListColumns = []string{
+	"#{session_name}", "#{pane_current_path}", "#{@vibe_remote_name}", "#{@vibe_remote_mode}",
+	"#{@vibe_remote_source_workdir}", "#{@vibe_remote_source_repo}", "#{@vibe_remote_worktree_root}",
+	"#{@vibe_remote_branch}", "#{@vibe_remote_claude_u}", "#{@vibe_remote_project}", "#{@vibe_remote_home}",
+	"#{@vibe_remote_created}", "#{session_created}", "#{@vibe_remote_workdir}",
+}
+
+// tmuxListMarks are the two pieces of text that give the answer to
+// `tmux list-sessions` its structure: sep stands between the fields of a
+// session and end closes its record (tmux adds a newline after it). Most of
+// the fields are directory names, and a directory name can hold any character
+// a fixed separator could be made of — a tab, a newline — so the marks are
+// made up anew for every reading, from random bytes: no name that already
+// exists can contain them.
+type tmuxListMarks struct{ sep, end string }
+
+func newTmuxListMarks() tmuxListMarks {
+	var b [8]byte
+	nonce := ""
+	if _, err := rand.Read(b[:]); err == nil {
+		nonce = hex.EncodeToString(b[:])
+	} else {
+		nonce = strconv.FormatInt(time.Now().UnixNano(), 16)
 	}
-	info := tmuxSessionInfo{}
-	if len(parts) > 1 {
-		info.workdir = parts[1]
+	return tmuxListMarks{sep: "<vr-" + nonce + ">", end: "<vr-" + nonce + "-end>"}
+}
+
+// format is the -F argument of list-sessions for these marks.
+func (k tmuxListMarks) format() string {
+	return strings.Join(tmuxListColumns, k.sep) + k.end
+}
+
+// tmuxSessionRecord reads the fields of one session, in tmuxListColumns order.
+// The caller has made sure there are exactly that many.
+func tmuxSessionRecord(f []string) tmuxSessionInfo {
+	return tmuxSessionInfo{
+		workdir:        f[1],
+		name:           strings.TrimSpace(f[2]),
+		mode:           f[3],
+		sourceWorkdir:  f[4],
+		sourceRepo:     f[5],
+		worktreeRoot:   f[6],
+		branch:         f[7],
+		claudeU:        strings.TrimSpace(f[8]),
+		project:        f[9],
+		home:           f[10],
+		created:        strings.TrimSpace(f[11]),
+		sessionCreated: strings.TrimSpace(f[12]),
+		startDir:       f[13],
 	}
-	if len(parts) > 2 {
-		info.name = strings.TrimSpace(parts[2])
+}
+
+// parseTmuxSessions reads the answer to `tmux list-sessions -F k.format()`.
+// It is all or nothing: every record must be closed by the end mark and have
+// exactly the fields that were asked for, and one that does not makes the
+// whole answer unreadable — a list with a session missing from it, or with a
+// session's fields shifted into each other, would be taken for the truth by
+// everything that reconciles against it. A session whose name is not
+// vibe-remote-<id> is not one of ours (someone started it on this socket by
+// hand); it is read like any other and left out.
+func parseTmuxSessions(out string, k tmuxListMarks) (map[string]tmuxSessionInfo, error) {
+	sessions := make(map[string]tmuxSessionInfo)
+	closer := k.end + "\n"
+	for n := 1; out != ""; n++ {
+		i := strings.Index(out, closer)
+		if i < 0 {
+			return nil, fmt.Errorf("record %d is not complete", n)
+		}
+		fields := strings.Split(out[:i], k.sep)
+		out = out[i+len(closer):]
+		if len(fields) != len(tmuxListColumns) {
+			return nil, fmt.Errorf("record %d has %d fields, not the %d that were asked for", n, len(fields), len(tmuxListColumns))
+		}
+		id, ours := strings.CutPrefix(fields[0], "vibe-remote-")
+		if !ours || id == "" {
+			log.Printf("tmux list-sessions: %q is not a vibe-remote session, left out", fields[0])
+			continue
+		}
+		sessions[id] = tmuxSessionRecord(fields)
 	}
-	if len(parts) > 3 {
-		info.mode = parts[3]
-	}
-	if len(parts) > 4 {
-		info.sourceWorkdir = parts[4]
-	}
-	if len(parts) > 5 {
-		info.sourceRepo = parts[5]
-	}
-	if len(parts) > 6 {
-		info.worktreeRoot = parts[6]
-	}
-	if len(parts) > 7 {
-		info.branch = parts[7]
-	}
-	if len(parts) > 8 {
-		info.claudeU = strings.TrimSpace(parts[8])
-	}
-	if len(parts) > 12 {
-		info.project = parts[9]
-		info.home = parts[10]
-		info.created = strings.TrimSpace(parts[11])
-		info.sessionCreated = strings.TrimSpace(parts[12])
-	}
-	if len(parts) > 13 {
-		info.startDir = parts[13]
-	}
-	return info, true
+	return sessions, nil
 }
 
 // isNoTmuxServer reports whether tmux's stderr means "there is nothing running"
@@ -193,7 +237,9 @@ func tmuxSocketGone() bool {
 // session. The rule, whenever it is not certain that there is no tmux session,
 // is that the reading failed:
 //
-//  1. tmux answered: its answer is the set.
+//  1. tmux answered: its answer is the set — all of it or none of it. An
+//     answer with a record that cannot be read (parseTmuxSessions) is a failed
+//     reading, not the set of the records that could.
 //  2. tmux said that no server is running (isNoTmuxServer): no sessions.
 //  3. tmux ran and failed, or there is no tmux program to run; the socket file
 //     does not exist; and haveTerminal is false: no sessions. No server was
@@ -207,7 +253,8 @@ func tmuxSocketGone() bool {
 //     that is not found while the socket file is there or haveTerminal is
 //     true: "not on the daemon's PATH" is not "no tmux on this machine".
 func readTmuxSessions(haveTerminal func() bool) (sessions map[string]tmuxSessionInfo, ok bool, why string) {
-	out, err := tmuxCmd("list-sessions", "-F", "#{session_name}\t#{pane_current_path}\t#{@vibe_remote_name}\t#{@vibe_remote_mode}\t#{@vibe_remote_source_workdir}\t#{@vibe_remote_source_repo}\t#{@vibe_remote_worktree_root}\t#{@vibe_remote_branch}\t#{@vibe_remote_claude_u}\t#{@vibe_remote_project}\t#{@vibe_remote_home}\t#{@vibe_remote_created}\t#{session_created}\t#{@vibe_remote_workdir}").Output()
+	marks := newTmuxListMarks()
+	out, err := tmuxCmd("list-sessions", "-F", marks.format()).Output()
 	if err != nil {
 		// tmux exits non-zero both when there genuinely are no sessions and when
 		// the query could not run at all. Treating every non-zero exit as an
@@ -250,18 +297,12 @@ func readTmuxSessions(haveTerminal func() bool) (sessions map[string]tmuxSession
 		}
 		return nil, false, why
 	}
-	sessions = make(map[string]tmuxSessionInfo)
-	for _, line := range strings.Split(strings.TrimRight(string(out), "\r\n"), "\n") {
-		info, ok := parseTmuxSessionLine(line)
-		if !ok {
-			// A line that doesn't parse means tmux and vibe-remote disagree on
-			// the format contract — the session would silently vanish from the
-			// list, so make it loud rather than skipping in silence.
-			log.Printf("tmux list-sessions unparsed line: %q", line)
-			continue
-		}
-		id := strings.TrimPrefix(strings.SplitN(line, "\t", 2)[0], "vibe-remote-")
-		sessions[id] = info
+	sessions, err = parseTmuxSessions(string(out), marks)
+	if err != nil {
+		// Not "no sessions", and not the sessions that did read either.
+		why = fmt.Sprintf("tmux answered, but its answer could not be read as a list of sessions (%v), so nothing is known about the sessions that are running. Try again; if it stays like this, run `tmux -L %s list-sessions` on that machine to see what tmux says", err, tmuxSocket)
+		log.Printf("tmux list-sessions: %s", why)
+		return nil, false, why
 	}
 	return sessions, true, ""
 }

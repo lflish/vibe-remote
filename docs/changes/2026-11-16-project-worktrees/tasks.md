@@ -913,7 +913,7 @@
 - 依赖：无
 
 ### T23 返工（X11）：tmux 列表有一行解析不了就算读取失败；当前目录挪到最后一列
-- 状态：待办
+- 状态：完成
 - 来源：X11（验证结论 P3，严重）。会话当前目录的名字里有换行或制表符时，`list-sessions` 的行解析不了或列错位，读取仍算成功，删除 worktree 漏掉活着的会话
 - 文件：修改 `vibe-remoted/internal/session/runner.go`（格式串把 `pane_current_path` 挪到最后一列；`parseTmuxSessionLine` 列数必须等于格式串的列数、只对最后一列用 `SplitN`；`readTmuxSessions` 任何一行解析不了整次读取失败并写明原因）、相关测试里按列写的行；`CLAUDE.md`（列数与解析那一句）；测试 `gate_c_test.go`
 - 场景：R5.6（H19：归属按创建时算）
@@ -923,6 +923,7 @@
   - `TestParseTmuxSessionLine…`：列数不对的行被拒；最后一列里的制表符原样保留
 - 完成定义：`cd vibe-remoted && TMUX_TMPDIR=$(mktemp -d) go test -race -count=1 -timeout 10m ./internal/session -run 'TestTmux|TestParseTmux|TestTab|TestRemove|TestReconcile|TestSessionsOf'` 一行 `ok`
 - 依赖：无
+- 实现时的调整（d69、decisions #141、#142）：没有采用「按行解析、把 `pane_current_path` 挪到最后一列」。字段和记录改用每次读取现造的随机标记分隔，制表符和换行在哪一列都能原样读回，所以换行的反例不再是「删除被拒」而是「归属不变、删除时把它结束」；「有一条读不了就整次失败」的规则保留，用 tmux 多答一行的用例守着。实际的用例名：`TestSessionWhoseProcessIsInAnOddlyNamedDirectoryIsStillRead`（5 种目录名 × 重启与否）、`TestSessionCreatedInAnOddlyNamedDirectoryIsStillRead`、`TestTmuxReadFailsWhenARecordDoesNotParse`，以及改写的 `TestParseTmuxSessionLine*` 5 个
 
 ### T24 返工（X12）：`isNoTmuxServer` 只认 tmux 的那两句话
 - 状态：待办
@@ -1090,7 +1091,10 @@ spec「推迟到以后」的条目：
 - `Manager.Delete` 不看 `tmux kill-session` 有没有成功（`Runner.Kill` 只记一条警告）：socket 文件被删而 server 还活着时删除终端会话，会话从表里去掉、tmux 里还在运行；表因此变空，之后的对账又会把「socket 不存在」当成没有会话。原有写法，这次没有改；可以让删除在连不上 tmux 时返回失败。（关口 C 第 1 轮返工补充，d68：删除 worktree 的途中已经改成结束一个确认一个；单独删会话仍是原样，因为它是 tmux 没了之后清掉表里会话的出路。）
 - 500 的 `message` 里「对 tmux server 进程发 SIGUSR1」没有给出 pid：daemon 不记 server 的 pid，用户要自己找（`pgrep -u $USER tmux` 可能列出不止一个 server）。
 
-测试阶段后半（探索式检查，真实指针和键盘事件；test-report.md 的 X1–X8）之后留下的：
+关口 C 第 1 轮返工（X9–X15）之后留下的：
+
+- 路径以空白结尾（末尾是空格、制表符或换行）的目录：`ResolveHome`、`HasSubmoduleCheckouts` 等处对 git 输出的路径用 `strings.TrimSpace`，末尾的空白被一并去掉，这样的目录里的会话算不出归属（留空，每轮重试都失败），这样的 worktree 查不了状态。原有写法，X11 的用例 `trailing_tab` 只覆盖了「进程 cd 进这样的目录」（能读对），没有覆盖「在这样的目录里创建」。改成只去掉 git 输出末尾的一个换行即可。
+
 
 - **X1，交给用户决定（c7）**：新建或重命名任何一个终端会话时，本窗口里所有打开着的后台终端会话都会亮起「有新消息」。原因：daemon 用 `tmux set-option` 写会话的名字和归属，tmux 每执行一次 `set-option` 就重绘这台 server 上的全部客户端，重绘的字节到达后台会话，而点亮规则是「后台会话有任何字节到达即亮」。基准 `6d88e45` 上同样（每次新建 7 次 `set-option`，现在 11 次；`index.ts` 里判定的那几行逐字相同），但本需求让同时开多个会话成了常态。要去掉它得改点亮规则（例如屏幕内容没变就不亮），或换一种不触发重绘的存法（tmux 会话环境变量 `set-environment -t` 不重绘，但 `list-sessions` 的格式串读不到它）；两种都改动已确认的取舍，没有自己定。
 - X4：删除 worktree 时，其中在本窗口开着的终端会话会在状态栏报一次「会话已退出（代码 -1）」（daemon 先结束会话，exit 帧先于删除的应答到达）；删除是用户自己确认的，这句提示多余，还会盖在切过去的另一个会话上。可以在删除请求在途时不显示这些会话的退出提示。

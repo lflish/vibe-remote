@@ -2,6 +2,7 @@ package session
 
 import (
 	"os"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"syscall"
@@ -196,4 +197,233 @@ func TestRemoveWorktreeConfirmsSessionsAgainstTmux(t *testing.T) {
 			t.Fatalf("session %s was dropped from the table while tmux still listed it", ids[0])
 		}
 	})
+}
+
+// weirdDirNames are directory names with the characters a fixed separator in
+// tmux's answer could be made of.
+var weirdDirNames = map[string]string{
+	"newline":         "line\nwrap",
+	"tab":             "tab\twrap",
+	"trailing_tab":    "tab\t",
+	"tab_then_slash":  "a\t",
+	"newline_and_tab": "x\n\ty",
+}
+
+// X11. A session whose process is in a directory with a newline or a tab in
+// its name (the terminal ran cd) is still read from tmux, with every field
+// where it belongs: it is counted in the worktree it was created in — by this
+// daemon and by one that has restarted — and a removal ends it.
+func TestSessionWhoseProcessIsInAnOddlyNamedDirectoryIsStillRead(t *testing.T) {
+	requireTmux(t)
+	for label, name := range weirdDirNames {
+		for _, restarted := range []bool{false, true} {
+			sub := label + "/same_daemon"
+			if restarted {
+				sub = label + "/restarted_daemon"
+			}
+			t.Run(sub, func(t *testing.T) {
+				freshTmuxDir(t)
+				repo := devflowRepo(t)
+				root := externalWorktree(t, repo, "feat")
+				store := NewMemoryProjectStore()
+				m := NewManager(true, "sleep 120", false, "")
+				m.SetProjectStore(store)
+				id := terminalSessionIn(t, m, root)
+				weird := filepath.Join(t.TempDir(), name)
+				if label == "tab_then_slash" {
+					// The part after the tab starts with a slash: it looks like a
+					// path of its own.
+					weird = filepath.Join(weird, "b")
+				}
+				if err := os.MkdirAll(weird, 0o700); err != nil {
+					t.Fatal(err)
+				}
+				weird, err := filepath.EvalSymlinks(weird)
+				if err != nil {
+					t.Fatal(err)
+				}
+				// As if the process in the terminal had changed directory.
+				if out, err := tmuxCmd("respawn-pane", "-k", "-t", "vibe-remote-"+id+":0.0", "-c", weird, "sleep", "120").CombinedOutput(); err != nil {
+					t.Fatalf("respawn-pane: %v: %s", err, out)
+				}
+				deadline := time.Now().Add(5 * time.Second)
+				for {
+					out, _ := tmuxCmd("display-message", "-p", "-t", "vibe-remote-"+id, "#{pane_current_path}").Output()
+					if strings.TrimSuffix(string(out), "\n") == weird {
+						break
+					}
+					if time.Now().After(deadline) {
+						t.Fatalf("the pane did not move to %q (tmux says %q)", weird, out)
+					}
+					time.Sleep(20 * time.Millisecond)
+				}
+				if restarted {
+					m = NewManager(true, "sleep 120", false, "")
+					m.SetProjectStore(store)
+				}
+
+				live, ok := m.liveTmuxSessions()
+				if !ok || len(live) != 1 {
+					t.Fatalf("liveTmuxSessions() = %v, %v; want the one session, read", live, ok)
+				}
+				if got := live[id]; got.workdir != weird || got.startDir != root || got.home != root || got.project != repo {
+					t.Fatalf("session read as %+v; want workdir %q, start directory and home %q, project %q", got, weird, root, repo)
+				}
+				st, err := m.WorktreeStatus(root, allowAny)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if !reflect.DeepEqual(st.Sessions, []string{id}) {
+					t.Fatalf("status.sessions = %v, want [%s]: the session was created in this worktree", st.Sessions, id)
+				}
+				// A request that does not name the session is refused, and nothing
+				// is touched.
+				unaware := request(st)
+				unaware.Sessions = []string{}
+				_, err = m.RemoveWorktree(unaware, allowAny)
+				if changed := wantChanged(t, err); !reflect.DeepEqual(changed.Status.Sessions, []string{id}) || len(changed.EndedSessions) != 0 {
+					t.Fatalf("changed = %+v, want the session %s listed and nobody ended", changed, id)
+				}
+				if !pathExists(root) || !tmuxSessionAlive(id) {
+					t.Fatal("the directory or the session is gone after a refused removal")
+				}
+				res, err := m.RemoveWorktree(request(st), allowAny)
+				if err != nil {
+					t.Fatalf("RemoveWorktree: %v", err)
+				}
+				if !res.Removed || !reflect.DeepEqual(res.EndedSessions, []string{id}) || pathExists(root) || tmuxSessionAlive(id) {
+					t.Fatalf("result = %+v, directory there = %v, session alive = %v; want the worktree removed and its session ended",
+						res, pathExists(root), tmuxSessionAlive(id))
+				}
+			})
+		}
+	}
+}
+
+// X11. The same for a session created in such a directory: its start
+// directory, its attribution and — in a worktree whose own path has the
+// character — the worktree root all carry it.
+func TestSessionCreatedInAnOddlyNamedDirectoryIsStillRead(t *testing.T) {
+	requireTmux(t)
+	// A newline in a worktree's own path is X14's (the worktree list); see
+	// TestListWorktreesPathWithNewline.
+	for _, label := range []string{"tab"} {
+		name := weirdDirNames[label]
+		t.Run(label, func(t *testing.T) {
+			freshTmuxDir(t)
+			repo := devflowRepo(t)
+			runGit(t, repo, "worktree", "add", "-b", "feat", filepath.Join(containerOf(repo), name))
+			root := listedWorktreeOnBranch(t, repo, "feat")
+			if !strings.Contains(root, "\t") {
+				t.Fatalf("worktree root %q has no tab in it", root)
+			}
+			store := NewMemoryProjectStore()
+			m1 := NewManager(true, "sleep 120", false, "")
+			m1.SetProjectStore(store)
+			inRoot := terminalSessionIn(t, m1, root)
+			time.Sleep(5 * time.Millisecond)
+			elsewhere := terminalSessionIn(t, m1, repo)
+
+			// A daemon that has restarted knows the sessions from tmux alone.
+			m2 := NewManager(true, "sleep 120", false, "")
+			m2.SetProjectStore(store)
+			live, ok := m2.liveTmuxSessions()
+			if !ok || len(live) != 2 {
+				t.Fatalf("liveTmuxSessions() = %v, %v; want both sessions, read", live, ok)
+			}
+			if got := live[inRoot]; got.startDir != root || got.home != root || got.project != repo || got.workdir != root {
+				t.Fatalf("session in the worktree read as %+v; want start directory, home and workdir %q, project %q", got, root, repo)
+			}
+			if got := live[elsewhere]; got.startDir != repo || got.home != repo {
+				t.Fatalf("session in the main directory read as %+v; want start directory and home %q", got, repo)
+			}
+			st, err := m2.WorktreeStatus(root, allowAny)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !reflect.DeepEqual(st.Sessions, []string{inRoot}) {
+				t.Fatalf("status.sessions = %v, want [%s]", st.Sessions, inRoot)
+			}
+			res, err := m2.RemoveWorktree(request(st), allowAny)
+			if err != nil {
+				t.Fatalf("RemoveWorktree: %v", err)
+			}
+			if !res.Removed || !reflect.DeepEqual(res.EndedSessions, []string{inRoot}) || pathExists(root) || tmuxSessionAlive(inRoot) {
+				t.Fatalf("result = %+v; want the worktree removed and its session ended", res)
+			}
+			if !tmuxSessionAlive(elsewhere) {
+				t.Fatal("the session in the main directory was ended too")
+			}
+		})
+	}
+}
+
+// X11. An answer of tmux with something in it that cannot be read is not the
+// set of the sessions that could be: the reading failed, the session table is
+// kept as it is, and no worktree is removed on the strength of it.
+func TestTmuxReadFailsWhenARecordDoesNotParse(t *testing.T) {
+	real := requireTmux(t)
+	freshTmuxDir(t)
+	// A tmux that answers list-sessions with one more line than was asked for,
+	// while the file garble exists; everything else is the real tmux.
+	bin := t.TempDir()
+	garble := filepath.Join(bin, "garble")
+	script := "#!/bin/sh\nfor a in \"$@\"; do\n  if [ \"$a\" = list-sessions ] && [ -e '" + garble + "' ]; then\n" +
+		"    '" + real + "' \"$@\" || exit $?\n    printf 'vibe-remote-ghost\\t/somewhere\\n'\n    exit 0\n  fi\ndone\nexec '" + real + "' \"$@\"\n"
+	if err := os.WriteFile(filepath.Join(bin, "tmux"), []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	repo := devflowRepo(t)
+	root := externalWorktree(t, repo, "feat")
+	m := NewManager(true, "sleep 120", false, "")
+	m.SetProjectStore(NewMemoryProjectStore())
+	id := terminalSessionIn(t, m, root)
+	st, err := m.WorktreeStatus(root, allowAny)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(st.Sessions, []string{id}) {
+		t.Fatalf("sessions = %v, want [%s]", st.Sessions, id)
+	}
+
+	if err := os.WriteFile(garble, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if live, ok := m.liveTmuxSessions(); ok {
+		t.Fatalf("liveTmuxSessions() = %v, true; want a failed reading: part of the answer could not be read", live)
+	}
+	if why := m.tmuxFailure(); !strings.Contains(why, "could not be read as a list of sessions") {
+		t.Fatalf("tmuxFailure() = %q, want it to say that the answer could not be read", why)
+	}
+	if list := m.List(); len(list) != 1 || list[0].ID != id {
+		t.Fatalf("List() = %+v, want the session %s kept", list, id)
+	}
+	// The same for a daemon that has restarted: it does not take the readable
+	// part of the answer for the sessions there are.
+	restarted := NewManager(true, "sleep 120", false, "")
+	restarted.SetProjectStore(NewMemoryProjectStore())
+	for name, mgr := range map[string]*Manager{"same daemon": m, "restarted daemon": restarted} {
+		req := request(st)
+		_, err = mgr.RemoveWorktree(req, allowAny)
+		failed := wantRemoveError(t, err)
+		if len(failed.EndedSessions) != 0 || !strings.Contains(failed.Message, "could not be read as a list of sessions") || !strings.Contains(failed.Message, "nothing was removed") {
+			t.Fatalf("%s: failed = %+v, want a refusal that says tmux's answer could not be read and ends nobody", name, failed)
+		}
+		if !pathExists(root) || branchOID(t, repo, "feat") == "" || !tmuxSessionAlive(id) {
+			t.Fatalf("%s: the directory, the branch or the session is gone after a refused removal", name)
+		}
+	}
+
+	if err := os.Remove(garble); err != nil {
+		t.Fatal(err)
+	}
+	res, err := restarted.RemoveWorktree(request(st), allowAny)
+	if err != nil {
+		t.Fatalf("RemoveWorktree once tmux answers properly: %v", err)
+	}
+	if !res.Removed || !reflect.DeepEqual(res.EndedSessions, []string{id}) || tmuxSessionAlive(id) {
+		t.Fatalf("result = %+v; want the worktree removed and the session %s ended", res, id)
+	}
 }

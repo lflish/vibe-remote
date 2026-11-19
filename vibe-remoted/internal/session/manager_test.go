@@ -278,10 +278,14 @@ func TestRunnerMetadataNormalizesEmptyMode(t *testing.T) {
 }
 
 func TestParseTmuxSessionLinePreservesMetadataFields(t *testing.T) {
-	line := "vibe-remote-s1\t/src\tname\tworktree\t/source\t/repo\t/repo-worktrees/s1\tvibe/s1"
-	got, ok := parseTmuxSessionLine(line)
-	if !ok {
-		t.Fatal("parseTmuxSessionLine rejected valid line")
+	out := tmuxAnswer(tmuxFields("vibe-remote-s1", "/src", "name", "worktree", "/source", "/repo", "/repo-worktrees/s1", "vibe/s1"))
+	sessions, err := parseTmuxSessions(out, testMarks)
+	if err != nil {
+		t.Fatalf("parseTmuxSessions rejected a valid answer: %v", err)
+	}
+	got, ok := sessions["s1"]
+	if !ok || len(sessions) != 1 {
+		t.Fatalf("sessions = %#v, want s1 alone", sessions)
 	}
 	if got.workdir != "/src" || got.name != "name" || got.mode != "worktree" || got.sourceWorkdir != "/source" || got.sourceRepo != "/repo" || got.worktreeRoot != "/repo-worktrees/s1" || got.branch != "vibe/s1" {
 		t.Fatalf("parsed fields = %#v", got)
@@ -289,21 +293,27 @@ func TestParseTmuxSessionLinePreservesMetadataFields(t *testing.T) {
 }
 
 func TestParseTmuxSessionLineKeepsEmptyTrailingFields(t *testing.T) {
-	_, ok := parseTmuxSessionLine("vibe-remote-s1\t/src\t\t\t\t\t\t")
-	if !ok {
-		t.Fatal("parseTmuxSessionLine rejected line with empty name")
+	sessions, err := parseTmuxSessions(tmuxAnswer(tmuxFields("vibe-remote-s1", "/src")), testMarks)
+	if _, ok := sessions["s1"]; err != nil || !ok {
+		t.Fatalf("parseTmuxSessions rejected a session with empty fields: %v, %#v", err, sessions)
 	}
 }
 
+// A session named "vibe-remote-" has no id: it is not one of vibe-remote's,
+// and is left out without making the answer unreadable.
 func TestParseTmuxSessionLineRejectsEmptySessionID(t *testing.T) {
-	if _, ok := parseTmuxSessionLine("vibe-remote-\t/src\t\t\t\t\t\t"); ok {
-		t.Fatal("parser accepted empty session ID")
+	sessions, err := parseTmuxSessions(tmuxAnswer(tmuxFields("vibe-remote-", "/src"), tmuxFields("vibe-remote-s2", "/src")), testMarks)
+	if err != nil {
+		t.Fatalf("err = %v, want the answer read", err)
+	}
+	if _, ok := sessions[""]; ok || len(sessions) != 1 {
+		t.Fatalf("sessions = %#v, want s2 alone: the parser accepted an empty session ID", sessions)
 	}
 }
 
 func TestParseTmuxSessionLineRejectsMalformedFieldCount(t *testing.T) {
-	if _, ok := parseTmuxSessionLine("vibe-remote-s1\t/src\t"); ok {
-		t.Fatal("parser accepted malformed field count")
+	if sessions, err := parseTmuxSessions(tmuxAnswer([]string{"vibe-remote-s1", "/src", ""}), testMarks); err == nil {
+		t.Fatalf("parser accepted malformed field count: %#v", sessions)
 	}
 }
 
