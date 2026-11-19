@@ -208,6 +208,16 @@ export function createNameSection(opts: { plan(name: string): Promise<WorktreePl
   let generation = 0;
   let timer: ReturnType<typeof setTimeout> | undefined;
 
+  // What to say for a refusal (`ok: false`). A reason this desktop has a text
+  // for gets it; any other — a newer daemon may refuse for reasons unknown
+  // here — is shown in the daemon's own words, or as a general sentence when
+  // it sent none. Never empty: a refusal must not look like "nothing wrong".
+  function refusalText(plan: WorktreePlan, name: string): string {
+    return worktreeErrorText(plan.error ?? '', { branch: name, path: plan.path, conflict: plan.conflict })
+      || plan.message
+      || t('wt.error.refused');
+  }
+
   function render() {
     const name = input.value;
     let text = '';
@@ -217,13 +227,19 @@ export function createNameSection(opts: { plan(name: string): Promise<WorktreePl
     } else {
       const problem = validateWorktreeName(name);
       if (problem) {
-        text = problem === 'empty' && !touched ? '' : t(`wt.name.${problem}`);
+        if (problem !== 'empty' || touched) {
+          text = t(`wt.name.${problem}`);
+        } else if (answer && answer.name === '' && !answer.plan.ok && !isNameReason(answer.plan.error)) {
+          // Nothing typed yet, and the daemon already refuses for a reason
+          // that is not about the (empty) name: say it now.
+          text = refusalText(answer.plan, name);
+        }
       } else if (failure !== null) {
         text = failure;
       } else if (answer && answer.name === name) {
         const plan = answer.plan;
         if (plan.ok) path = plan.path ?? '';
-        else text = worktreeErrorText(plan.error ?? '', { branch: name, path: plan.path, conflict: plan.conflict }) ?? plan.message ?? plan.error ?? '';
+        else text = refusalText(plan, name);
       }
     }
     input.disabled = blocked !== null;
@@ -309,6 +325,11 @@ export function createNameSection(opts: { plan(name: string): Promise<WorktreePl
 }
 
 let nameFieldSeq = 0;
+
+// The refusals that are about the name asked for (an empty or missing reason
+// counts: that is what the nameless first question gets).
+const NAME_REASONS = new Set(['invalid_worktree_name', 'worktree_branch_exists', 'worktree_path_exists', 'worktree_path_not_allowed']);
+const isNameReason = (code: string | undefined) => !code || NAME_REASONS.has(code);
 
 function uiCard(value: SessionUI, title: string, description: string, tag?: string): HTMLButtonElement {
   const button = document.createElement('button');

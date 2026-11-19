@@ -149,6 +149,65 @@ test('plan_failure_is_shown_and_not_ready', async () => {
   s.remove();
 });
 
+// The daemon may refuse for a reason this desktop has no text for (a newer
+// daemon; e.g. a repository with no commit to start from). It is a refusal
+// all the same: the daemon's own words are shown, and the name is not usable.
+test('unknown_plan_reason_is_shown_not_taken_for_success', async () => {
+  const refuse = (over) => (name) => Promise.resolve({ ok: false, error: 'source_has_no_commits', message: 'the repository has no commits yet', project: '/r/devflow', projectName: 'devflow', ...over });
+  // Asked about a typed name.
+  const s = mountSection(refuse({}));
+  typeInto(s.input, 'fix-login');
+  await afterDebounce();
+  assert.equal(s.error.textContent, 'the repository has no commits yet');
+  assert.equal(s.error.hidden, false);
+  assert.equal(s.section.ready(), false);
+  assert.equal(await s.section.confirm(), null, 'confirming does not go through either');
+  assert.equal(tid('wt-target-path', s.section.el).textContent, '—');
+  assert.equal(s.input.disabled, false, 'the field stays usable: the reason may not be about the directory');
+  s.remove();
+
+  // No message with it: a general sentence, never an empty error or the bare code.
+  const bare = mountSection(refuse({ message: undefined }));
+  typeInto(bare.input, 'fix-login');
+  await afterDebounce();
+  assert.equal(bare.error.textContent, t('wt.error.refused'));
+  assert.notEqual(t('wt.error.refused'), 'wt.error.refused', 'the text exists');
+  assert.equal(bare.section.ready(), false);
+  bare.remove();
+  // Not even a reason code.
+  const empty = mountSection(() => Promise.resolve({ ok: false }));
+  typeInto(empty.input, 'fix-login');
+  await afterDebounce();
+  assert.equal(empty.error.textContent, t('wt.error.refused'));
+  assert.equal(empty.section.ready(), false);
+  empty.remove();
+
+  // Already known when the dialog opens (the first question carries no name):
+  // shown at once, before anything is typed.
+  const early = mountSection(refuse({}));
+  early.section.refresh();
+  await settle();
+  assert.equal(early.error.textContent, 'the repository has no commits yet');
+  assert.equal(early.error.hidden, false);
+  assert.equal(early.section.ready(), false);
+  // The usual answer to the nameless first question stays silent.
+  early.remove();
+  const quiet = mountSection(async (name) => planFor(name));
+  quiet.section.refresh();
+  await settle();
+  assert.equal(quiet.error.textContent, '', 'an untouched empty name shows no error');
+  quiet.remove();
+
+  // In the picker the confirm button stays off.
+  const p = await openPicker('worktree', { plan: (workdir, name) => ({ ok: false, error: 'source_has_no_commits', message: 'the repository has no commits yet' }) });
+  assert.equal(tid('wt-name-error', p.root).textContent, 'the repository has no commits yet');
+  typeInto(tid('wt-name-input', p.root), 'fix-login');
+  await afterDebounce();
+  assert.equal(tid('wt-name-error', p.root).textContent, 'the repository has no commits yet');
+  assert.equal(p.confirm.disabled, true);
+  await closePicker(p);
+});
+
 test('picker_worktree_mode_name_segment', async () => {
   const p = await openPicker('worktree', { plan: pickerPlan });
   for (const id of ['wt-name-input', 'wt-name-error', 'wt-base-info', 'wt-target-path']) {
