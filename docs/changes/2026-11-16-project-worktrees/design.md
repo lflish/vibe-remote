@@ -983,6 +983,7 @@ CSS 变量：保留现有变量名（`styles.css` 里到处在用），换成 M1
 - 关口 C 第 1 轮返工（验证者 codex，评审对象 91e0fab；X9–X15，decisions #140 起）：
   - X10（decisions #140、d68）：6.2 第 8 步「逐个结束会话」改为逐个结束**并确认**。终端会话：`kill-session` 之后按 4.9 的四条规则再读一次 tmux（读失败再试，共 3 次、间隔 100 ms），读不到或它还在都算没结束，此时返回 500 `worktree_remove_failed`，`message` 写明是哪个会话、为什么，目录和分支不动，`endedSessions` 只含已确认结束的；没结束的会话留在会话表里，PTY 不动。对话会话和不用 tmux 的终端会话照旧（进程是 daemon 自己的子进程，结束时已经等到它退出）。单独删会话不改。
   - X11（decisions d69、#141、#142）：4.9 / 5.1 读 tmux 的格式。`list-sessions -F` 的 14 个字段之间和每条记录末尾改用每次读取现造的随机标记，不用制表符和换行；解析要么全对、要么整次读取失败（四条规则的第 ① 条收窄为「tmux 回答了并且每条记录都读得了」）；只接受 14 个字段。会话当前所在的目录、创建时的目录、归属、worktree 根的名字里有制表符或换行时，读到的内容和归属不变。
+  - X9（decisions #143、d70）：6.1 的撤销。`worktreeClaim` 多一个 `added`：本次自己的 `git worktree add` 正常结束，或被时限 / 信号杀掉（`gitStopped`）才为真；为假时（add 还没运行，或自己报错退出）该路径上登记的任何 worktree 都不认领、不执行 `worktree remove`，目录只做不递归的 `os.Remove`。分支在有留下来的 worktree 检出它时不删。`CreatedWorktree.Undo`（创建成功之后会话没起来）恒为真，行为不变。post-checkout 钩子失败的 worktree 因此会留下（d70）。
 
 ### 升级步骤
 

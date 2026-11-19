@@ -434,9 +434,11 @@ type CreatedWorktree struct {
 }
 
 // Test seams: after the pre-checks and before anything is claimed; after the
-// directory and branch are claimed and before git worktree add.
+// directory is claimed and before the branch is; after the directory and
+// branch are claimed and before git worktree add.
 var (
 	testAfterCreateChecks func()
+	testBeforeBranchClaim func()
 	testBeforeWorktreeAdd func()
 )
 
@@ -743,6 +745,9 @@ func CreateWorktree(spec WorktreeSpec) (CreatedWorktree, error) {
 		return CreatedWorktree{}, withCleanup(fmt.Errorf("create worktree directory: %w", err), undoErr)
 	}
 	claim.dir = true
+	if testBeforeBranchClaim != nil {
+		testBeforeBranchClaim()
+	}
 	// An empty old value makes update-ref create the branch only if it does not
 	// exist. The message is what `git worktree add -b` writes to the reflog.
 	if _, err := gitAtTimeout(w, "update-ref", "-m", "branch: Created from HEAD", "refs/heads/"+claim.branch, claim.oid, ""); err != nil {
@@ -757,8 +762,12 @@ func CreateWorktree(spec WorktreeSpec) (CreatedWorktree, error) {
 		testBeforeWorktreeAdd()
 	}
 	if _, err := gitWithin(gitTreeTimeout, w, "worktree", "add", "--detach", claim.root, claim.oid); err != nil {
+		// git that gives up on its own takes back what it had made of the
+		// worktree; only one that was stopped half-way leaves it behind.
+		claim.added = gitStopped(err)
 		return CreatedWorktree{}, withCleanup(fmt.Errorf("create worktree: %w", err), claim.undo())
 	}
+	claim.added = true
 	// Not "checkout: moving from …": git resolves @{-1} from reflog entries of
 	// that form, and a worktree made with -b has no previous branch (V22).
 	if _, err := gitAtTimeout(claim.root, "symbolic-ref", "-m", "worktree: attached to refs/heads/"+claim.branch, "HEAD", "refs/heads/"+claim.branch); err != nil {
@@ -825,9 +834,27 @@ func withCleanup(err, cleanupErr error) error {
 // worktreeClaim is what one CreateWorktree call has taken so far. undo gives
 // back exactly that, deciding each step from the repository's state rather
 // than from git's messages.
+//
+// added says whether a worktree of this claim can be in root at all: its own
+// `git worktree add` finished, or was stopped half-way (its time limit, a
+// signal) and so left what it had registered. While it is false — the add has
+// not run yet, or gave up on its own, which is when git takes back what it
+// made — any worktree git lists in root was put there by someone else, and is
+// never removed, whatever branch or commit it is on.
 type worktreeClaim struct {
-	w, root, branch, oid, container string
-	dir, branchRef, newContainer    bool
+	w, root, branch, oid, container     string
+	dir, branchRef, newContainer, added bool
+}
+
+// gitStopped reports whether a failed git call was stopped from outside — it
+// ran into its time limit, or a signal ended it — rather than exiting with an
+// error of its own.
+func gitStopped(err error) bool {
+	if errors.Is(err, context.DeadlineExceeded) {
+		return true
+	}
+	var exit *exec.ExitError
+	return errors.As(err, &exit) && exit.ExitCode() < 0
 }
 
 // sameDir reports whether a and b name one directory: the same string, or the
@@ -876,41 +903,60 @@ func (c worktreeClaim) undo() error {
 	// under it reads as "no commits yet", and the next commit made in it would
 	// start a history of its own.
 	worktreeLeft := false
+	// branchHolder: a worktree that is on this claim's branch and stays.
+	branchHolder := ""
 	if c.dir {
+		// foreign: git lists a worktree in c.root that is not this claim's.
+		// reported: why the directory stays has been said already.
+		foreign, reported := false, false
 		wts, err := ListWorktrees(c.w)
 		listed := err == nil
 		if !listed {
 			problems = append(problems, fmt.Sprintf("registration of %s not checked: %v", c.root, err))
 		}
-		removeDir := true
 		for _, wt := range wts {
 			// By identity, not spelling: until the create has read the worktree
 			// back, c.root is the path as put together here, and git may have
 			// registered another spelling of it (a resolved symlink).
 			if !sameDir(wt.Path, c.root) {
+				if wt.Branch == c.branch {
+					branchHolder = wt.Path
+				}
 				continue
 			}
 			// Ours is on the branch claimed here, or still detached at the
-			// commit (between worktree add and symbolic-ref). Anything else was
-			// put into the claimed, still empty directory by someone else (V20).
-			if wt.Branch == c.branch || (wt.Detached && wt.Head == c.oid) {
+			// commit (between worktree add and symbolic-ref) — and only if this
+			// claim's own add can have left a worktree at all (c.added).
+			// Anything else was put into the claimed, still empty directory by
+			// someone else (V20): on another branch, or, before this claim's add
+			// ran or when it failed on its own, on any branch or commit, this
+			// claim's included.
+			if c.added && (wt.Branch == c.branch || (wt.Detached && wt.Head == c.oid)) {
 				// --force twice: git locks a worktree itself while it is adding
 				// it ("initializing") and unlocks it when it is done, so one whose
 				// `git worktree add` was killed half-way stays locked, and a single
 				// --force does not remove a locked worktree. That lock is this
 				// create's own as much as the directory is.
 				if _, err := gitWithin(gitTreeTimeout, c.w, "worktree", "remove", "--force", "--force", wt.Path); err != nil {
-					worktreeLeft = true
+					worktreeLeft, reported = true, true
 					problems = append(problems, fmt.Sprintf("worktree %s not removed: %v", c.root, err))
 				}
-			} else {
-				removeDir = false
-				problems = append(problems, fmt.Sprintf("directory %s not removed: it now holds another worktree", c.root))
+				continue
+			}
+			foreign = true
+			if wt.Branch == c.branch {
+				branchHolder = wt.Path
 			}
 		}
-		if removeDir {
-			// Not recursive: a directory that still has content is kept.
-			if err := os.Remove(c.root); err != nil && !os.IsNotExist(err) {
+		// Not recursive: a directory that still has content — a worktree that
+		// is not this claim's, anyone's files — is kept.
+		if err := os.Remove(c.root); err != nil && !os.IsNotExist(err) && !reported {
+			switch {
+			case foreign && c.added:
+				problems = append(problems, fmt.Sprintf("directory %s not removed: it now holds another worktree", c.root))
+			case foreign:
+				problems = append(problems, fmt.Sprintf("directory %s not removed: git lists a worktree in it, and this create, whose own git worktree add did not go through, cannot take it for its own", c.root))
+			default:
 				problems = append(problems, fmt.Sprintf("directory %s not removed: %v", c.root, err))
 			}
 		}
@@ -922,9 +968,15 @@ func (c worktreeClaim) undo() error {
 			}
 		}
 	}
-	if c.branchRef && worktreeLeft {
+	switch {
+	case c.branchRef && worktreeLeft:
 		problems = append(problems, fmt.Sprintf("branch %s kept: the worktree in %s could not be confirmed removed, so the directory and the branch are both still there", c.branch, c.root))
-	} else if c.branchRef {
+	case c.branchRef && branchHolder != "":
+		// Someone checked the new branch out in a worktree of their own. A
+		// branch deleted under a worktree leaves that worktree with "no commits
+		// yet".
+		problems = append(problems, fmt.Sprintf("branch %s kept: the worktree in %s is on it", c.branch, branchHolder))
+	case c.branchRef:
 		// Deletes only while the branch still points at the commit it was created at.
 		if _, err := gitAtTimeout(c.w, "update-ref", "-d", "refs/heads/"+c.branch, c.oid); err != nil {
 			if exists, serr := branchRefExists(c.w, c.branch); serr != nil {
@@ -957,6 +1009,7 @@ func (c CreatedWorktree) Undo() error {
 	return worktreeClaim{
 		w: c.Meta.SourceRepo, root: c.Meta.WorktreeRoot, branch: c.Meta.Branch, oid: c.OID,
 		container: filepath.Dir(c.Meta.WorktreeRoot), dir: true, branchRef: true, newContainer: c.NewContainer,
+		added: true,
 	}.undo()
 }
 

@@ -890,7 +890,7 @@
 机器关口 C 第 1 轮（验证者 codex，评审对象 `91e0fab`）不通过，拦下 7 个问题，测试阶段的问题编号接着编为 X9–X15（验证结论的 P1–P7）；另有「放松检查」一节的两条备注。每个任务：先把验证者的反例写成回归测试并确认失败，再修；修完做一次变异核对（去掉这次加的关键判断，回归测试要失败；临时改动不提交）；单独提交。做的先后：T22 → T23 → T21 → T25 → T24 → T26 → T27 → T28。所有命令带独立的 `TMUX_TMPDIR`，`go test` 带 `-timeout`。
 
 ### T21 返工（X9）：创建失败的撤销不动别人在同一路径上建的 worktree
-- 状态：待办
+- 状态：完成
 - 来源：X9（验证结论 P1，严重）。自己的 `git worktree add` 因目录已被占而失败时，撤销把另一个进程在同一路径上建的 worktree（同分支，或 detached 在同一提交）认成本次建的，用 `worktree remove --force --force` 删掉，对方的文件和分支一起丢
 - 文件：修改 `vibe-remoted/internal/session/worktree.go`（`CreateWorktree` 区分「`git worktree add` 自己报错退出」和「被时限杀掉」；`worktreeClaim.undo`）；测试 `vibe-remoted/internal/session/gate_c_test.go`（新建，本轮返工的回归测试都放这里）；`CLAUDE.md`、`.devflow.yml`（「撤销只清本次建的」那几句）
 - 场景：R3.5（不覆盖已有目录）、R3.8（创建失败不留东西，也不动别人的）
@@ -898,6 +898,7 @@
   - `TestUndoLeavesAWorktreeSomeoneElseAddedAtTheSamePath/same_branch`、`/detached_at_the_same_commit`：验证者的两个反例；创建失败，对方的 `precious.txt`、worktree 登记、对方检出的分支原样保留，错误的 message 写明目录留着
   - `TestUndoAfterWorktreeAddFailedOnItsOwn`：`worktree add` 自己失败（没有别人插手）时目录和本次的分支都清掉；本次建的分支被别的 worktree 检出时不删
   - `TestUndoAfterWorktreeAddWasKilled`：`worktree add` 到时限被杀后留下的（带 `locked initializing`）那一项仍按原规则认领并删除（现有 `TestCreateTimeoutLeavesNothing…` 一类用例继续通过）
+  - 实现时的调整（decisions #143、d70）：「被时限杀掉」的用例就是现有的 `TestWorktreeAddKilledDuringCheckoutIsUndone`（不另写同样的一个，加进第 18 条规则的 check）；`TestUndoLeavesAWorktreeSomeoneElseAddedAtTheSamePath` 多一个子用例 `added_before_the_branch_was_claimed`（对方在本次占到目录之后、建分支之前带着同名分支建 worktree，修复前同样被删）；`TestUndoAfterWorktreeAddFailedOnItsOwn` 的两个子用例是 `file_in_the_directory_and_branch_checked_out_elsewhere` 和 `post_checkout_hook_fails`；「自己失败、没有别人插手时清干净」由现有的 `TestCreateNamedWorktreeGitFailureLeavesNothing`、`TestGitNeverGetsShortBranchName` 守着
 - 完成定义：`cd vibe-remoted && TMUX_TMPDIR=$(mktemp -d) go test -race -count=1 -timeout 10m ./internal/session -run 'TestUndo|TestCreate'` 一行 `ok`；`.devflow.yml` 第 18 条规则的 check 加上新用例后原样执行退出 0
 - 依赖：无
 
@@ -999,6 +1000,8 @@
 | T19 | 2026-11-19 19:48 | 38eaa24（样式、测试、侧边栏的三处小补充）、9329773（CLAUDE.md 那一句、`--keep` 打印调试端口）、726ef12（并排截图）、本行所在的提交（记录） | 实现之前新写的形态用例第一个 FAIL（`main_area_is_card`：`#main-area` 没有 `border-radius`），侧边栏三处补充的用例实现之前也都 FAIL（`sessionProject is not a function`、`worktree-empty-text` 不存在）；实现之后 `test:theme-tokens` 15 个用例、`test:sidebar` 23 个、`test:tree` 20 个 `ok`。在 9329773 上：`npm run typecheck`、`npm test` 退出 0（含未改动的 `test-dialog-layout`、`test-picker-layout`、`test-slash-menu-layout`、`test-terminal-layout`、`test-chat-view`、`test-chat-markdown`、`test-chat-diff`、`test-chat-render-guard`）；`TMUX_TMPDIR=… gui-smoke.mjs` 40 行 PASS、0 FAIL，`TMUX_TMPDIR=… gui-chat-smoke.mjs` 29 行 PASS、0 FAIL；`^test(`=26、`check(`=24；两份冒烟脚本的断言没有改动（`gui-chat-smoke.mjs` 相对 merge-base 无 diff，`gui-smoke.mjs` 本任务只多一行 `--keep` 的打印）；`git diff --stat eabd0ce HEAD -- desktop/src/renderer/chat/ desktop/src/renderer/index.html` 无输出；`CLAUDE.md` 的 diff 只有第 12 行。开发中途的冒烟：第一次 `gui-smoke.mjs` 两处侧边栏检查 FAIL（worktree 行的分支图标放在名字外面，长分支名被截断时行内还剩 19px）→ 把图标并进名字自己的盒子后通过；之后一次 `three-level sidebar layout — timeout (10000ms): state dots on the two background sessions`，原样重跑通过，此后 3 次都通过（decisions #78）。真实 Electron 临时实例截图 `.devflow-tmp/build-shots/t19-*.png`（中英文、1200×780 和 800×500），与效果页并排的三张在 `evidence/m1-chat.png`、`m1-terminal.png`、`m1-delete-worktree.png` |
 | T20 | 2026-11-19 20:03 | 6b8b79a（三个规则文件）、本行所在的提交（记录） | `.devflow.yml` 新增的 7 条 `check` 命令逐条原样执行（各带自己的 `TMUX_TMPDIR=$(mktemp -d)` 和 `-timeout 10m`），7 条都以退出码 0 结束、每个包一行 `ok`（第 2 条里 `./internal/server` 是 `[no tests to run]`：两个用例都在 session 包，命令照 design 7.1 的原文）；`grep -c "rule:" .devflow.yml` 从 11 变成 18；`grep -n "当前为 3\|worktree 模式查所选的源目录本身…" CLAUDE.md` 无输出；`git show --stat 6b8b79a` 只有这 3 个文件。按改好的 protocol-sync 第 5 步核对：`attach.worktreeName`、7 个类型的字段名和可缺省性（Go 的 json 标签对 TS 的属性）、5 个端点的方法和路径（`routes()` 对 `rest.ts` 对文档的端点表）、4 个错误码的 fatal、`Version` / `PROTOCOL_VERSION` = 4、`CHAT_MIN_PROTO` = 3，三处无差异。CLAUDE.md 里写到的函数名、选项名、常量（`@vibe_remote_created` 等三个 tmux 选项、13 列、`repoLocks`、`startingDirs` / `removingRoots`、`precheckWorktree`、`projectsGitConcurrency = 8`、`gitTimeout = 5s`、`LC_ALL=C`、删除请求的超时公式、`ChatTrust`）逐个在代码里核对过。在 6b8b79a 上：`TMUX_TMPDIR=… make check` exit 0（Go 5 个包 `ok`，`npm test` 全过）；`TMUX_TMPDIR=… gui-smoke.mjs` 40 行 PASS、0 FAIL；`TMUX_TMPDIR=… gui-chat-smoke.mjs` 29 行 PASS、0 FAIL，三样都是第一次运行就通过 |
 | T22 | 2026-11-20 04:31 | 6282332、本行所在的提交（记录） | 修复前 3 个新用例 FAIL（`err = <nil>, want *WorktreeRemoveError`）；修复后 `go test -count=3 … -run 'TestRemoveWorktreeStopsWhenASessionDidNotEnd\|TestRemoveWorktreeConfirmsSessionsAgainstTmux'` `ok`；`go test -race -count=1 -timeout 10m ./internal/session ./internal/server` 两行 `ok`；`.devflow.yml` 第 15 条原样执行 exit 0；变异核对（去掉读失败 / 还在两个判断）3 个用例都 FAIL |
+| T23 | 2026-11-20 04:43 | 44c049d、本行之后的记录提交 | 修复前 `TestSessionWhoseProcessIsInAnOddlyNamedDirectoryIsStillRead`（10 个子用例）和 `TestSessionCreatedInAnOddlyNamedDirectoryIsStillRead` 全部 FAIL（换行：`liveTmuxSessions() = map[], true`；制表符：字段错位 `name:wrap … sourceWorkdir:normal`）；修复后连同 `TestTmuxReadFailsWhenARecordDoesNotParse`、`TestParseTmux*` `-count=2` `ok`；`go test -race -count=1 -timeout 15m ./internal/session ./internal/server` 两行 `ok`（292 s、64 s）；`.devflow.yml` 第 15 条原样执行 exit 0；变异核对两种：解析失败改成跳过 → 4 个用例 FAIL；标记改回固定的制表符 → 目录名用例 FAIL |
+| T21 | 2026-11-20 04:55 | 本行所在的提交 | 修复前 `TestUndoLeavesAWorktreeSomeoneElseAddedAtTheSamePath` 3 个子用例 FAIL（`their file: "" … no such file or directory; a failed create deleted someone else's work`）、`TestUndoAfterWorktreeAddFailedOnItsOwn/file_in_the_directory_and_branch_checked_out_elsewhere` FAIL（`branch fix-login is at ""`）；修复后 `-run 'TestUndo\|TestCreate\|TestWorktreeAddKilled\|TestGitNeverGetsShortBranchName'` `ok`；`go test -race -count=1 -timeout 15m ./internal/session ./internal/server` 两行 `ok`（296 s、63 s）；`.devflow.yml` 第 18 条原样执行 exit 0；变异核对：去掉 `c.added` → 4 个子用例 FAIL，去掉分支被检出的判断 → 2 个子用例 FAIL |
 
 更正：T5 实际完成于 2026-11-19 12:39，T6a 13:11，T6b 14:04（以提交时间为准）。此后各行的时间用 `date '+%F %H:%M'` 取。
 
@@ -1093,6 +1096,7 @@ spec「推迟到以后」的条目：
 
 关口 C 第 1 轮返工（X9–X15）之后留下的：
 
+- post-checkout 钩子失败的仓库里新建命名 worktree：git 把 `worktree add` 报成失败而 worktree 已经建完，撤销分不清它是不是别人刚建的，所以留在原处（detached，分支删掉，`message` 写明；d70）。每次重试都要先把留下的那个删掉。可以在运行 add 之前记下 `<git 公共目录>/worktrees/` 里已有的登记，只认领这次新出现的那一个。
 - 路径以空白结尾（末尾是空格、制表符或换行）的目录：`ResolveHome`、`HasSubmoduleCheckouts` 等处对 git 输出的路径用 `strings.TrimSpace`，末尾的空白被一并去掉，这样的目录里的会话算不出归属（留空，每轮重试都失败），这样的 worktree 查不了状态。原有写法，X11 的用例 `trailing_tab` 只覆盖了「进程 cd 进这样的目录」（能读对），没有覆盖「在这样的目录里创建」。改成只去掉 git 输出末尾的一个换行即可。
 
 

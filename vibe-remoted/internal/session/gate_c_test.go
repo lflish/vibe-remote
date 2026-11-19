@@ -1,7 +1,9 @@
 package session
 
 import (
+	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"reflect"
 	"strings"
@@ -426,4 +428,197 @@ func TestTmuxReadFailsWhenARecordDoesNotParse(t *testing.T) {
 	if !res.Removed || !reflect.DeepEqual(res.EndedSessions, []string{id}) || tmuxSessionAlive(id) {
 		t.Fatalf("result = %+v; want the worktree removed and the session %s ended", res, id)
 	}
+}
+
+// noWorktreeRemove fails the test if git was asked to remove a worktree.
+func noWorktreeRemove(t *testing.T, log string) {
+	t.Helper()
+	for _, c := range loggedGitCalls(t, log) {
+		if len(c) >= 2 && c[0] == "worktree" && c[1] == "remove" {
+			t.Fatalf("git %v ran against a worktree that is not this create's", c)
+		}
+	}
+}
+
+// X9. Between this create claiming the directory and the branch and its own
+// `git worktree add`, another process adds a worktree of its own at the same
+// path — on the very branch this create has just made, or detached at the very
+// commit. This create's add then fails, and its undo leaves that worktree
+// alone: their files, their registration, and the branch they are on.
+func TestUndoLeavesAWorktreeSomeoneElseAddedAtTheSamePath(t *testing.T) {
+	type check struct {
+		theirs     []string // git worktree add …, the path appended
+		theirHead  string   // what HEAD is in their worktree afterwards ("" = detached)
+		branchKept bool     // this create's branch is in use by them, so it stays
+	}
+	for name, c := range map[string]check{
+		"same_branch":                 {theirs: []string{"worktree", "add"}, theirHead: "refs/heads/fix-login", branchKept: true},
+		"detached_at_the_same_commit": {theirs: []string{"worktree", "add", "--detach"}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			repo := devflowRepo(t)
+			oid := runGit(t, repo, "rev-parse", "HEAD")
+			root := filepath.Join(containerOf(repo), "fix-login")
+			log := installArgLoggingGit(t)
+			testBeforeWorktreeAdd = func() {
+				args := append(append([]string{}, c.theirs...), root)
+				if c.theirHead != "" {
+					args = append(args, "fix-login")
+				} else {
+					args = append(args, "HEAD")
+				}
+				runGit(t, repo, args...)
+				if err := os.WriteFile(filepath.Join(root, "precious.txt"), []byte("someone else's work"), 0o600); err != nil {
+					t.Error(err)
+				}
+			}
+			t.Cleanup(func() { testBeforeWorktreeAdd = nil })
+
+			_, err := CreateWorktree(WorktreeSpec{Source: repo, SessionID: "s1", Name: "fix-login"})
+			if err == nil {
+				t.Fatal("the create succeeded although the directory had been taken")
+			}
+			if data, rerr := os.ReadFile(filepath.Join(root, "precious.txt")); rerr != nil || string(data) != "someone else's work" {
+				t.Fatalf("their file: %q, %v; a failed create deleted someone else's work (create error: %v)", data, rerr, err)
+			}
+			if !worktreeListed(t, repo, root) {
+				t.Fatal("their worktree is no longer registered")
+			}
+			if got := runGit(t, root, "rev-parse", "HEAD"); got != oid {
+				t.Fatalf("HEAD in their worktree = %q, want %s", got, oid)
+			}
+			head, _ := exec.Command("git", "-C", root, "symbolic-ref", "-q", "HEAD").Output()
+			if got := strings.TrimSpace(string(head)); got != c.theirHead {
+				t.Fatalf("their worktree is on %q, want %q", got, c.theirHead)
+			}
+			if !strings.Contains(err.Error(), root) || !strings.Contains(err.Error(), "not removed") {
+				t.Fatalf("message %q should say that the directory was not removed", err)
+			}
+			if c.branchKept {
+				if got := branchOID(t, repo, "fix-login"); got != oid {
+					t.Fatalf("branch fix-login is at %q, want it kept at %s: their worktree is on it", got, oid)
+				}
+				if !strings.Contains(err.Error(), "branch fix-login kept") {
+					t.Fatalf("message %q should say that the branch was kept", err)
+				}
+			} else if branchOID(t, repo, "fix-login") != "" {
+				t.Fatal("this create's branch was left behind although no worktree is on it")
+			}
+			noWorktreeRemove(t, log)
+		})
+	}
+
+	// The same before this create has made its branch: they add the worktree
+	// with a branch of that name of their own.
+	t.Run("added_before_the_branch_was_claimed", func(t *testing.T) {
+		repo := devflowRepo(t)
+		commitFile(t, repo, "later") // their branch starts somewhere else
+		root := filepath.Join(containerOf(repo), "fix-login")
+		log := installArgLoggingGit(t)
+		var theirs string
+		testBeforeBranchClaim = func() {
+			runGit(t, repo, "worktree", "add", "-b", "fix-login", root, "HEAD~1")
+			theirs = runGit(t, root, "rev-parse", "HEAD")
+			if err := os.WriteFile(filepath.Join(root, "precious.txt"), []byte("someone else's work"), 0o600); err != nil {
+				t.Error(err)
+			}
+		}
+		t.Cleanup(func() { testBeforeBranchClaim = nil })
+		_, err := CreateWorktree(WorktreeSpec{Source: repo, SessionID: "s1", Name: "fix-login"})
+		if !errors.Is(err, ErrWorktreeBranchExists) {
+			t.Fatalf("err = %v, want ErrWorktreeBranchExists", err)
+		}
+		if data, rerr := os.ReadFile(filepath.Join(root, "precious.txt")); rerr != nil || string(data) != "someone else's work" {
+			t.Fatalf("their file: %q, %v; a failed create deleted someone else's work (create error: %v)", data, rerr, err)
+		}
+		if !worktreeListed(t, repo, root) || branchOID(t, repo, "fix-login") != theirs {
+			t.Fatalf("their worktree or their branch was disturbed (branch at %q, want %s)", branchOID(t, repo, "fix-login"), theirs)
+		}
+		noWorktreeRemove(t, log)
+	})
+}
+
+// X9. `git worktree add` that gives up on its own has taken back what it had
+// made, so whatever is in the directory afterwards is not removed with git;
+// the directory goes only if it is empty, and the branch only if no worktree
+// is on it.
+func TestUndoAfterWorktreeAddFailedOnItsOwn(t *testing.T) {
+	// Someone put a file into the claimed directory and checked the new branch
+	// out in a worktree elsewhere.
+	t.Run("file_in_the_directory_and_branch_checked_out_elsewhere", func(t *testing.T) {
+		repo := devflowRepo(t)
+		oid := runGit(t, repo, "rev-parse", "HEAD")
+		root := filepath.Join(containerOf(repo), "fix-login")
+		elsewhere := filepath.Join(t.TempDir(), "elsewhere")
+		testBeforeWorktreeAdd = func() {
+			if err := os.WriteFile(filepath.Join(root, "note.txt"), []byte("a note"), 0o600); err != nil {
+				t.Error(err)
+			}
+			runGit(t, repo, "worktree", "add", elsewhere, "fix-login")
+		}
+		t.Cleanup(func() { testBeforeWorktreeAdd = nil })
+		_, err := CreateWorktree(WorktreeSpec{Source: repo, SessionID: "s1", Name: "fix-login"})
+		if err == nil {
+			t.Fatal("the create succeeded into a directory that was not empty")
+		}
+		if data, _ := os.ReadFile(filepath.Join(root, "note.txt")); string(data) != "a note" {
+			t.Fatalf("the file in the directory is gone (create error: %v)", err)
+		}
+		if got := branchOID(t, repo, "fix-login"); got != oid {
+			t.Fatalf("branch fix-login is at %q, want it kept at %s: a worktree is on it", got, oid)
+		}
+		if got := runGit(t, elsewhere, "symbolic-ref", "HEAD"); got != "refs/heads/fix-login" {
+			t.Fatalf("the worktree elsewhere is on %q", got)
+		}
+		for _, want := range []string{root, "not removed", "branch fix-login kept", elsewhere} {
+			if !strings.Contains(err.Error(), want) {
+				t.Fatalf("message %q does not say %q", err, want)
+			}
+		}
+	})
+
+	// git reports a failing post-checkout hook as a failed `git worktree add`,
+	// although the worktree is complete by then. This create cannot tell that
+	// worktree from one someone else added in the meantime, so it is left where
+	// it is (detached; the branch, which nothing is on, goes) and the error
+	// says so.
+	t.Run("post_checkout_hook_fails", func(t *testing.T) {
+		repo := devflowRepo(t)
+		oid := runGit(t, repo, "rev-parse", "HEAD")
+		hook := filepath.Join(repo, ".git", "hooks", "post-checkout")
+		if err := os.MkdirAll(filepath.Dir(hook), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(hook, []byte("#!/bin/sh\necho 'the hook says no' >&2\nexit 2\n"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		root := filepath.Join(containerOf(repo), "fix-login")
+		log := installArgLoggingGit(t)
+		_, err := CreateWorktree(WorktreeSpec{Source: repo, SessionID: "s1", Name: "fix-login"})
+		if err == nil {
+			t.Fatal("the create succeeded although git worktree add reported a failure")
+		}
+		noWorktreeRemove(t, log)
+		if branchOID(t, repo, "fix-login") != "" {
+			t.Fatal("the branch was left behind although no worktree is on it")
+		}
+		if !strings.Contains(err.Error(), "the hook says no") {
+			t.Fatalf("message %q does not carry git's own words", err)
+		}
+		if !worktreeListed(t, repo, root) {
+			// A git that takes the worktree back itself when the hook fails.
+			if pathExists(root) {
+				t.Fatalf("git lists no worktree at %s, but the directory is still there", root)
+			}
+			return
+		}
+		if got := runGit(t, root, "rev-parse", "HEAD"); got != oid {
+			t.Fatalf("HEAD in the worktree that was left = %q, want %s", got, oid)
+		}
+		for _, want := range []string{root, "not removed"} {
+			if !strings.Contains(err.Error(), want) {
+				t.Fatalf("message %q does not say %q", err, want)
+			}
+		}
+	})
 }
