@@ -74,6 +74,9 @@ func (s *Server) wsCreateChat(ctx context.Context, conn *websocket.Conn, frame p
 	if frame.NewSessionID != "" && !session.ValidSessionID(frame.NewSessionID) {
 		return fail(ctx, conn, protocol.ErrCodeInvalidID, "invalid newSessionId")
 	}
+	if err := checkWorktreeName(frame, mode); err != nil {
+		return fail(ctx, conn, protocol.ErrCodeInvalidWorktreeName, "create session: "+err.Error())
+	}
 	parsed, reason := chat.ParseClaudeCmd(s.cfg.ResolveClaudeCmd(frame.Flags))
 	if reason == "" {
 		reason = s.chatAvailability(ctx, false).Reason

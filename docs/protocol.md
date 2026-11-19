@@ -392,7 +392,7 @@ v3 对话会话的条目另带（终端条目一律省略）：
 | GET | `/api/v1/sessions` | 会话列表（条目字段同 `sessions` 帧，含 v3 对话字段） |
 | GET | `/api/v1/projects` | （v4）本机项目树：`{proto, projects:[{id, name, git, error?, errorMessage?, worktrees:[{path, branch?, head, detached?, main?, managed?, sessions:[id]}], sessions:[id]}]}`。数组字段恒为 `[]`。旧 daemon 没有此路径，返回 404（客户端据此回退到按会话分组） |
 | POST | `/api/v1/projects/remove` | （v4）从项目清单移除一个项目，body `{"id":"..."}`，不碰磁盘。成功 204；清单里没有该 id → 404 `{"error":"project_not_found"}`；仍有会话归属它 → 409 `{"error":"project_has_sessions"}` |
-| GET | `/api/v1/worktrees/plan?workdir=<目录>&name=<名字>` | （v4）新建 worktree 之前的只读预检，不创建任何东西；检查的内容和先后与 attach 带 `worktreeName` 新建时在动手之前做的相同。见下文「`/api/v1/worktrees/plan`」 |
+| GET | `/api/v1/worktrees/plan?workdir=<目录>&name=<名字>` | （v4）新建 worktree 之前的只读预检，不创建任何东西；检查的内容与 attach 带 `worktreeName` 新建时在动手之前做的相同。先后只有一处不同：attach 最先查名字里不需要 git 就能判断的规则（此时 daemon 还没有运行任何 git，不通过就是 `invalid_worktree_name`），预检先看 `workdir`（名字不合法时也要给出 `project` 和 `base`）；所以目录和名字都有问题时，两边报的可能不是同一个原因。见下文「`/api/v1/worktrees/plan`」 |
 | GET | `/api/v1/worktrees/status?path=<worktree 根目录>` | （v4）一个 worktree 现在的状态：删除确认框上的数字从这里来。见下文「`/api/v1/worktrees/status` 和 `/api/v1/worktrees/remove`」 |
 | POST | `/api/v1/worktrees/remove` | （v4）删除一个 worktree（不能是主目录），按请求里的同意项决定是否丢弃文件、是否连分支一起删。删除前 daemon 重查状态，与确认时不一致返回 409。见下文 |
 | DELETE | `/api/v1/sessions/{id}` | 关闭指定会话，成功 204，不存在 404。对话会话：停进程、删记录，claude 的 JSONL 对话记录保留。v4 起不再碰 worktree：worktree 模式会话的目录和分支都保留，不再返回 409 `worktree_preserved`（删除 worktree 是单独的操作）。v3 及更早的 daemon 会在工作区干净时一并删除 worktree 和分支，有未提交改动时保留并返回 409 `{"error":"worktree_preserved","message","worktreeRoot","branch"}`（会话本身已关闭），客户端仍要处理这种响应 |

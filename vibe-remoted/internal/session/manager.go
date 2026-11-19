@@ -442,6 +442,12 @@ func (m *Manager) lockRepo(repo string) (unlock func()) {
 // caller calls started once the session is registered, or after
 // undoOwnWorktree.
 func (m *Manager) createOwnWorktree(source, id, name string, validate func(string) (string, error)) (created CreatedWorktree, started func(), err error) {
+	if name != "" {
+		// Before ResolveHome below, the first git call of a create.
+		if err := CheckWorktreeNameLocal(name); err != nil {
+			return CreatedWorktree{}, nil, err
+		}
+	}
 	spec := WorktreeSpec{Source: source, SessionID: id, Name: name}
 	if validate != nil {
 		spec.AllowPath = func(path string) error {

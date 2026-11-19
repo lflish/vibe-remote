@@ -501,13 +501,25 @@ func checkRefFormatBranch(repoDir, name string) error {
 	return nil
 }
 
-// ValidateWorktreeName reports whether name can be the branch of a new
-// worktree in the repository at repoDir (errors.Is ErrInvalidWorktreeName when
-// it cannot). Names that start with "-" or contain "@{" are refused before git
-// is run at all.
-func ValidateWorktreeName(repoDir, name string) error {
+// CheckWorktreeNameLocal applies the name rules that need no git
+// (errors.Is ErrInvalidWorktreeName when one is broken). Everything that
+// creates a worktree for a client-given name calls it before it starts its
+// first git process, so such a name is refused whatever git would have said
+// about the directory, and never comes near a git command line.
+func CheckWorktreeNameLocal(name string) error {
 	if problem := worktreeNameProblem(name); problem != "" {
 		return fmt.Errorf("%w: %q (%s)", ErrInvalidWorktreeName, name, problem)
+	}
+	return nil
+}
+
+// ValidateWorktreeName reports whether name can be the branch of a new
+// worktree in the repository at repoDir (errors.Is ErrInvalidWorktreeName when
+// it cannot). Names the local rules refuse (a leading "-", "@{", …) are
+// refused before git is run at all.
+func ValidateWorktreeName(repoDir, name string) error {
+	if err := CheckWorktreeNameLocal(name); err != nil {
+		return err
 	}
 	return checkRefFormatBranch(repoDir, name)
 }
@@ -678,6 +690,14 @@ func allowWorktreePath(spec WorktreeSpec, path string) error {
 // call made and nothing that was already there. The branch is only ever named
 // to git as refs/heads/<branch>. The caller holds the repository's lock.
 func CreateWorktree(spec WorktreeSpec) (CreatedWorktree, error) {
+	if spec.Name != "" {
+		// Before the first git call. The pre-check endpoint, which shares
+		// precheckWorktree, looks at the repository first: it reports where the
+		// worktree would go even for a name that cannot be used.
+		if err := CheckWorktreeNameLocal(spec.Name); err != nil {
+			return CreatedWorktree{}, err
+		}
+	}
 	checks, err := precheckWorktree(spec, spec.Name != "")
 	if err != nil {
 		return CreatedWorktree{}, err

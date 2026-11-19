@@ -207,6 +207,11 @@ func (s *Server) wsAttach(ctx context.Context, conn *websocket.Conn) *attachment
 			conn.Close(websocket.StatusPolicyViolation, "bad session id")
 			return nil
 		}
+		if err := checkWorktreeName(frame, mode); err != nil {
+			sendError(ctx, conn, protocol.ErrCodeInvalidWorktreeName, true, "create session: "+err.Error())
+			conn.Close(websocket.StatusPolicyViolation, "bad worktree name")
+			return nil
+		}
 
 		claudeCmd := s.cfg.ResolveClaudeCmd(frame.Flags)
 		runner, err = s.mgr.Create(session.CreateOptions{
@@ -268,6 +273,17 @@ func worktreeName(frame protocol.AttachFrame, mode protocol.SessionMode) string 
 		return ""
 	}
 	return frame.WorktreeName
+}
+
+// checkWorktreeName refuses an attach whose worktreeName breaks the rules that
+// need no git, before anything on the way to creating the session runs git
+// (the chat trust check does, on the source directory).
+func checkWorktreeName(frame protocol.AttachFrame, mode protocol.SessionMode) error {
+	name := worktreeName(frame, mode)
+	if name == "" {
+		return nil
+	}
+	return session.CheckWorktreeNameLocal(name)
 }
 
 // worktreeErrorCode maps the errors of creating a worktree to their attach

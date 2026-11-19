@@ -799,3 +799,52 @@ func TestTooLongPathIsNotReportedAsNotAllowed(t *testing.T) {
 		t.Fatalf("err = %v, want ErrWorktreePathNotAllowed", err)
 	}
 }
+
+// Creating a worktree for a name the local rules refuse starts no git process
+// at all: not for the name, and not to look at the repository first.
+func TestCreateRefusesBadWorktreeNameBeforeAnyGit(t *testing.T) {
+	repo := devflowRepo(t)
+	m := NewManager(false, "/bin/cat", false, "")
+	m.SetProjectStore(NewMemoryProjectStore())
+	log := installArgLoggingGit(t)
+	for _, name := range []string{"-x", "--force", "a b", "a..b", "@{-1}", "a\u200bb", strings.Repeat("x", 251)} {
+		if _, err := m.Create(CreateOptions{Workdir: repo, Mode: protocol.SessionModeWorktree, WorktreeName: name, Cols: 80, Rows: 24}); !errors.Is(err, ErrInvalidWorktreeName) {
+			t.Errorf("Create(%q) = %v, want ErrInvalidWorktreeName", name, err)
+		}
+		if _, err := CreateWorktree(WorktreeSpec{Source: repo, SessionID: "s1", Name: name}); !errors.Is(err, ErrInvalidWorktreeName) {
+			t.Errorf("CreateWorktree(%q) = %v, want ErrInvalidWorktreeName", name, err)
+		}
+	}
+	if calls := loggedGitCalls(t, log); len(calls) != 0 {
+		t.Fatalf("git ran for names the local rules refuse: %v", calls)
+	}
+	// In a directory that is not a repository the name is still what is wrong
+	// first when a session is created; the pre-check, which reports on the
+	// directory, says not_git.
+	plain := t.TempDir()
+	if _, err := m.Create(CreateOptions{Workdir: plain, Mode: protocol.SessionModeWorktree, WorktreeName: "-x", Cols: 80, Rows: 24}); !errors.Is(err, ErrInvalidWorktreeName) {
+		t.Fatalf("Create in a plain directory = %v, want ErrInvalidWorktreeName", err)
+	}
+	if plan, err := m.PlanWorktree(plain, "-x", nil); err != nil || plan.Error != "not_git" {
+		t.Fatalf("plan in a plain directory = %+v, %v; want not_git", plan, err)
+	}
+	// The pre-check looks at the repository first, so that it can say where the
+	// worktree would go and what it would be based on even for such a name; the
+	// name itself is in no git command line.
+	log = installArgLoggingGit(t)
+	plan, err := m.PlanWorktree(repo, "-zz9", nil)
+	if err != nil || plan.Error != "invalid_worktree_name" || plan.Project != repo || plan.Base == nil {
+		t.Fatalf("plan = %+v, %v; want invalid_worktree_name with project and base", plan, err)
+	}
+	calls := loggedGitCalls(t, log)
+	if len(calls) == 0 {
+		t.Fatal("the pre-check ran no git: the check below proves nothing")
+	}
+	for _, call := range calls {
+		for _, arg := range call {
+			if strings.Contains(arg, "zz9") {
+				t.Fatalf("the refused name reached git: %v", call)
+			}
+		}
+	}
+}
