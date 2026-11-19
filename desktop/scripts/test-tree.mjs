@@ -69,6 +69,26 @@ test('single_worktree_is_flat', () => {
   assert.equal(tree[0].worktrees[0].sessions.length, 2);
 });
 
+// The repository's main directory is outside the daemon's allowed roots
+// (R2.6): the daemon lists only the other worktree. That worktree is not the
+// project's own directory, so it keeps its row — the only place its "delete
+// worktree" entry lives (review, item to verify 2).
+test('single_worktree_that_is_not_main_keeps_its_row', () => {
+  const projects = [
+    { id: '/outside/repo', name: 'repo', git: true, worktrees: [{ path: '/r/repo-wt/a', branch: 'a', head: 'abc1234', managed: true, sessions: ['s'] }], sessions: [] },
+  ];
+  const tree = buildTree([sess('s', { workdir: '/r/repo-wt/a' })], projects);
+  assert.equal(tree[0].flat, false, 'not flat: the one listed worktree is not the main directory');
+  assert.equal(tree[0].branchLabel, undefined, 'the branch is on the worktree row, not on the project row');
+  assert.equal(tree[0].worktrees.length, 1);
+  assert.equal(tree[0].worktrees[0].main, false);
+  assert.deepEqual(tree[0].worktrees[0].sessions.map((x) => x.id), ['s']);
+  assert.deepEqual(sessionContext(tree, 's'), { project: 'repo', branch: 'a', name: 'a' });
+  // A git project with nothing listed (its list could not be read) stays flat.
+  const failed = buildTree([sess('e')], [{ id: '/r/e', name: 'e', git: true, error: 'git_failed', errorMessage: 'boom', worktrees: [], sessions: ['e'] }]);
+  assert.equal(failed[0].flat, true);
+});
+
 test('non_git_project', () => {
   const projects = [{ id: '/tmp/notes', name: 'notes', git: false, worktrees: [], sessions: ['n1'] }];
   const tree = buildTree([sess('n1', { workdir: '/tmp/notes' })], projects);

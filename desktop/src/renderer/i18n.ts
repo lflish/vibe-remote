@@ -16,6 +16,7 @@ const zh: Dict = {
   // sidebar project tree (T6b)
   'sidebar.project.newSession': '新建会话',
   'sidebar.project.newWorktree': '新建 worktree',
+  'sidebar.project.noMain': '不能新建 worktree：这个仓库的主目录不在这台机器允许的目录范围内',
   'sidebar.project.more': '更多',
   'sidebar.project.remove': '从侧边栏移除',
   'sidebar.project.removeBlocked': '这个项目下还有会话，先结束会话才能移除',
@@ -363,6 +364,7 @@ const en: Dict = {
   // sidebar project tree (T6b)
   'sidebar.project.newSession': 'New session',
   'sidebar.project.newWorktree': 'New worktree',
+  'sidebar.project.noMain': 'Cannot create a worktree: this repository\'s main directory is outside the folders this machine allows',
   'sidebar.project.more': 'More',
   'sidebar.project.remove': 'Remove from sidebar',
   'sidebar.project.removeBlocked': 'This project still has sessions; end them before it can be removed',

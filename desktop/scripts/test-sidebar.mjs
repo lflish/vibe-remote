@@ -68,6 +68,30 @@ test('flat_project_has_no_worktree_row', () => {
   assert.equal(tid(c, 'project-branch').textContent, 'dev');
 });
 
+test('single_worktree_that_is_not_main_has_a_row_and_a_menu', () => {
+  // The main directory is outside the allowed roots: only the other worktree is listed (R2.6).
+  const projects = [{ id: '/outside/repo', name: 'repo', git: true, worktrees: [{ path: '/r/repo-wt/a', branch: 'a', head: 'abc1234', managed: true, sessions: ['s'] }], sessions: [] }];
+  const tree = buildTree([sess('s', { workdir: '/r/repo-wt/a' })], projects);
+  const deleted = [];
+  const c = render([machineEntry(tree)], acts({ newWorktree() {}, newSession() {}, deleteWorktree: (m, p, wt) => deleted.push(wt.path) }));
+  const rows = tall(c, 'worktree-row');
+  assert.equal(rows.length, 1, 'the worktree has its own row');
+  assert.equal(rows[0].querySelector('.worktree-label').textContent, 'a');
+  assert.equal(tid(c, 'project-branch'), null);
+  assert.equal(tid(c, 'project-new-session'), null, 'the project row offers no session of its own: its directory is not listed');
+  click(rows[0].querySelector('[data-testid="worktree-menu"]'));
+  const del = menuItem('worktree-delete');
+  assert.ok(del && !del.disabled, 'the worktree can be deleted from its menu');
+  click(del);
+  assert.deepEqual(deleted, ['/r/repo-wt/a']);
+  // "New worktree" starts from the main directory, which this daemon may not use: say so.
+  const nw = tid(c, 'project-new-worktree');
+  assert.equal(nw.disabled, true);
+  assert.equal(nw.title, t('sidebar.project.noMain'));
+  assert.notEqual(t('sidebar.project.noMain'), 'sidebar.project.noMain', 'the text exists');
+  assert.equal(nw.getAttribute('aria-label'), t('sidebar.project.noMain'));
+});
+
 test('non_git_has_no_worktree_entries', () => {
   const tree = buildTree([sess('n1', { workdir: '/tmp/notes' })], [{ id: '/tmp/notes', name: 'notes', git: false, worktrees: [], sessions: ['n1'] }]);
   const c = render([machineEntry(tree)], acts({ newWorktree() {}, newSession() {} }));

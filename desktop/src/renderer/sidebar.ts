@@ -227,7 +227,11 @@ function renderProject(list: HTMLElement, m: SidebarMachine, project: TreeProjec
     const btn = iconButton('project-new-worktree', 'branch', t('sidebar.project.newWorktree'));
     if (m.cap !== 'v4' || !hasMain) {
       btn.disabled = true;
-      if (upgradeTitle) btn.title = upgradeTitle;
+      // A new worktree starts from the main directory; when that is not
+      // listed (outside the allowed roots, R2.6) the button says so.
+      const why = upgradeTitle || t('sidebar.project.noMain');
+      btn.title = why;
+      btn.setAttribute('aria-label', why);
     }
     btn.addEventListener('click', (e) => { e.stopPropagation(); actions.newWorktree!(m.machine, project); });
     rowActions.appendChild(btn);
