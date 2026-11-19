@@ -750,6 +750,22 @@ func TestRemoveChangedSinceStatus(t *testing.T) {
 		}
 		f.intact()
 	})
+	// Only the head differs: keeping the branch needs no consent, so nothing
+	// but the head comparison stands between this request and the sessions.
+	t.Run("head_moved_keep_branch", func(t *testing.T) {
+		f := newRemoveFixture(t, 1)
+		req := request(f.status())
+		tip := emptyCommits(t, f.root, 1)
+		_, err := f.remove(req)
+		changed := wantChanged(t, err)
+		if changed.Status.Head != tip || len(changed.EndedSessions) != 0 {
+			t.Fatalf("changed = %+v, want the new head %s and nobody ended", changed, tip)
+		}
+		if !f.alive(f.ids[0]) {
+			t.Fatal("the session was ended before the head was compared")
+		}
+		f.intact()
+	})
 	t.Run("new_session", func(t *testing.T) {
 		f := newRemoveFixture(t, 1)
 		req := request(f.status())
@@ -1377,6 +1393,29 @@ func TestRemoveDeletesBranchByFullRef(t *testing.T) {
 		out, _ := exec.Command("git", "-C", f.repo, "config", "--get-regexp", `^branch\.fix-login\.`).CombinedOutput()
 		if strings.TrimSpace(string(out)) != "" {
 			t.Fatalf("branch configuration left behind: %s", out)
+		}
+	})
+	// The branch is moved after the directory is gone and before it is deleted:
+	// it no longer points at the commit that was confirmed, so it stays.
+	t.Run("moved_before_delete", func(t *testing.T) {
+		f := newRemoveFixture(t, 0)
+		runGit(t, f.repo, "checkout", "-q", "--detach")
+		later := emptyCommits(t, f.repo, 1)
+		runGit(t, f.repo, "checkout", "-q", "main")
+		req := request(f.status())
+		req.DeleteBranch = true
+		origPATH := os.Getenv("PATH")
+		installGitWrapper(t, `case " $* " in *" worktree remove "*) "$REAL" "$@" || exit $?; "$REAL" -C "$2" update-ref refs/heads/fix-login `+later+`; exit 0;; esac`)
+		res, err := f.remove(req)
+		t.Setenv("PATH", origPATH)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !res.Removed || res.BranchDeleted || res.BranchError == "" {
+			t.Fatalf("result = %+v, want the directory removed and the moved branch kept", res)
+		}
+		if got := branchOID(t, f.repo, "fix-login"); got != later {
+			t.Fatalf("fix-login at %q, want it kept at %q", got, later)
 		}
 	})
 	// The name check would not let this one be created here, but another tool
