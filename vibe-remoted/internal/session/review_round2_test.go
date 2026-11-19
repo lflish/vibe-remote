@@ -1,11 +1,16 @@
 package session
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/lflish/vibe-remote/vibe-remoted/internal/protocol"
 )
 
 // Regression tests for the findings of the second review of the project and
@@ -380,4 +385,73 @@ func TestCreateWorktreeReadBackFails(t *testing.T) {
 		}
 		left(t, repo, err)
 	})
+}
+
+// `git worktree add` that runs into its time limit is killed in the middle of
+// the checkout. git has by then registered the worktree and locked it itself
+// (reason "initializing"), which it only undoes when it finishes. All of that
+// is this create's own, and its undo takes it back: nothing is left listed,
+// locked or on disk, and the same name can be used again.
+func TestWorktreeAddKilledDuringCheckoutIsUndone(t *testing.T) {
+	f := newRemoveFixture(t, 0)
+	// A smudge filter that does not return while the flag file is there: the
+	// checkout of the new worktree stops at the first *.txt file.
+	dir := t.TempDir()
+	flag, smudge := filepath.Join(dir, "hang"), filepath.Join(dir, "smudge.sh")
+	if err := os.WriteFile(smudge, []byte("#!/bin/sh\nif [ -e '"+flag+"' ]; then sleep 120; fi\nexec cat\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, f.repo, "config", "filter.slow.smudge", smudge)
+	runGit(t, f.repo, "config", "filter.slow.clean", "cat")
+	writeFiles(t, f.repo, ".gitattributes", "a.txt", "b.txt")
+	if err := os.WriteFile(filepath.Join(f.repo, ".gitattributes"), []byte("*.txt filter=slow\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, f.repo, "add", ".gitattributes", "a.txt", "b.txt")
+	runGit(t, f.repo, "commit", "-m", "filtered files")
+
+	if err := os.WriteFile(flag, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	shortGitLimit(t, &gitTreeTimeout, 3*time.Second)
+	_, err := f.m.Create(CreateOptions{Workdir: f.repo, Mode: protocol.SessionModeWorktree, WorktreeName: "slow", Cols: 80, Rows: 24})
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("create = %v, want the timed-out git worktree add reported as a failure", err)
+	}
+	if strings.Contains(err.Error(), "cleanup:") || strings.Contains(err.Error(), "rollback") {
+		t.Errorf("the undo left something behind: %v", err)
+	}
+	root := filepath.Join(containerOf(f.repo), "slow")
+	if list := runGit(t, f.repo, "worktree", "list", "--porcelain"); strings.Contains(list, root) {
+		t.Errorf("git still lists the worktree:\n%s", list)
+	}
+	if pathExists(root) {
+		t.Errorf("%s is still there: %v", root, dirNames(t, root))
+	}
+	if admin := filepath.Join(f.repo, ".git", "worktrees", "slow"); pathExists(admin) {
+		t.Errorf("%s is still there: %v", admin, dirNames(t, admin))
+	}
+	if branchOID(t, f.repo, "slow") != "" {
+		t.Error("branch slow is left")
+	}
+	if f.store.Managed(f.repo, root, "slow") {
+		t.Error("a creation record is left")
+	}
+	if t.Failed() {
+		return
+	}
+
+	// The checkout works again: the same name is free.
+	if err := os.Remove(flag); err != nil {
+		t.Fatal(err)
+	}
+	r, err := f.m.Create(CreateOptions{Workdir: f.repo, Mode: protocol.SessionModeWorktree, WorktreeName: "slow", Cols: 80, Rows: 24})
+	if err != nil {
+		t.Fatalf("create with the same name after the undone one: %v", err)
+	}
+	t.Cleanup(func() { r.Kill() })
+	if data, _ := os.ReadFile(filepath.Join(r.WorktreeRoot, "b.txt")); string(data) != "b.txt\n" {
+		t.Fatalf("b.txt in the new worktree = %q", data)
+	}
+	f.intact()
 }

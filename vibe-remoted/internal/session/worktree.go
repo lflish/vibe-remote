@@ -887,7 +887,12 @@ func (c worktreeClaim) undo() error {
 			// commit (between worktree add and symbolic-ref). Anything else was
 			// put into the claimed, still empty directory by someone else (V20).
 			if wt.Branch == c.branch || (wt.Detached && wt.Head == c.oid) {
-				if _, err := gitWithin(gitTreeTimeout, c.w, "worktree", "remove", "--force", wt.Path); err != nil {
+				// --force twice: git locks a worktree itself while it is adding
+				// it ("initializing") and unlocks it when it is done, so one whose
+				// `git worktree add` was killed half-way stays locked, and a single
+				// --force does not remove a locked worktree. That lock is this
+				// create's own as much as the directory is.
+				if _, err := gitWithin(gitTreeTimeout, c.w, "worktree", "remove", "--force", "--force", wt.Path); err != nil {
 					worktreeLeft = true
 					problems = append(problems, fmt.Sprintf("worktree %s not removed: %v", c.root, err))
 				}
