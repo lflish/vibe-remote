@@ -189,15 +189,17 @@ func tmuxSocketGone() bool {
 //
 //  1. tmux answered: its answer is the set.
 //  2. tmux said that no server is running (isNoTmuxServer): no sessions.
-//  3. The query failed, the socket file does not exist and haveTerminal is
-//     false: no sessions. No server was started since the socket directory was
-//     last cleared (a reboot, or a daemon that has only ever run chat
-//     sessions). Decided from the error value and the file system, not from
-//     tmux's words.
+//  3. tmux ran and failed, or there is no tmux program to run; the socket file
+//     does not exist; and haveTerminal is false: no sessions. No server was
+//     started since the socket directory was last cleared (a reboot, or a
+//     daemon that has only ever run chat sessions). Decided from the error
+//     value and the file system, not from tmux's words.
 //  4. Everything else is a failed reading. That includes a socket file that is
 //     gone while haveTerminal is true: a tmux server outlives its socket file
 //     (someone cleared /tmp) and creates it again on SIGUSR1, so the sessions
-//     the table remembers may well be running.
+//     the table remembers may well be running. And it includes a tmux program
+//     that is not found while the socket file is there or haveTerminal is
+//     true: "not on the daemon's PATH" is not "no tmux on this machine".
 func readTmuxSessions(haveTerminal func() bool) (sessions map[string]tmuxSessionInfo, ok bool, why string) {
 	out, err := tmuxCmd("list-sessions", "-F", "#{session_name}\t#{pane_current_path}\t#{@vibe_remote_name}\t#{@vibe_remote_mode}\t#{@vibe_remote_source_workdir}\t#{@vibe_remote_source_repo}\t#{@vibe_remote_worktree_root}\t#{@vibe_remote_branch}\t#{@vibe_remote_claude_u}\t#{@vibe_remote_project}\t#{@vibe_remote_home}\t#{@vibe_remote_created}\t#{session_created}\t#{@vibe_remote_workdir}").Output()
 	if err != nil {
@@ -212,14 +214,24 @@ func readTmuxSessions(haveTerminal func() bool) (sessions map[string]tmuxSession
 		if ran && isNoTmuxServer(exitErr.Stderr) {
 			return map[string]tmuxSessionInfo{}, true, ""
 		}
-		if errors.Is(err, exec.ErrNotFound) {
-			return map[string]tmuxSessionInfo{}, true, ""
-		}
-		if ran && tmuxSocketGone() {
-			if !haveTerminal() {
+		// No tmux program on the daemon's PATH is not "no tmux on this machine":
+		// sessions of an earlier run, started with another PATH, may be alive
+		// behind the socket. So that case goes by the socket file and the table
+		// like a query that ran and failed.
+		noProgram := errors.Is(err, exec.ErrNotFound)
+		if ran || noProgram {
+			gone := tmuxSocketGone()
+			if gone && !haveTerminal() {
 				return map[string]tmuxSessionInfo{}, true, ""
 			}
-			why = fmt.Sprintf("tmux's socket file %s is gone while the daemon remembers terminal sessions. If tmux is still running, sending SIGUSR1 to the tmux server process makes it create the socket again; otherwise restart the daemon", tmuxSocketPath())
+			switch {
+			case noProgram && !gone:
+				why = fmt.Sprintf("the tmux program was not found on the daemon's PATH, but tmux's socket %s is there: terminal sessions may be running behind it. Put tmux on the daemon's PATH and restart the daemon", tmuxSocketPath())
+			case noProgram:
+				why = "the tmux program was not found on the daemon's PATH, but the daemon remembers terminal sessions. Put tmux on the daemon's PATH and restart the daemon"
+			case gone:
+				why = fmt.Sprintf("tmux's socket file %s is gone while the daemon remembers terminal sessions. If tmux is still running, sending SIGUSR1 to the tmux server process makes it create the socket again; otherwise restart the daemon", tmuxSocketPath())
+			}
 		}
 		detail := ""
 		if why != "" {

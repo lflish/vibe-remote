@@ -173,3 +173,96 @@ func TestMissingSocketIsNotAnEmptySetWhileTheTableHasTerminalSessions(t *testing
 		t.Fatalf("List() = %+v, want the remembered session kept", list)
 	}
 }
+
+// "There is no tmux program" is what the daemon's PATH says, not what the
+// machine has: a daemon first run from a shell and then started by launchd or
+// systemd finds no tmux (on macOS it is in /opt/homebrew/bin) while the
+// sessions of the earlier run are still alive behind the socket. That is not
+// "no sessions": the removal is refused and says why.
+func TestRemoveWorktreeRefusedWhenTmuxIsNotOnPathButItsSocketIsThere(t *testing.T) {
+	requireTmux(t)
+	freshTmuxDir(t)
+	repo := devflowRepo(t)
+	root := externalWorktree(t, repo, "feat")
+	store := NewMemoryProjectStore()
+	m1 := NewManager(true, "sleep 30", false, "")
+	m1.SetProjectStore(store)
+	id := terminalSessionIn(t, m1, root)
+
+	// The restarted daemon: an empty table, and a PATH without tmux.
+	withTmux := os.Getenv("PATH")
+	onlyGitOnPath(t)
+	m2 := NewManager(true, "sleep 30", false, "")
+	m2.SetProjectStore(store)
+	if live, ok := m2.liveTmuxSessions(); ok {
+		t.Fatalf("liveTmuxSessions() = %v, true; want a failed reading: there is no tmux program but its socket is there", live)
+	}
+	st, err := m2.WorktreeStatus(root, allowAny)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = m2.RemoveWorktree(request(st), allowAny)
+	failed := wantRemoveError(t, err)
+	if len(failed.EndedSessions) != 0 {
+		t.Fatalf("failed = %+v, want a refusal that ends nobody", failed)
+	}
+	for _, word := range []string{"tmux program", "not found", "socket"} {
+		if !strings.Contains(failed.Message, word) {
+			t.Fatalf("message = %q, want it to say %q", failed.Message, word)
+		}
+	}
+	if !pathExists(root) || branchOID(t, repo, "feat") == "" {
+		t.Fatal("the directory or the branch was removed while the sessions in it could not be read")
+	}
+
+	// With tmux found again the same daemon sees the session it would have
+	// left without a directory.
+	t.Setenv("PATH", withTmux)
+	if tmuxCmd("has-session", "-t", "vibe-remote-"+id).Run() != nil {
+		t.Fatal("the tmux session is gone")
+	}
+	if again, err := m2.WorktreeStatus(root, allowAny); err != nil || !reflect.DeepEqual(again.Sessions, []string{id}) {
+		t.Fatalf("status = %+v, %v; want the session %s counted", again, err, id)
+	}
+}
+
+// Without a tmux program the socket file and the table are all there is to go
+// by, and both have to say "nothing": something at the socket path, or a
+// terminal session the daemon remembers, makes it a failed reading.
+func TestNoTmuxProgramIsAnEmptySetOnlyWithoutSocketAndWithoutTerminalSessions(t *testing.T) {
+	t.Run("socket_file_is_there", func(t *testing.T) {
+		dir := freshTmuxDir(t)
+		sockDir := filepath.Join(dir, "tmux-"+strconv.Itoa(os.Getuid()))
+		if err := os.Mkdir(sockDir, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(sockDir, tmuxSocket), nil, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		onlyGitOnPath(t)
+		if live, ok := liveTmuxSessions(); ok {
+			t.Fatalf("liveTmuxSessions() = %v, true; want a failed reading: something is at the socket path", live)
+		}
+	})
+
+	t.Run("table_has_a_terminal_session", func(t *testing.T) {
+		freshTmuxDir(t)
+		onlyGitOnPath(t)
+		m := NewManager(true, "sleep 30", false, "")
+		if live, ok := m.liveTmuxSessions(); !ok || len(live) != 0 {
+			t.Fatalf("liveTmuxSessions() = %v, %v with no tmux, no socket and an empty table; want an empty set that counts as read", live, ok)
+		}
+		m.mu.Lock()
+		m.sessions["remembered"] = &Runner{ID: "remembered", Workdir: t.TempDir(), useTmux: true}
+		m.mu.Unlock()
+		if live, ok := m.liveTmuxSessions(); ok {
+			t.Fatalf("liveTmuxSessions() = %v, true; want a failed reading while the table has a terminal session", live)
+		}
+		if _, ok := m.Get("remembered"); !ok {
+			t.Fatal("the remembered session was dropped from the table")
+		}
+		if why := m.tmuxFailure(); !strings.Contains(why, "tmux program") || !strings.Contains(why, "remembers") {
+			t.Fatalf("tmuxFailure() = %q, want it to say that there is no tmux program while the daemon remembers terminal sessions", why)
+		}
+	})
+}
