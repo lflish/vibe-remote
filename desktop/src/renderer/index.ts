@@ -12,6 +12,7 @@ import { openMachineManager } from './machines';
 import { t, toggleLocale, getLocale, onLocaleChange } from './i18n';
 import { fitWhenVisible, dimensionsWhenVisible } from './terminal-layout';
 import { attachMacClipboardShortcuts } from './terminal-clipboard';
+import { terminalTheme } from './theme';
 import { ChatView } from './chat/view';
 import { nextDot, type ActivityEvent, type Dot, type RestSnapshot } from './chat/activity';
 import type { Prompt } from './chat/types';
@@ -788,15 +789,9 @@ function makeTerminal(): { term: Terminal; fit: FitAddon } {
   const term = new Terminal({
     fontSize: 14,
     fontFamily: "'JetBrains Mono', 'SF Mono', 'Fira Code', 'Cascadia Code', monospace",
-    theme: {
-      background: '#FBFAF7', foreground: '#2B2A28', cursor: '#AD5048',
-      selectionBackground: '#DED7CB',
-      black: '#3B3A37', red: '#C0564B', green: '#5E8C58', yellow: '#B07D2E',
-      blue: '#4A72B0', magenta: '#9A5BA0', cyan: '#3E8C8C', white: '#6B6862',
-      brightBlack: '#9B978E', brightRed: '#C0564B', brightGreen: '#5E8C58',
-      brightYellow: '#B07D2E', brightBlue: '#4A72B0', brightMagenta: '#9A5BA0',
-      brightCyan: '#3E8C8C', brightWhite: '#2B2A28',
-    },
+    // Background, foreground, cursor and selection follow the app theme; the
+    // 16 ANSI colors are fixed (theme.ts).
+    theme: terminalTheme(),
     cursorBlink: true, scrollback: 10000, allowProposedApi: true,
     // claude turns on mouse reporting, which otherwise makes xterm forward every
     // drag to the app and disable its own selection — getSelection() would always

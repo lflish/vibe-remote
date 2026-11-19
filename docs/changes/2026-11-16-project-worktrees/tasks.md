@@ -826,7 +826,7 @@
 - 依赖：T9、T11、T12、T14
 
 ### T18 视觉 M1（一）：配色变量、终端主题、窗口底色
-- 状态：待办
+- 状态：进行中
 - 文件：新建 `desktop/src/renderer/theme.ts`、`desktop/scripts/test-theme-tokens.mjs`；修改 `desktop/src/renderer/styles.css`（`:root` 里现有变量换成 design 7.5 表里的值，补上表里标「新」的变量；`:root` 之外现有的 59 处十六进制或 `rgba()` 全部换成变量或 `color-mix(in srgb, var(--…) N%, var(--…))`；T6b 加的 `.project-tag` 规则和四个 `--tag-*` 变量保持原样（值照 design 7.5 的表）；三种状态点的规则按 H23；文件开头两处 `Claude Desktop-inspired` 注释改为指向本需求的 M1）、`desktop/src/renderer/index.ts`（`makeTerminal` 里写死的 theme 换成 `terminalTheme()`）、`desktop/src/main/index.ts`（`backgroundColor` 改为 `#EFEFF4`）、`desktop/package.json`（`test:theme-tokens`）
 - 接口：
   - 使用：xterm 的 `ITheme`（现有依赖）

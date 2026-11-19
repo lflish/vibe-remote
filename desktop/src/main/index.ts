@@ -99,7 +99,7 @@ function createWindow() {
     minHeight: 500,
     titleBarStyle: 'hiddenInset', // native frameless with traffic lights on Mac
     trafficLightPosition: { x: 16, y: 16 },
-    backgroundColor: '#F5F4EF', // match the renderer to avoid a dark launch flash
+    backgroundColor: '#EFEFF4', // --bg-app in styles.css (test-theme-tokens keeps them equal): no flash on a cold start
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
