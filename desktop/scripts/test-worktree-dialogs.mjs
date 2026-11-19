@@ -943,8 +943,20 @@ test('delete_flow_branch_error', async () => {
 test('delete_flow_remove_404', async () => {
   const f = startFlow({ statuses: [status({ sessions: ['s1', 's2'] })], removes: [restError(404, 'worktree_not_found')] });
   await f.act('dialog-confirm');
-  assert.deepEqual(await f.done, { removed: true, endedSessions: ['s1', 's2'] });
+  // The daemon refuses with 404 before it ends any session: the ones listed in
+  // the confirmation are not reported as ended.
+  assert.deepEqual(await f.done, { removed: true, endedSessions: [] });
   assert.deepEqual(f.notices, ['这个 worktree 已经不存在']);
+
+  // Sessions an earlier answer of the same flow reported as ended still are.
+  const g = startFlow({
+    statuses: [status({ sessions: ['s1', 's2'] }), status({ sessions: ['s2'] })],
+    removes: [restError(500, 'worktree_remove_failed', { message: 'fatal: simulated', endedSessions: ['s1'] }), restError(404, 'worktree_not_found')],
+  });
+  await g.act('dialog-confirm');
+  await g.act('dialog-confirm');
+  assert.deepEqual(await g.done, { removed: true, endedSessions: ['s1'] });
+  assert.deepEqual(g.notices, ['这个 worktree 已经不存在']);
 });
 
 test('delete_flow_timeout_then_gone', async () => {

@@ -714,6 +714,21 @@ test('remove_result_closes_views', async () => {
   assert.deepEqual(openViews(), ['a', 'b']);
   assert.deepEqual(refreshes(), { sessions: 1, projects: 1 });
 
+  // The worktree was removed by someone else while the confirmation was open
+  // (`git worktree remove --force` in a terminal): the daemon answers 404
+  // before it touches anything, so the sessions listed in the confirmation
+  // are still running. Their views stay; the refresh shows where they are now.
+  statusAnswers = [() => json(200, status())];
+  removeAnswers = [() => json(404, { error: 'worktree_not_found', message: 'not a worktree this daemon can see' })];
+  disposed = await start();
+  click(dialogButton('dialog-confirm'));
+  await settle();
+  assert.equal(document.querySelector('.modal-overlay'), null);
+  assert.equal(document.getElementById('status-message').textContent, '这个 worktree 已经不存在');
+  assert.deepEqual(disposed, [], 'a 404 ended no session: no view is closed');
+  assert.deepEqual(openViews(), ['a', 'b']);
+  assert.deepEqual(refreshes(), { sessions: 1, projects: 1 }, 'the machine is refreshed');
+
   // Cancelled before anything was requested: nothing happens at all.
   statusAnswers = [() => json(200, status())];
   disposed = await start();

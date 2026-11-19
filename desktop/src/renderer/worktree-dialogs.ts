@@ -571,8 +571,11 @@ export async function deleteWorktreeFlow(
         continue;
       }
       if (e.status === 404) {
+        // Someone else removed it since the confirmation. The daemon answers
+        // 404 before it ends anything, so the sessions the confirmation listed
+        // may well be running still: only what an earlier answer of this flow
+        // reported as ended is passed on.
         notify(t('wt.delete.gone'));
-        addEnded(req.sessions);
         return outcome(true);
       }
       if (e.status < 500) {
