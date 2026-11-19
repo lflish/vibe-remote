@@ -1,6 +1,6 @@
 # 任务：按项目和 worktree 组织会话，并更换视觉风格
 
-依据：spec.md、design.md　共 21 个任务（T1–T20，其中 T6 拆成 T6a 和 T6b）　更新：2026-11-19（按第二轮工程评审和用户的三个决定修订，decisions #28–#38、d28–d29、c5；上一次是 2026-11-18 按第一轮工程评审修订，#16–#27、d22–d27、c4）
+依据：spec.md、design.md　共 21 个任务（T1–T20，其中 T6 拆成 T6a 和 T6b）　更新：2026-11-19（按第二轮工程评审和用户的三个决定修订，decisions #28–#40、d28–d30、c5；上一次是 2026-11-18 按第一轮工程评审修订，#16–#27、d22–d27、c4）
 
 ## 约定
 
@@ -514,7 +514,7 @@
 
 ### T8 协议 4：新建前的只读预检 `GET /api/v1/worktrees/plan`
 - 状态：待办
-- 文件：修改 `vibe-remoted/internal/session/projects.go`（`PlanWorktree`）、`vibe-remoted/internal/server/projects.go`（处理函数）、`vibe-remoted/internal/server/server.go`（路由）、`vibe-remoted/internal/protocol/protocol.go`（`WorktreePlan`、`WorktreeBase`）、`desktop/src/shared/protocol.ts`（`WorktreePlan`）、`desktop/src/renderer/rest.ts`（`planWorktree`）、`docs/protocol.md`（端点说明，版本表第 4 行补这个端点）；测试 `vibe-remoted/internal/session/projects_test.go`、`vibe-remoted/internal/server/projects_test.go`、`desktop/scripts/test-rest-projects.mjs`
+- 文件：修改 `vibe-remoted/internal/session/projects.go`（`PlanWorktree`）、`vibe-remoted/internal/server/projects.go`（处理函数）、`vibe-remoted/internal/server/server.go`（路由）、`vibe-remoted/internal/protocol/protocol.go`（`WorktreePlan`，含可缺省的 `conflict`；`WorktreeBase`）、`desktop/src/shared/protocol.ts`（`WorktreePlan`）、`desktop/src/renderer/rest.ts`（`planWorktree`）、`docs/protocol.md`（端点说明，版本表第 4 行补这个端点）；测试 `vibe-remoted/internal/session/projects_test.go`、`vibe-remoted/internal/server/projects_test.go`、`desktop/scripts/test-rest-projects.mjs`
 - 接口：
   - 使用：`ResolveHome`、`Home.Single`、`ListWorktrees`、`gitAtTimeout`（T2）；`ValidateWorktreeName`、`WorktreeDirName`、`BranchConflict`、5 个错误变量、`cfg.ResolveAllowedNewPath`（T7）；`cfg.ResolveAllowedWorkdir`（现有）
   - 提供：`(m *Manager) PlanWorktree(workdir, name string, allowPath func(string) error) (protocol.WorktreePlan, error)`；TS `planWorktree(workdir: string, name: string): Promise<WorktreePlan>`
@@ -646,7 +646,7 @@
 - 状态：待办
 - 文件：
   - 修改 `vibe-remoted/internal/session/worktree.go`（`DirtyFiles`、`IgnoredFiles`、`HasSubmoduleCheckouts`、`ErrWorktreeNotFound`、`ErrWorktreeIsMain`、`ErrWorktreeBusy`、`WorktreeChangedError`、`WorktreeRemoveError`；删除 `CleanupWorktree`、`WorktreePreservedError`、`RollbackWorktree`、`isMissingBranchError`、`isMissingWorktreeError`）、`vibe-remoted/internal/session/projects.go`（`WorktreeStatus`、`RemoveWorktree`，步骤照 design 6.2 的 10 步；`Projects` 之外的这两个方法也在读会话之前调 `syncFromTmux()`）、`vibe-remoted/internal/session/manager.go` 和 `chat_manager.go`（`startingDirs`、`removingRoots` 两张表和 `beginStart`；终端、对话两条创建路径在工作目录确定之后、启动进程之前调它，Worktree 模式在放开仓库锁之前对新 worktree 里的工作目录调它，交接出来的终端会话同样；T7 写的「会话启动失败 → 重新取仓库锁 → 锁内撤销 → 放锁」之后才调 `done()`，design 6.1）、`vibe-remoted/internal/server/projects.go`（两个处理函数）、`vibe-remoted/internal/server/server.go`（路由）
-  - 修改 `vibe-remoted/internal/protocol/protocol.go`（`WorktreeStatus`、`WorktreeRemoveRequest`、`WorktreeRemoveResult`）、`desktop/src/shared/protocol.ts`（同名类型）、`desktop/src/renderer/rest.ts`（`worktreeStatus`、`removeWorktree`、`removeTimeoutMs`；`timedFetch` 加第 3 个可缺省参数 `timeoutMs`，缺省仍是 8 秒）、`docs/protocol.md`（两个端点的请求、响应、错误码；版本表第 4 行补全，补完后与 design 第 4 节开头那句一致）
+  - 修改 `vibe-remoted/internal/protocol/protocol.go`（`WorktreeStatus`，含恒有值的 `ignoredFiles`；`WorktreeRemoveRequest`、`WorktreeRemoveResult`）、`desktop/src/shared/protocol.ts`（同名类型）、`desktop/src/renderer/rest.ts`（`worktreeStatus`、`removeWorktree`、`removeTimeoutMs`；`timedFetch` 加第 3 个可缺省参数 `timeoutMs`，缺省仍是 8 秒）、`docs/protocol.md`（两个端点的请求、响应、错误码，含 409 和 500 响应体里的 `endedSessions`、`worktree_remove_failed` 的两类来源；版本表第 4 行补全，补完后与 design 第 4 节开头那句一致）
   - 测试：新建 `vibe-remoted/internal/session/worktree_remove_test.go`；修改 `vibe-remoted/internal/session/worktree_test.go`、`vibe-remoted/internal/server/projects_test.go`、`desktop/scripts/test-rest-projects.mjs`
   - 按 spec 改写的现有测试（decisions #11，design 7.1）：`TestWorktreeCleanCleanupRemovesWorktreeAndBranch` → `TestRemoveCleanMergedWorktree`；`TestWorktreeDirtyCleanupPreservesBoth` → `TestRemoveDirtyNeedsConsent`；`TestWorktreeIgnoredFileIsPreserved` → `TestRemoveIgnoredOnlyIsClean`。T1 的 `TestCleanupKeepsCleanWorktreeWithUnmergedCommits`、`TestCleanupKeepsBranchWhenWorktreeDirMissing`、`TestCleanupFailsClosedWhenUnmergedCheckFails` 随 `CleanupWorktree` 删除，由 `TestRemoveUnmergedNeedsConsent` 和 `TestRemoveFailsClosedWhenRecheckFails` 取代；`TestUnmergedCommits` 保留。`TestWorktreeRollbackToleratesMissingWorktreeOrBranch` 随 `RollbackWorktree` 的删除改名为 `TestUndoToleratesMissingWorktreeOrBranch`、改调 `Undo`，断言不变（目录已被删时连续撤销两次都不报错，decisions #27）。测试里当清理用的 `defer CleanupWorktree(meta)` 改为 `defer created.Undo()`
 - 接口：

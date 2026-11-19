@@ -2,7 +2,7 @@
 
 对应需求：spec.md（R1–R9，H1–H27）　更新：2026-11-19
 
-文中的决定编号（6–38、d5–d29、c1–c5）见 decisions.md；实验输出在 `evidence/`。任务编号（T1–T20，其中 T6 拆成 T6a 和 T6b）见 tasks.md。2026-11-18 按工程评审（3 个严重、12 个一般）修订，依据见第 9 节 V10–V17。2026-11-19 按第二轮工程评审（1 个严重、12 个一般）和用户的三个决定（c3 同意、c4 采纳、R5.9 改写）修订，依据见 V18–V24。
+文中的决定编号（6–40、d5–d30、c1–c5）见 decisions.md；实验输出在 `evidence/`。任务编号（T1–T20，其中 T6 拆成 T6a 和 T6b）见 tasks.md。2026-11-18 按工程评审（3 个严重、12 个一般）修订，依据见第 9 节 V10–V17。2026-11-19 按第二轮工程评审（1 个严重、12 个一般）和用户的三个决定（c3 同意、c4 采纳、R5.9 改写）修订，依据见 V18–V24。
 
 ## 1. 方案
 
@@ -209,7 +209,7 @@ HTTP 错误：403 `workdir` 不在 `allowed_roots` 内（响应体同 `/api/v1/f
 | `head` | 完整的 40 位提交哈希，删除时原样带回 |
 | `branch` / `detached` | 同 4.2 |
 | `dirtyFiles` | 未提交或未跟踪的文件数，不含被忽略的（H10） |
-| `ignoredFiles` | 被 git 忽略、会随目录一起删除的文件数（R5.4，c4 已采纳）。口径见第 3 节：逐个文件数，`node_modules/` 里有 1200 个文件就是 1200；嵌在被忽略目录里的另一个 git 仓库算 1。恒有值，没有时是 0。它只是给人看的说明：不参与「干净」的判定，不需要同意项，删除时 daemon 不拿它做比对 |
+| `ignoredFiles` | 被 git 忽略、会随目录一起删除的文件数（R5.4，c4 已采纳）。口径见第 3 节：逐个文件数，`node_modules/` 里有 1200 个文件就是 1200；嵌在被忽略目录里的另一个 git 仓库算 1。恒有值，没有时是 0。它只是给人看的说明：不参与「干净」的判定，不需要同意项，删除时 daemon 不拿它做比对。它和其它几个数一样是「查状态」的一部分，走 `gitAtTimeout`：查询失败或超时，status 返回 500 `git_failed` |
 | `unmergedCommits` | 有分支：该分支上不被任何其他本地分支或远程跟踪分支包含的提交数（H9）。detached：`HEAD` 上不被任何本地分支或远程跟踪分支包含的提交数（R5.11） |
 | `sessions` | 归属这个 worktree 的会话 id（含已结束的对话会话），以及还没有归属、工作目录在它下面的会话 |
 
@@ -244,7 +244,7 @@ daemon 的处理顺序见 6.2。响应：
 | 200 `{"removed":true,"branchDeleted":true,"endedSessions":["…"]}` | 目录已删。`branchDeleted` 表示分支是否也删了；分支该删而没删成时为 `false` 并带 `branchError` | 关掉这些会话的视图，刷新侧边栏；`branchError` 显示在状态栏 |
 | 400 `worktree_is_main` | `path` 是主目录（R5.7） | 状态栏报错（菜单里本来就没有这一项） |
 | 404 `worktree_not_found` | 同 4.5 | 刷新侧边栏，状态栏提示已不存在 |
-| 409 `worktree_changed`，响应体多 `status`（4.5 的结构，最新状态）和 `endedSessions` | 重查后与用户确认的不一致。结束会话之前发现的（`endedSessions` 是 `[]`，什么都没动）：`head` 变了；有不在 `sessions` 里的会话（包括删除请求等锁期间在这个 worktree 里建成的会话，和正在其中创建的会话）；有未提交文件而 `discardFiles` 不为真；会让未合并提交失去分支而 `dropCommits` 不为真。结束会话之后才发现的（`endedSessions` 是已经结束的会话，目录和分支都还在）：会话在被结束之前又提交了一次，`head` 变了；`git worktree remove` 被 git 拒绝后再查，出现了没被同意丢弃的文件 | 用返回的 `status` 重新弹确认框，写明状态已变化；`endedSessions` 非空时另写明已结束几个会话，并关掉它们的视图 |
+| 409 `worktree_changed`，响应体多 `status`（4.5 的结构，最新状态）和 `endedSessions` | 重查后与用户确认的不一致。结束会话之前发现的（`endedSessions` 是 `[]`，什么都没动）：`head` 变了；有不在 `sessions` 里的会话（包括删除请求等锁期间在这个 worktree 里建成的会话，和正在其中创建的会话）；有未提交文件而 `discardFiles` 不为真；会让未合并提交失去分支而 `dropCommits` 不为真。结束会话之后才发现的（`endedSessions` 是已经结束的会话，目录和分支都还在）：会话在被结束之前又提交了一次，`head` 变了；`git worktree remove` 被 git 拒绝后再查，出现了没被同意丢弃的文件 | 用返回的 `status` 重新弹确认框，写明状态已变化；`endedSessions` 非空时另写明已结束几个会话；流程结束时关掉它们的视图 |
 | 500 `worktree_remove_failed`，响应体多 `endedSessions` | 结束会话之前就能确定删不了或删了会多丢东西（R5.9；`endedSessions` 是 `[]`，会话、目录、分支都没动）：worktree 被 `git worktree lock` 锁定；里面有子模块或嵌入式仓库的检出；里面还嵌着这个仓库的别的 worktree。已经动手之后的失败（R5.12；`endedSessions` 是已经结束的会话）：某个会话没能结束；git 删除失败。`message` 是原因或 git 的错误输出 | 再查一次状态，按实际剩下的情况显示（6.2 的表）：worktree 还在 → 带着错误重新打开确认框；已经不在列表里（目录只删了一部分）→ 显示失败说明 |
 
 409 和 500 的响应体例子：`{"error":"worktree_changed","message":"…","status":{…},"endedSessions":["1794824025040-12b763ac"]}`、`{"error":"worktree_remove_failed","message":"…","endedSessions":[]}`。`endedSessions` 恒为数组；`session not found`（会话在轮到它之前自己退出了）也算已结束。
@@ -490,7 +490,7 @@ function terminalTheme(): ITheme     // 底色、前景、光标、选区读 CSS
 锁外先做第 1 步（要靠它知道取哪把锁），其余在锁内。下面的 git 命令都在发起处所在的 worktree 根（`Home.Path`，记作 W）里执行：它一定是个可用的工作目录，分支和 worktree 的登记又是整个仓库共用的。任何一步失败都返回对应错误并停止：
 
 1. `ResolveHome(Source)`：返回错误或不是 git → `create_failed`。有名字而 `Single` 为真 → `create_failed`，`message` 写明这个仓库是子模块或使用了独立的 git 目录、不支持命名 worktree（`ErrUnsupportedRepo`）。
-2. 有名字：`ValidateWorktreeName` → `invalid_worktree_name`；分支 = 名字，目录 = `<dirname(项目)>/<basename(项目)>-worktrees/<WorktreeDirName(名字)>`。没有名字：分支 `vibe/<会话id>`，目录 `<dirname(Home.Path)>/<basename(Home.Path)>-worktrees/<会话id>`（现有算法）。两种目录都在某个 worktree 根的同级目录下：命名的在主目录旁边，自动命名的在发起处那个 worktree 旁边。所以本功能不会把新 worktree 建到另一个 worktree 里面；嵌套的 worktree 只会来自别的工具，删除时的处理见 6.2 第 6 步。
+2. 有名字：`ValidateWorktreeName` → `invalid_worktree_name`；分支 = 名字，目录 = `<dirname(项目)>/<basename(项目)>-worktrees/<WorktreeDirName(名字)>`。没有名字：分支 `vibe/<会话id>`，目录 `<dirname(Home.Path)>/<basename(Home.Path)>-worktrees/<会话id>`（现有算法）。两种目录都在某个 worktree 根的同级目录下：命名的固定在主目录旁边的 `<主目录名>-worktrees/` 里，不会落进这个仓库的另一个 worktree 里面；自动命名的在发起处那个 worktree 旁边，只有发起处本身已经嵌在别的 worktree 里时（别的工具把它建在了那里）才会跟着嵌进去。所以嵌套的 worktree 不会由命名 worktree 这个功能造出来；已经存在的嵌套在删除时由 6.2 第 6 步处理。
 3. `AllowPath(目录)` → `worktree_path_not_allowed`（此前是建好再检查再回滚；现在对两条路径都先检查，建好之后在第 10 步再查一次最终的工作目录）。
 4. `BranchConflict(W, 分支)` 返回非空 → `worktree_branch_exists`，`message` 写明挡住它的是哪个分支。它做三个只读检查（V21）：
    - `git -C W show-ref --verify --quiet refs/heads/<分支>` 退出码 0：同名分支已存在。
