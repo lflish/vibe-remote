@@ -115,6 +115,9 @@ test('error_text', () => {
   assert.equal(worktreeErrorText('unsupported_repo', {}), t('wt.error.unsupported_repo'));
   assert.notEqual(t('wt.error.unsupported_repo'), 'wt.error.unsupported_repo', 'the key exists');
   assert.equal(worktreeErrorText('not_git', {}), '这个目录不在 git 仓库里');
+  // The place the worktree would start from has no commit yet (review G6).
+  assert.equal(worktreeErrorText('no_commits', {}), '这里还没有任何提交，不能从这里新建 worktree');
+  assert.equal(worktreeErrorText('no_commits', { branch: 'fix-login', path: '/r/x' }), t('wt.error.no_commits'));
   assert.equal(worktreeErrorText('create_failed', {}), null);
   assert.equal(worktreeErrorText('something_new', { branch: 'x' }), null);
 });

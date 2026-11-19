@@ -11,7 +11,7 @@ await indexDom();
 localStorage.setItem('vibe-remote.locale', 'zh');
 const { createNameSection, createFlagsSection } = await load('src/renderer/session-form.ts', { platform: 'browser' });
 const { openDirPicker } = await load('src/renderer/dirpicker.ts', { platform: 'browser' });
-const { t } = await load('src/renderer/i18n.ts', { platform: 'browser' });
+const { t, dictionaries } = await load('src/renderer/i18n.ts', { platform: 'browser' });
 
 const { test, run } = runner('test-session-form');
 const M = { name: 'this-mac', addr: '10.0.0.9', port: 8765, token: 't' };
@@ -147,6 +147,43 @@ test('plan_failure_is_shown_and_not_ready', async () => {
   assert.equal(s.section.ready(), false);
   assert.equal(await s.section.confirm(), null);
   s.remove();
+});
+
+// no_commits (review G6): the place the worktree would start from has nothing
+// committed yet. Like not_git and unsupported_repo no name can help, so the
+// field is off and the reason is there as soon as the daemon has answered.
+test('no_commits_turns_the_name_field_off', async () => {
+  const noCommits = { ok: false, error: 'no_commits', message: 'nothing is committed here yet; a worktree is created from a commit', project: '/r/devflow', projectName: 'devflow', base: { branch: 'main', head: '0000000' } };
+  const s = mountSection(() => Promise.resolve(noCommits));
+  s.section.refresh();
+  await settle();
+  assert.equal(s.error.textContent, '这里还没有任何提交，不能从这里新建 worktree');
+  assert.equal(s.error.hidden, false);
+  assert.equal(s.input.disabled, true, 'no name can be typed');
+  assert.equal(s.section.ready(), false);
+  assert.equal(s.section.acceptable(), false);
+  assert.equal(await s.section.confirm(), null);
+  // There is no commit to be "based on": the line with the all-zero id stays away.
+  assert.equal(tid('wt-base-info', s.section.el).hidden, true, 'no base line');
+  assert.equal(tid('wt-target-path', s.section.el).closest('.modal-name-target').hidden, true);
+  s.remove();
+  for (const locale of ['zh', 'en']) assert.ok(dictionaries[locale]['wt.error.no_commits'], `wt.error.no_commits in ${locale}`);
+
+  // In the folder picker: the field is off and the dialog cannot be confirmed;
+  // browsing to a folder that has commits turns the field on again.
+  const p = await openPicker('worktree', {
+    plan: (workdir, name) => (workdir === '/r/devflow' ? noCommits : planFor(name)),
+    fs: (path) => ({ path: path || '/r/devflow', entries: [{ name: 'other', path: '/r/other' }], parent: '/r', chatTrust: 'trusted' }),
+  });
+  assert.equal(tid('wt-name-error', p.root).textContent, '这里还没有任何提交，不能从这里新建 worktree');
+  assert.equal(tid('wt-name-input', p.root).disabled, true);
+  assert.equal(p.confirm.disabled, true);
+  click([...p.root.querySelectorAll('.modal-item')].find((b) => b.textContent.includes('other')));
+  await settle(8);
+  assert.equal(tid('wt-name-input', p.root).disabled, false);
+  assert.equal(tid('wt-name-error', p.root).textContent, '');
+  assert.equal(tid('wt-base-info', p.root).hidden, false, 'the base line is back');
+  await closePicker(p);
 });
 
 // The daemon may refuse for a reason this desktop has no text for (a newer

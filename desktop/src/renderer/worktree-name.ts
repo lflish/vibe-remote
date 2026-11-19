@@ -44,6 +44,7 @@ const ERROR_KEYS = new Set([
   'worktree_path_not_allowed',
   'unsupported_repo',
   'not_git',
+  'no_commits',
 ]);
 
 /**

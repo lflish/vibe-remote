@@ -201,7 +201,7 @@ export function createNameSection(opts: { plan(name: string): Promise<WorktreePl
 
   // An empty name is not called an error until the user has typed something.
   let touched = false;
-  // not_git / unsupported_repo: no name can work here, the field is off.
+  // not_git / unsupported_repo / no_commits: no name can work here, the field is off.
   let blocked: string | null = null;
   let failure: string | null = null;
   let answer: { name: string; plan: WorktreePlan } | null = null;
@@ -251,7 +251,9 @@ export function createNameSection(opts: { plan(name: string): Promise<WorktreePl
   }
 
   function showBase(plan: WorktreePlan) {
-    const base = plan.base;
+    // no_commits still comes with a base (the branch, and an all-zero id):
+    // there is no commit to be based on, so the line is not shown.
+    const base = plan.error === 'no_commits' ? undefined : plan.base;
     baseInfo.hidden = !base;
     if (!base) return;
     baseInfo.textContent = base.detached || !base.branch
@@ -265,7 +267,7 @@ export function createNameSection(opts: { plan(name: string): Promise<WorktreePl
       const plan = await opts.plan(name);
       if (mine !== generation) return null;
       showBase(plan);
-      blocked = plan.error === 'not_git' || plan.error === 'unsupported_repo' ? plan.error : null;
+      blocked = plan.error !== undefined && BLOCKING_REASONS.has(plan.error) ? plan.error : null;
       failure = null;
       answer = { name, plan };
       return plan;
@@ -325,6 +327,11 @@ export function createNameSection(opts: { plan(name: string): Promise<WorktreePl
 }
 
 let nameFieldSeq = 0;
+
+// The refusals no name can get around: the directory is not in a repository,
+// the repository is of a kind named worktrees are not made in, or nothing is
+// committed where the worktree would start from.
+const BLOCKING_REASONS = new Set(['not_git', 'unsupported_repo', 'no_commits']);
 
 // The refusals that are about the name asked for (an empty or missing reason
 // counts: that is what the nameless first question gets).

@@ -215,12 +215,19 @@ test('new_worktree_enter_right_after_typing', async () => {
 });
 
 test('new_worktree_unsupported_repo', async () => {
-  for (const [code, text] of [['unsupported_repo', t('wt.error.unsupported_repo')], ['not_git', '这个目录不在 git 仓库里']]) {
-    const d = await openNew({
-      plan: () => (code === 'not_git'
-        ? { ok: false, error: 'not_git', message: 'not a repository' }
-        : { ok: false, error: 'unsupported_repo', message: 'submodule', project: MAIN, projectName: 'devflow', base: { branch: 'main', head: 'a1b2c3d' } }),
-    });
+  // What the daemon answers in each case: not_git has nothing else, the other
+  // two come with the project and the base (all zeros when nothing is committed).
+  const answers = {
+    not_git: { ok: false, error: 'not_git', message: 'not a repository' },
+    unsupported_repo: { ok: false, error: 'unsupported_repo', message: 'submodule', project: MAIN, projectName: 'devflow', base: { branch: 'main', head: 'a1b2c3d' } },
+    no_commits: { ok: false, error: 'no_commits', message: 'nothing is committed here yet', project: MAIN, projectName: 'devflow', base: { branch: 'main', head: '0000000' } },
+  };
+  for (const [code, text] of [
+    ['unsupported_repo', t('wt.error.unsupported_repo')],
+    ['not_git', '这个目录不在 git 仓库里'],
+    ['no_commits', '这里还没有任何提交，不能从这里新建 worktree'],
+  ]) {
+    const d = await openNew({ plan: () => answers[code] });
     assert.equal(d.error.textContent, text, code);
     assert.equal(d.error.hidden, false);
     assert.equal(d.input.disabled, true, `${code}: the name cannot be typed`);
