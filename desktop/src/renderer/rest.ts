@@ -1,4 +1,4 @@
-import type { MachineConfig, Project, SessionInfo, WorktreePlan } from '../shared/protocol';
+import type { MachineConfig, Project, SessionInfo, WorktreePlan, WorktreeRemoveRequest, WorktreeRemoveResult, WorktreeStatus } from '../shared/protocol';
 import { t } from './i18n';
 
 // Every REST call gets a deadline. Without one, a black-holed host (daemon
@@ -7,8 +7,17 @@ import { t } from './i18n';
 // request on every tick.
 const REQUEST_TIMEOUT_MS = 8000;
 
-export function timedFetch(input: string, init: RequestInit = {}): Promise<Response> {
-  return fetch(input, { ...init, signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS) });
+export function timedFetch(input: string, init: RequestInit = {}, timeoutMs: number = REQUEST_TIMEOUT_MS): Promise<Response> {
+  return fetch(input, { ...init, signal: AbortSignal.timeout(timeoutMs) });
+}
+
+/**
+ * Deadline for removing a worktree that has `sessionCount` sessions. The daemon
+ * ends them one by one (a chat process takes up to about 4 s to stop) and a
+ * large directory takes time to delete, so the usual deadline is too short.
+ */
+export function removeTimeoutMs(sessionCount: number): number {
+  return Math.min(60_000, 10_000 + 5_000 * sessionCount);
 }
 
 /**
@@ -114,6 +123,36 @@ export class VibeRemoteRest {
     url.searchParams.set('workdir', workdir);
     url.searchParams.set('name', name);
     const res = await timedFetch(url.toString(), { headers: this.headers() });
+    if (!res.ok) throw await RestError.from(res);
+    return res.json();
+  }
+
+  /**
+   * The state of a worktree (v4): what the delete confirmation shows. Throws a
+   * RestError; 404 `worktree_not_found` when it is no longer there.
+   */
+  async worktreeStatus(path: string): Promise<WorktreeStatus> {
+    const url = new URL(`${this.base()}/api/v1/worktrees/status`);
+    url.searchParams.set('path', path);
+    const res = await timedFetch(url.toString(), { headers: this.headers() });
+    if (!res.ok) throw await RestError.from(res);
+    return res.json();
+  }
+
+  /**
+   * Remove a worktree (v4). `req` carries what the user saw (head, sessions)
+   * and agreed to. A refusal is a RestError whose body has `endedSessions`
+   * for 409 `worktree_changed` (with the current `status`) and 500
+   * `worktree_remove_failed`. A timeout or network failure is not a RestError:
+   * the daemon carries the removal through regardless, so the outcome is then
+   * unknown, not negative.
+   */
+  async removeWorktree(req: WorktreeRemoveRequest): Promise<WorktreeRemoveResult> {
+    const res = await timedFetch(`${this.base()}/api/v1/worktrees/remove`, {
+      method: 'POST',
+      headers: { ...this.headers(), 'Content-Type': 'application/json' },
+      body: JSON.stringify(req),
+    }, removeTimeoutMs(req.sessions.length));
     if (!res.ok) throw await RestError.from(res);
     return res.json();
   }

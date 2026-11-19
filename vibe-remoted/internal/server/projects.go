@@ -74,3 +74,74 @@ func (s *Server) handleWorktreePlan(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, http.StatusOK, plan)
 }
+
+// handleWorktreeStatus serves GET /api/v1/worktrees/status (design 4.5): the
+// numbers the delete confirmation shows.
+func (s *Server) handleWorktreeStatus(w http.ResponseWriter, r *http.Request) {
+	if !s.checkToken(r, w) {
+		return
+	}
+	path := r.URL.Query().Get("path")
+	if path == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid_request", "message": "path is required"})
+		return
+	}
+	status, err := s.mgr.WorktreeStatus(path, session.AllowFunc(s.cfg.ResolveAllowedWorkdir))
+	switch {
+	case err == nil:
+		writeJSON(w, http.StatusOK, status)
+	case errors.Is(err, session.ErrWorktreeNotFound):
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "worktree_not_found", "message": "not a worktree this daemon can see"})
+	default:
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "git_failed", "message": err.Error()})
+	}
+}
+
+// handleWorktreeRemove serves POST /api/v1/worktrees/remove (design 4.6). The
+// removal is not tied to the request: when the client gives up waiting, it is
+// still carried through, since stopping half-way would be worse.
+func (s *Server) handleWorktreeRemove(w http.ResponseWriter, r *http.Request) {
+	if !s.checkToken(r, w) {
+		return
+	}
+	var req protocol.WorktreeRemoveRequest
+	if status, err := decodeJSONBody(w, r, &req); err != nil {
+		writeJSON(w, status, map[string]string{"error": "invalid_request", "message": err.Error()})
+		return
+	}
+	if req.Path == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid_request", "message": "path is required"})
+		return
+	}
+	result, err := s.mgr.RemoveWorktree(req, session.AllowFunc(s.cfg.ResolveAllowedWorkdir))
+	var changed *session.WorktreeChangedError
+	var failed *session.WorktreeRemoveError
+	switch {
+	case err == nil:
+		result.EndedSessions = orEmpty(result.EndedSessions)
+		writeJSON(w, http.StatusOK, result)
+	case errors.Is(err, session.ErrWorktreeIsMain):
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "worktree_is_main", "message": err.Error()})
+	case errors.Is(err, session.ErrWorktreeNotFound):
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "worktree_not_found", "message": "not a worktree this daemon can see"})
+	case errors.As(err, &changed):
+		writeJSON(w, http.StatusConflict, map[string]any{
+			"error": "worktree_changed", "message": "the worktree is no longer in the state that was confirmed",
+			"status": changed.Status, "endedSessions": orEmpty(changed.EndedSessions),
+		})
+	case errors.As(err, &failed):
+		writeJSON(w, http.StatusInternalServerError, map[string]any{
+			"error": "worktree_remove_failed", "message": failed.Message, "endedSessions": orEmpty(failed.EndedSessions),
+		})
+	default:
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "git_failed", "message": err.Error(), "endedSessions": []string{}})
+	}
+}
+
+// orEmpty makes a nil list serialize as [] rather than null.
+func orEmpty(list []string) []string {
+	if list == nil {
+		return []string{}
+	}
+	return list
+}

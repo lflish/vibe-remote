@@ -19,9 +19,11 @@ import "encoding/json"
 //	4: attach.worktreeName, errors invalid_worktree_name/
 //	   worktree_branch_exists/worktree_path_exists/worktree_path_not_allowed,
 //	   GET /api/v1/projects, POST /api/v1/projects/remove,
-//	   GET /api/v1/worktrees/plan, /api/v1/fs chatTrust also "trusted" for a
-//	   worktree root of a trusted main directory (all S→C frames unchanged
-//	   from v3)
+//	   GET /api/v1/worktrees/plan, GET /api/v1/worktrees/status,
+//	   POST /api/v1/worktrees/remove, DELETE /api/v1/sessions/{id} leaves
+//	   the worktree alone (no 409 worktree_preserved), /api/v1/fs chatTrust
+//	   also "trusted" for a worktree root of a trusted main directory (all
+//	   S→C frames unchanged from v3)
 const Version = 4
 
 // Frame types exchanged between client and server.

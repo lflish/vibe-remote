@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 	"sync"
@@ -363,14 +364,405 @@ func (m *Manager) RemoveProject(id string) error {
 	return nil
 }
 
-// WorktreeStatus reports the state of the worktree at path (design 4.5).
-func (m *Manager) WorktreeStatus(path string, allow AllowFunc) (protocol.WorktreeStatus, error) {
-	return protocol.WorktreeStatus{}, errNotImplemented
+// within reports whether dir is root or lies below it.
+func within(root, dir string) bool {
+	return dir == root || strings.HasPrefix(dir, root+string(filepath.Separator))
 }
 
-// RemoveWorktree removes the worktree at req.Path (design 6.2).
+// beginStart registers workdir as a directory a session is about to start in,
+// and returns the func that ends the registration. It is called once the
+// workdir is settled and before any process starts; done is called once the
+// session is in the table, or the create has failed and cleaned up. A removal
+// therefore finds a session of its worktree either here or in the table.
+// ErrWorktreeBusy: the workdir is in a worktree that is being removed.
+func (m *Manager) beginStart(workdir string) (done func(), err error) {
+	m.mu.Lock()
+	for root := range m.removingRoots {
+		if within(root, workdir) {
+			m.mu.Unlock()
+			return nil, fmt.Errorf("%w: %s", ErrWorktreeBusy, root)
+		}
+	}
+	if m.startingDirs == nil {
+		m.startingDirs = make(map[string]int)
+	}
+	m.startingDirs[workdir]++
+	m.mu.Unlock()
+	var once sync.Once
+	done = func() {
+		once.Do(func() {
+			m.mu.Lock()
+			if m.startingDirs[workdir]--; m.startingDirs[workdir] <= 0 {
+				delete(m.startingDirs, workdir)
+			}
+			m.mu.Unlock()
+		})
+	}
+	// A removal that finished just before the registration took the directory
+	// with it.
+	if _, statErr := os.Stat(workdir); os.IsNotExist(statErr) {
+		done()
+		return nil, fmt.Errorf("working directory %s does not exist", workdir)
+	}
+	return done, nil
+}
+
+// locateWorktree is the first step of looking at or removing a worktree
+// (design 6.2 step 1). path must be the canonical path of a worktree root
+// inside the allowed roots; anything else is ErrWorktreeNotFound, decided
+// before git is run on it. An error that is not ErrWorktreeNotFound is a git
+// failure.
+func locateWorktree(path string, allow AllowFunc) (Home, error) {
+	if allow == nil || !filepath.IsAbs(path) || filepath.Clean(path) != path {
+		return Home{}, ErrWorktreeNotFound
+	}
+	if canonical, err := allow(path); err != nil || canonical != path {
+		return Home{}, ErrWorktreeNotFound
+	}
+	home, err := ResolveHome(path)
+	if err != nil {
+		return Home{}, fmt.Errorf("read repository: %w", err)
+	}
+	if !home.Git || home.Path != path {
+		return Home{}, ErrWorktreeNotFound
+	}
+	return home, nil
+}
+
+// listedWorktree reads the repository's worktree list and returns it with the
+// index of the entry for path. Only an entry the repository itself lists, with
+// its directory still there, counts; anything else is ErrWorktreeNotFound.
+func listedWorktree(home Home, path string) ([]Worktree, int, error) {
+	wts, err := ListWorktrees(home.Repo)
+	if err != nil {
+		return nil, 0, fmt.Errorf("list worktrees: %w", err)
+	}
+	for i, wt := range wts {
+		if wt.Path == path && !wt.Prunable && !wt.Bare {
+			return wts, i, nil
+		}
+	}
+	return nil, 0, ErrWorktreeNotFound
+}
+
+// sessionsIn returns the ids of the sessions that lose their directory when
+// the worktree at root goes: those attributed to it, and those with no
+// attribution yet whose workdir is in it (design 6.2 step 3). Oldest first.
+func (m *Manager) sessionsIn(root string) []string {
+	var in []sessAttr
+	for _, s := range m.collectSessions() {
+		if s.home == root || (s.project == "" && s.home == "" && within(root, s.workdir)) {
+			in = append(in, s)
+		}
+	}
+	sortSessions(in)
+	ids := make([]string, 0, len(in))
+	for _, s := range in {
+		ids = append(ids, s.id)
+	}
+	return ids
+}
+
+// worktreeState reads what a removal of the listed worktree wt would lose
+// (design 4.5), without the ignored-file count and the sessions.
+func (m *Manager) worktreeState(home Home, wt Worktree, main bool) (protocol.WorktreeStatus, error) {
+	st := protocol.WorktreeStatus{Path: wt.Path, Project: home.Project, Branch: wt.Branch, Head: wt.Head,
+		Detached: wt.Branch == "", Main: main, Sessions: []string{}}
+	if !main && m.projectStore != nil {
+		st.Managed = m.projectStore.Managed(home.Project, wt.Path, wt.Branch)
+	}
+	var err error
+	if st.DirtyFiles, err = DirtyFiles(wt.Path); err != nil {
+		return protocol.WorktreeStatus{}, err
+	}
+	if wt.Branch != "" {
+		st.UnmergedCommits, err = UnmergedCommits(home.Repo, wt.Branch)
+	} else {
+		st.UnmergedCommits, err = UnmergedCommits(wt.Path, "")
+	}
+	if err != nil {
+		return protocol.WorktreeStatus{}, err
+	}
+	return st, nil
+}
+
+// ignoredFilesOrUnknown is the ignored-file count for a status: -1 when it
+// could not be counted. It is a note in the confirmation, and must not keep a
+// worktree from being looked at or removed (d31).
+func ignoredFilesOrUnknown(path string) int {
+	n, err := IgnoredFiles(path)
+	if err != nil {
+		return -1
+	}
+	return n
+}
+
+// WorktreeStatus reports the state of the worktree at path: what the delete
+// confirmation tells the user (design 4.5). ErrWorktreeNotFound when path is
+// not a worktree root the daemon itself read from its repository, inside the
+// allowed roots; any other error is a git failure.
+func (m *Manager) WorktreeStatus(path string, allow AllowFunc) (protocol.WorktreeStatus, error) {
+	home, err := locateWorktree(path, allow)
+	if err != nil {
+		return protocol.WorktreeStatus{}, err
+	}
+	if home.Single {
+		return protocol.WorktreeStatus{}, ErrWorktreeNotFound
+	}
+	wts, i, err := listedWorktree(home, path)
+	if err != nil {
+		return protocol.WorktreeStatus{}, err
+	}
+	// A daemon that has just restarted may not have its tmux sessions in the
+	// table yet.
+	m.syncFromTmux()
+	st, err := m.worktreeState(home, wts[i], i == 0)
+	if err != nil {
+		return protocol.WorktreeStatus{}, err
+	}
+	st.IgnoredFiles = ignoredFilesOrUnknown(path)
+	st.Sessions = m.sessionsIn(path)
+	return st, nil
+}
+
+// markRemoving declares the worktree at root as being removed, unless a
+// session is being created in it right now. From then until the returned func
+// is called, beginStart refuses sessions in it.
+func (m *Manager) markRemoving(root string) (unmark func(), ok bool) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for dir := range m.startingDirs {
+		if within(root, dir) {
+			return nil, false
+		}
+	}
+	if m.removingRoots == nil {
+		m.removingRoots = make(map[string]struct{})
+	}
+	m.removingRoots[root] = struct{}{}
+	return func() {
+		m.mu.Lock()
+		delete(m.removingRoots, root)
+		m.mu.Unlock()
+	}, true
+}
+
+// gitOutput is what to show of a failed git call: git's own words when it said
+// anything.
+func gitOutput(out []byte, err error) string {
+	if text := strings.TrimSpace(string(out)); text != "" {
+		return text
+	}
+	return err.Error()
+}
+
+// RemoveWorktree removes the worktree at req.Path and, when asked and allowed,
+// its branch (design 6.2). It only ever acts on a worktree the daemon read
+// from the repository's own list — never the main directory — and only does
+// what the user confirmed: the state is read again under the repository's
+// lock, and anything that differs from the request comes back as a
+// *WorktreeChangedError with the current state and nothing more lost.
+//
+// Until the first session is ended, a failure changes nothing. From there on
+// every error carries the sessions already ended: ending them cannot be taken
+// back. A branch is deleted only for a worktree vibe-remote created, by its
+// full ref name and only while it still points at the confirmed commit.
 func (m *Manager) RemoveWorktree(req protocol.WorktreeRemoveRequest, allow AllowFunc) (protocol.WorktreeRemoveResult, error) {
-	return protocol.WorktreeRemoveResult{}, errNotImplemented
+	none := protocol.WorktreeRemoveResult{}
+	path := req.Path
+	home, err := locateWorktree(path, allow)
+	if err != nil {
+		return none, err
+	}
+	if home.Single {
+		// The only worktree of a repository with no recognizable main directory.
+		return none, ErrWorktreeIsMain
+	}
+	unlock := m.lockRepo(home.Repo)
+	defer unlock()
+	wts, i, err := listedWorktree(home, path)
+	if err != nil {
+		return none, err
+	}
+	if i == 0 {
+		return none, ErrWorktreeIsMain
+	}
+	wt := wts[i]
+
+	m.syncFromTmux()
+	st, err := m.worktreeState(home, wt, false)
+	if err != nil {
+		return none, err
+	}
+	st.Sessions = m.sessionsIn(path)
+	ended := []string{}
+	// changed is the "not what you confirmed" answer for state cur.
+	changed := func(cur protocol.WorktreeStatus) error {
+		cur.IgnoredFiles = ignoredFilesOrUnknown(path)
+		return &WorktreeChangedError{Status: cur, EndedSessions: ended}
+	}
+	// current re-reads the state after something went wrong; listed=false when
+	// git no longer lists the worktree.
+	current := func() (cur protocol.WorktreeStatus, listed bool, err error) {
+		again, j, err := listedWorktree(home, path)
+		if errors.Is(err, ErrWorktreeNotFound) {
+			return cur, false, nil
+		}
+		if err != nil {
+			return cur, false, err
+		}
+		if cur, err = m.worktreeState(home, again[j], false); err != nil {
+			return cur, true, err
+		}
+		cur.Sessions = m.sessionsIn(path)
+		return cur, true, nil
+	}
+
+	unmark, free := m.markRemoving(path)
+	if !free {
+		return none, changed(st) // a session is being created in here
+	}
+	defer unmark()
+	// Every session registered before the mark is in the table by now.
+	st.Sessions = m.sessionsIn(path)
+	if m.testAfterRemovingMarked != nil {
+		m.testAfterRemovingMarked()
+	}
+
+	// What git would refuse, or would take along without the confirmation
+	// having mentioned it, is refused whatever was agreed to, before any
+	// session is ended.
+	if wt.Locked {
+		reason := ""
+		if wt.LockReason != "" {
+			reason = " (reason: " + wt.LockReason + ")"
+		}
+		return none, &WorktreeRemoveError{EndedSessions: ended,
+			Message: fmt.Sprintf("this worktree is locked with git worktree lock%s; unlock it first: git worktree unlock %s", reason, path)}
+	}
+	hasCheckouts, err := HasSubmoduleCheckouts(path)
+	if err != nil {
+		return none, err
+	}
+	if hasCheckouts {
+		return none, &WorktreeRemoveError{EndedSessions: ended,
+			Message: "this worktree holds a checked-out submodule or embedded repository, which may contain commits that exist nowhere else; " +
+				"vibe-remote does not remove it. To remove it yourself: git worktree remove --force " + path}
+	}
+	for _, other := range wts {
+		if !other.Prunable && strings.HasPrefix(other.Path, path+string(filepath.Separator)) {
+			name := "detached at " + shortHead(other.Head)
+			if other.Branch != "" {
+				name = "branch " + other.Branch
+			}
+			return none, &WorktreeRemoveError{EndedSessions: ended,
+				Message: fmt.Sprintf("another worktree is inside this one: %s (%s); remove that one first", other.Path, name)}
+		}
+	}
+
+	confirmed := make(map[string]bool, len(req.Sessions))
+	for _, id := range req.Sessions {
+		confirmed[id] = true
+	}
+	for _, id := range st.Sessions {
+		if !confirmed[id] {
+			return none, changed(st)
+		}
+	}
+	deleteBranch := req.DeleteBranch && st.Managed && st.Branch != ""
+	losesCommits := st.UnmergedCommits > 0 && (deleteBranch || st.Branch == "")
+	if st.Head != req.Head || (st.DirtyFiles > 0 && !req.DiscardFiles) || (losesCommits && !req.DropCommits) {
+		return none, changed(st)
+	}
+
+	end := m.Delete
+	if m.testEndSession != nil {
+		end = m.testEndSession
+	}
+	for _, id := range st.Sessions {
+		// A session that is already gone ended on its own just now.
+		if err := end(id); err != nil && !errors.Is(err, ErrSessionNotFound) {
+			return none, &WorktreeRemoveError{EndedSessions: ended, Message: fmt.Sprintf("could not end session %s: %v", id, err)}
+		}
+		ended = append(ended, id)
+	}
+	if m.testAfterSessionsEnded != nil {
+		m.testAfterSessionsEnded()
+	}
+	// The sessions were still running when the state was read, and they are
+	// the likeliest thing to have committed since. On a detached worktree such
+	// a commit would be on no branch and go unnoticed with the directory.
+	out, err := gitAtTimeout(wt.Path, "rev-parse", "HEAD")
+	if err != nil {
+		return none, &WorktreeRemoveError{EndedSessions: ended, Message: "could not read HEAD again: " + gitOutput(out, err)}
+	}
+	if strings.TrimSpace(string(out)) != req.Head {
+		cur, listed, err := current()
+		if err != nil || !listed {
+			return none, &WorktreeRemoveError{EndedSessions: ended, Message: "HEAD moved while the sessions were being ended, and the worktree could not be read again"}
+		}
+		return none, changed(cur)
+	}
+	if m.testBeforeWorktreeRemove != nil {
+		m.testBeforeWorktreeRemove()
+	}
+
+	args := []string{"worktree", "remove"}
+	if req.DiscardFiles {
+		args = append(args, "--force")
+	}
+	if out, err := gitAt(home.Repo, append(args, wt.Path)...); err != nil {
+		// Why it failed is found by looking again, not by reading git's message.
+		failure := gitOutput(out, err)
+		cur, listed, curErr := current()
+		switch {
+		case curErr != nil:
+		case !listed:
+			// git forgets the worktree before it deletes the directory.
+			if _, statErr := os.Lstat(path); statErr == nil {
+				failure += fmt.Sprintf("; git no longer lists this worktree, but part of its directory is left at %s", path)
+			}
+			failure += "; the branch was not deleted"
+		case cur.Head != req.Head || (cur.DirtyFiles > 0 && !req.DiscardFiles):
+			return none, changed(cur)
+		}
+		return none, &WorktreeRemoveError{EndedSessions: ended, Message: failure}
+	}
+
+	res := protocol.WorktreeRemoveResult{Removed: true, EndedSessions: ended}
+	if deleteBranch {
+		res.BranchDeleted, res.BranchError = deleteWorktreeBranch(home.Repo, wt.Branch, wt.Head)
+	}
+	if m.projectStore != nil {
+		m.projectStore.RemoveWorktree(path)
+	}
+	// The container is ours to tidy; any other parent directory is not.
+	if container := filepath.Join(filepath.Dir(home.Project), filepath.Base(home.Project)+"-worktrees"); filepath.Dir(path) == container {
+		_ = os.Remove(container) // stays unless empty
+	}
+	return res, nil
+}
+
+// deleteWorktreeBranch deletes refs/heads/<branch> after its worktree is gone,
+// if no other worktree has it checked out and it still points at head. The
+// branch is named by its full ref, which git neither expands nor reads as an
+// option. It reports why the branch is still there when it is.
+func deleteWorktreeBranch(repo, branch, head string) (deleted bool, problem string) {
+	wts, err := ListWorktrees(repo)
+	if err != nil {
+		return false, fmt.Sprintf("could not check whether branch %s is checked out elsewhere: %v", branch, err)
+	}
+	for _, wt := range wts {
+		if wt.Branch == branch {
+			return false, fmt.Sprintf("branch %s is still checked out in %s", branch, wt.Path)
+		}
+	}
+	if out, err := gitAt(repo, "update-ref", "-d", "refs/heads/"+branch, head); err != nil {
+		return false, gitOutput(out, err)
+	}
+	// Leftover tracking configuration; there being none is not an error.
+	_, _ = gitAt(repo, "config", "--remove-section", "branch."+branch)
+	return true, ""
 }
 
 // PlanWorktree is the read-only pre-check for creating a worktree named name

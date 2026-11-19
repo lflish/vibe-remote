@@ -232,6 +232,17 @@ func (m *Manager) CreateChat(opts ChatCreateOptions) (ChatAttachment, error) {
 	if mode != protocol.SessionModeNormal && mode != protocol.SessionModeWorktree {
 		return ChatAttachment{}, fmt.Errorf("unknown session mode %q", mode)
 	}
+	ownWorktree := mode == protocol.SessionModeWorktree
+	// started ends the registration of the workdir as "a session is starting
+	// here" (see createTerminalLocked); a new worktree's is made with it.
+	var started func()
+	if !ownWorktree {
+		var err error
+		if started, err = m.beginStart(opts.Workdir); err != nil {
+			return ChatAttachment{}, err
+		}
+		defer started()
+	}
 
 	// The conversation: -c continues the workdir's latest one (a new
 	// worktree has none), anything else starts a new one.
@@ -265,17 +276,20 @@ func (m *Manager) CreateChat(opts ChatCreateOptions) (ChatAttachment, error) {
 
 	workdir := opts.Workdir
 	var meta WorktreeMetadata
-	ownWorktree := mode == protocol.SessionModeWorktree
 	var created CreatedWorktree
 	var ownHome *Home
 	if ownWorktree {
 		var err error
-		created, err = m.createOwnWorktree(opts.Workdir, id, opts.WorktreeName, opts.ValidateWorkdir)
+		created, started, err = m.createOwnWorktree(opts.Workdir, id, opts.WorktreeName, opts.ValidateWorkdir)
 		if err != nil {
 			m.releaseClaude(u, id)
 			return ChatAttachment{}, err
 		}
+		defer started()
 		meta, workdir, ownHome = created.Meta, created.Workdir, &created.Home
+	}
+	if m.testAfterBeginStart != nil {
+		m.testAfterBeginStart(workdir)
 	}
 	m.mu.RLock()
 	closing := m.closing
@@ -774,6 +788,16 @@ func (m *Manager) Handoff(chatID, newID string, cols, rows uint16) (*Runner, err
 				return
 			}
 		}
+		// Asked before the chat process is stopped: refused here (the worktree
+		// is being removed), the chat session simply keeps running. While this
+		// registration is held no removal can begin, so the one
+		// createTerminalLocked makes for the same directory cannot be refused.
+		started, serr := m.beginStart(rec.Workdir)
+		if serr != nil {
+			err = serr
+			return
+		}
+		defer started()
 		_ = ops.StopLocked(protocol.EndReasonStopped) // releases U before returning
 		u := rec.ClaudeSessionID
 		if err = m.claimClaude(u, newID); err != nil {

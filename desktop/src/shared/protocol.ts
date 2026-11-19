@@ -12,8 +12,10 @@
  *   4: attach.worktreeName, errors invalid_worktree_name/worktree_branch_exists/
  *      worktree_path_exists/worktree_path_not_allowed (fatal),
  *      GET /api/v1/projects, POST /api/v1/projects/remove,
- *      GET /api/v1/worktrees/plan, fs chatTrust also 'trusted' for a worktree
- *      root of a trusted main directory (S→C frames unchanged)
+ *      GET /api/v1/worktrees/plan, GET /api/v1/worktrees/status,
+ *      POST /api/v1/worktrees/remove, DELETE /api/v1/sessions/{id} leaves the
+ *      worktree alone (no 409 worktree_preserved), fs chatTrust also 'trusted'
+ *      for a worktree root of a trusted main directory (S→C frames unchanged)
  */
 export const PROTOCOL_VERSION = 4;
 
@@ -59,6 +61,43 @@ export interface WorktreeBase {
   branch?: string; // omitted when detached
   head: string; // first 7 of the commit
   detached?: boolean;
+}
+
+// v4, GET /api/v1/worktrees/status: what the delete confirmation shows.
+export interface WorktreeStatus {
+  path: string;
+  project: string;
+  branch?: string; // omitted when detached
+  head: string; // the full commit hash; sent back with the removal
+  detached?: boolean;
+  main: boolean;
+  managed: boolean; // created by vibe-remote
+  dirtyFiles: number; // uncommitted or untracked; ignored files excluded
+  unmergedCommits: number; // on no other local branch or remote-tracking ref
+  // Ignored by git, removed with the directory. Only a note: -1 = could not
+  // be counted; a removal never compares it.
+  ignoredFiles: number;
+  sessions: string[];
+}
+
+// v4, body of POST /api/v1/worktrees/remove: the worktree, what the user saw
+// of it (head, sessions) and what they agreed to lose.
+export interface WorktreeRemoveRequest {
+  path: string;
+  head: string;
+  sessions: string[];
+  discardFiles?: boolean;
+  deleteBranch?: boolean; // honored only for a worktree vibe-remote created, on a branch
+  dropCommits?: boolean;
+}
+
+// v4, the 200 answer to a removal: the directory is gone. `branchError` says
+// why a branch that was to be deleted is still there.
+export interface WorktreeRemoveResult {
+  removed: boolean;
+  branchDeleted: boolean;
+  branchError?: string;
+  endedSessions: string[];
 }
 
 /** One project in the tree (GET /api/v1/projects). */

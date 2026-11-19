@@ -17,7 +17,7 @@ PTY 字节数据使用 base64 编码传输（`data` 帧）。
 | 1 | 初始版本（隐式） |
 | 2 | `attach.newSessionId`（新建会话幂等）、`error.code` / `error.fatal`、`proto` 字段本身、服务端 WebSocket 心跳 |
 | 3 | 对话界面：`attach.ui` / `epoch` / `since` / `handoffFrom`，`chat` / `chat_sync` / `chat_state` / `chat_ack`（含 send 的 `duplicate` / `completed`）/ `chat_send` / `chat_respond` / `chat_interrupt` / `chat_set_mode` 帧，`ready.ui` / `claudeSessionId` / `existing` / `handoffFrom`，`sessions[].ui` / `state` / `activitySeq` / `epoch` / `endReason`，`/api/v1/info.chat`（含 `?recheck=1`），`/api/v1/fs` 的 `chatTrust`，对话会话 reload 返回 202，错误码 `ui_mismatch` / `chat_unsupported` / `claude_session_busy` / `shutting_down`。终端会话的 `ready` / `sessions` / `data` / `exit` / `error` 帧除 `proto` 值外与 v2 逐字节相同 |
-| 4 | `attach.worktreeName`，错误码 `invalid_worktree_name` / `worktree_branch_exists` / `worktree_path_exists` / `worktree_path_not_allowed`；`GET /api/v1/projects`、`POST /api/v1/projects/remove`、`GET /api/v1/worktrees/plan`；`DELETE /api/v1/sessions/{id}` 不再清理 worktree（不再返回 409 `worktree_preserved`）；`/api/v1/fs.chatTrust` 的 worktree 规则（主目录被信任的 worktree 根也是 `trusted`，新建对话会话的 attach 同样放行）。所有 S→C 帧的字段与 v3 相同 |
+| 4 | `attach.worktreeName`，`GET /api/v1/projects`，`POST /api/v1/projects/remove`，`GET /api/v1/worktrees/plan`，`GET /api/v1/worktrees/status`，`POST /api/v1/worktrees/remove`，`DELETE /api/v1/sessions/{id}` 不再清理 worktree（不再返回 409 `worktree_preserved`），`/api/v1/fs.chatTrust` 的 worktree 规则（主目录被信任的 worktree 根也是 `trusted`，新建对话会话的 attach 同样放行），错误码 `invalid_worktree_name` / `worktree_branch_exists` / `worktree_path_exists` / `worktree_path_not_allowed`。所有 S→C 帧的字段与 v3 相同 |
 
 兼容规则：新增字段在接收端一律可选；未知帧类型、未知 `notify.kind`、未知 `error.code` 均忽略（未知 code 只按 `fatal` 处理）。客户端发现 `proto` 低于自身版本时应提示用户更新 daemon——旧 daemon 会接受请求但**静默忽略**不认识的字段。
 
@@ -225,7 +225,7 @@ v3 对话会话的条目另带（终端条目一律省略）：
 | `invalid_workdir` | ✓ | workdir 不在 `allowed_roots` 内 |
 | `invalid_mode` | ✓ | 未知的 `mode` |
 | `invalid_session_id` | ✓ | `newSessionId` 格式非法 |
-| `create_failed` | ✓ | 新建失败（如 worktree 模式选了非 Git 目录；git 执行失败，`message` 含 git 的错误输出；带 `worktreeName` 而仓库是子模块或用了独立的 git 目录） |
+| `create_failed` | ✓ | 新建失败（如 worktree 模式选了非 Git 目录；git 执行失败，`message` 含 git 的错误输出；带 `worktreeName` 而仓库是子模块或用了独立的 git 目录；v4：工作目录所在的 worktree 正在被删除，或工作目录已不存在） |
 | `session_not_found` | ✓ | 要恢复的会话已不存在（被删除、tmux 被杀，或 daemon 未启用 tmux） |
 | `attach_failed` | | 会话存在但接入失败（PTY/tmux 暂时故障） |
 | `ui_mismatch` | ✓ | v3：接入的会话类型与 `attach.ui` 不符（含旧桌面接入对话会话）；`attach.ui` 不是 `terminal` / `chat`；交接（`handoffFrom`）却带 `ui:"chat"` |
@@ -361,13 +361,15 @@ v3 对话会话的条目另带（终端条目一律省略）：
 | GET | `/api/v1/projects` | （v4）本机项目树：`{proto, projects:[{id, name, git, error?, errorMessage?, worktrees:[{path, branch?, head, detached?, main?, managed?, sessions:[id]}], sessions:[id]}]}`。数组字段恒为 `[]`。旧 daemon 没有此路径，返回 404（客户端据此回退到按会话分组） |
 | POST | `/api/v1/projects/remove` | （v4）从项目清单移除一个项目，body `{"id":"..."}`，不碰磁盘。成功 204；清单里没有该 id → 404 `{"error":"project_not_found"}`；仍有会话归属它 → 409 `{"error":"project_has_sessions"}` |
 | GET | `/api/v1/worktrees/plan?workdir=<目录>&name=<名字>` | （v4）新建 worktree 之前的只读预检，不创建任何东西；检查的内容和先后与 attach 带 `worktreeName` 新建时在动手之前做的相同。见下文「`/api/v1/worktrees/plan`」 |
+| GET | `/api/v1/worktrees/status?path=<worktree 根目录>` | （v4）一个 worktree 现在的状态：删除确认框上的数字从这里来。见下文「`/api/v1/worktrees/status` 和 `/api/v1/worktrees/remove`」 |
+| POST | `/api/v1/worktrees/remove` | （v4）删除一个 worktree（不能是主目录），按请求里的同意项决定是否丢弃文件、是否连分支一起删。删除前 daemon 重查状态，与确认时不一致返回 409。见下文 |
 | DELETE | `/api/v1/sessions/{id}` | 关闭指定会话，成功 204，不存在 404。对话会话：停进程、删记录，claude 的 JSONL 对话记录保留。v4 起不再碰 worktree：worktree 模式会话的目录和分支都保留，不再返回 409 `worktree_preserved`（删除 worktree 是单独的操作）。v3 及更早的 daemon 会在工作区干净时一并删除 worktree 和分支，有未提交改动时保留并返回 409 `{"error":"worktree_preserved","message","worktreeRoot","branch"}`（会话本身已关闭），客户端仍要处理这种响应 |
 | POST | `/api/v1/sessions/{id}/rename` | 重命名会话，body `{"name":"..."}`，终端会话名字存 tmux 用户选项，对话会话存 daemon 的 `chat-sessions.json` |
 | POST | `/api/v1/sessions/{id}/reload` | 终端会话：在原 tmux 会话和工作目录中重启 CLI，并继续最近的对话，成功 204。对话会话（v3）：立即返回 **202**，在后台停进程后以同一 claude 会话重新启动，进度与结果经 `chat_state` 广播（重载中再调用也是 202）；该 claude 会话正被别的会话持有 → 409 `{"error":"claude_session_busy","owner":"<会话 id>","message":"…"}`；会话不存在 → 404。持有 claude 会话的终端会话（交接创建或带 continue 启动）在其被别人持有时同样 409；daemon 未启用 tmux 时终端会话 reload 返回 409 `{"error":"…"}` |
 | GET | `/api/v1/fs?path=<dir>` | 列目录（仅目录项），供远程目录选择器用。返回 `{path, parent, entries, chatTrust}`：`chatTrust`（v3）为能否在该目录新建对话会话：`trusted` / `untrusted` / `unknown`，只有 `trusted` 可以。v3 只看 claude 对该目录本身的信任记录；v4 起另认一种情况：该目录是某个仓库的 worktree 根（以该仓库自己的 `git worktree list` 为准，不看目录里的 `.git` 文件），且仓库主目录（精确到这一个路径）被 claude 信任。主目录本身、worktree 里的子目录、裸仓库 / 子模块 / `--separate-git-dir` 仓库的 worktree 仍只看自己的记录；信任文件缺失或损坏是 `unknown`。新建对话会话的 attach 用同一条规则（worktree 模式查所选的源目录），不满足时是 fatal 的 `chat_unsupported`（`workdir_untrusted`）；`parent` 是规范化后的上级目录，**仅在其本身也可列出时才返回**，已在 `allowed_roots` 顶层时为空串。客户端据此隐藏「上一级」，避免点出必然的 403（`allowed_roots` 配的是符号链接解析前的路径如 `/tmp`，而 `path` 是规范化后的 `/private/tmp`，客户端无法自行比较） |
 | POST | `/api/v1/events` | 带外事件上报，body `{sessionId,kind,message?}`，路由为该会话的 notify 帧。鉴权见下文，与其它端点不同 |
 
-请求体（rename、events）上限 64 KiB，超出返回 413。rename：会话不存在返回 404，tmux 设置失败等其它错误返回 500。
+请求体（rename、events、worktrees/remove）上限 64 KiB，超出返回 413。rename：会话不存在返回 404，tmux 设置失败等其它错误返回 500。
 
 ### `/api/v1/info` 的 `chat`（v3）
 
@@ -405,6 +407,73 @@ v3 对话会话的条目另带（终端条目一律省略）：
 | `branch`、`path` | string | ✓ | 将要创建的分支和目录；名字通过了规则才有（`not_git`、`unsupported_repo`、`invalid_worktree_name` 时没有） |
 
 HTTP 错误：缺 `workdir` → 400 `{"error":"invalid_request"}`；`workdir` 不在 `allowed_roots` 内 → 403（响应体同 `/api/v1/fs`）；`workdir` 在 git 仓库里但 git 执行失败或超时 → 500 `{"error":"git_failed","message"}`。旧 daemon 没有此路径，返回 404。
+
+### `/api/v1/worktrees/status` 和 `/api/v1/worktrees/remove`（v4）
+
+删除 worktree 分两步：先查状态（界面按它显示确认框），再带着「用户看到了什么、同意了什么」发删除。daemon 在删除前重查一遍，只做用户同意过的事。
+
+两个端点的 `path` 都必须是 worktree 的根目录，写成规范路径（就是 `/api/v1/projects` 里那一项的 `path`）。它先过 `allowed_roots`（解析符号链接后必须与传入的值逐字相等），再必须是 daemon 自己从所属仓库的 `git worktree list` 里读到的一项；不满足的一律 404 `worktree_not_found`，不对这个路径运行 git。客户端传来的路径和分支名不经过 shell；要删的分支取自 daemon 读到的列表，只以完整引用名 `refs/heads/<分支>` 交给 git。
+
+`GET /api/v1/worktrees/status?path=…`：
+
+```json
+{ "path": "/Users/mac/github/devflow-worktrees/fix-login",
+  "project": "/Users/mac/github/devflow",
+  "branch": "fix-login", "head": "9f8e7d6c5b4a39281706f5e4d3c2b1a098765432",
+  "main": false, "managed": true,
+  "dirtyFiles": 3, "unmergedCommits": 2, "ignoredFiles": 1204,
+  "sessions": ["1794824025040-12b763ac", "1794824031111-0a1b2c3d"] }
+```
+
+| 字段 | 类型 | 可缺省 | 说明 |
+|------|------|--------|------|
+| `path`、`project` | string | | worktree 根目录；所属项目的 id |
+| `branch` | string | ✓ | 检出的分支；不在任何分支上时没有 |
+| `head` | string | | 完整的 40 位提交哈希，删除时原样带回 |
+| `detached` | bool | ✓ | 不在任何分支上 |
+| `main` | bool | | 是主目录（主目录可以查状态，不能删） |
+| `managed` | bool | | 由 vibe-remote 创建。只有这种 worktree 的分支可以随它一起删 |
+| `dirtyFiles` | number | | 未提交或未跟踪的文件数，不含被 git 忽略的 |
+| `unmergedCommits` | number | | 有分支：该分支上不被任何其他本地分支或远程跟踪分支包含的提交数；不在分支上：`HEAD` 上不被任何本地分支或远程跟踪分支包含的提交数 |
+| `ignoredFiles` | number | | 被 git 忽略、会随目录一起删除的文件数（逐个文件数，目录不折叠；嵌在被忽略目录里的另一个 git 仓库算 1）。恒有值；`-1` 表示没数出来（这一项超时或失败不影响其它字段）。它只是给人看的说明：没有对应的同意项，删除时 daemon 不比对它 |
+| `sessions` | string[] | | 会随这个 worktree 一起结束的会话：归属它的（含已结束的对话会话），以及还没有归属、工作目录在它下面的。恒为数组 |
+
+错误：缺 `path` → 400 `{"error":"invalid_request"}`；404 `worktree_not_found`（见上；仓库是子模块或用了独立的 git 目录时也是它）；git 执行失败或超时 → 500 `{"error":"git_failed","message"}`。
+
+`POST /api/v1/worktrees/remove`，请求体：
+
+```json
+{ "path": "/Users/mac/github/devflow-worktrees/fix-login",
+  "head": "9f8e7d6c5b4a39281706f5e4d3c2b1a098765432",
+  "sessions": ["1794824025040-12b763ac", "1794824031111-0a1b2c3d"],
+  "discardFiles": true, "deleteBranch": false, "dropCommits": false }
+```
+
+| 字段 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| `path` | string | 是 | 要删的 worktree |
+| `head` | string | 是 | 确认框打开时 status 返回的 `head` |
+| `sessions` | string[] | 是 | 确认框上告诉用户会被结束的会话（status 的 `sessions`） |
+| `discardFiles` | bool | 否 | 用户同意丢弃未提交和未跟踪的文件 |
+| `deleteBranch` | bool | 否 | 用户选择连分支一起删。只有 `managed` 且在分支上时 daemon 才照做，其余情况忽略：不是 vibe-remote 创建的 worktree，分支一律保留 |
+| `dropCommits` | bool | 否 | 用户同意让未合并的提交不再属于任何分支 |
+
+| 响应 | 什么时候 |
+|------|----------|
+| 200 `{"removed":true,"branchDeleted":true,"endedSessions":["…"]}` | 目录已删。`branchDeleted`：分支是否也删了；该删而没删成（例如还被别的 worktree 检出着）时为 `false` 并带 `branchError`（string）。`endedSessions`：被结束的会话 |
+| 400 `worktree_is_main` | `path` 是主目录；仓库是子模块或用了独立的 git 目录时，它唯一的 worktree 也按主目录对待 |
+| 404 `worktree_not_found` | 见上 |
+| 409 `worktree_changed`，响应体多 `status`（上面 status 的结构，最新状态）和 `endedSessions` | 重查后与用户确认的不一致，没有删除。结束会话之前发现的（`endedSessions` 是 `[]`，什么都没动）：`head` 变了；有不在请求 `sessions` 里的会话，或有会话正在这个 worktree 里创建；有未提交文件而 `discardFiles` 不为真；会让未合并提交失去分支而 `dropCommits` 不为真。结束会话之后才发现的（`endedSessions` 是已经结束的会话，目录和分支都还在）：会话在被结束之前又提交了一次；git 拒绝删除后再查，出现了没被同意丢弃的文件。客户端用 `status` 重新确认 |
+| 500 `worktree_remove_failed`，响应体多 `endedSessions` | 结束会话之前就能确定删不了（`endedSessions` 是 `[]`，会话、目录、分支都没动；不管同意项是什么都拒绝）：worktree 被 `git worktree lock` 锁定；里面有初始化过的子模块或嵌入式仓库的检出；里面还嵌着这个仓库的另一个 worktree。已经动手之后的失败（`endedSessions` 是已经结束的会话）：某个会话没能结束；git 删除失败。`message` 是原因或 git 的错误输出；git 已经注销了这个 worktree、目录只删了一部分时，`message` 另外写明剩下的路径，分支不删 |
+| 500 `git_failed`，响应体带 `endedSessions: []` | 重查状态时 git 执行失败或超时；什么都没动 |
+
+409、500 的响应体例子：`{"error":"worktree_changed","message":"…","status":{…},"endedSessions":["1794824025040-12b763ac"]}`、`{"error":"worktree_remove_failed","message":"…","endedSessions":[]}`。`endedSessions` 恒为数组；轮到它之前已经自己退出的会话也算已结束。
+
+删除期间，在这个 worktree 里新建会话（含交接）会收到 fatal 的 `create_failed`，`message` 写明它正在被删除；反过来，有会话正在其中创建时，删除返回 409。
+
+这个请求可能比别的 REST 请求慢得多（逐个结束会话，一个对话会话停进程最长约 4 秒；大目录的删除也要时间）。桌面端给它单独的超时 `10 秒 + 5 秒 × sessions 的个数`，上限 60 秒。客户端超时或断开后，daemon 仍会把这次删除做完；客户端此时应再查一次 status 来确定结果（404 = 已删除）。
+
+旧 daemon 没有这两个路径，返回 404（对 `status` 而言与 `worktree_not_found` 的区别是响应体里没有 `error` 字段；客户端按 `/api/v1/projects` 是否 404 判断版本，不在旧 daemon 上调用它们）。
 
 ### `/api/v1/events` 鉴权与限制
 

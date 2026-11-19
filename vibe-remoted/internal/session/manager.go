@@ -315,14 +315,27 @@ func (m *Manager) createTerminalLocked(id string, opts CreateOptions) (*Runner, 
 	ownWorktree := mode == protocol.SessionModeWorktree && opts.Worktree == nil
 	var created CreatedWorktree
 	var ownHome *Home
+	// started ends the registration of workdir as "a session is starting
+	// here" (beginStart); it runs after the session is registered, or after a
+	// failed start has undone its worktree.
+	var started func()
 	if opts.Worktree != nil {
 		meta = *opts.Worktree
 	} else if ownWorktree {
-		created, err = m.createOwnWorktree(opts.Workdir, id, opts.WorktreeName, opts.ValidateWorkdir)
+		created, started, err = m.createOwnWorktree(opts.Workdir, id, opts.WorktreeName, opts.ValidateWorkdir)
 		if err != nil {
 			return nil, err
 		}
 		meta, workdir, ownHome = created.Meta, created.Workdir, &created.Home
+	}
+	if started == nil {
+		if started, err = m.beginStart(workdir); err != nil {
+			return nil, err
+		}
+	}
+	defer started()
+	if m.testAfterBeginStart != nil {
+		m.testAfterBeginStart(workdir)
 	}
 
 	claudeCmd := m.claudeCmd
@@ -423,8 +436,12 @@ func (m *Manager) lockRepo(repo string) (unlock func()) {
 
 // createOwnWorktree creates the worktree of a worktree-mode session under the
 // repository's lock and records it as created by vibe-remote (design 6.1).
-// validate is the caller's ValidateWorkdir.
-func (m *Manager) createOwnWorktree(source, id, name string, validate func(string) (string, error)) (CreatedWorktree, error) {
+// validate is the caller's ValidateWorkdir. Before the lock is released the
+// session's workdir is registered as starting (beginStart), so a removal that
+// takes the lock next does not find the new worktree without a session; the
+// caller calls started once the session is registered, or after
+// undoOwnWorktree.
+func (m *Manager) createOwnWorktree(source, id, name string, validate func(string) (string, error)) (created CreatedWorktree, started func(), err error) {
 	spec := WorktreeSpec{Source: source, SessionID: id, Name: name}
 	if validate != nil {
 		spec.AllowPath = func(path string) error {
@@ -436,21 +453,23 @@ func (m *Manager) createOwnWorktree(source, id, name string, validate func(strin
 	// here; CreateWorktree resolves it again under the lock and goes by that.
 	home, err := ResolveHome(source)
 	if err != nil {
-		return CreatedWorktree{}, fmt.Errorf("discover repository: %w", err)
+		return CreatedWorktree{}, nil, fmt.Errorf("discover repository: %w", err)
 	}
 	if !home.Git {
-		return CreatedWorktree{}, errNotGit(source)
+		return CreatedWorktree{}, nil, errNotGit(source)
 	}
 	unlock := m.lockRepo(home.Repo)
 	defer unlock()
-	created, err := CreateWorktree(spec)
-	if err != nil {
-		return CreatedWorktree{}, err
+	if created, err = CreateWorktree(spec); err != nil {
+		return CreatedWorktree{}, nil, err
+	}
+	if started, err = m.beginStart(created.Workdir); err != nil {
+		return CreatedWorktree{}, nil, withCleanup(err, created.Undo())
 	}
 	if m.projectStore != nil {
 		m.projectStore.AddWorktree(created.Home.Project, created.Meta.WorktreeRoot, created.Meta.Branch)
 	}
-	return created, nil
+	return created, started, nil
 }
 
 // undoOwnWorktree takes back a worktree whose session failed to start, again

@@ -24,12 +24,6 @@ type WorktreeMetadata struct {
 	Branch        string
 }
 
-type WorktreePreservedError struct{ WorktreeRoot, Branch string }
-
-func (e *WorktreePreservedError) Error() string {
-	return fmt.Sprintf("worktree %q is dirty; preserved branch %q", e.WorktreeRoot, e.Branch)
-}
-
 // gitTimeout bounds the git calls used for read-only discovery (ListWorktrees,
 // ResolveHome, worktree pre-checks). Tests may lower it. gitAt (the creation
 // and cleanup path) is not time-bounded.
@@ -277,18 +271,70 @@ type WorktreeRemoveError struct {
 
 func (e *WorktreeRemoveError) Error() string { return e.Message }
 
-var errNotImplemented = errors.New("not implemented")
+// nonEmptyLines counts the non-empty lines of a git listing.
+func nonEmptyLines(out []byte) int {
+	n := 0
+	for _, line := range strings.Split(string(out), "\n") {
+		if line != "" {
+			n++
+		}
+	}
+	return n
+}
 
 // DirtyFiles counts the uncommitted and untracked files of a worktree; files
-// git ignores are not counted (H10).
-func DirtyFiles(worktreeDir string) (int, error) { return 0, errNotImplemented }
+// git ignores are not counted (H10). core.fsmonitor is the one setting that
+// makes status run a program of the repository's choosing, so it is off.
+func DirtyFiles(worktreeDir string) (int, error) {
+	out, err := gitAtTimeout(worktreeDir, "-c", "core.fsmonitor=false", "status", "--porcelain", "--untracked-files=all")
+	if err != nil {
+		return 0, fmt.Errorf("check worktree status: %w", err)
+	}
+	return nonEmptyLines(out), nil
+}
 
-// IgnoredFiles counts the files git ignores in a worktree, one per file.
-func IgnoredFiles(worktreeDir string) (int, error) { return 0, errNotImplemented }
+// IgnoredFiles counts the files git ignores in a worktree: one per file, a
+// directory is not folded into one entry, and a repository nested in an
+// ignored directory counts once (design 3). It walks everything git ignores,
+// so it can be slow where the tracked content is not.
+func IgnoredFiles(worktreeDir string) (int, error) {
+	out, err := gitAtTimeout(worktreeDir, "-c", "core.fsmonitor=false", "ls-files", "--others", "--ignored", "--exclude-standard")
+	if err != nil {
+		return 0, fmt.Errorf("count ignored files: %w", err)
+	}
+	return nonEmptyLines(out), nil
+}
 
 // HasSubmoduleCheckouts reports whether a worktree holds a checked-out
-// submodule or embedded repository.
-func HasSubmoduleCheckouts(worktreeDir string) (bool, error) { return false, errNotImplemented }
+// submodule or embedded repository, by the two tests git itself applies before
+// it refuses to remove a worktree (validate_no_submodules): the worktree's git
+// directory has a modules/ directory, or the index has a gitlink whose path
+// contains a .git. Such a checkout can hold commits that exist nowhere else.
+func HasSubmoduleCheckouts(worktreeDir string) (bool, error) {
+	out, err := gitAtTimeout(worktreeDir, "rev-parse", "--absolute-git-dir")
+	if err != nil {
+		return false, fmt.Errorf("locate git directory: %w", err)
+	}
+	gitDir := strings.TrimSpace(string(out))
+	if info, statErr := os.Stat(filepath.Join(gitDir, "modules")); statErr == nil && info.IsDir() {
+		return true, nil
+	}
+	out, err = gitAtTimeout(worktreeDir, "ls-files", "--stage", "-z")
+	if err != nil {
+		return false, fmt.Errorf("read index: %w", err)
+	}
+	for _, entry := range strings.Split(string(out), "\x00") {
+		// "<mode> <object> <stage>\t<path>"
+		meta, name, ok := strings.Cut(entry, "\t")
+		if !ok || !strings.HasPrefix(meta, "160000 ") {
+			continue
+		}
+		if _, statErr := os.Lstat(filepath.Join(worktreeDir, name, ".git")); statErr == nil {
+			return true, nil
+		}
+	}
+	return false, nil
+}
 
 // BranchExistsError says which existing branch blocks the new one: the branch
 // itself, or one git cannot keep next to it (fix blocks fix/login, change/foo
@@ -716,37 +762,6 @@ func (c CreatedWorktree) Undo() error {
 	}.undo()
 }
 
-func isMissingBranchError(err error) bool {
-	message := err.Error()
-	return strings.Contains(message, "branch '") && strings.Contains(message, "not found")
-}
-
-func isMissingWorktreeError(err error) bool {
-	message := strings.ToLower(err.Error())
-	return strings.Contains(message, "is not a working tree") || strings.Contains(message, "does not exist") || strings.Contains(message, "not found")
-}
-
-func RollbackWorktree(meta WorktreeMetadata) error {
-	if _, err := gitAt(meta.SourceRepo, "worktree", "remove", "--force", meta.WorktreeRoot); err != nil {
-		if !isMissingWorktreeError(err) {
-			// A missing path is already rolled back, but Git may retain stale metadata
-			// after an external filesystem removal. Prune that metadata before deleting
-			// the branch.
-			if _, pruneErr := gitAt(meta.SourceRepo, "worktree", "prune"); pruneErr != nil {
-				return fmt.Errorf("rollback worktree: %w", err)
-			}
-		}
-	}
-	if _, err := gitAt(meta.SourceRepo, "branch", "-D", meta.Branch); err != nil {
-		if isMissingBranchError(err) {
-			return nil
-		}
-		return fmt.Errorf("rollback branch: %w", err)
-	}
-	_ = os.Remove(filepath.Dir(meta.WorktreeRoot))
-	return nil
-}
-
 // UnmergedCommits counts commits on branch that no other local branch or
 // remote-tracking ref contains (H9, design 3). An empty branch counts the
 // commits reachable from dir's detached HEAD instead. The branch is always
@@ -768,42 +783,4 @@ func UnmergedCommits(dir, branch string) (int, error) {
 		return 0, fmt.Errorf("parse unmerged commit count: %w", err)
 	}
 	return n, nil
-}
-
-func CleanupWorktree(meta WorktreeMetadata) error {
-	if _, statErr := os.Stat(meta.WorktreeRoot); os.IsNotExist(statErr) {
-		// The directory is gone but the branch may still hold unpushed work.
-		n, err := UnmergedCommits(meta.SourceRepo, meta.Branch)
-		if err != nil {
-			return err
-		}
-		if n > 0 {
-			return &WorktreePreservedError{WorktreeRoot: meta.WorktreeRoot, Branch: meta.Branch}
-		}
-		return RollbackWorktree(meta)
-	}
-	out, err := gitAt(meta.WorktreeRoot, "status", "--ignored", "--untracked-files=all", "--porcelain")
-	if err != nil {
-		return fmt.Errorf("check worktree status: %w", err)
-	}
-	if strings.TrimSpace(string(out)) != "" {
-		return &WorktreePreservedError{WorktreeRoot: meta.WorktreeRoot, Branch: meta.Branch}
-	}
-	// A clean worktree can still carry commits that live nowhere else; preserve
-	// both the directory and the branch so the work is not lost.
-	n, err := UnmergedCommits(meta.SourceRepo, meta.Branch)
-	if err != nil {
-		return err
-	}
-	if n > 0 {
-		return &WorktreePreservedError{WorktreeRoot: meta.WorktreeRoot, Branch: meta.Branch}
-	}
-	if _, err := gitAt(meta.SourceRepo, "worktree", "remove", meta.WorktreeRoot); err != nil && !isMissingWorktreeError(err) {
-		return fmt.Errorf("remove worktree: %w", err)
-	}
-	if _, err := gitAt(meta.SourceRepo, "branch", "-D", meta.Branch); err != nil && !isMissingBranchError(err) {
-		return fmt.Errorf("remove branch: %w", err)
-	}
-	_ = os.Remove(filepath.Dir(meta.WorktreeRoot))
-	return nil
 }
