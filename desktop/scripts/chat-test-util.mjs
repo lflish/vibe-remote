@@ -74,7 +74,7 @@ export const __test = {
   views, machineSessions, machineOnline, machineTrees, machineCaps, machineProjects,
   get activeKey() { return activeKey; },
   setMachines(list: MachineConfig[]) { machines = list; },
-  showMachineOverview, applyViewActivity, renderSidebar, openChatSession, openSession, rebuildRests, setActive, refreshAllMachines,
+  showMachineOverview, applyViewActivity, renderSidebar, openChatSession, openSession, rebuildRests, setActive, refreshAllMachines, pollMachines,
 };
 `;
   const stub = {

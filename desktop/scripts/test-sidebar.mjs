@@ -328,6 +328,101 @@ test('keeps_tree_when_projects_request_fails', async () => {
   dom.dom.window.close();
 });
 
+// The 5 s poll must not throw away the answers that take longer than 5 s: a
+// repository whose git hangs makes the daemon answer /projects after its own
+// 5 s timeout, i.e. always after the next poll went out (review D1).
+test('slow_answers_survive_the_next_poll', async () => {
+  const dom = await indexDom();
+  localStorage.setItem('vibe-remote.locale', 'zh');
+  localStorage.removeItem('vibe-remote.collapsed-machines');
+  localStorage.removeItem('vibe-remote.collapsed-projects');
+  const app = await loadIndex();
+  app.setMachines([M]);
+  app.rebuildRests();
+  const json = (code, body) => new Response(JSON.stringify(body), { status: code, headers: { 'Content-Type': 'application/json' } });
+  const main = (extra = []) => [{ path: '/r/ok', branch: 'main', head: 'a1b2c3d', main: true, sessions: [] }, ...extra];
+  const tree = (worktrees, slow = {}) => ({ proto: 4, projects: [
+    { id: '/r/ok', name: 'ok', git: true, sessions: [], worktrees },
+    { id: '/r/slowrepo', name: 'slowrepo', git: true, sessions: [], worktrees: [{ path: '/r/slowrepo', branch: 'main', head: 'b2c3d4e', main: true, sessions: [] }], ...slow },
+  ] });
+  const wt = (name) => ({ path: `/r/ok-worktrees/${name}`, branch: name, head: 'c3d4e5f', managed: true, sessions: [] });
+  // Every request stays open until the test answers it.
+  const pending = { sessions: [], projects: [] };
+  globalThis.fetch = (url) => new Promise((resolve, reject) => {
+    const path = new URL(String(url)).pathname;
+    if (path === '/api/v1/sessions') pending.sessions.push({ resolve, reject });
+    else if (path === '/api/v1/projects') pending.projects.push({ resolve, reject });
+    else resolve(new Response(null, { status: 204 }));
+  });
+  const settle = async (n = 12) => { for (let i = 0; i < n; i++) await new Promise((r) => setTimeout(r, 0)); };
+  const labels = () => [...document.querySelectorAll('[data-testid="worktree-row"] .worktree-label')].map((e) => e.textContent);
+  const errors = () => [...document.querySelectorAll('[data-testid="project-error"]')].map((e) => e.textContent);
+  const machineState = () => document.querySelector('[data-testid="machine-state"]').dataset.state;
+
+  // Start-up: one refresh, answered.
+  const first = app.refreshAllMachines(true, MK);
+  pending.sessions[0].resolve(json(200, { list: [] }));
+  pending.projects[0].resolve(json(200, tree(main())));
+  await first;
+  assert.deepEqual(labels(), [], 'one worktree each: both projects are flat');
+  assert.equal(machineState(), 'connected');
+
+  // Poll 1 goes out; its /projects answer is still pending when poll 2 goes out.
+  void app.pollMachines();
+  await settle();
+  pending.sessions[1].resolve(json(200, { list: [] }));
+  await settle();
+  void app.pollMachines();
+  await settle();
+  assert.equal(pending.projects.length, 3, 'two /projects requests are in flight');
+  // Poll 1 is answered now: a new worktree in the healthy repository, and the
+  // hung one reported as failed.
+  const failed = { error: 'git_failed', errorMessage: 'git worktree list --porcelain: context deadline exceeded', worktrees: [] };
+  pending.projects[1].resolve(json(200, tree(main([wt('added-later')]), failed)));
+  await settle();
+  assert.deepEqual(labels(), ['main', 'added-later'], 'the answer to poll 1 is shown although poll 2 is already out');
+  assert.deepEqual(errors(), [t('sidebar.project.readFailed', { msg: failed.errorMessage })], 'the hung repository shows why it could not be read');
+
+  // An answer that arrives out of order never replaces a newer one.
+  pending.sessions[2].resolve(json(200, { list: [] }));
+  void app.pollMachines();
+  await settle();
+  pending.sessions[3].resolve(json(200, { list: [] }));
+  pending.projects[3].resolve(json(200, tree(main([wt('added-later'), wt('newest')]))));
+  await settle();
+  assert.deepEqual(labels(), ['main', 'added-later', 'newest']);
+  pending.projects[2].resolve(json(200, tree(main([wt('added-later')]), failed)));
+  await settle();
+  assert.deepEqual(labels(), ['main', 'added-later', 'newest'], 'the late answer to poll 2 is dropped: poll 3 has been applied');
+  assert.deepEqual(errors(), []);
+
+  // The same for the session list: a host that stops answering fails each
+  // request after the 8 s deadline, later than the next poll.
+  void app.pollMachines();
+  await settle();
+  void app.pollMachines();
+  await settle();
+  pending.sessions[4].reject(Object.assign(new Error('The operation timed out.'), { name: 'TimeoutError' }));
+  await settle();
+  assert.equal(machineState(), 'offline', 'a request that timed out after the next poll went out still marks the machine offline');
+
+  // A refresh asked for by an action (here: forced) still supersedes what is in flight.
+  const forced = app.refreshAllMachines(true, MK);
+  await settle();
+  const last = pending.projects.length - 1;
+  pending.projects[last - 1].resolve(json(200, tree(main())));
+  await settle();
+  assert.deepEqual(labels(), ['main', 'added-later', 'newest'], 'an answer from before the forced refresh is not applied');
+  pending.sessions[pending.sessions.length - 1].resolve(json(200, { list: [] }));
+  pending.projects[last].resolve(json(200, tree(main([wt('after-forced')]))));
+  await forced;
+  assert.deepEqual(labels(), ['main', 'after-forced']);
+  assert.equal(machineState(), 'connected');
+  for (const kind of ['sessions', 'projects']) for (const req of pending[kind]) req.resolve(json(200, kind === 'sessions' ? { list: [] } : tree(main([wt('after-forced')]))));
+  await settle();
+  dom.dom.window.close();
+});
+
 test('collapsed_projects_persist', async () => {
   const dom = await indexDom();
   localStorage.setItem('vibe-remote.locale', 'zh');

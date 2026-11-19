@@ -97,9 +97,23 @@ const reloadingSessions = new Set<string>();
 // their own `activity` from live frames instead.
 const sessionDots = new Map<string, Dot>();
 const restSnapshots = new Map<string, RestSnapshot>();
-// Every refresh captures a generation. A newer refresh or machine-list edit
-// invalidates older in-flight requests without serializing the 5s poll.
+// Which answers of the REST refresh may still be applied.
+//
+// machineRefreshGeneration: a refresh asked for by an action (a session became
+// ready, something was deleted, a rename…) and a machine-list edit start a new
+// generation, and answers to requests of an older one are dropped — what they
+// say predates the action. The 5 s poll does NOT start a generation: a
+// repository whose git hangs makes the daemon answer /projects after its own
+// 5 s timeout, later than the next poll, and a host that stopped answering
+// fails after the 8 s deadline; were each poll to invalidate the previous one,
+// none of those answers would ever be applied.
+//
+// refreshApplied: within a generation, the answers of one machine to one kind
+// of request (sessions, projects) are applied in the order the requests were
+// sent; one that arrives after a later request has been answered is dropped.
 let machineRefreshGeneration = 0;
+let refreshSeq = 0;
+const refreshApplied = new Map<string, number>(); // `${machineKey}|${kind}` -> seq of the last answer applied
 let statusMessageTimer: ReturnType<typeof setTimeout> | null = null;
 
 const machineKey = (m: MachineConfig) => `${m.addr}:${m.port}`;
@@ -274,7 +288,14 @@ let pollingStarted = false;
 function startPolling() {
   if (pollingStarted) return;
   pollingStarted = true;
-  setInterval(refreshAllMachines, 5000);
+  setInterval(pollMachines, 5000);
+}
+
+// pollMachines is the periodic refresh. Unlike a refresh asked for by an
+// action it leaves the requests that are still in flight valid (see
+// machineRefreshGeneration).
+function pollMachines(): Promise<void> {
+  return refreshAllMachines(false, undefined, true);
 }
 
 // rebuildRests rebuilds the machineKey→REST map after the machine list changes
@@ -306,6 +327,8 @@ function wireManageMachinesButton() {
           machineProjects.delete(rk);
           machineCaps.delete(rk);
           machineTrees.delete(rk);
+          refreshApplied.delete(`${rk}|sessions`);
+          refreshApplied.delete(`${rk}|projects`);
           for (const pk of [...collapsedProjects]) {
             if (pk.startsWith(`${rk}|`)) collapsedProjects.delete(pk);
           }
@@ -389,10 +412,12 @@ function wireTerminalResizeObserver() {
   ro.observe(container);
 }
 
-// refreshAllMachines pulls each machine's session list over REST. It is the
-// single reachability signal used by the desktop sidebar.
-async function refreshAllMachines(force = false, targetMachineKey?: string) {
-  const generation = ++machineRefreshGeneration;
+// refreshAllMachines pulls each machine's session list and project tree over
+// REST. It is the single reachability signal used by the desktop sidebar.
+// `poll` is set by the 5 s timer only (pollMachines).
+async function refreshAllMachines(force = false, targetMachineKey?: string, poll = false) {
+  const generation = poll ? machineRefreshGeneration : ++machineRefreshGeneration;
+  const seq = ++refreshSeq;
   const now = Date.now();
   const refreshMachines = machines.filter((machine) => {
     const mk = machineKey(machine);
@@ -400,16 +425,21 @@ async function refreshAllMachines(force = false, targetMachineKey?: string) {
     return force || (machineRetryAt.get(mk) ?? 0) <= now;
   });
 
+  // take reports whether this refresh's answer of one kind may be applied for
+  // a machine, and records it as the latest applied if so.
+  const take = (m: MachineConfig, kind: 'sessions' | 'projects') => {
+    const mk = machineKey(m);
+    if (generation !== machineRefreshGeneration || !machines.some((current) => machineKey(current) === mk)) return false;
+    const key = `${mk}|${kind}`;
+    if (seq <= (refreshApplied.get(key) ?? 0)) return false;
+    refreshApplied.set(key, seq);
+    return true;
+  };
   // Publish each response independently. In particular, a slow / unavailable
   // info endpoint must not delay the session list (or make a healthy machine
   // appear offline after its sessions request succeeds).
-  const isCurrent = (m: MachineConfig) => {
-    const mk = machineKey(m);
-    return generation === machineRefreshGeneration && machines.some((current) => machineKey(current) === mk);
-  };
   const publish = (m: MachineConfig) => {
     const mk = machineKey(m);
-    if (!isCurrent(m)) return;
     renderSidebar();
     if (overviewMachineKey === mk) {
       const overviewMachine = machines.find((candidate) => machineKey(candidate) === mk);
@@ -425,37 +455,39 @@ async function refreshAllMachines(force = false, targetMachineKey?: string) {
       if (!rest) return [];
       const sessionsRequest = rest.listSessions()
         .then((sessions) => {
-          if (!isCurrent(m)) return;
+          if (!take(m, 'sessions')) return;
           trackChatActivity(m, sessions);
           machineSessions.set(mk, sessions);
           machineOnline.set(mk, true);
           machineIssues.delete(mk);
           machineFailures.delete(mk);
           machineRetryAt.delete(mk);
+          publish(m);
         })
         .catch((error: unknown) => {
-          if (!isCurrent(m)) return;
+          if (!take(m, 'sessions')) return;
           machineOnline.set(mk, false);
           machineIssues.set(mk, classifyMachineIssue(error));
           const failures = (machineFailures.get(mk) ?? 0) + 1;
           machineFailures.set(mk, failures);
           machineRetryAt.set(mk, Date.now() + Math.min(5000 * (2 ** (failures - 1)), 60000));
-        })
-        .finally(() => publish(m));
+          publish(m);
+        });
       // The project tree is published independently (design 6.4): a success sets
       // v4 and stores the tree, a 404 marks the machine legacy, and a transient
       // failure keeps the previous capability and tree (nextCapability, d7).
       const projectsRequest = rest.listProjects()
         .then((projects) => {
-          if (!isCurrent(m)) return;
+          if (!take(m, 'projects')) return;
           machineCaps.set(mk, nextCapability(machineCaps.get(mk) ?? 'unknown', projects));
           machineProjects.set(mk, projects);
+          publish(m);
         })
         .catch((error: unknown) => {
-          if (!isCurrent(m)) return;
+          if (!take(m, 'projects')) return;
           machineCaps.set(mk, nextCapability(machineCaps.get(mk) ?? 'unknown', error instanceof Error ? error : new Error(String(error))));
-        })
-        .finally(() => publish(m));
+          publish(m);
+        });
       return [sessionsRequest, projectsRequest];
     }),
   );
