@@ -9,7 +9,7 @@ import { indexDom, load, loadIndex, runner } from './chat-test-util.mjs';
 
 const page = await indexDom();
 localStorage.setItem('vibe-remote.locale', 'zh');
-const { renderSidebar, renderToolbarTitle } = await load('src/renderer/sidebar.ts', { platform: 'browser' });
+const { renderSidebar, renderToolbarTitle, rendererIcon } = await load('src/renderer/sidebar.ts', { platform: 'browser' });
 const { buildTree, projectHue } = await load('src/renderer/tree.ts');
 const { t } = await load('src/renderer/i18n.ts', { platform: 'browser' });
 
@@ -47,7 +47,8 @@ test('renders_three_levels', () => {
       { path: '/r/devflow-worktrees/fix-login', branch: 'fix-login', head: '9f8e7d6', managed: true, sessions: ['s2'] },
     ], sessions: [],
   }];
-  const tree = buildTree([sess('s1', { workdir: '/r/devflow' }), sess('s2', { workdir: '/r/devflow-worktrees/fix-login' })], projects);
+  // R1.1: a chat session in the main directory, a terminal session in the other worktree.
+  const tree = buildTree([sess('s1', { workdir: '/r/devflow', ui: 'chat', state: 'idle' }), sess('s2', { workdir: '/r/devflow-worktrees/fix-login' })], projects);
   const c = render([machineEntry(tree)]);
   assert.equal(tall(c, 'worktree-row').length, 2);
   const groups = [...c.querySelectorAll('.worktree-group')];
@@ -58,6 +59,27 @@ test('renders_three_levels', () => {
     assert.ok(rows[0].dataset.ui);
     assert.ok('dot' in rows[0].dataset);
   }
+  // Each row sits under its own worktree and carries the icon of its kind.
+  const rowOf = (id) => c.querySelector(`[data-testid="session-row"][data-session-id="${id}"]`);
+  const icon = (id) => rowOf(id).querySelector('.session-label > .session-kind-icon svg path');
+  assert.equal(rowOf('s1').closest('.worktree-group').dataset.path, '/r/devflow');
+  assert.equal(rowOf('s2').closest('.worktree-group').dataset.path, '/r/devflow-worktrees/fix-login');
+  assert.equal(rowOf('s1').dataset.ui, 'chat');
+  assert.equal(rowOf('s2').dataset.ui, 'terminal');
+  assert.ok(icon('s1') && icon('s2'), 'both rows have a kind icon');
+  assert.equal(rowOf('s1').querySelectorAll('.session-kind-icon').length, 1, 'one icon per row');
+  assert.equal(rowOf('s2').querySelectorAll('.session-kind-icon').length, 1);
+  const shape = (name) => rendererIcon(name).querySelector('path').getAttribute('d');
+  assert.notEqual(shape('chat'), shape('terminal'), 'the two kinds are drawn differently');
+  assert.equal(icon('s1').getAttribute('d'), shape('chat'), 'the chat session shows the chat glyph');
+  assert.equal(icon('s2').getAttribute('d'), shape('terminal'), 'the terminal session shows the terminal glyph');
+  // In words as well: the badge and the kind line under the name.
+  assert.equal(rowOf('s1').querySelector('.session-ui-badge').textContent, t('chat.badge'));
+  assert.equal(rowOf('s2').querySelector('.session-ui-badge'), null);
+  assert.equal(rowOf('s1').querySelector('.session-meta').textContent, t('sidebar.session.kind.chat'));
+  assert.equal(rowOf('s2').querySelector('.session-meta').textContent, t('sidebar.session.kind.terminal'));
+  // A session with no `ui` (an older daemon) is a terminal session.
+  assert.equal(icon('s2').getAttribute('d'), rendererIcon('terminal').querySelector('path').getAttribute('d'));
 });
 
 test('flat_project_has_no_worktree_row', () => {
@@ -197,13 +219,32 @@ test('collapsed_project_shows_waiting_dot', () => {
   const projects = [{ id: '/r/w', name: 'w', git: true, worktrees: [{ path: '/r/w', branch: 'main', head: 'x', main: true, sessions: ['s'] }], sessions: [] }];
   const tree = buildTree([sess('s', { workdir: '/r/w' })], projects);
   const dotOf = () => 'waiting';
-  const collapsed = render([machineEntry(tree)], acts(), { collapsedProjects: new Set([`${MK}|/r/w`]), dotOf });
+  const folded = new Set([`${MK}|/r/w`]);
+  const collapsed = render([machineEntry(tree)], acts(), { collapsedProjects: folded, dotOf });
   assert.ok(tid(collapsed, 'project-dot'));
   assert.equal(tid(collapsed, 'session-row'), null, 'collapsed hides sessions');
+  // It is the "needs you" dot, the same one the session row shows (R1.6) —
+  // not the "turn finished" or "new output" one, and not a hidden one.
+  const classes = (el) => [...el.classList].sort();
+  assert.deepEqual(classes(tid(collapsed, 'project-dot')), ['session-unread', 'waiting']);
 
   const expanded = render([machineEntry(tree)], acts(), { dotOf });
   assert.equal(tid(expanded, 'project-dot'), null);
   assert.equal(tid(expanded, 'session-row').dataset.dot, 'waiting');
+  assert.deepEqual(classes(tid(expanded, 'session-row').querySelector('.session-unread')), classes(tid(collapsed, 'project-dot')), 'folded and unfolded show the same dot');
+
+  // Only "needs you" is rolled up: a folded project whose sessions merely
+  // finished a turn or printed something shows no dot at all.
+  for (const state of ['idle', 'output', 'none']) {
+    const quiet = render([machineEntry(tree)], acts(), { collapsedProjects: folded, dotOf: () => state });
+    assert.equal(tid(quiet, 'project-dot'), null, `no project dot for ${state}`);
+    assert.equal(tid(quiet, 'project-row').querySelector('.session-unread'), null, `no dot element at all for ${state}`);
+  }
+  // The session on screen needs no dot, but its project folded away still does
+  // when another of its sessions is waiting.
+  const two = buildTree([sess('a', { workdir: '/r/w' }), sess('b', { workdir: '/r/w' })], [{ ...projects[0], worktrees: [{ ...projects[0].worktrees[0], sessions: ['a', 'b'] }] }]);
+  const mixed = render([machineEntry(two)], acts(), { collapsedProjects: folded, dotOf: (mk, id) => (id === 'b' ? 'waiting' : 'idle') });
+  assert.deepEqual(classes(tid(mixed, 'project-dot')), ['session-unread', 'waiting']);
 });
 
 test('project_menu_remove', () => {
