@@ -961,6 +961,15 @@ CSS 变量：保留现有变量名（`styles.css` 里到处在用），换成 M1
 - 评审修复（X4）：6.1 新建时名字的本地规则挪到第 1 步之前（任何 git 调用之前），在 WebSocket 入口和 `createOwnWorktree` 各查一次；4.4 的预检仍是先看目录、再查名字，所以「预检与新建先报哪个原因一致」只在目录没有问题时成立（d47）。7.1 里「以 - 开头的在调用 git 前被拒」这条规则的检查应加上 `TestAttachRefusesBadWorktreeNameBeforeAnyGit`、`TestCreateRefusesBadWorktreeNameBeforeAnyGit`（`.devflow.yml` 由主会话改）。
 - 评审修复（待验证项 1，已确认）：6.2 第 3 步之前，`RemoveWorktree` 要求与 tmux 的对账被应用（没应用重试一次）；两次都没成 → 500 `worktree_remove_failed`，什么都不动。4.9「先和 tmux 对账」原来不看对账有没有成功（decisions #92）。
 - 评审修复（待验证项 2，已确认）：4.9 / 第 7 节「读列表和预检的 git 带 5 秒超时、创建和清理不带」改成每个 git 调用都带时限：查询和单个引用的改动 5 秒，`rev-list --count` 30 秒，`git worktree add` / `remove` 5 分钟；不带超时的 `gitAt` 删掉。超时按失败处理，仓库锁随之释放（decisions #93）。
+- 评审修复（桌面端，decisions #100–#107、d50–d56）：
+  - 6.4：轮询不再「沿用 generation 机制」作废上一轮。每 5 秒的轮询不开启新一代，应答按机器 × 请求种类的发出序号应用；动作触发的刷新和机器列表编辑仍开启新一代（#100）。
+  - 6.2 的表：删除请求得到 404 时不再并上这次请求的 `sessions`，只带同一流程里先前应答报告过的 `endedSessions`（#102）。
+  - 4.10：git 项目扁平的条件改为「列出的唯一 worktree 是主目录，或什么都没列出」；唯一列出的 worktree 不是主目录时保留 worktree 行（#103、d56）。
+  - 7.4：`menu.ts` 的菜单放不下时翻到按钮上方并夹在窗口内；侧边栏重建后找回焦点，开着的行菜单跟随它的行（#104）。`legacy` / `unknown` 不再共用升级文案：`unknown` 用 `sidebar.unknown.notRead`，删会话确认框多一种 `session.delete.unknownWorktree`（`confirmDeleteSession` 加可缺省的 `unknownWorktree`）（d51）。目录选择器的确认按钮等 info，info 失败时 Worktree 模式不可用（d50）。新建 worktree 对话框的回车不等预检（d52，改 d33）。worktree 行在删除请求在途时显示 `sidebar.worktree.removing`（`SidebarModel.isRemoving`，`deleteWorktreeFlow` 第四个参数）（d55）。标题里分支先让位（d53）。`-c` 说明在勾选时滚进可见区（d54）。
+  - 7.5：`shell-layout.mjs` 现在存在，量 800×500 下的行菜单、标题和 `-c` 说明（#101）。
+  - 协议：`WorktreeRemoveRequest.branch`（可缺省）、TS 的 `ProjectsResponse`；名字的两条本地规则（Cf / Zl / Zp、分段超过 250 字节）（#105、#106）。
+  - 新增文案键 6 个：`picker.worktreeNeedsInfo`、`sidebar.project.noMain`、`sidebar.worktree.removing`、`sidebar.unknown.notRead`、`session.delete.unknownWorktree`、`wt.error.refused`。
+- 合并对接（decisions #108–#113、d57）：上一条末尾「分段超过 250 字节」以 daemon 为准，改成**整个名字**超过 250 字节（#108，同 d46）；G9 的 15 条向量进了共用的 `testdata/worktree-names.json`，4.1「两边由共用向量守着」对新规则重新成立（#109，了结 #87）；4.4 的 `no_commits` 在桌面端与 `not_git`、`unsupported_repo` 同类处理（7.4 的名字段：输入框禁用、写明原因），这种应答不显示「基于 … @ …」那一行，新增文案键 `wt.error.no_commits`（#110、d57）；7.1 的三条规则（d44、d45、d47 提出的）已写进 `.devflow.yml`（#113）。
 
 ## 11. 方案验证（机器关口 B）
 
