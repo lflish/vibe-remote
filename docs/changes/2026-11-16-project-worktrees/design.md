@@ -970,6 +970,14 @@ CSS 变量：保留现有变量名（`styles.css` 里到处在用），换成 M1
   - 协议：`WorktreeRemoveRequest.branch`（可缺省）、TS 的 `ProjectsResponse`；名字的两条本地规则（Cf / Zl / Zp、分段超过 250 字节）（#105、#106）。
   - 新增文案键 6 个：`picker.worktreeNeedsInfo`、`sidebar.project.noMain`、`sidebar.worktree.removing`、`sidebar.unknown.notRead`、`session.delete.unknownWorktree`、`wt.error.refused`。
 - 合并对接（decisions #108–#113、d57）：上一条末尾「分段超过 250 字节」以 daemon 为准，改成**整个名字**超过 250 字节（#108，同 d46）；G9 的 15 条向量进了共用的 `testdata/worktree-names.json`，4.1「两边由共用向量守着」对新规则重新成立（#109，了结 #87）；4.4 的 `no_commits` 在桌面端与 `not_git`、`unsupported_repo` 同类处理（7.4 的名字段：输入框禁用、写明原因），这种应答不显示「基于 … @ …」那一行，新增文案键 `wt.error.no_commits`（#110、d57）；7.1 的三条规则（d44、d45、d47 提出的）已写进 `.devflow.yml`（#113）。
+- 第二轮复评修复（评审对象 e278f87..c74e715；decisions #114–#120、d58–d61）：
+  - 4.9：与 tmux 的对账里，tmux 的 socket 文件不存在、或机器上没有 tmux 程序，都算「没有任何 tmux 会话」（对账成功）；只有 server 在而查询失败才算对账失败。上面「待验证项 1」那条的「两次都没成 → 500」只对后一种成立（#114）。
+  - 第 3 节、7.1：上面 G4 那条的「在 git 环境里统一关闭（`gitEnv()`）」改回命令行参数：每条 git 命令行以 `-c core.fsmonitor=false` 开头（`gitFixedArgs`），`GIT_CONFIG_COUNT` 的写法在 git 2.31 之前不生效（#115）。7.1 那条规则的文字收窄为「daemon 运行的 git 不运行 `core.fsmonitor` 指定的程序」，clean / smudge 过滤器和 hook 不在其内（#120）。
+  - 6.1：读回登记项失败时再读一次；撤销里认定是本次的那一项用两个 `--force` 删（`worktree add` 被杀后留下 git 自己加的锁）；分支只在确认 worktree 已不在时才删，否则目录和分支都留着并写进 `message`（#116、#117）。
+  - 5.1：tmux 用户选项多一个 `@vibe_remote_workdir`（创建时的工作目录），`list-sessions` 的格式串 14 列，`parseTmuxSessionLine` 接受 8、9、13、14 列。6.2 第 3 步、4.5 的 `sessions`：上面 G5 那条的「工作目录」是**创建时的**工作目录，不随进程 `cd` 变，daemon 重启前后一致；没有该选项的旧会话只按 `home` 算（#118，依据 spec H19）。
+  - 5.2：上面 G1 那条括号里的「（或已是 `prunable`）」不再成立：创建记录只在 git 的列表里完全没有这个路径时才清（d59，推翻 #82 的那半句）。
+  - 6.4、7.4：worktree 行「正在删除…」的标记在删除成功后留到机器刷新结束才清；`deleteWorktreeFlow` 的回调多一个参数说明 worktree 是不是已经没了（#119、d60）。
+  - 4.1：名字的两条本地规则各有原因码，不再是 `invalid`：不显示的字符是 `invisible`，超过 250 字节是 `too_long`；新增文案键 `wt.name.invisible`、`wt.name.too_long`（d61，改上面 G9 那条的「原因都是 `invalid`」）。
 
 ## 11. 方案验证（机器关口 B）
 
