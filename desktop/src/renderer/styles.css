@@ -1303,3 +1303,7 @@ html, body {
 /* The session dialog's subtitle carries a full path: let it break anywhere and
    be selectable (T11). */
 .modal-subtitle-path { word-break: break-all; user-select: text; -webkit-user-select: text; }
+
+/* A worktree row is lower than a project row: its hover actions are sized to
+   its text line so the rows below do not move when they appear (T11). */
+.worktree-row > .row-actions > .row-action { width: 18px; height: 16px; }

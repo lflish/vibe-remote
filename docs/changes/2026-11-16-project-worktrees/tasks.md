@@ -613,8 +613,8 @@
 - 依赖：T2
 
 ### T11 桌面端：在已有 worktree 里新建会话
-- 状态：进行中
-- 文件：修改 `desktop/src/renderer/worktree-dialogs.ts`（加 `openWorktreeSessionDialog`）、`desktop/src/renderer/chat/availability.ts`（`chatAvailability` 加第 4 个可缺省参数 `opts?: { mainPath?: string }`）、`desktop/src/renderer/index.ts`（给 `SidebarActions` 传 `newSession`：打开对话框，确认后走现有的新建会话流程）、`desktop/src/renderer/styles.css`（追加对话框副标题里路径一行的规则）、`desktop/src/renderer/i18n.ts`（`wt.session.title` / `subtitle` / `confirm`、`picker.ui.chat.reason.worktree_untrusted`、`label.dir`、`label.branch`）；测试 `desktop/scripts/test-worktree-dialogs.mjs`、`test-chat-availability.mjs`
+- 状态：完成
+- 文件：修改 `.claude/skills/verify/scripts/sidebar-layout.mjs`（悬停时行高不变的检查，decisions #61）、`desktop/src/renderer/worktree-dialogs.ts`（加 `openWorktreeSessionDialog`）、`desktop/src/renderer/chat/availability.ts`（`chatAvailability` 加第 4 个可缺省参数 `opts?: { mainPath?: string }`）、`desktop/src/renderer/index.ts`（给 `SidebarActions` 传 `newSession`：打开对话框，确认后走现有的新建会话流程）、`desktop/src/renderer/styles.css`（追加对话框副标题里路径一行的规则）、`desktop/src/renderer/i18n.ts`（`wt.session.title` / `subtitle` / `confirm`、`picker.ui.chat.reason.worktree_untrusted`、`label.dir`、`label.branch`）；测试 `desktop/scripts/test-worktree-dialogs.mjs`、`test-chat-availability.mjs`
 - 接口：
   - 使用：`createUiSection`、`createFlagsSection`（T9）；`rest.info()`、`rest.listDir(path)` 的 `chatTrust`（现有；规则由 T10 放宽）；`TreeProject`、`TreeWorktree`、`Capability`、`SidebarActions.newSession`（T5、T6b）
   - 提供：`openWorktreeSessionDialog(machine, project: TreeProject, worktree: TreeWorktree, opts?: { sessionCountAt?(workdir: string): number }): Promise<PickedSession | null>`（`opts` 本任务只留出参数，T15 才用）：标题 `wt.session.title`（带 worktree 的 `label`），副标题 `wt.session.subtitle`（项目名和完整路径）；只有界面段和启动选项段；确认后返回 `{ workdir: worktree.path, flags, mode: 'normal', ui }`
@@ -894,6 +894,7 @@
 | T8 | 2026-11-19 15:28 | d378972 | 完成定义的 `go test -race -count=1 ./internal/session ./internal/server -run 'TestPlan\|TestNewEndpointsRequireToken'` 两行 `ok`；`npm run typecheck`+`test:rest-projects`(6) 退出 0；`WorktreePlan` / `WorktreeBase` 的字段和可缺省性在 protocol.go / protocol.ts / protocol.md 三处一致，路由、`rest.ts`、端点表一致；`TMUX_TMPDIR=… make check` exit 0；`gui-smoke.mjs` 33 行 PASS、`gui-chat-smoke.mjs` 29 行 PASS，都无 FAIL |
 | T9 | 2026-11-19 15:54 | df32cea（失败的测试和接口骨架）、0a6ef68（实现）、本行所在的提交（记录） | 完成定义的 `typecheck`+`test:worktree-name`(3)+`test:session-form`(9)+`test:worktree-dialogs`(6)+`test:dialog-layout`+`test:picker-layout`+`test:i18n-parity`(285 键) 全退出 0；`npm test` 退出 0；`TMUX_TMPDIR=… make check` exit 0；`gui-smoke.mjs` 33 行 PASS（含目录选择器 500/700/803 三档、侧边栏布局在每一行悬停时再量一遍：项目行的「新建 worktree」按钮已出现）、`gui-chat-smoke.mjs` 29 行 PASS，都无 FAIL；真实 Electron 临时实例里新建 worktree 对话框（中文正常态、出错态、长冲突文案、英文出错态）和目录选择器的 Worktree 模式在 800×500、800×700、1100×803 下主按钮都在对话框和窗口内且点得到，截图 `.devflow-tmp/build-shots/t9-*.png` |
 | T10 | 2026-11-19 16:07 | 468e871（失败的测试和骨架）、本行所在的提交（实现、协议文档、记录） | 完成定义的 `go test -race -count=1 ./internal/session ./internal/server ./internal/chat -run 'TestChatTrust\|TestFSChatTrust\|TestWSCreateChatInWorktree\|TestWSCreateChatWorktreeUntrusted\|TestCreateChatUntrustedWorkdir\|TestWorkdirTrusted\|TestNoCredentialAccess'` 三行 `ok`（`TestChatTrust` 24 个子用例全 PASS）；`grep -rn "chat.WorkdirTrusted" vibe-remoted/internal/server` 无输出；逐条去掉实现里的判断做了 4 次变异核对，对应的反例用例都会失败；`chatTrust` 的取值在 protocol.go / protocol.ts / rest.ts / protocol.md 一致；`TMUX_TMPDIR=… make check` 第一次在 `internal/chat` 的 `TestStopAccountsForEveryQueuedMessage/restart` 失败（假 claude 启动时以 139 退出，本任务没有改这个包），单独跑这个包 3 次、重跑 `make check` 都通过（decisions #60） |
+| T11 | 2026-11-19 16:18 | 192baa4（实现）、本行所在的提交（悬停行高的修复和检查、记录） | 完成定义的 `typecheck`+`test:worktree-dialogs`(12)+`test:chat-availability`(12)+`test:dialog-layout`+`test:i18n-parity`(291 键) 全退出 0；`npm test` 退出 0；`TMUX_TMPDIR=… make check` exit 0；`gui-smoke.mjs` 33 行 PASS、`gui-chat-smoke.mjs` 29 行 PASS，都无 FAIL。侧边栏布局检查新增「悬停时行高不变」：去掉修复时 `gui-smoke.mjs` 两处侧边栏检查 FAIL（`worktree row "fix-login" changes height from 20.5px to 24px`），加上后通过。真实 Electron 临时实例：在 worktree 行新建会话的对话框（对话可用、对话置灰带主目录原因的中英文）在 800×500、800×700、1100×803 下主按钮都在对话框和窗口内且点得到；隐藏目录下的 worktree 里建出对话会话（主目录被信任、该路径自己没有信任记录），同一 worktree 再开一个终端会话，两个名字不同；截图 `.devflow-tmp/build-shots/t11-*.png` |
 
 更正：T5 实际完成于 2026-11-19 12:39，T6a 13:11，T6b 14:04（以提交时间为准）。此后各行的时间用 `date '+%F %H:%M'` 取。
 
@@ -927,5 +928,7 @@ spec「推迟到以后」的条目：
 - 新流程建出的分支不跟随 `branch.autoSetupMerge`，`post-checkout` 钩子运行时 HEAD 还是 detached（design 6.1 第 9 步，d28）。有用户依赖这两点时，可以在 `symbolic-ref` 之后补写上游配置，或再触发一次钩子。
 - `/api/v1/projects` 的补归属对一直失败的会话每轮重试、没有退避（design 5.4）。实际遇到大量这种会话时再加。
 - 查 `go test -race ./...` 里 `internal/chat` 偶发卡住的原因（T6c 时 `make check` 卡了 10 分钟被外层超时杀掉，当时没有留下 goroutine 堆栈；单独跑这个包 18 秒通过，重跑 `make check` 通过；decisions #50）。下次遇到时给卡住的 `chat.test` 发 `SIGQUIT` 把堆栈留下来。
+- 界面卡片（终端 / 对话）的键盘焦点环和「已选中」的描边是同一种样子（都是 `--accent` 的 2px 框）：对话框打开时焦点在「终端」上，用键盘或脚本选了「对话」之后两张卡片看起来都被选中。目录选择器原来就是这样，新对话框沿用了同一个段。T19 换形态时把两种状态做出区别。
+- 扁平的 git 项目行上点「新建会话」，对话框标题用的是分支名（「在 dev 新建会话」），项目名在副标题里；可以考虑这种情况标题用项目名。
 - 查 `internal/chat` 的 `TestStopAccountsForEveryQueuedMessage/restart` 偶发失败的原因（T10 时 `make check` 里出现 1 次：`claude exited during startup (code 139)`，假 claude 在重启后以 SIGSEGV 退出；单独跑 3 次和重跑 `make check` 都通过，decisions #60）。
 - 查 `gui-chat-smoke` R7 偶发失败的原因（AskUserQuestion 表单：`answers echoed: on": "Pick a fruit"`；T6b 提交后 3 次里失败 1 次，decisions #47）。

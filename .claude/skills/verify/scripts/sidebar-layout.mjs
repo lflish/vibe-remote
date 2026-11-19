@@ -11,6 +11,7 @@
 //     MIN_NAME_EM characters' worth while the full name would need more
 //   - a name ending in "…" while its line still has free space
 //   - text that is cut off without an ellipsis
+//   - a row whose height changes while the mouse is over a row
 
 import { spawnSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
@@ -129,10 +130,15 @@ const MEASURE = `(() => {
   return { problems, rows, sessions, width: px(edge.width), truncated, targets };
 })()`;
 
+const HEIGHTS = `[...document.querySelectorAll('#machine-list .project-row, #machine-list .worktree-row, #machine-list .session-item')].map((r) => ({
+  what: (r.classList.contains('project-row') ? 'project' : r.classList.contains('worktree-row') ? 'worktree' : 'session') + ' row "' + (r.querySelector('.project-name, .worktree-label, .session-label-text')?.textContent ?? '') + '"',
+  h: Math.round(r.getBoundingClientRect().height * 10) / 10,
+}))`;
+
 /**
  * Measures the sidebar as it is right now, then once more with the mouse over
  * each row in view (rows reveal their action buttons on hover, which takes room
- * from the name). `cdp` needs send() and evaluate(). Returns
+ * from the name; no row may change its height when they do). `cdp` needs send() and evaluate(). Returns
  * { problems, rows, sessions, width, truncated, hovered }: `problems` is empty
  * when every row passes in every pass; `truncated` lists the names that end in
  * "…" with nothing hovered (allowed only when their line is full) so a run's
@@ -141,12 +147,19 @@ const MEASURE = `(() => {
 export async function sidebarLayout(cdp) {
   const rest = await cdp.evaluate(MEASURE);
   const problems = [...rest.problems];
+  const heights = await cdp.evaluate(HEIGHTS);
   for (const t of rest.targets) {
     await cdp.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: t.x, y: t.y });
     for (const p of (await cdp.evaluate(MEASURE)).problems) {
       const line = `with the mouse over a row: ${p}`;
       if (!rest.problems.includes(p) && !problems.includes(line)) problems.push(line);
     }
+    // A row that grows when its buttons appear pushes every row below it.
+    const now = await cdp.evaluate(HEIGHTS);
+    now.forEach((h, i) => {
+      const line = `with the mouse over a row: ${h.what} changes height from ${heights[i]?.h}px to ${h.h}px`;
+      if (heights[i] && heights[i].what === h.what && Math.abs(h.h - heights[i].h) > 0.5 && !problems.includes(line)) problems.push(line);
+    });
   }
   if (rest.targets.length) await cdp.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: rest.width + 200, y: 8 });
   return { problems, rows: rest.rows, sessions: rest.sessions, width: rest.width, truncated: rest.truncated, hovered: rest.targets.length };
