@@ -39,15 +39,21 @@ func tmuxCmd(args ...string) *exec.Cmd {
 }
 
 // tmuxSocketPath is where `tmux -L vibe-remote` puts its socket for this
-// process: <dir>/tmux-<uid>/vibe-remote, where <dir> is TMUX_TMPDIR when that
-// is set and not empty, and /tmp otherwise (tmux's TMUX_SOCK search path,
-// "$TMUX_TMPDIR:/tmp/"). tmuxCmd passes the daemon's own TMUX_TMPDIR on, so
-// this is the path its tmux commands use. It is only ever looked at (os.Stat),
-// never created, removed or connected to from here.
+// process: <dir>/tmux-<uid>/vibe-remote. tmux takes <dir> from its TMUX_SOCK
+// search path, "$TMUX_TMPDIR:/tmp/": each entry is resolved with realpath, an
+// entry that does not resolve (TMUX_TMPDIR unset, empty, or naming a directory
+// that does not exist) is skipped, and the first one left is used. So <dir> is
+// TMUX_TMPDIR with its symbolic links resolved when that works, and /tmp
+// otherwise; /tmp itself is left as written (on macOS it is a link to
+// /private/tmp, which os.Stat follows). tmuxCmd passes the daemon's own
+// TMUX_TMPDIR on, so this is the path its tmux commands use. It is only ever
+// looked at (os.Stat), never created, removed or connected to from here.
 func tmuxSocketPath() string {
-	dir := os.Getenv("TMUX_TMPDIR")
-	if dir == "" {
-		dir = "/tmp"
+	dir := "/tmp"
+	if env := os.Getenv("TMUX_TMPDIR"); env != "" {
+		if resolved, err := filepath.EvalSymlinks(env); err == nil {
+			dir = resolved
+		}
 	}
 	return filepath.Join(dir, fmt.Sprintf("tmux-%d", os.Getuid()), tmuxSocket)
 }

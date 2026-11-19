@@ -266,3 +266,47 @@ func TestNoTmuxProgramIsAnEmptySetOnlyWithoutSocketAndWithoutTerminalSessions(t 
 		}
 	})
 }
+
+// tmux resolves TMUX_TMPDIR (realpath) before it uses it and goes on to /tmp
+// when that fails: a directory that does not exist is skipped, a symbolic link
+// is followed. The daemon works the socket path out the same way, or it would
+// look for the socket file in a place tmux never uses. Only the computed
+// string is checked: no tmux runs here, and nothing in /tmp is looked at.
+func TestTmuxSocketPathResolvesTheDirectoryLikeTmux(t *testing.T) {
+	leaf := filepath.Join("tmux-"+strconv.Itoa(os.Getuid()), tmuxSocket)
+	base, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	target := filepath.Join(base, "target")
+	if err := os.Mkdir(target, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(base, "link")
+	if err := os.Symlink(target, link); err != nil {
+		t.Fatal(err)
+	}
+	dangling := filepath.Join(base, "dangling")
+	if err := os.Symlink(filepath.Join(base, "nowhere"), dangling); err != nil {
+		t.Fatal(err)
+	}
+	cases := []struct {
+		name string
+		dir  string // TMUX_TMPDIR
+		want string
+	}{
+		{"an existing directory", target, filepath.Join(target, leaf)},
+		{"a directory that does not exist", filepath.Join(base, "missing"), filepath.Join("/tmp", leaf)},
+		{"a symbolic link to another directory", link, filepath.Join(target, leaf)},
+		{"a symbolic link to nothing", dangling, filepath.Join("/tmp", leaf)},
+		{"empty", "", filepath.Join("/tmp", leaf)},
+	}
+	for _, c := range cases {
+		t.Run(strings.ReplaceAll(c.name, " ", "_"), func(t *testing.T) {
+			t.Setenv("TMUX_TMPDIR", c.dir)
+			if got := tmuxSocketPath(); got != c.want {
+				t.Fatalf("TMUX_TMPDIR=%q: tmuxSocketPath() = %s, want %s", c.dir, got, c.want)
+			}
+		})
+	}
+}

@@ -61,7 +61,13 @@ func onlyGitOnPath(t *testing.T) {
 func TestTmuxSocketPathIsWhereTmuxPutsIt(t *testing.T) {
 	requireTmux(t)
 	dir := freshTmuxDir(t)
-	want := filepath.Join(dir, fmt.Sprintf("tmux-%d", os.Getuid()), tmuxSocket)
+	// tmux resolves the directory before it uses it (on macOS /tmp is a link
+	// to /private/tmp), and so does the daemon.
+	resolved, err := filepath.EvalSymlinks(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := filepath.Join(resolved, fmt.Sprintf("tmux-%d", os.Getuid()), tmuxSocket)
 	if got := tmuxSocketPath(); got != want {
 		t.Fatalf("tmuxSocketPath() = %s, want %s", got, want)
 	}
