@@ -207,9 +207,11 @@ case that covers it has to FAIL.
 `ws-worktree-smoke.mjs` is the half without a window: creating and deleting
 worktrees over REST/WebSocket in the environments where the daemon has the
 hardest time knowing which sessions run — a fresh tmux socket directory, no
-tmux program on PATH, the socket file removed while the server runs (and
-SIGUSR1 to that server), no tmux program but a socket, a tmux session left by
-an older vibe-remoted — and with whatever git it is given:
+tmux program on PATH, a server that has exited, the socket file removed while
+the server runs (and SIGUSR1 to that server), no tmux program but a socket, a
+tmux session left by an older vibe-remoted — in repositories whose main
+directory git does not name (a submodule, `--separate-git-dir`), and with
+whatever git it is given (9 cases, ~15 s):
 
 ```bash
 node .claude/skills/verify/scripts/ws-worktree-smoke.mjs

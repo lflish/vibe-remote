@@ -13,6 +13,9 @@
 //   tmux: the socket file is removed while the server runs → refused (500,
 //        nothing touched); after SIGUSR1 to that server → works, session ended
 //   tmux: no tmux program on PATH but its socket is there → refused
+//   tmux: the server has exited and left its socket file → deleting works
+//   a repository whose main directory git does not name (--separate-git-dir,
+//        a submodule): one project with one worktree, no named worktree there
 //   a terminal session from before the upgrade (a tmux session with none of
 //        the @vibe_remote_* options) is counted and ended
 //
