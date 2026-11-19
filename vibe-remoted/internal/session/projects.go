@@ -739,7 +739,16 @@ func (m *Manager) RemoveWorktree(req protocol.WorktreeRemoveRequest, allow Allow
 			return none, changed(st)
 		}
 	}
-	deleteBranch := req.DeleteBranch && st.Managed && st.Branch != ""
+	// The branch can only go with a worktree vibe-remote created, on a branch.
+	// A request to delete it for anything else was confirmed against another
+	// state (the worktree has since been switched to another branch, or
+	// detached): doing the rest and quietly keeping the branch is not what was
+	// agreed to. The same goes for a branch other than the one the
+	// confirmation showed, when the request says which that was.
+	if (req.DeleteBranch && !(st.Managed && st.Branch != "")) || (req.Branch != "" && req.Branch != st.Branch) {
+		return none, changed(st)
+	}
+	deleteBranch := req.DeleteBranch
 	losesCommits := st.UnmergedCommits > 0 && (deleteBranch || st.Branch == "")
 	if st.Head != req.Head || (st.DirtyFiles > 0 && !req.DiscardFiles) || (losesCommits && !req.DropCommits) {
 		return none, changed(st)

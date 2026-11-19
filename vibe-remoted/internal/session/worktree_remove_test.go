@@ -605,7 +605,19 @@ func TestRemoveExternalNeverDeletesBranch(t *testing.T) {
 	if !pathExists(filepath.Join(ext, "a.txt")) {
 		t.Fatal("files were removed without consent")
 	}
+	// With every consent given the request is still refused: the branch of a
+	// worktree vibe-remote did not create is never deleted, so "delete the
+	// branch too" cannot have been confirmed against this state.
 	req.DiscardFiles = true
+	_, err = f.remove(req)
+	if changed := wantChanged(t, err); changed.Status.Managed || changed.Status.Branch != "change/general-skills" || len(changed.EndedSessions) != 0 {
+		t.Fatalf("changed = %+v, want the external worktree's current state", changed)
+	}
+	if !pathExists(filepath.Join(ext, "a.txt")) || branchOID(t, f.repo, "change/general-skills") != tip {
+		t.Fatal("the refused request removed the directory or touched the branch")
+	}
+	// Asked for the directory alone, it goes and the branch stays.
+	req.DeleteBranch, req.DropCommits = false, false
 	res := f.mustRemove(req)
 	if res.BranchDeleted || res.BranchError != "" {
 		t.Fatalf("result = %+v, want the branch untouched", res)
@@ -628,7 +640,12 @@ func TestRemoveExternalNeverDeletesBranch(t *testing.T) {
 		}
 		req := request(st)
 		req.DeleteBranch, req.DropCommits = true, true
-		res := f.mustRemove(req)
+		_, err := f.remove(req)
+		wantChanged(t, err)
+		if !pathExists(f.root) || branchOID(t, f.repo, "other") != otherTip || branchOID(t, f.repo, "fix-login") != fixTip {
+			t.Fatal("the refused request removed the directory, or removed or moved a branch")
+		}
+		res := f.mustRemove(request(st))
 		if res.BranchDeleted {
 			t.Fatalf("result = %+v", res)
 		}

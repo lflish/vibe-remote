@@ -493,15 +493,19 @@ type WorktreeStatus struct {
 }
 
 // WorktreeRemoveRequest is the body of POST /api/v1/worktrees/remove (v4,
-// design 4.6): the worktree, what the user saw of it (Head, Sessions) and what
-// they agreed to lose.
+// design 4.6): the worktree, what the user saw of it (Head, Sessions, Branch)
+// and what they agreed to lose. Path, Head and Sessions are required.
 type WorktreeRemoveRequest struct {
-	Path         string   `json:"path"`
-	Head         string   `json:"head"`
-	Sessions     []string `json:"sessions"`
-	DiscardFiles bool     `json:"discardFiles,omitempty"`
-	DeleteBranch bool     `json:"deleteBranch,omitempty"` // honored only for a worktree vibe-remote created, on a branch
-	DropCommits  bool     `json:"dropCommits,omitempty"`
+	Path     string   `json:"path"`
+	Head     string   `json:"head"`
+	Sessions []string `json:"sessions"`
+	// Branch is the branch the confirmation showed (the status's branch);
+	// omitted when it showed none, and by clients that do not send it. When
+	// present it must still be the worktree's branch.
+	Branch       string `json:"branch,omitempty"`
+	DiscardFiles bool   `json:"discardFiles,omitempty"`
+	DeleteBranch bool   `json:"deleteBranch,omitempty"` // only for a worktree vibe-remote created, on a branch; otherwise the request is refused as changed
+	DropCommits  bool   `json:"dropCommits,omitempty"`
 }
 
 // WorktreeRemoveResult is the 200 answer to a removal: the directory is gone.

@@ -478,6 +478,7 @@ HTTP 错误：缺 `workdir` → 400 `{"error":"invalid_request"}`；`workdir` �
 { "path": "/Users/mac/github/devflow-worktrees/fix-login",
   "head": "9f8e7d6c5b4a39281706f5e4d3c2b1a098765432",
   "sessions": ["1794824025040-12b763ac", "1794824031111-0a1b2c3d"],
+  "branch": "fix-login",
   "discardFiles": true, "deleteBranch": false, "dropCommits": false }
 ```
 
@@ -487,7 +488,8 @@ HTTP 错误：缺 `workdir` → 400 `{"error":"invalid_request"}`；`workdir` �
 | `head` | string | 是 | 确认框打开时 status 返回的 `head` |
 | `sessions` | string[] | 是 | 确认框上告诉用户会被结束的会话（status 的 `sessions`）。没有会话时是 `[]`，不能省略或传 `null` |
 | `discardFiles` | bool | 否 | 用户同意丢弃未提交和未跟踪的文件 |
-| `deleteBranch` | bool | 否 | 用户选择连分支一起删。只有 `managed` 且在分支上时 daemon 才照做，其余情况忽略：不是 vibe-remote 创建的 worktree，分支一律保留 |
+| `branch` | string | 否 | 确认框打开时 status 返回的 `branch`（当时不在任何分支上就不带）。带了就与现在检出的分支比对，不同返回 409。不带时 daemon 不做这项比对（较早的桌面端不带） |
+| `deleteBranch` | bool | 否 | 用户选择连分支一起删。只对 `managed` 且在分支上的 worktree 有意义：重查时它不是 `managed` 或不在分支上（例如确认之后被切到了别的分支）→ 409，什么都不删，不会「只删目录、悄悄留下分支」。不是 vibe-remote 创建的 worktree，分支一律保留，删它时不要带这一项 |
 | `dropCommits` | bool | 否 | 用户同意让未合并的提交不再属于任何分支 |
 
 | 响应 | 什么时候 |
@@ -496,7 +498,7 @@ HTTP 错误：缺 `workdir` → 400 `{"error":"invalid_request"}`；`workdir` �
 | 400 `invalid_request` | 请求体不是合法的 JSON；缺必填字段：`path`、`head` 为空或没有，`sessions` 没有或是 `null`（没有会话时传 `[]`）。`message` 写明缺哪一个。什么都没动 |
 | 400 `worktree_is_main` | `path` 是主目录；仓库是子模块或用了独立的 git 目录时，它唯一的 worktree 也按主目录对待 |
 | 404 `worktree_not_found` | 见上 |
-| 409 `worktree_changed`，响应体多 `status`（上面 status 的结构，最新状态）和 `endedSessions` | 重查后与用户确认的不一致，没有删除。结束会话之前发现的（`endedSessions` 是 `[]`，什么都没动）：`head` 变了；有不在请求 `sessions` 里的会话，或有会话正在这个 worktree 里创建；有未提交文件而 `discardFiles` 不为真；会让未合并提交失去分支而 `dropCommits` 不为真。结束会话之后才发现的（`endedSessions` 是已经结束的会话，目录和分支都还在）：会话在被结束之前又提交了一次；git 拒绝删除后再查，出现了没被同意丢弃的文件。客户端用 `status` 重新确认 |
+| 409 `worktree_changed`，响应体多 `status`（上面 status 的结构，最新状态）和 `endedSessions` | 重查后与用户确认的不一致，没有删除。结束会话之前发现的（`endedSessions` 是 `[]`，什么都没动）：`head` 变了；请求带了 `branch` 而现在检出的分支不同；请求带 `deleteBranch` 而这个 worktree 现在不是 `managed` 或不在分支上；有不在请求 `sessions` 里的会话，或有会话正在这个 worktree 里创建；有未提交文件而 `discardFiles` 不为真；会让未合并提交失去分支而 `dropCommits` 不为真。结束会话之后才发现的（`endedSessions` 是已经结束的会话，目录和分支都还在）：会话在被结束之前又提交了一次；git 拒绝删除后再查，出现了没被同意丢弃的文件。客户端用 `status` 重新确认 |
 | 500 `worktree_remove_failed`，响应体多 `endedSessions` | 结束会话之前就能确定删不了（`endedSessions` 是 `[]`，会话、目录、分支都没动；不管同意项是什么都拒绝）：worktree 被 `git worktree lock` 锁定；里面有初始化过的子模块或嵌入式仓库的检出；里面还嵌着这个仓库的另一个 worktree。已经动手之后的失败（`endedSessions` 是已经结束的会话）：某个会话没能结束；git 删除失败。`message` 是原因或 git 的错误输出；git 已经注销了这个 worktree、目录只删了一部分时，`message` 另外写明剩下的路径，分支不删 |
 | 500 `git_failed`，响应体带 `endedSessions: []` | 重查状态时 git 执行失败或超时；什么都没动 |
 

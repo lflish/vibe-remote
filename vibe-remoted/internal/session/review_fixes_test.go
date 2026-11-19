@@ -456,3 +456,74 @@ func TestProjectsDirectoryInsideLaterRepositoryIsNotAProject(t *testing.T) {
 		t.Fatalf("project outlived its last session: %+v", *p)
 	}
 }
+
+// The user confirmed "directory and branch"; by the time the request arrives
+// the worktree is on another branch, so it is no longer the worktree
+// vibe-remote created and its branch cannot go with it. That is not what was
+// confirmed: nothing is removed and the current state comes back, instead of
+// the directory going and the branch silently staying.
+func TestRemoveBranchSwitchedAfterConfirmation(t *testing.T) {
+	setup := func(t *testing.T) (*removeFixture, protocol.WorktreeStatus) {
+		t.Helper()
+		f := newRemoveFixture(t, 1)
+		st := f.status()
+		if st.Branch != "fix-login" || !st.Managed {
+			t.Fatalf("status = %+v, want managed on fix-login", st)
+		}
+		runGit(t, f.root, "switch", "-c", "other") // HEAD does not move
+		return f, st
+	}
+	refused := func(t *testing.T, f *removeFixture, req protocol.WorktreeRemoveRequest) protocol.WorktreeStatus {
+		t.Helper()
+		_, err := f.remove(req)
+		changed := wantChanged(t, err)
+		if changed.Status.Branch != "other" || changed.Status.Managed || len(changed.EndedSessions) != 0 {
+			t.Fatalf("changed = %+v, want the current state (unmanaged, on other) and nobody ended", changed)
+		}
+		if !f.alive(f.ids[0]) {
+			t.Fatal("the session was ended by a refused removal")
+		}
+		if !pathExists(f.root) || branchOID(t, f.repo, "fix-login") == "" || branchOID(t, f.repo, "other") == "" {
+			t.Fatal("the directory or a branch is gone")
+		}
+		return changed.Status
+	}
+
+	// A request without the branch (an older desktop): deleteBranch can only
+	// have been confirmed for a worktree that was managed and on a branch.
+	t.Run("delete_branch_no_longer_possible", func(t *testing.T) {
+		f, st := setup(t)
+		req := request(st)
+		req.DeleteBranch = true
+		cur := refused(t, f, req)
+		// Confirmed again against the current state: the directory goes, both
+		// branches stay.
+		res := f.mustRemove(request(cur))
+		if res.BranchDeleted || res.BranchError != "" {
+			t.Fatalf("result = %+v", res)
+		}
+		if branchOID(t, f.repo, "fix-login") == "" || branchOID(t, f.repo, "other") == "" {
+			t.Fatal("a branch was removed")
+		}
+	})
+
+	// With the branch the confirmation showed, a switch is noticed whatever
+	// was agreed to.
+	t.Run("confirmed_branch_differs", func(t *testing.T) {
+		f, st := setup(t)
+		req := request(st)
+		req.Branch = st.Branch
+		refused(t, f, req)
+	})
+
+	// Unchanged, with the branch given: carried out as before.
+	t.Run("confirmed_branch_matches", func(t *testing.T) {
+		f := newRemoveFixture(t, 0)
+		st := f.status()
+		req := request(st)
+		req.Branch, req.DeleteBranch = st.Branch, true
+		if res := f.mustRemove(req); !res.BranchDeleted {
+			t.Fatalf("result = %+v", res)
+		}
+	})
+}
