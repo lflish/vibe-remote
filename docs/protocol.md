@@ -444,7 +444,7 @@ HTTP 错误：缺 `workdir` → 400 `{"error":"invalid_request"}`；`workdir` �
 
 删除 worktree 分两步：先查状态（界面按它显示确认框），再带着「用户看到了什么、同意了什么」发删除。daemon 在删除前重查一遍，只做用户同意过的事。
 
-两个端点的 `path` 都必须是 worktree 的根目录，写成规范路径（就是 `/api/v1/projects` 里那一项的 `path`）。它先过 `allowed_roots`（解析符号链接后必须与传入的值逐字相等），再必须是 daemon 自己从所属仓库的 `git worktree list` 里读到的一项；不满足的一律 404 `worktree_not_found`，不对这个路径运行 git。客户端传来的路径和分支名不经过 shell；要删的分支取自 daemon 读到的列表，只以完整引用名 `refs/heads/<分支>` 交给 git。
+两个端点的 `path` 都必须是 worktree 的根目录，写成规范路径（就是 `/api/v1/projects` 里那一项的 `path`）。检查分两步，不满足的一律 404 `worktree_not_found`：(1) 先过 `allowed_roots`——必须是绝对路径、已经规范化、解析符号链接后与传入的值逐字相等且在允许范围内；这一步不通过时 daemon 不运行任何 git。(2) 通过之后，daemon 在这个路径上做只读的仓库发现（`git rev-parse --show-toplevel`、`git worktree list`），它必须正好是所属仓库自己的 `git worktree list` 里的一项（不是其中的子目录，也不是 `.git` 里面）。两步都通过之后才会运行读状态和删除的命令。客户端传来的路径和分支名不经过 shell；要删的分支取自 daemon 读到的列表，只以完整引用名 `refs/heads/<分支>` 交给 git。
 
 `GET /api/v1/worktrees/status?path=…`：
 

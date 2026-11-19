@@ -848,3 +848,67 @@ func TestCreateRefusesBadWorktreeNameBeforeAnyGit(t *testing.T) {
 		}
 	}
 }
+
+// What is promised about the path of worktrees/status and worktrees/remove
+// (docs/protocol.md): a path outside the allowed roots, or not written in its
+// canonical form, is refused without git being run at all; one that passes is
+// then looked at with read-only git commands only, and refused unless it is a
+// worktree root the repository lists.
+func TestWorktreePathChecksBeforeGit(t *testing.T) {
+	f := newRemoveFixture(t, 0)
+	outside := repoAt(t, filepath.Join(t.TempDir(), "elsewhere"))
+	link := filepath.Join(filepath.Dir(f.repo), "link-to-worktree")
+	if err := os.Symlink(f.root, link); err != nil {
+		t.Skipf("symlinks unsupported: %v", err)
+	}
+	base := filepath.Dir(f.repo)
+	allow := func(path string) (string, error) {
+		canonical, err := filepath.EvalSymlinks(path)
+		if err != nil {
+			return "", err
+		}
+		if !within(base, canonical) {
+			return "", errors.New("not in allowed roots")
+		}
+		return canonical, nil
+	}
+	head := runGit(t, f.root, "rev-parse", "HEAD")
+	refused := func(t *testing.T, path string) {
+		t.Helper()
+		if _, err := f.m.WorktreeStatus(path, allow); !errors.Is(err, ErrWorktreeNotFound) {
+			t.Fatalf("WorktreeStatus(%s) = %v, want ErrWorktreeNotFound", path, err)
+		}
+		req := protocol.WorktreeRemoveRequest{Path: path, Head: head, Sessions: []string{}, DiscardFiles: true, DropCommits: true}
+		if _, err := f.m.RemoveWorktree(req, allow); !errors.Is(err, ErrWorktreeNotFound) {
+			t.Fatalf("RemoveWorktree(%s) = %v, want ErrWorktreeNotFound", path, err)
+		}
+	}
+
+	log := installArgLoggingGit(t)
+	for _, path := range []string{outside, link, f.root + "/", f.root + "/../fix-login", "fix-login", ""} {
+		refused(t, path)
+	}
+	if calls := loggedGitCalls(t, log); len(calls) != 0 {
+		t.Fatalf("git ran for a path that is outside the allowed roots or not canonical: %v", calls)
+	}
+
+	// Inside the roots and canonical, but not a worktree root: found out by
+	// asking git, with commands that change nothing.
+	sub := filepath.Join(f.root, "sub")
+	if err := os.Mkdir(sub, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	refused(t, sub)
+	refused(t, filepath.Join(f.repo, ".git"))
+	calls := loggedGitCalls(t, log)
+	if len(calls) == 0 {
+		t.Fatal("no git ran for a path inside the roots: the check below proves nothing")
+	}
+	for _, call := range calls {
+		readOnly := len(call) >= 2 && (call[0] == "rev-parse" || (call[0] == "worktree" && call[1] == "list"))
+		if !readOnly {
+			t.Fatalf("a git command that is not a read-only lookup ran for a refused path: %v", call)
+		}
+	}
+	f.intact()
+}

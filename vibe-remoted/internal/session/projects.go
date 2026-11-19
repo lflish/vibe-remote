@@ -445,9 +445,11 @@ func (m *Manager) beginStart(workdir string) (done func(), err error) {
 
 // locateWorktree is the first step of looking at or removing a worktree
 // (design 6.2 step 1). path must be the canonical path of a worktree root
-// inside the allowed roots; anything else is ErrWorktreeNotFound, decided
-// before git is run on it. An error that is not ErrWorktreeNotFound is a git
-// failure.
+// inside the allowed roots; anything else is ErrWorktreeNotFound. A path that
+// is not absolute, not clean, not its own canonical form or outside the roots
+// is refused before git is run at all; for one that passes, git is asked
+// (read-only: rev-parse, worktree list) whether it is a work tree's top. An
+// error that is not ErrWorktreeNotFound is a git failure.
 func locateWorktree(path string, allow AllowFunc) (Home, error) {
 	if allow == nil || !filepath.IsAbs(path) || filepath.Clean(path) != path {
 		return Home{}, ErrWorktreeNotFound
