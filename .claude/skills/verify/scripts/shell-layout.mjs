@@ -1,5 +1,5 @@
 // Layout checks for the shell around the sessions (row menus, the toolbar
-// title), shared by the GUI smoke scripts.
+// title, the note under a launch option), shared by the GUI smoke scripts.
 // They run in the smallest window the app allows, 800×500, where these are
 // the first things to stop fitting; jsdom has no layout, so only the running
 // app can show it. The window size is emulated: the real window is left alone.
@@ -147,4 +147,43 @@ const TITLE = `(() => {
  */
 export async function titleLayout(cdp, size = MIN_WINDOW) {
   return atWindowSize(cdp, size, () => cdp.evaluate(TITLE));
+}
+
+const NOTE = `(() => {
+  const px = (n) => Math.round(n * 10) / 10;
+  const note = document.querySelector('.modal-overlay [data-testid="continue-note"]');
+  const body = note?.closest('.modal-body');
+  if (!note || !body) return { problems: ['the note about the continue option is not in the dialog'] };
+  const n = note.getBoundingClientRect();
+  const b = body.getBoundingClientRect();
+  const top = Math.max(b.top, 0);
+  const bottom = Math.min(b.bottom, innerHeight);
+  const visible = Math.max(0, Math.min(n.bottom, bottom) - Math.max(n.top, top));
+  const problems = [];
+  if (visible < n.height - 0.75) problems.push('the note ' + px(n.top) + '..' + px(n.bottom) + ' shows only ' + px(visible) + ' of ' + px(n.height) + 'px in the dialog body ' + px(top) + '..' + px(bottom));
+  return { problems, note: [px(n.top), px(n.bottom)], body: [px(top), px(bottom)], visible: px(visible), height: px(n.height), window: [innerWidth, innerHeight] };
+})()`;
+
+/**
+ * With a new-session dialog open in an 800×500 window: ticks the launch option
+ * `continue` with a real mouse click (scrolling it into view first, as a user
+ * would) and measures whether the note that then appears under it can be read
+ * without scrolling further.
+ */
+export async function continueNoteLayout(cdp, size = MIN_WINDOW) {
+  return atWindowSize(cdp, size, async () => {
+    const at = await cdp.evaluate(`(() => {
+      const box = document.querySelector('.modal-overlay .modal-flag input[name="claude-flag-continue"]');
+      if (!box) return null;
+      if (box.checked) box.click();
+      box.scrollIntoView({ block: 'nearest' });
+      const r = box.getBoundingClientRect();
+      return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
+    })()`);
+    if (!at) return { problems: ['the dialog has no "continue" launch option'] };
+    await cdp.send('Input.dispatchMouseEvent', { type: 'mousePressed', x: at.x, y: at.y, button: 'left', buttons: 1, clickCount: 1 });
+    await cdp.send('Input.dispatchMouseEvent', { type: 'mouseReleased', x: at.x, y: at.y, button: 'left', buttons: 0, clickCount: 1 });
+    await sleep(200);
+    return cdp.evaluate(NOTE);
+  });
 }

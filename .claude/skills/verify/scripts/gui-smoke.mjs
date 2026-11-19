@@ -12,7 +12,8 @@
 //   three-level sidebar (throwaway repositories with several worktrees) →
 //   every row's name, badge, state text and dot are readable at the default width;
 //   at 800×500 the "more" menu of a row at the bottom of the sidebar is usable
-//   and the toolbar title keeps the session name under a long branch
+//   and the toolbar title keeps the session name under a long branch; the note
+//   under the "continue" launch option is brought into view when it appears
 //   chat (second daemon, fake claude): new chat session via the picker →
 //   reply rendered → permission prompt allowed once → turn resumes
 //   session-switching keys (⌘1–9, ⌘⇧[, ⌘⇧]) with the focus in the terminal and
@@ -42,7 +43,7 @@ import { createRequire } from 'node:module';
 import { randomBytes } from 'node:crypto';
 import { pickerLayout } from './picker-layout.mjs';
 import { sidebarLayout, makeSidebarRepos, startSession, LONG_BRANCH } from './sidebar-layout.mjs';
-import { rowMenuLayout, titleLayout } from './shell-layout.mjs';
+import { rowMenuLayout, titleLayout, continueNoteLayout } from './shell-layout.mjs';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../../../..');
 const DESKTOP = join(ROOT, 'desktop');
@@ -208,7 +209,11 @@ async function main() {
   const go = spawnSync('go', ['build', '-o', daemonBin, './cmd/vibe-remoted'], { cwd: join(ROOT, 'vibe-remoted'), stdio: 'inherit' });
   if (go.status !== 0) throw new Error('go build failed');
   const base = JSON.parse(readFileSync(join(ROOT, 'vibe-remoted.tmux.json'), 'utf-8'));
-  writeFileSync(daemonCfg, JSON.stringify({ ...base, port, token }), { mode: 0o600 });
+  // One launch option, off by default: the new-session dialogs show their
+  // options section, and the note under "continue" can be measured (step 9).
+  // No session of this run is started with it.
+  const claudeFlags = [{ id: 'continue', label: 'Continue the last conversation (-c)', arg: '-c' }];
+  writeFileSync(daemonCfg, JSON.stringify({ ...base, port, token, claude_flags: claudeFlags }), { mode: 0o600 });
   await startDaemon();
   ok(`daemon up on 127.0.0.1:${port}`);
   const preexisting = new Set((await restSessions()).map((s) => s.id));
@@ -490,6 +495,14 @@ async function sidebarCase(firstSessionId) {
     check(title.problems.length === 0 && title.branch?.text === LONG_BRANCH && title.branch.needs > title.branch.shown,
       'under a long branch the toolbar title of an 800×500 window shortens the branch and keeps the session name whole',
       title.problems.length ? title.problems.join('; ') : `the branch was not the long one or was not shortened: ${JSON.stringify(title.branch)}`);
+    // "New session" in a worktree that already has sessions: ticking "continue" shows a note, which has to be readable.
+    await cdp.evaluate(`[...document.querySelectorAll('.worktree-group')].find((g) => g.querySelector('.worktree-label').textContent === 'fix-login').querySelector('[data-testid="worktree-new-session"]').click(), true`);
+    await waitFor(() => cdp.evaluate(`(() => { const d = document.querySelector('.modal-overlay [data-testid="worktree-session-dialog"]'); const b = d?.querySelector('[data-testid="dialog-confirm"]'); return !!b && !b.disabled && !!d.querySelector('.modal-flag input[name="claude-flag-continue"]'); })()`), 10000, 'new-session dialog with its launch options');
+    const note = await continueNoteLayout(cdp);
+    await cdp.evaluate(`document.querySelector('.modal-overlay [data-testid="dialog-cancel"]').click(), true`);
+    await waitFor(() => cdp.evaluate(`!document.querySelector('.modal-overlay')`), 5000, 'new-session dialog closed');
+    check(note.problems.length === 0 && note.height > 0, 'in an 800×500 window the note under "continue" is fully visible once the option is ticked',
+      note.problems.length ? note.problems.join('; ') : 'the note has no height');
   } catch (e) {
     fail(`three-level sidebar layout — ${e.message}`);
   }

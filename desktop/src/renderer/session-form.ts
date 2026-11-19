@@ -98,10 +98,17 @@ export function createFlagsSection(opts: { existingSessions: number }): {
   continueNote.textContent = t('wt.session.continueNote');
 
   // In the DOM only while it applies, right under the option it is about.
-  function syncContinueNote() {
+  // `reveal`: the user has just ticked the option. In a short window the
+  // options sit at the bottom edge of the dialog's scrolling body, so the note
+  // would appear below the fold; bring it into view.
+  function syncContinueNote(reveal = false) {
     const check = checks.find((c) => c.id === CONTINUE_FLAG_ID);
-    if (check && check.input.checked && existingSessions > 0) check.row.after(continueNote);
-    else continueNote.remove();
+    if (check && check.input.checked && existingSessions > 0) {
+      check.row.after(continueNote);
+      if (reveal) continueNote.scrollIntoView?.({ block: 'nearest' });
+    } else {
+      continueNote.remove();
+    }
   }
 
   return {
@@ -119,7 +126,7 @@ export function createFlagsSection(opts: { existingSessions: number }): {
         input.type = 'checkbox';
         input.name = `claude-flag-${f.id}`;
         input.checked = f.default === true;
-        input.addEventListener('change', syncContinueNote);
+        input.addEventListener('change', () => syncContinueNote(f.id === CONTINUE_FLAG_ID));
         const span = document.createElement('span');
         span.textContent = f.label;
         row.append(input, span);

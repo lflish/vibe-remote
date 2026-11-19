@@ -330,6 +330,35 @@ test('continue_note_shown', async () => {
   p.daemon.restore();
 });
 
+// In a short window the launch options sit at the bottom edge of the dialog's
+// scrolling body: the note that appears under the option the user just ticked
+// has to be brought into view, or it explains nothing (review D11; the real
+// geometry is measured by shell-layout.mjs).
+test('continue_note_is_scrolled_into_view_when_ticked', async () => {
+  const scrolled = [];
+  const proto = window.HTMLElement.prototype;
+  const original = proto.scrollIntoView;
+  proto.scrollIntoView = function (opts) { scrolled.push([this.dataset.testid, opts]); };
+  try {
+    const p = await openPicker('normal', { info: DEFAULT_CONTINUE }, { sessionCountAt: () => 1 });
+    assert.ok(tid('continue-note', p.root), 'on by default: the note is there from the start');
+    assert.deepEqual(scrolled, [], 'opening the dialog scrolls nothing: the user has not asked for anything yet');
+    click(flagBox(p.root, 'continue'));
+    assert.equal(tid('continue-note', p.root), null);
+    assert.deepEqual(scrolled, []);
+    click(flagBox(p.root, 'continue'));
+    assert.ok(tid('continue-note', p.root));
+    assert.deepEqual(scrolled, [['continue-note', { block: 'nearest' }]], 'ticking the option brings its note into view');
+    // Another option does not move the dialog.
+    click(flagBox(p.root, 'skip'));
+    assert.equal(scrolled.length, 1);
+    await closePicker(p);
+  } finally {
+    if (original) proto.scrollIntoView = original;
+    else delete proto.scrollIntoView;
+  }
+});
+
 test('continue_note_hidden_without_sessions', async () => {
   const p = await openPicker('normal', {}, { sessionCountAt: () => 0 });
   click(flagBox(p.root, 'continue'));
