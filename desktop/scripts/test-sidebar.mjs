@@ -118,6 +118,32 @@ test('machine_row_shows_connection_state', () => {
   assert.deepEqual([...row.children].map((e) => e.className.split(' ')[0]), ['machine-kind-icon', 'machine-name-label', 'machine-state', 'machine-session-count']);
 });
 
+// A machine whose sessions are all gone still has its projects and worktrees
+// (R2.2): the arrow has to keep working, or a folded machine can never be
+// opened again (review D5).
+test('collapsed_machine_without_sessions_can_expand', () => {
+  const projects = [{
+    id: '/r/devflow', name: 'devflow', git: true, worktrees: [
+      { path: '/r/devflow', branch: 'main', head: 'a1b2c3d', main: true, sessions: [] },
+      { path: '/r/devflow-worktrees/fix-login', branch: 'fix-login', head: '9f8e7d6', managed: true, sessions: [] },
+    ], sessions: [],
+  }];
+  const tree = buildTree([], projects);
+  const toggled = [];
+  const c = render([machineEntry(tree, { collapsed: true })], acts({ toggleMachine: (mk) => toggled.push(mk) }));
+  const toggle = c.querySelector('.machine-toggle');
+  assert.equal(c.querySelector('.machine-session-count').textContent, '0', 'the count is still the number of sessions');
+  assert.equal(c.querySelector('.session-list').hidden, true);
+  assert.equal(tall(c, 'project-row').length, 1, 'the project is there, folded away');
+  assert.equal(toggle.disabled, false, 'the arrow works: there are projects to show');
+  assert.equal(toggle.getAttribute('aria-expanded'), 'false');
+  click(toggle);
+  assert.deepEqual(toggled, [MK]);
+  // Nothing at all under the machine: nothing to unfold.
+  const empty = render([machineEntry([], { collapsed: false })]);
+  assert.equal(empty.querySelector('.machine-toggle').disabled, true);
+});
+
 test('gone_session_meta', () => {
   const projects = [{ id: '/r/g', name: 'g', git: true, worktrees: [{ path: '/r/g', branch: 'main', head: 'aaaaaaa', main: true, sessions: ['live'] }], sessions: ['go'] }];
   const tree = buildTree([sess('live', { workdir: '/r/g' }), sess('go', { workdir: '/gone' })], projects);

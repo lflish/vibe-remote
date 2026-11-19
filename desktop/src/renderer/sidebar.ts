@@ -99,7 +99,9 @@ export function renderSidebar(container: HTMLElement, model: SidebarModel, actio
     toggle.appendChild(rendererIcon('chevron'));
     toggle.setAttribute('aria-expanded', String(!collapsed));
     toggle.setAttribute('aria-label', t('a11y.actionTarget', { action: collapsed ? t('sidebar.expand') : t('sidebar.collapse'), target: machine.name }));
-    toggle.disabled = total === 0;
+    // Disabled only when there is nothing under the machine. A machine with no
+    // sessions can still have projects and worktrees to show (R2.2).
+    toggle.disabled = m.tree.length === 0;
     toggle.addEventListener('click', () => {
       actions.toggleMachine(m.key);
     });
