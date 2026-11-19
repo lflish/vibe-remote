@@ -940,6 +940,7 @@ CSS 变量：保留现有变量名（`styles.css` 里到处在用），换成 M1
 - T9：`index.ts` 里新建会话的两条路径（目录选择器、新建 worktree 对话框）合到 `startPicked()`；attach 的 error 帧带 `worktreeName` 对应的四个错误码时，状态栏和终端里的报错改用 `worktreeErrorText` 的文案，其它错误码和没带名字的新建不变。
 - T10：`session.ChatTrust` 在 7.3 的 5 步之外再从受信任的主目录自己读一次 `git worktree list`，目标目录在两份列表里都是不带 `prunable` 的后续项才算 `trusted`（decisions #59）。比 7.3 严，不比它宽；7.3 列的每个拒绝条件都保留。除任务列的反例外另加了 `forged_commondir`（私有 git 目录的 `commondir` 指向受信任仓库）、`forged_git_symlink`（`.git` 是指向受信任仓库 `.git` 的符号链接）、`symlink_to_worktree`（指向 worktree 根的符号链接路径不算）、`nested_repo_in_main`（嵌在受信任主目录里的另一个仓库和它的 worktree）、`child_of_main_trusted`、`git_timeout`（git 超时一律拒绝）。
 - T11：`openWorktreeSessionDialog` 用 `info.proto >= 4` 代替「能力状态是 `v4`」来决定置灰原因是否指向项目主目录（decisions #62）；`chatAvailability` 只在 `trust` 是 `untrusted` 时才用 `worktree_untrusted`，`unknown`（信任文件读不了）仍是现有文案。两个新对话框的确认按钮等 `/api/v1/info` 有结果之后才可用，免得默认勾选的启动选项被抢先的确认丢掉（d34）。副标题带 `title` 提示（`label.dir`、`label.branch`）。worktree 行的操作按钮改成 18×16px，悬停时行高不变；`sidebar-layout.mjs` 加了对应的检查（decisions #61）。
+- T12：确认框（删除会话，以及 T14 的删除 worktree）里回车的规则写成一个共用函数：焦点在按钮上就执行那个按钮，否则执行默认按钮；默认按钮常驻一圈描边（d35）。删除会话确认框里的会话名取侧边栏显示的那个（同一 worktree 下第二个起带序号的名字，`sessionContext().name`），不再自己从 `title` / 工作目录推。`worktreeLabel` 的条件写成「会话挂在不是主目录的那个 worktree 节点下」，扁平显示的项目（只有一个 worktree、它又不是主目录）也算。现有测试 `TestProjectsDropsStaleWorktreeRecord`、`test-sidebar.mjs › actions_fire_once` 跟着改了搭环境和触发确认的方式（decisions #63、#64）。
 
 ## 11. 方案验证（机器关口 B）
 

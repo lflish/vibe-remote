@@ -6,7 +6,7 @@ import { PROTOCOL_VERSION } from '../shared/protocol';
 import { VibeRemoteClient, ConnectionState, type AttachOptions } from './client';
 import { VibeRemoteRest, DeleteSessionError, ReloadSessionError, RestError } from './rest';
 import { openDirPicker, type PickedSession } from './dirpicker';
-import { openNewWorktreeDialog, openWorktreeSessionDialog } from './worktree-dialogs';
+import { confirmDeleteSession, openNewWorktreeDialog, openWorktreeSessionDialog } from './worktree-dialogs';
 import { worktreeErrorText } from './worktree-name';
 import { openMachineManager } from './machines';
 import { t, toggleLocale, getLocale, onLocaleChange } from './i18n';
@@ -1203,8 +1203,8 @@ function expandActiveProject(key: string) {
 
 // buildSidebarModel snapshots the module state the sidebar reads and rebuilds
 // each machine's tree from its sessions and last projects result; sidebarActions
-// routes every side effect back here (the window.confirm dialogs for reload and
-// delete stay in these callbacks).
+// routes every side effect back here (the window.confirm dialog for reload and
+// the delete confirmation stay in these callbacks).
 function buildSidebarModel(): SidebarModel {
   return {
     machines: machines.map((machine) => {
@@ -1258,9 +1258,7 @@ const sidebarActions: SidebarActions = {
     void handleReload(machine, session);
   },
   deleteSession: (machine, session) => {
-    const name = session.title || (session.workdir ? session.workdir.split('/').pop() : '') || session.id;
-    if (!window.confirm(t('session.deleteConfirm', { name }))) return;
-    closeSession(machine, session.id);
+    void confirmAndDeleteSession(machine, session);
   },
   toggleMachine: (mk) => {
     if (collapsedMachines.has(mk)) collapsedMachines.delete(mk);
@@ -1286,6 +1284,23 @@ const sidebarActions: SidebarActions = {
   },
   // deleteWorktree is wired in T14.
 };
+
+// confirmAndDeleteSession asks before deleting a session. The dialog says what
+// happens to the worktree the session sits in: kept (protocol 4), or removed
+// with the session when clean (an older daemon, R9.1).
+async function confirmAndDeleteSession(machine: MachineConfig, session: SessionInfo) {
+  const mk = machineKey(machine);
+  const ctx = sessionContext(treeFor(mk), session.id);
+  const name = ctx?.name || session.title || (session.workdir ? session.workdir.split('/').pop() : '') || session.id;
+  let worktreeLabel: string | undefined;
+  for (const p of treeFor(mk)) {
+    const wt = p.worktrees.find((w) => !w.main && w.sessions.some((s) => s.id === session.id));
+    if (wt) worktreeLabel = wt.label;
+  }
+  const legacyWorktree = machineCaps.get(mk) !== 'v4' && session.mode === 'worktree';
+  if (!(await confirmDeleteSession({ name, worktreeLabel, legacyWorktree }))) return;
+  void closeSession(machine, session.id);
+}
 
 // handleRemoveProject drops a project from the sidebar (disk untouched). A 409
 // means it still has sessions; show the reason in the status bar (R2.4).

@@ -32,6 +32,7 @@ function dialogShell(testid: string, title: string, subtitleText: string, confir
   heading.textContent = title;
   const subtitle = el('div', 'modal-subtitle');
   subtitle.textContent = subtitleText;
+  subtitle.hidden = subtitleText === '';
   header.append(heading, subtitle);
 
   const body = el('div', 'modal-body');
@@ -268,6 +269,85 @@ export function openWorktreeSessionDialog(
     deactivate = activateModal(shell.overlay, shell.modal, shell.heading, termCard, () => close(null));
     refresh();
   });
+}
+
+/**
+ * Puts a confirmation on screen. The focus starts on `initial()`, the default
+ * button; Enter runs the button that has the focus, or the default one when
+ * the focus is elsewhere in the dialog. Escape, the Cancel button and a click
+ * outside all call `cancel`. Returns `{ close, markDefault }`: `close` takes the
+ * dialog down, `markDefault` re-reads `initial()` after the dialog changed.
+ */
+function showConfirm(shell: DialogShell, initial: () => HTMLButtonElement, cancel: () => void): { close(): void; markDefault(): void } {
+  const buttons = [shell.cancel, shell.confirm];
+  const markDefault = () => {
+    const def = initial();
+    for (const b of buttons) b.toggleAttribute('data-default', b === def);
+  };
+  shell.overlay.addEventListener('keydown', (e) => {
+    if (e.key !== 'Enter' || e.isComposing) return;
+    e.preventDefault();
+    const target = e.target as HTMLElement | null;
+    const focused = target && target.tagName === 'BUTTON' && shell.modal.contains(target) ? (target as HTMLButtonElement) : initial();
+    if (!focused.disabled) focused.click();
+  });
+  shell.overlay.addEventListener('click', (e) => {
+    if (e.target === shell.overlay) cancel();
+  });
+  shell.cancel.addEventListener('click', cancel);
+  markDefault();
+  document.body.appendChild(shell.overlay);
+  const deactivate = activateModal(shell.overlay, shell.modal, shell.heading, initial(), cancel);
+  return {
+    close() {
+      deactivate();
+      shell.overlay.remove();
+    },
+    markDefault,
+  };
+}
+
+/**
+ * Confirms deleting a session (R5.1). Resolves true only when the delete
+ * button is used; the focus starts on Cancel, so Enter right away cancels.
+ *
+ * `worktreeLabel` is passed for a session under a worktree other than the main
+ * directory: the dialog then says the worktree and its branch stay.
+ * `legacyWorktree` is for a worktree-mode session on a daemon older than
+ * protocol 4, which removes a clean worktree and its branch with the session
+ * (R9.1); that note replaces the other one.
+ */
+export function confirmDeleteSession(opts: { name: string; worktreeLabel?: string; legacyWorktree: boolean }): Promise<boolean> {
+  return new Promise((resolve) => {
+    const shell = dialogShell('delete-session-dialog', t('session.delete.title', { name: opts.name }), '', t('session.delete.confirm'));
+    shell.confirm.classList.add('btn-danger');
+    const text = el('div', 'modal-confirm');
+    text.appendChild(paragraph(t('session.delete.body')));
+    const note = opts.legacyWorktree
+      ? t('session.delete.legacyWorktree')
+      : opts.worktreeLabel
+        ? t('session.delete.keepsWorktree', { worktree: opts.worktreeLabel })
+        : '';
+    if (note) text.appendChild(paragraph(note, 'delete-session-note'));
+    shell.body.appendChild(text);
+
+    let closed = false;
+    const finish = (confirmed: boolean) => {
+      if (closed) return;
+      closed = true;
+      shown.close();
+      resolve(confirmed);
+    };
+    shell.confirm.addEventListener('click', () => finish(true));
+    const shown = showConfirm(shell, () => shell.cancel, () => finish(false));
+  });
+}
+
+function paragraph(text: string, testid?: string): HTMLElement {
+  const p = el('p', 'modal-confirm-text');
+  p.textContent = text;
+  if (testid) p.dataset.testid = testid;
+  return p;
 }
 
 function button(className: string, testid: string, text: string): HTMLButtonElement {

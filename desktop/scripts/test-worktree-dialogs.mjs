@@ -1,15 +1,15 @@
-// worktree-dialogs.ts: the new-worktree dialog (T9) and the new-session dialog
-// for an existing worktree (T11). Driven through the real REST client against a
-// fake daemon behind fetch.
+// worktree-dialogs.ts: the new-worktree dialog (T9), the new-session dialog for
+// an existing worktree (T11) and the delete-session confirmation (T12). Driven
+// through the real REST client against a fake daemon behind fetch.
 import { strict as assert } from 'node:assert';
 import { indexDom, load, runner } from './chat-test-util.mjs';
 import { INFO_V4, afterDebounce, click, fakeDaemon, overlay, planFor, pressKey, settle, tid, typeInto } from './dialog-test-util.mjs';
 
-await indexDom();
+const page = await indexDom();
 localStorage.setItem('vibe-remote.locale', 'zh');
 let sockets = 0;
 globalThis.WebSocket = class { constructor() { sockets++; } };
-const { openNewWorktreeDialog, openWorktreeSessionDialog } = await load('src/renderer/worktree-dialogs.ts', { platform: 'browser' });
+const { openNewWorktreeDialog, openWorktreeSessionDialog, confirmDeleteSession } = await load('src/renderer/worktree-dialogs.ts', { platform: 'browser' });
 const { t } = await load('src/renderer/i18n.ts', { platform: 'browser' });
 
 const { test, run } = runner('test-worktree-dialogs');
@@ -333,6 +333,72 @@ test('worktree_session_waits_for_launch_options', async () => {
   click(e.confirm);
   assert.deepEqual(await e.result, { mode: 'normal', workdir: DEVFLOW.worktrees[1].path, ui: 'terminal', flags: [] });
   e.daemon.restore();
+});
+
+// --- T12: delete-session confirmation ---
+
+/** Opens a confirmation and lets its initial focus land. */
+function openConfirm(promise) {
+  let settled = false;
+  const result = promise.then((v) => { settled = true; return v; });
+  page.flushFrames();
+  const root = overlay();
+  return { result, root, settled: () => settled, confirm: tid('dialog-confirm', root), cancel: tid('dialog-cancel', root) };
+}
+
+test('delete_session_keeps_worktree_note', async () => {
+  const d = openConfirm(confirmDeleteSession({ name: '登录修复', worktreeLabel: 'fix-login', legacyWorktree: false }));
+  assertShell(d.root);
+  assert.ok(tid('delete-session-dialog', d.root), 'the dialog carries its test id');
+  assert.equal(d.root.querySelector('.modal-title').textContent, '删除会话「登录修复」？');
+  assert.ok(d.root.querySelector('.modal-body').textContent.includes('会话会结束，远程进程会被终止，无法撤销。'));
+  assert.equal(tid('delete-session-note', d.root).textContent, 'worktree fix-login 的目录和分支都会保留，之后可以在侧边栏继续使用，或者单独删除。');
+  assert.equal(d.confirm.textContent, '删除会话');
+  assert.equal(document.activeElement, d.cancel, 'the initial focus is on Cancel');
+  await settle();
+  assert.equal(d.settled(), false, 'nothing is decided until a button is used');
+  click(d.confirm);
+  assert.equal(await d.result, true);
+  assert.equal(overlay(), null);
+});
+
+test('delete_session_legacy_note', async () => {
+  const legacy = t('session.delete.legacyWorktree');
+  assert.ok(legacy.includes('旧版') && legacy.includes('一并删除'), legacy);
+  for (const worktreeLabel of [undefined, 'fix-login']) {
+    const d = openConfirm(confirmDeleteSession({ name: '接口限流', worktreeLabel, legacyWorktree: true }));
+    assert.equal(tid('delete-session-note', d.root).textContent, legacy, 'the old-daemon note wins over the keep note');
+    assert.equal(d.root.querySelectorAll('[data-testid="delete-session-note"]').length, 1);
+    click(d.cancel);
+    assert.equal(await d.result, false);
+  }
+});
+
+test('delete_session_plain', async () => {
+  const d = openConfirm(confirmDeleteSession({ name: 'notes', legacyWorktree: false }));
+  assert.equal(tid('delete-session-note', d.root), null);
+  assert.equal(d.root.querySelector('.modal-body').textContent, t('session.delete.body'));
+  // A name is text, never markup.
+  click(d.cancel);
+  await d.result;
+  const e = openConfirm(confirmDeleteSession({ name: '<img src=x onerror=alert(1)>', legacyWorktree: false }));
+  assert.equal(e.root.querySelector('img'), null);
+  assert.ok(e.root.querySelector('.modal-title').textContent.includes('<img src=x'));
+  pressKey(e.cancel, 'Escape');
+  assert.equal(await e.result, false);
+  assert.equal(overlay(), null);
+});
+
+test('delete_session_enter_cancels', async () => {
+  const d = openConfirm(confirmDeleteSession({ name: '登录修复', worktreeLabel: 'fix-login', legacyWorktree: false }));
+  pressKey(document.activeElement, 'Enter');
+  assert.equal(await d.result, false, 'Enter right after opening cancels');
+  assert.equal(overlay(), null);
+  // Enter on the delete button, once the user has moved there, deletes.
+  const e = openConfirm(confirmDeleteSession({ name: '登录修复', legacyWorktree: false }));
+  e.confirm.focus();
+  pressKey(e.confirm, 'Enter');
+  assert.equal(await e.result, true);
 });
 
 await run();

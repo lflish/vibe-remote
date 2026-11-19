@@ -367,12 +367,10 @@ test('inline_rename_commits', async () => {
 });
 
 test('actions_fire_once', async () => {
-  const origConfirm = globalThis.window.confirm;
   const { dom, app, calls } = await setupApp([
     { id: 'o', title: 'open', workdir: '/w/o', created: '2026-01-01T00:00:01Z', mode: 'normal', ui: 'chat', state: 'running' },
     { id: 'd', title: 'del', workdir: '/w/d', created: '2026-01-01T00:00:02Z', mode: 'normal' },
   ]);
-  globalThis.window.confirm = () => true;
   const container = document.createElement('div');
   document.getElementById('terminal-container').appendChild(container);
   app.views.set(`${MK}::o`, { ui: 'chat', key: `${MK}::o`, sessionId: 'o', machine: M, container, activity: 'none', client: { state: 'connected' }, show() {} });
@@ -385,14 +383,17 @@ test('actions_fire_once', async () => {
 
   click(labelOf('del').querySelector('.session-close'));
   await new Promise((r) => setTimeout(r, 20));
-  assert.equal(calls.filter((c) => c.method === 'DELETE' && c.url.endsWith('/api/v1/sessions/d')).length, 1, 'one DELETE');
+  const deletes = () => calls.filter((c) => c.method === 'DELETE' && c.url.endsWith('/api/v1/sessions/d')).length;
+  assert.equal(deletes(), 0, 'nothing is deleted before the in-app confirmation is answered');
+  click(document.querySelector('[data-testid="delete-session-dialog"] [data-testid="dialog-confirm"]'));
+  await new Promise((r) => setTimeout(r, 20));
+  assert.equal(deletes(), 1, 'one DELETE');
 
   assert.equal(document.querySelector('.session-list').hidden, false);
   click(document.querySelector('.machine-toggle'));
   assert.equal(document.querySelector('.session-list').hidden, true, 'machine collapsed');
   assert.ok(JSON.parse(localStorage.getItem('vibe-remote.collapsed-machines')).includes(MK));
 
-  globalThis.window.confirm = origConfirm;
   dom.dom.window.close();
 });
 

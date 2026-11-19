@@ -1307,3 +1307,23 @@ html, body {
 /* A worktree row is lower than a project row: its hover actions are sized to
    its text line so the rows below do not move when they appear (T11). */
 .worktree-row > .row-actions > .row-action { width: 18px; height: 16px; }
+
+/* --- confirmations (T12) --------------------------------------------------- */
+.modal-title { overflow-wrap: anywhere; }
+.modal-subtitle[hidden] { display: none; }
+.modal-confirm {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 14px 16px;
+  font-size: 12.5px;
+  line-height: 1.6;
+  color: var(--text-primary);
+}
+.modal-confirm-text { overflow-wrap: anywhere; }
+.modal-footer .btn-danger { background: var(--error); color: var(--bg-elevated); }
+.modal-footer .btn-danger:hover { background: color-mix(in srgb, var(--error) 86%, var(--text-primary)); }
+/* The button Enter runs when the focus is not on another button. */
+.modal-footer button[data-default] {
+  box-shadow: 0 0 0 2px var(--bg-elevated), 0 0 0 4px color-mix(in srgb, var(--accent) 60%, transparent);
+}
