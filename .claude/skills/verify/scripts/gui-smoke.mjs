@@ -10,11 +10,16 @@
 //   navigation / window.open blocked; hook event → desktop notification
 //   daemon restart → reconnect banner → session recovered
 //   three-level sidebar (throwaway repositories with several worktrees) →
-//   every row's name, badge, state text and dot are readable at the default width
+//   every row's name, badge, state text and dot are readable at the default width;
+//   at 800×500 the "more" menu of a row at the bottom of the sidebar is usable
+//   and the toolbar title keeps the session name under a long branch; the note
+//   under the "continue" launch option is brought into view when it appears
 //   chat (second daemon, fake claude): new chat session via the picker →
 //   reply rendered → permission prompt allowed once → turn resumes
 //   session-switching keys (⌘1–9, ⌘⇧[, ⌘⇧]) with the focus in the terminal and
-//   in the chat input: the session changes, nothing is typed into either
+//   in the chat input: the session changes, nothing is typed into either; the
+//   keys are intercepted (prevented, never delivered to the page) while another
+//   ⌘ key is not, and with a dialog open they are not intercepted either
 //
 // It launches the *built* app (dist/) with the stock Electron binary against a
 // throwaway daemon and a throwaway userData dir, so the developer's real
@@ -40,6 +45,7 @@ import { createRequire } from 'node:module';
 import { randomBytes } from 'node:crypto';
 import { pickerLayout } from './picker-layout.mjs';
 import { sidebarLayout, makeSidebarRepos, startSession, LONG_BRANCH } from './sidebar-layout.mjs';
+import { rowMenuLayout, titleLayout, continueNoteLayout } from './shell-layout.mjs';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../../../..');
 const DESKTOP = join(ROOT, 'desktop');
@@ -205,7 +211,11 @@ async function main() {
   const go = spawnSync('go', ['build', '-o', daemonBin, './cmd/vibe-remoted'], { cwd: join(ROOT, 'vibe-remoted'), stdio: 'inherit' });
   if (go.status !== 0) throw new Error('go build failed');
   const base = JSON.parse(readFileSync(join(ROOT, 'vibe-remoted.tmux.json'), 'utf-8'));
-  writeFileSync(daemonCfg, JSON.stringify({ ...base, port, token }), { mode: 0o600 });
+  // One launch option, off by default: the new-session dialogs show their
+  // options section, and the note under "continue" can be measured (step 9).
+  // No session of this run is started with it.
+  const claudeFlags = [{ id: 'continue', label: 'Continue the last conversation (-c)', arg: '-c' }];
+  writeFileSync(daemonCfg, JSON.stringify({ ...base, port, token, claude_flags: claudeFlags }), { mode: 0o600 });
   await startDaemon();
   ok(`daemon up on 127.0.0.1:${port}`);
   const preexisting = new Set((await restSessions()).map((s) => s.id));
@@ -475,6 +485,26 @@ async function sidebarCase(firstSessionId) {
     console.log(`NOTE sidebar ${l.width}px wide: ${l.rows} rows (${l.hovered} also measured under the mouse), ${l.sessions} sessions; names ending in "…": ${l.truncated.length ? l.truncated.join(' | ') : 'none'}`);
     check(l.sessions >= 9 && labels.includes(LONG_BRANCH) && labels.includes('fix-login'), 'sidebar shows the projects, worktrees and sessions under test', `${l.sessions} sessions, worktrees ${JSON.stringify(labels)}`);
     check(l.problems.length === 0, 'sidebar rows are readable at the default width (names, badges, state text, dots)', l.problems.join('; '));
+    // The smallest window: a row at the bottom of the sidebar still gets a menu that can be used.
+    const menus = await rowMenuLayout(cdp);
+    console.log(`NOTE row menus in an 800×500 window: ${(menus.measured ?? []).join(' | ')}`);
+    check(menus.problems.length === 0 && menus.nearBottom > 0, 'the "more" menu of a project row and of a worktree row at the bottom of the sidebar stays inside an 800×500 window and takes a click',
+      menus.problems.length ? menus.problems.join('; ') : 'no row sat near the bottom of the window: nothing was exercised');
+    // The toolbar title of the session under the long branch: the branch is what gets shortened.
+    await open(ids.long);
+    const title = await titleLayout(cdp);
+    console.log(`NOTE toolbar title in an 800×500 window: ${JSON.stringify({ project: title.project, branch: title.branch, session: title.session })}`);
+    check(title.problems.length === 0 && title.branch?.text === LONG_BRANCH && title.branch.needs > title.branch.shown,
+      'under a long branch the toolbar title of an 800×500 window shortens the branch and keeps the session name whole',
+      title.problems.length ? title.problems.join('; ') : `the branch was not the long one or was not shortened: ${JSON.stringify(title.branch)}`);
+    // "New session" in a worktree that already has sessions: ticking "continue" shows a note, which has to be readable.
+    await cdp.evaluate(`[...document.querySelectorAll('.worktree-group')].find((g) => g.querySelector('.worktree-label').textContent === 'fix-login').querySelector('[data-testid="worktree-new-session"]').click(), true`);
+    await waitFor(() => cdp.evaluate(`(() => { const d = document.querySelector('.modal-overlay [data-testid="worktree-session-dialog"]'); const b = d?.querySelector('[data-testid="dialog-confirm"]'); return !!b && !b.disabled && !!d.querySelector('.modal-flag input[name="claude-flag-continue"]'); })()`), 10000, 'new-session dialog with its launch options');
+    const note = await continueNoteLayout(cdp);
+    await cdp.evaluate(`document.querySelector('.modal-overlay [data-testid="dialog-cancel"]').click(), true`);
+    await waitFor(() => cdp.evaluate(`!document.querySelector('.modal-overlay')`), 5000, 'new-session dialog closed');
+    check(note.problems.length === 0 && note.height > 0, 'in an 800×500 window the note under "continue" is fully visible once the option is ticked',
+      note.problems.length ? note.problems.join('; ') : 'the note has no height');
   } catch (e) {
     fail(`three-level sidebar layout — ${e.message}`);
   }
@@ -570,6 +600,48 @@ const SHORTCUT_KEYS = {
   prev: ['{', 'BracketLeft', 219, MOD.meta | MOD.shift],
 };
 for (let n = 1; n <= 9; n++) SHORTCUT_KEYS[n] = [String(n), `Digit${n}`, 48 + n, MOD.meta];
+// Not a shortcut of this app: the control for "is the key intercepted".
+SHORTCUT_KEYS.k = ['k', 'KeyK', 75, MOD.meta];
+
+// Records where each ⌘ keydown gets to. The app takes its switching keys on
+// `window` in the capture phase, prevents their default action and stops them
+// there. Three probes, all added after the app's own listener:
+//   seen    — on window, capture: runs for every key (same target as the app's
+//             listener, which ran first); `prevented` is what the app did to it
+//   page    — on document, capture: the first stop past the window; a key that
+//             was stopped never gets here, whatever the focused element does
+//   bubble  — on document, bubble: the key went all the way down and back up
+// "No bytes sent" and "nothing typed" cannot tell an intercepted ⌘ key from an
+// ignored one (xterm sends nothing for ⌘ keys anyway); this can.
+const KEY_PROBE = `(() => {
+  if (!window.__vrKeyProbe) {
+    const log = window.__vrKeyProbe = [];
+    const note = (phase) => (e) => { if (e.metaKey) log.push({ phase, code: e.code, prevented: e.defaultPrevented }); };
+    window.addEventListener('keydown', note('seen'), true);
+    document.addEventListener('keydown', note('page'), true);
+    document.addEventListener('keydown', note('bubble'), false);
+  }
+  window.__vrKeyProbe.length = 0;
+  return true;
+})()`;
+
+// Presses the key and reports how far its keydown got.
+async function probeKey(name) {
+  await cdp.evaluate(KEY_PROBE);
+  await pressShortcut(name);
+  const log = await cdp.evaluate(`JSON.stringify(window.__vrKeyProbe)`);
+  const events = JSON.parse(log).filter((e) => e.code === SHORTCUT_KEYS[name][1]);
+  const at = (phase) => events.find((e) => e.phase === phase);
+  return {
+    name,
+    // Taken by the app: prevented, and delivered to nothing past the window.
+    intercepted: !!at('seen') && at('seen').prevented === true && !at('page') && !at('bubble'),
+    // Left alone: delivered through the page, default action intact.
+    delivered: !!at('seen') && at('seen').prevented === false && !!at('page') && !!at('bubble') && at('bubble').prevented === false,
+    trace: events.map((e) => `${e.phase}${e.prevented ? '(prevented)' : ''}`).join('>') || 'no keydown',
+  };
+}
+const traces = (list) => list.map((p) => `${p.name}: ${p.trace}`).join('; ');
 
 async function pressShortcut(name) {
   const [key, code, vk, modifiers] = SHORTCUT_KEYS[name];
@@ -617,6 +689,21 @@ async function shortcutCase(firstSessionId) {
     check(inTerminal && third && next && prev, '⌘3 opens the third session in the sidebar; ⌘⇧] and ⌘⇧[ step to its neighbours',
       `focus in terminal ${inTerminal}, ⌘3 ${third}, ⌘⇧] ${next}, ⌘⇧[ ${prev}`);
 
+    // The interception itself, from the focused terminal (R7.3): the switching
+    // keys stop at the window; a ⌘ key that is not one of them goes through.
+    const termFocused = await waitFor(async () => (await focusKind()) === 'terminal', 3000, 'terminal focused').then(() => true, () => false);
+    const tNext = await probeKey('next');
+    await waitFor(async () => (await active()) === all[3], 8000, '⌘⇧] → the fourth session').catch(() => {});
+    await waitFor(async () => (await focusKind()) === 'terminal', 3000, 'terminal focused').catch(() => {});
+    const tIndex = await probeKey(3);
+    await waitFor(async () => (await active()) === all[2], 8000, '⌘3 → the third session').catch(() => {});
+    await waitFor(async () => (await focusKind()) === 'terminal', 3000, 'terminal focused').catch(() => {});
+    const tOther = await probeKey('k');
+    const tStayed = (await active()) === all[2] && (await focusKind()) === 'terminal';
+    check(termFocused && tNext.intercepted && tIndex.intercepted && tOther.delivered && tStayed,
+      'in a focused terminal ⌘⇧] and ⌘3 are taken before the page sees them (prevented, not delivered), while ⌘K is delivered untouched',
+      `terminal focused ${termFocused}; ${traces([tNext, tIndex, tOther])}; after ⌘K still on the third session with the terminal focused ${tStayed}`);
+
     // Wrapping at both ends; the last session is the chat one.
     const first = await switchTo(1, all[0]);
     const wrapBack = await switchTo('prev', all[n - 1]);
@@ -633,6 +720,18 @@ async function shortcutCase(firstSessionId) {
     const draft = await cdp.evaluate(`${visibleChat}.querySelector('[data-testid="chat-input"]').value`);
     check(inChat && away && back && draft === 'draft stays', 'with the focus in the chat input the keys switch sessions and type nothing into it',
       `focus in chat input ${inChat}, ⌘⇧[ ${away}, ⌘⇧] back ${back}, input ${JSON.stringify(draft)}`);
+    // And the interception with the focus in the chat input: same as in the terminal.
+    await cdp.evaluate(`${visibleChat}.querySelector('[data-testid="chat-input"]').focus(), true`);
+    const cFocused = (await focusKind()) === 'chat-input';
+    const cOther = await probeKey('k');
+    const cStayed = (await active()) === chatId;
+    const cPrev = await probeKey('prev');
+    const cMoved = await waitFor(async () => (await active()) === all[n - 2], 8000, '⌘⇧[ from the chat input').then(() => true, () => false);
+    await openRow(chatId);
+    const draftAfter = await cdp.evaluate(`${visibleChat}.querySelector('[data-testid="chat-input"]').value`);
+    check(cFocused && cOther.delivered && cStayed && cPrev.intercepted && cMoved && draftAfter === 'draft stays',
+      'with the focus in the chat input ⌘⇧[ is taken before the input sees it, while ⌘K reaches the input and changes nothing',
+      `focus in chat input ${cFocused}; ${traces([cOther, cPrev])}; ⌘K stayed ${cStayed}, ⌘⇧[ switched ${cMoved}, input ${JSON.stringify(draftAfter)}`);
     await cdp.evaluate(`(() => { const i = ${visibleChat}.querySelector('[data-testid="chat-input"]'); i.value = ''; i.dispatchEvent(new Event('input', { bubbles: true })); return true; })()`);
 
     // A folded project is skipped, and a position past the end does nothing (R7.5, R7.1).
@@ -665,9 +764,16 @@ async function shortcutCase(firstSessionId) {
     await waitFor(() => cdp.evaluate(`!!document.querySelector('.modal-overlay [data-testid="delete-session-dialog"]')`), 5000, 'delete confirmation');
     const blockedIndex = await stays(4, all[1]);
     const blockedNext = await stays('next', all[1]);
+    // Not intercepted at all while a dialog is open (R7.4): the keys are delivered like any other.
+    const dIndex = await probeKey(4);
+    const dNext = await probeKey('next');
+    await sleep(400);
+    const dStayed = (await active()) === all[1];
     await cdp.evaluate(`document.querySelector('.modal-overlay [data-testid="dialog-cancel"]').click(), true`);
     await waitFor(() => cdp.evaluate(`!document.querySelector('.modal-overlay')`), 5000, 'confirmation closed');
     check(blockedIndex && blockedNext && (await order()).length === n, 'with a dialog open ⌘4 and ⌘⇧] leave the session shown alone', `⌘4 stayed ${blockedIndex}, ⌘⇧] stayed ${blockedNext}`);
+    check(dIndex.delivered && dNext.delivered && dStayed, 'with a dialog open ⌘4 and ⌘⇧] are not intercepted: they are delivered to the page with their default action intact',
+      `${traces([dIndex, dNext])}; session stayed ${dStayed}`);
 
     // Nothing goes to a PTY for these keys. Every terminal session is opened
     // first, so that a first attach (xterm answering the remote's terminal

@@ -86,6 +86,10 @@ export interface WorktreeRemoveRequest {
   path: string;
   head: string;
   sessions: string[];
+  // The branch the confirmation showed; left out for a detached worktree. A
+  // daemon that checks it answers 409 worktree_changed when the worktree is
+  // on another branch by now; one that does not know the field ignores it.
+  branch?: string;
   discardFiles?: boolean;
   deleteBranch?: boolean; // honored only for a worktree vibe-remote created, on a branch
   dropCommits?: boolean;
@@ -98,6 +102,12 @@ export interface WorktreeRemoveResult {
   branchDeleted: boolean;
   branchError?: string;
   endedSessions: string[];
+}
+
+/** The 200 answer of GET /api/v1/projects (v4): this machine's project tree. */
+export interface ProjectsResponse {
+  proto: number;
+  projects: Project[]; // always an array, [] when there is none
 }
 
 /** One project in the tree (GET /api/v1/projects). */

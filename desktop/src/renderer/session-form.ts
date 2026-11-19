@@ -98,10 +98,17 @@ export function createFlagsSection(opts: { existingSessions: number }): {
   continueNote.textContent = t('wt.session.continueNote');
 
   // In the DOM only while it applies, right under the option it is about.
-  function syncContinueNote() {
+  // `reveal`: the user has just ticked the option. In a short window the
+  // options sit at the bottom edge of the dialog's scrolling body, so the note
+  // would appear below the fold; bring it into view.
+  function syncContinueNote(reveal = false) {
     const check = checks.find((c) => c.id === CONTINUE_FLAG_ID);
-    if (check && check.input.checked && existingSessions > 0) check.row.after(continueNote);
-    else continueNote.remove();
+    if (check && check.input.checked && existingSessions > 0) {
+      check.row.after(continueNote);
+      if (reveal) continueNote.scrollIntoView?.({ block: 'nearest' });
+    } else {
+      continueNote.remove();
+    }
   }
 
   return {
@@ -119,7 +126,7 @@ export function createFlagsSection(opts: { existingSessions: number }): {
         input.type = 'checkbox';
         input.name = `claude-flag-${f.id}`;
         input.checked = f.default === true;
-        input.addEventListener('change', syncContinueNote);
+        input.addEventListener('change', () => syncContinueNote(f.id === CONTINUE_FLAG_ID));
         const span = document.createElement('span');
         span.textContent = f.label;
         row.append(input, span);
@@ -146,8 +153,11 @@ export function createFlagsSection(opts: { existingSessions: number }): {
  * `plan` (GET /api/v1/worktrees/plan), asked once typing pauses. Answers that
  * arrive for an older value are dropped.
  *
- * `refresh()` asks again for the current value — call it when the section is
- * first shown and whenever the directory `plan` works on changes. `confirm()`
+ * `ready()`: the daemon has answered that the current value can be used.
+ * `acceptable()`: the local rules have nothing against it (the daemon may not
+ * have been asked yet). `refresh()` asks again for the current value — call it
+ * when the section is first shown and whenever the directory `plan` works on
+ * changes. `confirm()`
  * asks once more right away and returns the plan only if the name can be used;
  * otherwise the reason is shown under the field and it returns null.
  */
@@ -156,6 +166,7 @@ export function createNameSection(opts: { plan(name: string): Promise<WorktreePl
   input: HTMLInputElement;
   value(): string;
   ready(): boolean;
+  acceptable(): boolean;
   confirm(): Promise<WorktreePlan | null>;
   refresh(): void;
 } {
@@ -197,6 +208,16 @@ export function createNameSection(opts: { plan(name: string): Promise<WorktreePl
   let generation = 0;
   let timer: ReturnType<typeof setTimeout> | undefined;
 
+  // What to say for a refusal (`ok: false`). A reason this desktop has a text
+  // for gets it; any other — a newer daemon may refuse for reasons unknown
+  // here — is shown in the daemon's own words, or as a general sentence when
+  // it sent none. Never empty: a refusal must not look like "nothing wrong".
+  function refusalText(plan: WorktreePlan, name: string): string {
+    return worktreeErrorText(plan.error ?? '', { branch: name, path: plan.path, conflict: plan.conflict })
+      || plan.message
+      || t('wt.error.refused');
+  }
+
   function render() {
     const name = input.value;
     let text = '';
@@ -206,13 +227,19 @@ export function createNameSection(opts: { plan(name: string): Promise<WorktreePl
     } else {
       const problem = validateWorktreeName(name);
       if (problem) {
-        text = problem === 'empty' && !touched ? '' : t(`wt.name.${problem}`);
+        if (problem !== 'empty' || touched) {
+          text = t(`wt.name.${problem}`);
+        } else if (answer && answer.name === '' && !answer.plan.ok && !isNameReason(answer.plan.error)) {
+          // Nothing typed yet, and the daemon already refuses for a reason
+          // that is not about the (empty) name: say it now.
+          text = refusalText(answer.plan, name);
+        }
       } else if (failure !== null) {
         text = failure;
       } else if (answer && answer.name === name) {
         const plan = answer.plan;
         if (plan.ok) path = plan.path ?? '';
-        else text = worktreeErrorText(plan.error ?? '', { branch: name, path: plan.path, conflict: plan.conflict }) ?? plan.message ?? plan.error ?? '';
+        else text = refusalText(plan, name);
       }
     }
     input.disabled = blocked !== null;
@@ -275,6 +302,8 @@ export function createNameSection(opts: { plan(name: string): Promise<WorktreePl
     input,
     value: () => input.value,
     ready: () => !blocked && answer !== null && answer.name === input.value && answer.plan.ok === true,
+    // Nothing known here speaks against the name: confirm() may be asked.
+    acceptable: () => !blocked && validateWorktreeName(input.value) === null,
     async confirm() {
       clearTimeout(timer);
       const name = input.value;
@@ -296,6 +325,11 @@ export function createNameSection(opts: { plan(name: string): Promise<WorktreePl
 }
 
 let nameFieldSeq = 0;
+
+// The refusals that are about the name asked for (an empty or missing reason
+// counts: that is what the nameless first question gets).
+const NAME_REASONS = new Set(['invalid_worktree_name', 'worktree_branch_exists', 'worktree_path_exists', 'worktree_path_not_allowed']);
+const isNameReason = (code: string | undefined) => !code || NAME_REASONS.has(code);
 
 function uiCard(value: SessionUI, title: string, description: string, tag?: string): HTMLButtonElement {
   const button = document.createElement('button');

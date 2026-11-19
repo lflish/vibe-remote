@@ -370,11 +370,13 @@ html, body {
   line-height: 15px;
   color: var(--text-muted);
 }
+.worktree-row[data-removing] .worktree-label { color: var(--text-muted); }
 .worktree-empty { display: flex; align-items: center; gap: 10px; height: 28px; padding: 0 8px 0 50px; font-size: 12px; color: var(--text-muted); }
 .worktree-empty-text { flex-shrink: 0; }
 .worktree-empty-action { min-width: 0; padding: 0; border: 0; border-radius: 4px; background: none; color: var(--accent); font: inherit; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; cursor: pointer; }
 .worktree-empty-action::before { content: '+ '; }
 .worktree-empty-action:hover { color: var(--accent-hover); }
+.worktree-empty-action:disabled { color: var(--text-muted); cursor: default; }
 .worktree-empty-action:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 
 /* Session rows are two lines: the name has the first line to itself (next to
@@ -622,6 +624,9 @@ html, body {
 #toolbar-title:not(:has(span)) { color: var(--text-primary); font-weight: 600; }
 #toolbar-title > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; color: var(--text-secondary); }
 #toolbar-title > [data-testid='title-project'] { flex-shrink: 0; max-width: 40%; }
+/* When the three do not fit, the branch gives way first, down to a few
+   characters; only then is the session name cut. */
+#toolbar-title > [data-testid='title-branch'] { flex-shrink: 1000; min-width: 3em; }
 #toolbar-title > [data-testid='title-branch']::before {
   content: '';
   display: inline-block;
@@ -1078,6 +1083,7 @@ html, body {
 .modal-mode-description { font-size: 12px; line-height: 1.45; color: var(--text-secondary); }
 .modal-mode-note { padding: 0 0 6px; font-size: 12px; line-height: 1.5; color: var(--text-muted); }
 .modal-mode-note[hidden] { display: none; }
+.modal-mode-note-error { color: var(--error); }
 /* The picker's "this daemon is older" note sits between two sections of the
    scrolling body; it takes the side padding the sections have. */
 .modal-body > .modal-mode-note { padding: 8px 16px 0; }

@@ -80,15 +80,21 @@ export function openNewWorktreeDialog(
     const flagsSection = createFlagsSection({ existingSessions: 0 });
     shell.body.append(nameSection.el, uiSection.el, flagsSection.el);
 
+    // Everything but the name allows confirming. The machine info has to be in
+    // (or have failed) first: confirming earlier would drop the launch options
+    // that are on by default.
+    function submittable(): boolean {
+      const settled = info !== undefined || infoError !== undefined;
+      const chatOff = uiSection.value() === 'chat' && !chatAvailability(info, infoError, trust).enabled;
+      return !confirming && settled && !chatOff;
+    }
+
     function refresh() {
       const a = chatAvailability(info, infoError, trust);
       const ui = uiSection.value();
       uiSection.setAvailability(a);
       flagsSection.setUI(ui);
-      // The machine info has to be in (or have failed) first: confirming
-      // earlier would drop the launch options that are on by default.
-      const settled = info !== undefined || infoError !== undefined;
-      shell.confirm.disabled = confirming || !settled || !nameSection.ready() || (ui === 'chat' && !a.enabled);
+      shell.confirm.disabled = !submittable() || !nameSection.ready();
     }
 
     let deactivate = () => {};
@@ -100,8 +106,12 @@ export function openNewWorktreeDialog(
       resolve(result);
     }
 
+    // The button is on once the pre-check of the name has answered. Enter in
+    // the name field does not wait for that (typing a name and pressing Enter
+    // is one motion): a name the local rules accept is submitted, and the
+    // check below decides. A refusal shows under the field as usual.
     async function submit() {
-      if (shell.confirm.disabled) return;
+      if (!submittable() || !nameSection.acceptable()) return;
       // Ask once more: the name may have been taken since it was typed.
       confirming = true;
       refresh();
@@ -316,9 +326,11 @@ function showConfirm(shell: DialogShell, initial: () => HTMLButtonElement, cance
  * directory: the dialog then says the worktree and its branch stay.
  * `legacyWorktree` is for a worktree-mode session on a daemon older than
  * protocol 4, which removes a clean worktree and its branch with the session
- * (R9.1); that note replaces the other one.
+ * (R9.1); that note replaces the other one. `unknownWorktree` is for such a
+ * session on a daemon whose version is not known yet: the note then says both
+ * things can happen, instead of promising either.
  */
-export function confirmDeleteSession(opts: { name: string; worktreeLabel?: string; legacyWorktree: boolean }): Promise<boolean> {
+export function confirmDeleteSession(opts: { name: string; worktreeLabel?: string; legacyWorktree: boolean; unknownWorktree?: boolean }): Promise<boolean> {
   return new Promise((resolve) => {
     const shell = dialogShell('delete-session-dialog', t('session.delete.title', { name: opts.name }), '', t('session.delete.confirm'));
     shell.confirm.classList.add('btn-danger');
@@ -326,9 +338,11 @@ export function confirmDeleteSession(opts: { name: string; worktreeLabel?: strin
     text.appendChild(paragraph(t('session.delete.body')));
     const note = opts.legacyWorktree
       ? t('session.delete.legacyWorktree')
-      : opts.worktreeLabel
-        ? t('session.delete.keepsWorktree', { worktree: opts.worktreeLabel })
-        : '';
+      : opts.unknownWorktree
+        ? t('session.delete.unknownWorktree')
+        : opts.worktreeLabel
+          ? t('session.delete.keepsWorktree', { worktree: opts.worktreeLabel })
+          : '';
     if (note) text.appendChild(paragraph(note, 'delete-session-note'));
     shell.body.appendChild(text);
 
@@ -347,8 +361,8 @@ export function confirmDeleteSession(opts: { name: string; worktreeLabel?: strin
 /**
  * Confirms deleting a worktree (design 6.2). `status` is what the daemon just
  * reported; the dialog shows every part of it that means something is lost and
- * resolves with the request to send — what the user saw (`head`, `sessions`)
- * plus what they agreed to — or null when cancelled.
+ * resolves with the request to send — what the user saw (`head`, `sessions`,
+ * `branch`) plus what they agreed to — or null when cancelled.
  *
  * Uncommitted files, or commits of a detached worktree that are on no branch,
  * are lost for good: the dialog then warns, its confirm button is "Delete
@@ -436,6 +450,8 @@ export function confirmDeleteWorktree(
 
     const request = (): WorktreeRemoveRequest => {
       const req: WorktreeRemoveRequest = { path: status.path, head: status.head, sessions: [...status.sessions] };
+      // What the dialog showed: the daemon refuses if it is another branch by now.
+      if (branch) req.branch = branch;
       if (files) req.discardFiles = true;
       if (branch && status.managed) {
         if (unmerged === 0) {
@@ -511,13 +527,23 @@ export type DeleteWorktreeOutcome = { removed: boolean; endedSessions: string[] 
  * confirmation, or the worktree was already gone). Once a request went out the
  * result is never null: sessions may have been ended even though the worktree
  * is still there, and the caller has to close their views and refresh.
- * `notify` shows one line of text (the status bar).
+ * `notify` shows one line of text (the status bar). `onRequest(true)` is called
+ * when a removal request goes out and `onRequest(false)` when its outcome is
+ * known (it can take the daemon many seconds): the caller shows the worktree
+ * as being deleted in between. It is not in flight while a dialog is open.
  */
 export async function deleteWorktreeFlow(
   rest: Pick<VibeRemoteRest, 'worktreeStatus' | 'removeWorktree'>,
   target: { path: string; label: string },
   notify: (text: string) => void,
+  onRequest?: (inFlight: boolean) => void,
 ): Promise<DeleteWorktreeOutcome | null> {
+  let inFlight = false;
+  const setInFlight = (value: boolean) => {
+    if (inFlight === value) return;
+    inFlight = value;
+    onRequest?.(value);
+  };
   const ended: string[] = [];
   const addEnded = (ids: unknown) => {
     if (!Array.isArray(ids)) return;
@@ -541,6 +567,7 @@ export async function deleteWorktreeFlow(
     const req = await confirmDeleteWorktree(status, { label: target.label, changed, error, ended: ended.length });
     if (!req) return requested ? outcome(false) : null;
     requested = true;
+    setInFlight(true);
     try {
       const res = await rest.removeWorktree(req);
       addEnded(res.endedSessions);
@@ -571,8 +598,11 @@ export async function deleteWorktreeFlow(
         continue;
       }
       if (e.status === 404) {
+        // Someone else removed it since the confirmation. The daemon answers
+        // 404 before it ends anything, so the sessions the confirmation listed
+        // may well be running still: only what an earlier answer of this flow
+        // reported as ended is passed on.
         notify(t('wt.delete.gone'));
-        addEnded(req.sessions);
         return outcome(true);
       }
       if (e.status < 500) {
@@ -585,6 +615,7 @@ export async function deleteWorktreeFlow(
       } catch (again) {
         if (gone(again)) {
           // git no longer lists it: only part of the directory can be left.
+          setInFlight(false);
           await showDeleteWorktreeFailure({ label: target.label, message, ended: ended.length, path: target.path });
         } else {
           notify(t('wt.delete.failed', { msg: message }));
@@ -593,6 +624,9 @@ export async function deleteWorktreeFlow(
       }
       changed = false;
       error = message;
+    } finally {
+      // Before the next dialog, and on every way out.
+      setInFlight(false);
     }
   }
 }

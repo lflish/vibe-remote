@@ -99,6 +99,12 @@ export function openDirPicker(
     modeNote.textContent = t('picker.modeNote');
     modeNote.hidden = mode !== 'worktree';
     modesBox.appendChild(modeNote);
+    // Shown instead of the mode note when the machine info could not be read:
+    // whether this daemon names worktrees is then unknown.
+    const worktreeUnavailable = el('div', 'modal-mode-note modal-mode-note-error');
+    worktreeUnavailable.dataset.testid = 'picker-worktree-unavailable';
+    worktreeUnavailable.setAttribute('role', 'alert');
+    worktreeUnavailable.textContent = t('picker.worktreeNeedsInfo');
     body.appendChild(modesBox);
     // Worktree mode on a protocol 4 daemon: the new worktree gets a name (R3.9).
     // It is in the dialog only while that applies; an older daemon keeps the
@@ -136,10 +142,11 @@ export function openDirPicker(
         flagsSection.setFlags(loaded.claude_flags || []);
       })
       .catch((e: unknown) => {
-        // info failed: no flags shown, workdir selection still works (terminal).
+        // info failed: no flags shown, workdir selection still works (terminal,
+        // normal mode). Worktree mode is off: see worktreeBlocked().
         if (closed) return;
-        infoError = e;
-        refreshUI();
+        infoError = e ?? new Error('info failed');
+        refreshMode();
       });
 
     const footer = el('div', 'modal-footer');
@@ -160,6 +167,14 @@ export function openDirPicker(
 
     // --- Behavior ---
     const naming = () => mode === 'worktree' && (info?.proto ?? 1) >= WORKTREE_NAME_MIN_PROTO;
+    // The machine info is in, or has failed. Before that the dialog knows
+    // neither whether the daemon names worktrees nor which launch options are
+    // on by default, so nothing can be confirmed yet.
+    const infoSettled = () => info !== undefined || infoError !== undefined;
+    // Without the machine info a protocol 4 daemon cannot be told from an older
+    // one: confirming Worktree mode would create a worktree with no name there
+    // (`vibe/<session id>`), which nothing cleans up afterwards.
+    const worktreeBlocked = () => mode === 'worktree' && info === undefined && infoError !== undefined;
 
     // The sessions the new one would share its directory with. Worktree mode
     // starts in a worktree that does not exist yet.
@@ -172,7 +187,10 @@ export function openDirPicker(
     function refreshMode() {
       const named = naming();
       syncExistingSessions();
-      modeNote.hidden = mode !== 'worktree' || named;
+      const blocked = worktreeBlocked();
+      modeNote.hidden = mode !== 'worktree' || named || blocked;
+      if (blocked) modesBox.appendChild(worktreeUnavailable);
+      else worktreeUnavailable.remove();
       if (named && !nameSection.el.isConnected) {
         modesBox.appendChild(nameSection.el);
         if (listingReady) nameSection.refresh();
@@ -192,6 +210,7 @@ export function openDirPicker(
       // Chat stays chosen if the user browses into a folder it can't use, but
       // nothing is created until they pick another folder or the terminal.
       (selectBtn as HTMLButtonElement).disabled = !listingReady || confirming
+        || !infoSettled() || worktreeBlocked()
         || (ui === 'chat' && !a.enabled)
         || (naming() && !nameSection.ready());
     }

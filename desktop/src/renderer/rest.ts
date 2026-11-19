@@ -1,4 +1,4 @@
-import type { MachineConfig, Project, SessionInfo, WorktreePlan, WorktreeRemoveRequest, WorktreeRemoveResult, WorktreeStatus } from '../shared/protocol';
+import type { MachineConfig, Project, ProjectsResponse, SessionInfo, WorktreePlan, WorktreeRemoveRequest, WorktreeRemoveResult, WorktreeStatus } from '../shared/protocol';
 import { t } from './i18n';
 
 // Every REST call gets a deadline. Without one, a black-holed host (daemon
@@ -65,14 +65,18 @@ export class VibeRemoteRest {
   /**
    * Fetch the project tree (v4). An old daemon has no such route and answers
    * 404, which maps to null so the caller can fall back to session grouping;
-   * any other non-2xx throws a RestError.
+   * any other non-2xx throws a RestError. A 200 whose body has no `projects`
+   * array is not what the protocol defines and throws as well (a plain Error):
+   * read as an empty tree it would empty the sidebar. The caller treats it
+   * like any failed request and keeps what it had.
    */
   async listProjects(): Promise<Project[] | null> {
     const res = await timedFetch(`${this.base()}/api/v1/projects`, { headers: this.headers() });
     if (res.status === 404) return null;
     if (!res.ok) throw await RestError.from(res);
-    const body = await res.json() as { projects?: Project[] };
-    return body.projects ?? [];
+    const body = await res.json() as Partial<ProjectsResponse> | null;
+    if (!body || !Array.isArray(body.projects)) throw new Error('projects: the response has no project list');
+    return body.projects;
   }
 
   /** Remove a project from the list (the disk is untouched). */

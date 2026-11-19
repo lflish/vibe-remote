@@ -198,6 +198,141 @@ test('contrast_table', () => {
   }
 });
 
+// --- buttons, from the stylesheet itself (R8.4) ------------------------------
+// The table above lists color pairs by hand: it cannot notice a button whose
+// background is composed in the stylesheet (the hover states are color-mix()),
+// nor a rule that changes after the table was written. These cases read the
+// rules that apply to each button as the dialogs build it, in each state, work
+// out the text color and the background the cascade arrives at, and check
+// that pair.
+
+/** Every rule outside :root as { selectors, decls, order }. */
+function rules(text) {
+  const out = [];
+  let order = 0;
+  for (const m of outsideRoot(text).matchAll(/([^{}]+)\{([^{}]*)\}/g)) {
+    const d = {};
+    for (const part of m[2].split(';')) {
+      const i = part.indexOf(':');
+      if (i > 0) d[part.slice(0, i).trim()] = part.slice(i + 1).trim().replace(/\s+/g, ' ');
+    }
+    out.push({ selectors: m[1].split(',').map((x) => x.trim().replace(/\s+/g, ' ')).filter(Boolean), decls: d, order: order++ });
+  }
+  return out;
+}
+
+const BUTTON_CLASS = /\.btn-(?:primary|secondary|danger-outline|danger|neutral)(?![\w-])/;
+const STATES = ['hover', 'focus-visible', 'disabled', 'active', 'focus'];
+
+/**
+ * Whether `selector` matches the button `el` = { classes, ancestors, state }.
+ * Understands what the button rules are written in: compounds of classes and
+ * state pseudo-classes, joined by descendant combinators (ancestors are matched
+ * by class, as a set). Returns null for anything else, so that a button rule
+ * in a form this cannot read fails the test instead of being skipped.
+ */
+function matchButton(selector, el) {
+  const parts = selector.split(' ');
+  if (parts.some((p) => p === '>' || p === '+' || p === '~')) return null;
+  const parse = (compound) => {
+    const m = /^((?:\.[\w-]+)+)((?::[\w-]+)*)$/.exec(compound);
+    if (!m) return null;
+    const pseudo = m[2] ? m[2].slice(1).split(':') : [];
+    if (pseudo.some((x) => !STATES.includes(x))) return null;
+    return { classes: m[1].slice(1).split('.'), pseudo };
+  };
+  const last = parse(parts[parts.length - 1]);
+  if (!last) return null;
+  const before = parts.slice(0, -1).map(parse);
+  if (before.some((b) => b === null || b.pseudo.length > 0)) return null;
+  const specificity = [last, ...before].reduce((n, c) => n + c.classes.length + c.pseudo.length, 0);
+  const matches = last.classes.every((c) => el.classes.includes(c))
+    && last.pseudo.every((x) => x === el.state)
+    && before.every((b) => b.classes.every((c) => el.ancestors.includes(c)));
+  return { matches, specificity };
+}
+
+/** var(--x) or color-mix(in srgb, <color> N%, <color>) → [r, g, b]. */
+function resolveColor(value, from = vars) {
+  const v = /^var\((--[\w-]+)\)$/.exec(value);
+  if (v) return color(v[1], from);
+  const m = /^color-mix\(in srgb, (var\(--[\w-]+\)) (\d+(?:\.\d+)?)%, (var\(--[\w-]+\))\)$/.exec(value);
+  assert.ok(m, `cannot work out the color of "${value}"`);
+  return mix(resolveColor(m[1], from), Number(m[2]), resolveColor(m[3], from));
+}
+
+/** The text color and background the cascade gives the button, as written in the stylesheet. */
+function buttonColors(el, text = css) {
+  const applied = [];
+  for (const rule of rules(text)) {
+    const paints = 'color' in rule.decls || 'background' in rule.decls || 'background-color' in rule.decls;
+    for (const selector of rule.selectors) {
+      const last = selector.split(' ').pop();
+      if (!BUTTON_CLASS.test(last)) continue;
+      const hit = matchButton(selector, el);
+      if (hit === null) {
+        assert.ok(!paints, `button rule "${selector}" sets a color in a form this check cannot read`);
+        continue;
+      }
+      if (hit.matches) applied.push({ ...rule, specificity: hit.specificity });
+    }
+  }
+  applied.sort((a, b) => a.specificity - b.specificity || a.order - b.order);
+  const out = {};
+  for (const rule of applied) {
+    if ('color' in rule.decls) out.color = rule.decls.color;
+    const bg = rule.decls.background ?? rule.decls['background-color'];
+    if (bg !== undefined) out.background = bg;
+  }
+  return out;
+}
+
+// The buttons as the renderer builds them (class lists from worktree-dialogs.ts,
+// dirpicker.ts, machines.ts), each in the states that change their colors.
+const BUTTONS = [
+  ['primary button', { classes: ['btn-primary'], ancestors: [] }],
+  ['secondary button', { classes: ['btn-secondary'], ancestors: [] }],
+  ['dialog primary button', { classes: ['btn-primary'], ancestors: ['modal-footer'] }],
+  ['dialog secondary button', { classes: ['btn-secondary'], ancestors: ['modal-footer'] }],
+  ['dialog delete button', { classes: ['btn-primary', 'btn-danger'], ancestors: ['modal-footer'] }],
+  ['dialog "delete anyway" button', { classes: ['btn-secondary', 'btn-danger-outline'], ancestors: ['modal-footer'] }],
+  ['dialog safe button of a warning', { classes: ['btn-primary', 'btn-neutral'], ancestors: ['modal-footer'] }],
+];
+
+test('button_text_contrast_from_the_stylesheet', () => {
+  const seen = [];
+  for (const [what, base] of BUTTONS) {
+    for (const state of [undefined, 'hover', 'focus-visible']) {
+      const c = buttonColors({ ...base, state });
+      assert.ok(c.color && c.background, `${what}${state ? `:${state}` : ''} has a text color and a background (${JSON.stringify(c)})`);
+      const ratio = contrast(resolveColor(c.color), resolveColor(c.background));
+      seen.push(`${what}${state ? `:${state}` : ''} ${c.color} on ${c.background} = ${ratio.toFixed(2)}`);
+      assert.ok(ratio >= 4.5, `${what}${state ? `:${state}` : ''}: ${c.color} on ${c.background} is ${ratio.toFixed(2)}:1, needs 4.5:1`);
+    }
+  }
+  // The composed backgrounds are among what was measured, not just plain variables.
+  assert.deepEqual(buttonColors({ classes: ['btn-primary', 'btn-danger'], ancestors: ['modal-footer'], state: 'hover' }),
+    { color: 'var(--on-accent)', background: 'color-mix(in srgb, var(--error) 86%, var(--text-primary))' });
+  assert.deepEqual(buttonColors({ classes: ['btn-primary', 'btn-neutral'], ancestors: ['modal-footer'], state: 'hover' }),
+    { color: 'var(--on-accent)', background: 'color-mix(in srgb, var(--text-primary) 86%, var(--bg-elevated))' });
+  assert.deepEqual(buttonColors({ classes: ['btn-secondary', 'btn-danger-outline'], ancestors: ['modal-footer'], state: 'hover' }),
+    { color: 'var(--error)', background: 'color-mix(in srgb, var(--error) 8%, var(--bg-elevated))' });
+  assert.ok(seen.filter((line) => line.includes('color-mix')).length >= 3, seen.join('\n'));
+
+  // The check itself must catch what it is for: a hover background mixed too
+  // light for white text, a rule it cannot read, a later rule that wins.
+  const danger = { classes: ['btn-primary', 'btn-danger'], ancestors: ['modal-footer'], state: 'hover' };
+  const washed = css.replace('.modal-footer .btn-danger:hover { border-color: color-mix(in srgb, var(--error) 86%, var(--text-primary)); background: color-mix(in srgb, var(--error) 86%, var(--text-primary)); }',
+    '.modal-footer .btn-danger:hover { background: color-mix(in srgb, var(--error) 30%, var(--bg-elevated)); }');
+  assert.notEqual(washed, css, 'the rule under test is where this case expects it');
+  const bad = buttonColors(danger, washed);
+  assert.ok(contrast(resolveColor(bad.color), resolveColor(bad.background)) < 4.5, 'a washed-out hover background must fail');
+  assert.throws(() => buttonColors(danger, `${css}\n.modal-footer > .btn-danger { background: var(--bg-elevated); }`), /cannot read/);
+  assert.equal(buttonColors(danger, `${css}\n.modal-footer .btn-danger:hover { background: var(--bg-hover); }`).background, 'var(--bg-hover)');
+  // Equal specificity: the later rule wins (the dialog rule over the generic hover).
+  assert.equal(buttonColors({ classes: ['btn-primary', 'btn-danger'], ancestors: ['modal-footer'], state: undefined }).background, 'var(--error)');
+});
+
 test('dot_shapes_differ', () => {
   const base = decls('.session-unread');
   assert.equal(base.width, '8px');

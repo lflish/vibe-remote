@@ -9,7 +9,7 @@ import { indexDom, load, loadIndex, runner } from './chat-test-util.mjs';
 
 const page = await indexDom();
 localStorage.setItem('vibe-remote.locale', 'zh');
-const { renderSidebar, renderToolbarTitle } = await load('src/renderer/sidebar.ts', { platform: 'browser' });
+const { renderSidebar, renderToolbarTitle, rendererIcon } = await load('src/renderer/sidebar.ts', { platform: 'browser' });
 const { buildTree, projectHue } = await load('src/renderer/tree.ts');
 const { t } = await load('src/renderer/i18n.ts', { platform: 'browser' });
 
@@ -47,7 +47,8 @@ test('renders_three_levels', () => {
       { path: '/r/devflow-worktrees/fix-login', branch: 'fix-login', head: '9f8e7d6', managed: true, sessions: ['s2'] },
     ], sessions: [],
   }];
-  const tree = buildTree([sess('s1', { workdir: '/r/devflow' }), sess('s2', { workdir: '/r/devflow-worktrees/fix-login' })], projects);
+  // R1.1: a chat session in the main directory, a terminal session in the other worktree.
+  const tree = buildTree([sess('s1', { workdir: '/r/devflow', ui: 'chat', state: 'idle' }), sess('s2', { workdir: '/r/devflow-worktrees/fix-login' })], projects);
   const c = render([machineEntry(tree)]);
   assert.equal(tall(c, 'worktree-row').length, 2);
   const groups = [...c.querySelectorAll('.worktree-group')];
@@ -58,6 +59,68 @@ test('renders_three_levels', () => {
     assert.ok(rows[0].dataset.ui);
     assert.ok('dot' in rows[0].dataset);
   }
+  // Each row sits under its own worktree and carries the icon of its kind.
+  const rowOf = (id) => c.querySelector(`[data-testid="session-row"][data-session-id="${id}"]`);
+  const icon = (id) => rowOf(id).querySelector('.session-label > .session-kind-icon svg path');
+  assert.equal(rowOf('s1').closest('.worktree-group').dataset.path, '/r/devflow');
+  assert.equal(rowOf('s2').closest('.worktree-group').dataset.path, '/r/devflow-worktrees/fix-login');
+  assert.equal(rowOf('s1').dataset.ui, 'chat');
+  assert.equal(rowOf('s2').dataset.ui, 'terminal');
+  assert.ok(icon('s1') && icon('s2'), 'both rows have a kind icon');
+  assert.equal(rowOf('s1').querySelectorAll('.session-kind-icon').length, 1, 'one icon per row');
+  assert.equal(rowOf('s2').querySelectorAll('.session-kind-icon').length, 1);
+  const shape = (name) => rendererIcon(name).querySelector('path').getAttribute('d');
+  assert.notEqual(shape('chat'), shape('terminal'), 'the two kinds are drawn differently');
+  assert.equal(icon('s1').getAttribute('d'), shape('chat'), 'the chat session shows the chat glyph');
+  assert.equal(icon('s2').getAttribute('d'), shape('terminal'), 'the terminal session shows the terminal glyph');
+  // In words as well: the badge and the kind line under the name.
+  assert.equal(rowOf('s1').querySelector('.session-ui-badge').textContent, t('chat.badge'));
+  assert.equal(rowOf('s2').querySelector('.session-ui-badge'), null);
+  assert.equal(rowOf('s1').querySelector('.session-meta').textContent, t('sidebar.session.kind.chat'));
+  assert.equal(rowOf('s2').querySelector('.session-meta').textContent, t('sidebar.session.kind.terminal'));
+  // A session with no `ui` (an older daemon) is a terminal session.
+  assert.equal(icon('s2').getAttribute('d'), rendererIcon('terminal').querySelector('path').getAttribute('d'));
+});
+
+// R1.5 on the screen: three projects, eight sessions. The rows are read back
+// from the DOM, top to bottom, and compared with the order written out here.
+test('rows_are_drawn_in_the_daemons_order', () => {
+  const at = (n) => `2026-03-01T10:00:${String(n).padStart(2, '0')}Z`;
+  const projects = [
+    { id: '/r/alpha', name: 'alpha', git: true, sessions: [], worktrees: [
+      { path: '/r/alpha', branch: 'main', head: 'a000001', main: true, sessions: ['z9', 'y8'] },
+      { path: '/r/alpha-worktrees/fix', branch: 'fix', head: 'a000002', managed: true, sessions: ['x7', 'w6'] },
+      { path: '/r/alpha-worktrees/zeta', branch: 'zeta', head: 'a000003', managed: true, sessions: ['v5'] },
+    ] },
+    { id: '/r/Beta', name: 'Beta', git: true, sessions: [], worktrees: [{ path: '/r/Beta', branch: 'dev', head: 'b000001', main: true, sessions: ['u4'] }] },
+    { id: '/r/gamma', name: 'gamma', git: true, sessions: [], worktrees: [
+      { path: '/r/gamma', branch: 'main', head: 'c000001', main: true, sessions: ['t3'] },
+      { path: '/r/gamma-worktrees/b', branch: 'b', head: 'c000002', managed: true, sessions: ['s2'] },
+    ] },
+  ];
+  const list = [
+    ['z9', '/r/alpha', 1], ['y8', '/r/alpha', 2], ['x7', '/r/alpha-worktrees/fix', 3], ['w6', '/r/alpha-worktrees/fix', 4],
+    ['v5', '/r/alpha-worktrees/zeta', 5], ['u4', '/r/Beta', 6], ['t3', '/r/gamma', 7], ['s2', '/r/gamma-worktrees/b', 8],
+  ].map(([id, workdir, n]) => ({ id, title: '', workdir, created: at(n), mode: 'normal' }));
+  const expected = [
+    'project alpha', 'worktree main', 'session z9 alpha', 'session y8 alpha 2', 'worktree fix', 'session x7 fix', 'session w6 fix 2',
+    'worktree zeta', 'session v5 zeta',
+    'project Beta', 'session u4 Beta',
+    'project gamma', 'worktree main', 'session t3 gamma', 'worktree b', 'session s2 b',
+  ];
+  const drawn = (c) => [...c.querySelectorAll('[data-testid="project-row"], [data-testid="worktree-row"], [data-testid="session-row"]')].map((row) => {
+    if (row.dataset.testid === 'project-row') return `project ${row.querySelector('.project-name').textContent}`;
+    if (row.dataset.testid === 'worktree-row') return `worktree ${row.querySelector('.worktree-label').textContent}`;
+    return `session ${row.dataset.sessionId} ${row.querySelector('.session-label-text').textContent}`;
+  });
+  assert.deepEqual(drawn(render([machineEntry(buildTree(list, projects))])), expected);
+  // The same whatever order the session list arrives in, forty times over.
+  let seed = 3;
+  const rand = () => { seed = (seed * 1103515245 + 12345) & 0x7fffffff; return seed / 0x7fffffff; };
+  for (let i = 0; i < 40; i++) {
+    const shuffled = list.map((x) => [rand(), x]).sort((a, b) => a[0] - b[0]).map((x) => x[1]);
+    assert.deepEqual(drawn(render([machineEntry(buildTree(shuffled, projects))])), expected, `sessions listed as ${shuffled.map((x) => x.id).join(',')}`);
+  }
 });
 
 test('flat_project_has_no_worktree_row', () => {
@@ -66,6 +129,30 @@ test('flat_project_has_no_worktree_row', () => {
   const c = render([machineEntry(tree)]);
   assert.equal(tall(c, 'worktree-row').length, 0);
   assert.equal(tid(c, 'project-branch').textContent, 'dev');
+});
+
+test('single_worktree_that_is_not_main_has_a_row_and_a_menu', () => {
+  // The main directory is outside the allowed roots: only the other worktree is listed (R2.6).
+  const projects = [{ id: '/outside/repo', name: 'repo', git: true, worktrees: [{ path: '/r/repo-wt/a', branch: 'a', head: 'abc1234', managed: true, sessions: ['s'] }], sessions: [] }];
+  const tree = buildTree([sess('s', { workdir: '/r/repo-wt/a' })], projects);
+  const deleted = [];
+  const c = render([machineEntry(tree)], acts({ newWorktree() {}, newSession() {}, deleteWorktree: (m, p, wt) => deleted.push(wt.path) }));
+  const rows = tall(c, 'worktree-row');
+  assert.equal(rows.length, 1, 'the worktree has its own row');
+  assert.equal(rows[0].querySelector('.worktree-label').textContent, 'a');
+  assert.equal(tid(c, 'project-branch'), null);
+  assert.equal(tid(c, 'project-new-session'), null, 'the project row offers no session of its own: its directory is not listed');
+  click(rows[0].querySelector('[data-testid="worktree-menu"]'));
+  const del = menuItem('worktree-delete');
+  assert.ok(del && !del.disabled, 'the worktree can be deleted from its menu');
+  click(del);
+  assert.deepEqual(deleted, ['/r/repo-wt/a']);
+  // "New worktree" starts from the main directory, which this daemon may not use: say so.
+  const nw = tid(c, 'project-new-worktree');
+  assert.equal(nw.disabled, true);
+  assert.equal(nw.title, t('sidebar.project.noMain'));
+  assert.notEqual(t('sidebar.project.noMain'), 'sidebar.project.noMain', 'the text exists');
+  assert.equal(nw.getAttribute('aria-label'), t('sidebar.project.noMain'));
 });
 
 test('non_git_has_no_worktree_entries', () => {
@@ -118,6 +205,32 @@ test('machine_row_shows_connection_state', () => {
   assert.deepEqual([...row.children].map((e) => e.className.split(' ')[0]), ['machine-kind-icon', 'machine-name-label', 'machine-state', 'machine-session-count']);
 });
 
+// A machine whose sessions are all gone still has its projects and worktrees
+// (R2.2): the arrow has to keep working, or a folded machine can never be
+// opened again (review D5).
+test('collapsed_machine_without_sessions_can_expand', () => {
+  const projects = [{
+    id: '/r/devflow', name: 'devflow', git: true, worktrees: [
+      { path: '/r/devflow', branch: 'main', head: 'a1b2c3d', main: true, sessions: [] },
+      { path: '/r/devflow-worktrees/fix-login', branch: 'fix-login', head: '9f8e7d6', managed: true, sessions: [] },
+    ], sessions: [],
+  }];
+  const tree = buildTree([], projects);
+  const toggled = [];
+  const c = render([machineEntry(tree, { collapsed: true })], acts({ toggleMachine: (mk) => toggled.push(mk) }));
+  const toggle = c.querySelector('.machine-toggle');
+  assert.equal(c.querySelector('.machine-session-count').textContent, '0', 'the count is still the number of sessions');
+  assert.equal(c.querySelector('.session-list').hidden, true);
+  assert.equal(tall(c, 'project-row').length, 1, 'the project is there, folded away');
+  assert.equal(toggle.disabled, false, 'the arrow works: there are projects to show');
+  assert.equal(toggle.getAttribute('aria-expanded'), 'false');
+  click(toggle);
+  assert.deepEqual(toggled, [MK]);
+  // Nothing at all under the machine: nothing to unfold.
+  const empty = render([machineEntry([], { collapsed: false })]);
+  assert.equal(empty.querySelector('.machine-toggle').disabled, true);
+});
+
 test('gone_session_meta', () => {
   const projects = [{ id: '/r/g', name: 'g', git: true, worktrees: [{ path: '/r/g', branch: 'main', head: 'aaaaaaa', main: true, sessions: ['live'] }], sessions: ['go'] }];
   const tree = buildTree([sess('live', { workdir: '/r/g' }), sess('go', { workdir: '/gone' })], projects);
@@ -147,13 +260,32 @@ test('collapsed_project_shows_waiting_dot', () => {
   const projects = [{ id: '/r/w', name: 'w', git: true, worktrees: [{ path: '/r/w', branch: 'main', head: 'x', main: true, sessions: ['s'] }], sessions: [] }];
   const tree = buildTree([sess('s', { workdir: '/r/w' })], projects);
   const dotOf = () => 'waiting';
-  const collapsed = render([machineEntry(tree)], acts(), { collapsedProjects: new Set([`${MK}|/r/w`]), dotOf });
+  const folded = new Set([`${MK}|/r/w`]);
+  const collapsed = render([machineEntry(tree)], acts(), { collapsedProjects: folded, dotOf });
   assert.ok(tid(collapsed, 'project-dot'));
   assert.equal(tid(collapsed, 'session-row'), null, 'collapsed hides sessions');
+  // It is the "needs you" dot, the same one the session row shows (R1.6) —
+  // not the "turn finished" or "new output" one, and not a hidden one.
+  const classes = (el) => [...el.classList].sort();
+  assert.deepEqual(classes(tid(collapsed, 'project-dot')), ['session-unread', 'waiting']);
 
   const expanded = render([machineEntry(tree)], acts(), { dotOf });
   assert.equal(tid(expanded, 'project-dot'), null);
   assert.equal(tid(expanded, 'session-row').dataset.dot, 'waiting');
+  assert.deepEqual(classes(tid(expanded, 'session-row').querySelector('.session-unread')), classes(tid(collapsed, 'project-dot')), 'folded and unfolded show the same dot');
+
+  // Only "needs you" is rolled up: a folded project whose sessions merely
+  // finished a turn or printed something shows no dot at all.
+  for (const state of ['idle', 'output', 'none']) {
+    const quiet = render([machineEntry(tree)], acts(), { collapsedProjects: folded, dotOf: () => state });
+    assert.equal(tid(quiet, 'project-dot'), null, `no project dot for ${state}`);
+    assert.equal(tid(quiet, 'project-row').querySelector('.session-unread'), null, `no dot element at all for ${state}`);
+  }
+  // The session on screen needs no dot, but its project folded away still does
+  // when another of its sessions is waiting.
+  const two = buildTree([sess('a', { workdir: '/r/w' }), sess('b', { workdir: '/r/w' })], [{ ...projects[0], worktrees: [{ ...projects[0].worktrees[0], sessions: ['a', 'b'] }] }]);
+  const mixed = render([machineEntry(two)], acts(), { collapsedProjects: folded, dotOf: (mk, id) => (id === 'b' ? 'waiting' : 'idle') });
+  assert.deepEqual(classes(tid(mixed, 'project-dot')), ['session-unread', 'waiting']);
 });
 
 test('project_menu_remove', () => {
@@ -168,6 +300,150 @@ test('project_menu_remove', () => {
   click(remove);
   assert.equal(removed.length, 1);
   assert.equal(removed[0].id, '/r/p');
+});
+
+// jsdom has no layout: the boxes are given, the arithmetic is what is tested.
+// The real geometry is measured by shell-layout.mjs in the running app.
+test('row_menu_stays_inside_the_window', () => {
+  const projects = [{ id: '/r/p', name: 'p', git: true, worktrees: [{ path: '/r/p', branch: 'main', head: 'x', main: true, sessions: [] }], sessions: [] }];
+  const c = render([machineEntry(buildTree([], projects))]);
+  const btn = tid(c, 'project-menu');
+  const box = (left, top, width, height) => ({ left, top, width, height, right: left + width, bottom: top + height, x: left, y: top });
+  const proto = window.HTMLElement.prototype;
+  const original = proto.getBoundingClientRect;
+  const sizes = { innerWidth: window.innerWidth, innerHeight: window.innerHeight };
+  const place = (anchor) => {
+    proto.getBoundingClientRect = function () {
+      if (this === btn) return anchor;
+      if (this.classList.contains('menu')) return box(parseFloat(this.style.left) || 0, parseFloat(this.style.top) || 0, 180, 42);
+      return original.call(this);
+    };
+    click(btn);
+    const menu = document.querySelector('body > .menu');
+    return { top: parseFloat(menu.style.top), left: parseFloat(menu.style.left) };
+  };
+  try {
+    Object.defineProperty(window, 'innerWidth', { value: 800, configurable: true });
+    Object.defineProperty(window, 'innerHeight', { value: 500, configurable: true });
+    // Room below: right under the button, left edges aligned.
+    assert.deepEqual(place(box(60, 200, 22, 22)), { top: 222, left: 60 });
+    // The last row of an 800×500 window: the menu would end at 537, below the window.
+    const flipped = place(box(60, 473, 22, 22));
+    assert.ok(flipped.top + 42 <= 473, `the menu opens above its button (top ${flipped.top})`);
+    assert.ok(flipped.top >= 0);
+    // No room on either side of the button: still inside the window.
+    Object.defineProperty(window, 'innerHeight', { value: 60, configurable: true });
+    const squeezed = place(box(60, 20, 22, 22));
+    assert.ok(squeezed.top >= 0 && squeezed.top + 42 <= 60, `inside a 60px-high window (top ${squeezed.top})`);
+    // A button at the right edge: the menu is pulled back in.
+    Object.defineProperty(window, 'innerHeight', { value: 500, configurable: true });
+    const right = place(box(770, 200, 22, 22));
+    assert.ok(right.left + 180 <= 800, `inside the window's width (left ${right.left})`);
+  } finally {
+    proto.getBoundingClientRect = original;
+    Object.defineProperty(window, 'innerWidth', { value: sizes.innerWidth, configurable: true });
+    Object.defineProperty(window, 'innerHeight', { value: sizes.innerHeight, configurable: true });
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+  }
+});
+
+// The sidebar is rebuilt from scratch on every poll answer (twice per machine
+// every 5 s). The row buttons are visible only while their row is hovered or
+// holds the focus, so a keyboard user must not lose the focus to a rebuild
+// (review D9).
+const DEVFLOW_TWO = [{
+  id: '/r/devflow', name: 'devflow', git: true, worktrees: [
+    { path: '/r/devflow', branch: 'main', head: 'a1b2c3d', main: true, sessions: ['s1'] },
+    { path: '/r/devflow-worktrees/fix-login', branch: 'fix-login', head: '9f8e7d6', managed: true, sessions: ['s2'] },
+    { path: '/r/devflow-worktrees/other', branch: 'other', head: '1f2e3d4', managed: true, sessions: [] },
+  ], sessions: [],
+}];
+const twoSessions = () => [sess('s1', { workdir: '/r/devflow' }), sess('s2', { workdir: '/r/devflow-worktrees/fix-login' })];
+
+test('focus_survives_a_rebuild', () => {
+  const actions = acts({ newWorktree() {}, newSession() {}, deleteWorktree() {} });
+  const second = { machine: { ...M, name: 'other-mac', port: 9000 }, key: '10.0.0.9:9000', online: true, collapsed: false, cap: 'v4', tree: buildTree(twoSessions(), DEVFLOW_TWO) };
+  const build = (projects = DEVFLOW_TWO) => model([machineEntry(buildTree(twoSessions(), projects)), second]);
+  const c = document.createElement('div');
+  document.body.appendChild(c);
+  renderSidebar(c, build(), actions);
+  const group = (root, path) => [...root.querySelectorAll('.worktree-group')].find((g) => g.dataset.path === path);
+  const pickers = {
+    'the "new worktree" button of a project': (root) => tid(root, 'project-new-worktree'),
+    'the menu button of a worktree row': (root) => tid(group(root, '/r/devflow-worktrees/fix-login'), 'worktree-menu'),
+    'the "new session" button of a worktree with no session': (root) => tid(group(root, '/r/devflow-worktrees/other'), 'worktree-empty-new-session'),
+    'the close button of a session': (root) => root.querySelector('.session-item[data-session-id="s2"] .session-close'),
+    'a session label': (root) => root.querySelector('.session-item[data-session-id="s1"] .session-label'),
+    'the arrow of a machine': (root) => root.querySelector('.machine-toggle'),
+    'the same button on the second machine': (root) => tid(root.querySelectorAll('.machine-group')[1], 'project-new-worktree'),
+  };
+  for (const [what, pick] of Object.entries(pickers)) {
+    const before = pick(c);
+    before.focus();
+    assert.equal(document.activeElement, before, `${what} takes the focus`);
+    renderSidebar(c, build(), actions);
+    assert.ok(!before.isConnected, 'the sidebar was rebuilt');
+    assert.equal(document.activeElement, pick(c), `${what} still has the focus after a rebuild`);
+  }
+  // The focus outside the sidebar is left where it is.
+  const outside = document.createElement('button');
+  document.body.appendChild(outside);
+  outside.focus();
+  renderSidebar(c, build(), actions);
+  assert.equal(document.activeElement, outside);
+  // The focused row is gone after the rebuild: nothing to restore, nothing thrown.
+  pickers['the menu button of a worktree row'](c).focus();
+  renderSidebar(c, build([{ ...DEVFLOW_TWO[0], worktrees: [DEVFLOW_TWO[0].worktrees[0], DEVFLOW_TWO[0].worktrees[2]], sessions: ['s2'] }]), actions);
+  assert.ok(!c.contains(document.activeElement) || document.activeElement === c, 'no other row received the focus');
+  outside.remove();
+  c.remove();
+});
+
+// A row menu that is open during a rebuild stays with its row and keeps
+// working; when the row is gone the menu goes too.
+test('open_menu_follows_its_row_through_a_rebuild', async () => {
+  const deleted = [];
+  const actions = acts({ newWorktree() {}, newSession() {}, deleteWorktree: (m, p, wt) => deleted.push(wt.path) });
+  const build = (projects = DEVFLOW_TWO, over = {}) => model([machineEntry(buildTree(twoSessions(), projects), over)]);
+  const c = document.createElement('div');
+  document.body.appendChild(c);
+  renderSidebar(c, build(), actions);
+  const menuButton = () => tid([...c.querySelectorAll('.worktree-group')].find((g) => g.dataset.path === '/r/devflow-worktrees/fix-login'), 'worktree-menu');
+  const openMenus = () => document.querySelectorAll('body > .menu').length;
+  click(menuButton());
+  assert.equal(openMenus(), 1);
+  const item = menuItem('worktree-delete');
+  // The menu starts listening for clicks outside it one tick after it opens.
+  await new Promise((r) => setTimeout(r, 5));
+  renderSidebar(c, build(), actions);
+  assert.equal(openMenus(), 1, 'the menu is still open after a rebuild');
+  assert.equal(menuItem('worktree-delete'), item, 'it is the same menu');
+  // A mousedown on the row's new button is not a click outside the menu.
+  menuButton().dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
+  assert.equal(openMenus(), 1, 'the rebuilt button still belongs to the menu');
+  // (A mousedown anywhere else does close it: the listener is live.)
+  document.body.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
+  assert.equal(openMenus(), 0);
+  click(menuButton());
+  const again = menuItem('worktree-delete');
+  renderSidebar(c, build(), actions);
+  assert.equal(menuItem('worktree-delete'), again);
+  click(again);
+  assert.deepEqual(deleted, ['/r/devflow-worktrees/fix-login'], 'its entry still works after a rebuild');
+  assert.equal(openMenus(), 0);
+
+  // The row disappears while its menu is open.
+  click(menuButton());
+  assert.equal(openMenus(), 1);
+  renderSidebar(c, build([{ ...DEVFLOW_TWO[0], worktrees: [DEVFLOW_TWO[0].worktrees[0], DEVFLOW_TWO[0].worktrees[2]], sessions: ['s2'] }]), actions);
+  assert.equal(openMenus(), 0, 'a menu whose row is gone is closed');
+  // The machine is folded while a menu is open: its rows are hidden, the menu goes.
+  renderSidebar(c, build(), actions);
+  click(menuButton());
+  assert.equal(openMenus(), 1);
+  renderSidebar(c, build(DEVFLOW_TWO, { collapsed: true }), actions);
+  assert.equal(openMenus(), 0, 'a menu whose row is hidden is closed');
+  c.remove();
 });
 
 test('project_remove_disabled_with_sessions', () => {
@@ -220,6 +496,14 @@ test('legacy_note_and_disabled_entries', () => {
   const unknown = render([machineEntry(tree, { cap: 'unknown' })], legacyActs);
   assert.equal(tid(unknown, 'machine-legacy-note'), null);
   assert.equal(tid(unknown, 'project-new-worktree').disabled, true);
+  // Unknown is not old: the reason does not ask for an upgrade.
+  assert.equal(tid(unknown, 'project-new-worktree').title, t('sidebar.unknown.notRead'));
+  assert.notEqual(t('sidebar.unknown.notRead'), t('sidebar.legacy.needUpgrade'));
+  click([...unknown.querySelectorAll('[data-testid="worktree-menu"]')][0]);
+  const delUnknown = menuItem('worktree-delete');
+  assert.equal(delUnknown.disabled, true);
+  assert.equal(delUnknown.parentElement.querySelector('.menu-note').textContent, t('sidebar.unknown.notRead'));
+  document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
 });
 
 test('project_tag_hue_via_css_var', () => {
@@ -325,6 +609,101 @@ test('keeps_tree_when_projects_request_fails', async () => {
   assert.equal(app.machineCaps.get(MK), 'v4', 'capability survives a failed projects request');
   app.renderSidebar();
   assert.equal(document.querySelectorAll('[data-testid="project-row"]').length, before, 'rows unchanged');
+  dom.dom.window.close();
+});
+
+// The 5 s poll must not throw away the answers that take longer than 5 s: a
+// repository whose git hangs makes the daemon answer /projects after its own
+// 5 s timeout, i.e. always after the next poll went out (review D1).
+test('slow_answers_survive_the_next_poll', async () => {
+  const dom = await indexDom();
+  localStorage.setItem('vibe-remote.locale', 'zh');
+  localStorage.removeItem('vibe-remote.collapsed-machines');
+  localStorage.removeItem('vibe-remote.collapsed-projects');
+  const app = await loadIndex();
+  app.setMachines([M]);
+  app.rebuildRests();
+  const json = (code, body) => new Response(JSON.stringify(body), { status: code, headers: { 'Content-Type': 'application/json' } });
+  const main = (extra = []) => [{ path: '/r/ok', branch: 'main', head: 'a1b2c3d', main: true, sessions: [] }, ...extra];
+  const tree = (worktrees, slow = {}) => ({ proto: 4, projects: [
+    { id: '/r/ok', name: 'ok', git: true, sessions: [], worktrees },
+    { id: '/r/slowrepo', name: 'slowrepo', git: true, sessions: [], worktrees: [{ path: '/r/slowrepo', branch: 'main', head: 'b2c3d4e', main: true, sessions: [] }], ...slow },
+  ] });
+  const wt = (name) => ({ path: `/r/ok-worktrees/${name}`, branch: name, head: 'c3d4e5f', managed: true, sessions: [] });
+  // Every request stays open until the test answers it.
+  const pending = { sessions: [], projects: [] };
+  globalThis.fetch = (url) => new Promise((resolve, reject) => {
+    const path = new URL(String(url)).pathname;
+    if (path === '/api/v1/sessions') pending.sessions.push({ resolve, reject });
+    else if (path === '/api/v1/projects') pending.projects.push({ resolve, reject });
+    else resolve(new Response(null, { status: 204 }));
+  });
+  const settle = async (n = 12) => { for (let i = 0; i < n; i++) await new Promise((r) => setTimeout(r, 0)); };
+  const labels = () => [...document.querySelectorAll('[data-testid="worktree-row"] .worktree-label')].map((e) => e.textContent);
+  const errors = () => [...document.querySelectorAll('[data-testid="project-error"]')].map((e) => e.textContent);
+  const machineState = () => document.querySelector('[data-testid="machine-state"]').dataset.state;
+
+  // Start-up: one refresh, answered.
+  const first = app.refreshAllMachines(true, MK);
+  pending.sessions[0].resolve(json(200, { list: [] }));
+  pending.projects[0].resolve(json(200, tree(main())));
+  await first;
+  assert.deepEqual(labels(), [], 'one worktree each: both projects are flat');
+  assert.equal(machineState(), 'connected');
+
+  // Poll 1 goes out; its /projects answer is still pending when poll 2 goes out.
+  void app.pollMachines();
+  await settle();
+  pending.sessions[1].resolve(json(200, { list: [] }));
+  await settle();
+  void app.pollMachines();
+  await settle();
+  assert.equal(pending.projects.length, 3, 'two /projects requests are in flight');
+  // Poll 1 is answered now: a new worktree in the healthy repository, and the
+  // hung one reported as failed.
+  const failed = { error: 'git_failed', errorMessage: 'git worktree list --porcelain: context deadline exceeded', worktrees: [] };
+  pending.projects[1].resolve(json(200, tree(main([wt('added-later')]), failed)));
+  await settle();
+  assert.deepEqual(labels(), ['main', 'added-later'], 'the answer to poll 1 is shown although poll 2 is already out');
+  assert.deepEqual(errors(), [t('sidebar.project.readFailed', { msg: failed.errorMessage })], 'the hung repository shows why it could not be read');
+
+  // An answer that arrives out of order never replaces a newer one.
+  pending.sessions[2].resolve(json(200, { list: [] }));
+  void app.pollMachines();
+  await settle();
+  pending.sessions[3].resolve(json(200, { list: [] }));
+  pending.projects[3].resolve(json(200, tree(main([wt('added-later'), wt('newest')]))));
+  await settle();
+  assert.deepEqual(labels(), ['main', 'added-later', 'newest']);
+  pending.projects[2].resolve(json(200, tree(main([wt('added-later')]), failed)));
+  await settle();
+  assert.deepEqual(labels(), ['main', 'added-later', 'newest'], 'the late answer to poll 2 is dropped: poll 3 has been applied');
+  assert.deepEqual(errors(), []);
+
+  // The same for the session list: a host that stops answering fails each
+  // request after the 8 s deadline, later than the next poll.
+  void app.pollMachines();
+  await settle();
+  void app.pollMachines();
+  await settle();
+  pending.sessions[4].reject(Object.assign(new Error('The operation timed out.'), { name: 'TimeoutError' }));
+  await settle();
+  assert.equal(machineState(), 'offline', 'a request that timed out after the next poll went out still marks the machine offline');
+
+  // A refresh asked for by an action (here: forced) still supersedes what is in flight.
+  const forced = app.refreshAllMachines(true, MK);
+  await settle();
+  const last = pending.projects.length - 1;
+  pending.projects[last - 1].resolve(json(200, tree(main())));
+  await settle();
+  assert.deepEqual(labels(), ['main', 'added-later', 'newest'], 'an answer from before the forced refresh is not applied');
+  pending.sessions[pending.sessions.length - 1].resolve(json(200, { list: [] }));
+  pending.projects[last].resolve(json(200, tree(main([wt('after-forced')]))));
+  await forced;
+  assert.deepEqual(labels(), ['main', 'after-forced']);
+  assert.equal(machineState(), 'connected');
+  for (const kind of ['sessions', 'projects']) for (const req of pending[kind]) req.resolve(json(200, kind === 'sessions' ? { list: [] } : tree(main([wt('after-forced')]))));
+  await settle();
   dom.dom.window.close();
 });
 
@@ -547,6 +926,64 @@ test('remove_result_closes_views', async () => {
   assert.deepEqual(disposed, []);
   assert.deepEqual(openViews(), ['a', 'b']);
   assert.deepEqual(refreshes(), { sessions: 1, projects: 1 });
+
+  // The worktree was removed by someone else while the confirmation was open
+  // (`git worktree remove --force` in a terminal): the daemon answers 404
+  // before it touches anything, so the sessions listed in the confirmation
+  // are still running. Their views stay; the refresh shows where they are now.
+  statusAnswers = [() => json(200, status())];
+  removeAnswers = [() => json(404, { error: 'worktree_not_found', message: 'not a worktree this daemon can see' })];
+  disposed = await start();
+  click(dialogButton('dialog-confirm'));
+  await settle();
+  assert.equal(document.querySelector('.modal-overlay'), null);
+  assert.equal(document.getElementById('status-message').textContent, '这个 worktree 已经不存在');
+  assert.deepEqual(disposed, [], 'a 404 ended no session: no view is closed');
+  assert.deepEqual(openViews(), ['a', 'b']);
+  assert.deepEqual(refreshes(), { sessions: 1, projects: 1 }, 'the machine is refreshed');
+
+  // While the removal is under way (the daemon ends the sessions one by one
+  // and deletes the directory: several seconds) the row says so, its entries
+  // are off, and asking again does nothing (review D7).
+  let finishRemove;
+  statusAnswers = [() => json(200, status())];
+  removeAnswers = [() => new Promise((resolve) => { finishRemove = () => resolve(json(200, { removed: true, branchDeleted: true, endedSessions: [] })); })];
+  disposed = await start();
+  const staleDelete = (() => {
+    // A menu left over from before the request, as after a sidebar rebuild.
+    const row = [...document.querySelectorAll('[data-testid="worktree-row"]')].find((r) => r.querySelector('.worktree-label').textContent === 'fix-login');
+    click(row.querySelector('[data-testid="worktree-menu"]'));
+    return menuItem('worktree-delete');
+  })();
+  click(dialogButton('dialog-confirm'));
+  await settle();
+  const removingRow = () => [...document.querySelectorAll('[data-testid="worktree-row"]')].find((r) => r.querySelector('.worktree-label').textContent === 'fix-login');
+  assert.equal(document.querySelector('.modal-overlay'), null, 'the confirmation is closed');
+  assert.ok(removingRow(), 'the row is still there: the daemon has not answered');
+  assert.equal(removingRow().dataset.removing, 'true');
+  assert.equal(removingRow().getAttribute('aria-busy'), 'true');
+  assert.equal(removingRow().querySelector('[data-testid="worktree-removing"]').textContent, '正在删除…');
+  assert.equal(removingRow().querySelector('[data-testid="worktree-new-session"]').disabled, true, 'no new session in a worktree that is being deleted');
+  click(removingRow().querySelector('[data-testid="worktree-menu"]'));
+  assert.equal(menuItem('worktree-delete').disabled, true, 'the delete entry is off while the request is in flight');
+  document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+  // A rebuild in between (the poll) keeps the marker.
+  app.renderSidebar();
+  assert.equal(removingRow().dataset.removing, 'true');
+  // The entry of the menu opened earlier is still enabled; using it starts nothing.
+  calls = [];
+  click(staleDelete);
+  await settle();
+  assert.deepEqual(calls.filter((c) => c.includes('/worktrees/')), [], 'no second status or remove request');
+  assert.equal(document.querySelector('.modal-overlay'), null, 'no second confirmation');
+  // Other worktrees are not affected.
+  const mainRow = [...document.querySelectorAll('[data-testid="worktree-row"]')].find((r) => r.querySelector('.worktree-label').textContent === 'main');
+  assert.equal(mainRow.dataset.removing, undefined);
+  finishRemove();
+  await settle();
+  assert.equal(removingRow().dataset.removing, undefined, 'the marker goes when the request is answered');
+  assert.equal(removingRow().querySelector('[data-testid="worktree-removing"]'), null);
+  assert.equal(removingRow().querySelector('[data-testid="worktree-new-session"]').disabled, false);
 
   // Cancelled before anything was requested: nothing happens at all.
   statusAnswers = [() => json(200, status())];

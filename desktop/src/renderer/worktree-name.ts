@@ -10,6 +10,14 @@ export type WorktreeNameProblem = 'empty' | 'whitespace' | 'dotdot' | 'leading_d
 // differs from the former (it has U+FEFF and lacks U+0085).
 const SPACE = /[\t\n\v\f\r \u0085\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000]/;
 const CONTROL = /[\u0000-\u001f\u007f-\u009f]/;
+// Characters nobody can see in a name: Unicode format characters (Cf: zero-width
+// space and joiners, direction controls, the byte order mark…) and the line and
+// paragraph separators (Zl, Zp).
+const INVISIBLE = /[\p{Cf}\p{Zl}\p{Zp}]/u;
+// Each "/"-separated part of the name becomes a file name (under refs/heads/
+// and as part of the worktree's folder name); file systems stop at 255 bytes.
+const MAX_SEGMENT_BYTES = 250;
+const utf8 = new TextEncoder();
 
 /** Returns the first rule the name breaks, or null when only git can still object. */
 export function validateWorktreeName(name: string): WorktreeNameProblem | null {
@@ -19,6 +27,8 @@ export function validateWorktreeName(name: string): WorktreeNameProblem | null {
   if (name.startsWith('-')) return 'leading_dash';
   // "@{" is git's syntax for the previous or upstream branch.
   if (name.includes('@{') || CONTROL.test(name)) return 'invalid';
+  if (INVISIBLE.test(name)) return 'invalid';
+  if (name.split('/').some((segment) => utf8.encode(segment).length > MAX_SEGMENT_BYTES)) return 'invalid';
   return null;
 }
 

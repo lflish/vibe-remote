@@ -42,7 +42,7 @@ const tall = (id, root = document) => [...root.querySelectorAll(`[data-testid="$
  * holds what it serves and records what it was asked: `requests` (method +
  * path), `frames` (everything written to a WebSocket).
  */
-async function setup(sessions = SESSIONS) {
+async function setup(sessions = SESSIONS, opts = {}) {
   const dom = await indexDom();
   localStorage.setItem('vibe-remote.locale', 'zh');
   localStorage.removeItem('vibe-remote.collapsed-machines');
@@ -50,6 +50,7 @@ async function setup(sessions = SESSIONS) {
   const daemon = {
     sessions: [...sessions],
     projects: null, // null = this daemon has no /api/v1/projects (404)
+    projectsStatus: opts.projectsStatus ?? 0, // non-zero: /api/v1/projects fails with this status
     deleteAnswer: null,
     requests: [],
     frames: [],
@@ -61,6 +62,7 @@ async function setup(sessions = SESSIONS) {
     if (u.pathname === '/api/v1/info') return json(200, INFO_V3);
     if (u.pathname === '/api/v1/sessions') return json(200, { type: 'sessions', list: daemon.sessions });
     if (u.pathname === '/api/v1/projects') {
+      if (daemon.projectsStatus) return json(daemon.projectsStatus, { error: 'boom' });
       return daemon.projects ? json(200, { proto: 4, projects: daemon.projects }) : new Response('404 page not found\n', { status: 404, headers: { 'Content-Type': 'text/plain' } });
     }
     if (u.pathname === '/api/v1/fs') return json(200, { path: u.searchParams.get('path') || '/r/devflow', entries: [], parent: '/r', chatTrust: 'trusted' });
@@ -329,6 +331,63 @@ test('preserved_409_still_shown', async () => {
   await settle(30);
   assert.equal(statusText(), `Worktree 已保留 · ${WT_ROOT} · 分支 ${WT_BRANCH}`);
   assert.equal(statusText(), t('session.worktreePreserved', { path: WT_ROOT, branch: WT_BRANCH }));
+  teardown(env);
+});
+
+// Not knowing is not "old": until /api/v1/projects has answered once (it is
+// slow, or it failed), nothing may call this daemon outdated or describe what
+// an outdated daemon does (review D10).
+test('unknown_is_not_called_old', async () => {
+  const env = await setup(SESSIONS, { projectsStatus: 500 });
+  assert.equal(env.app.machineCaps.get(MK) ?? 'unknown', 'unknown');
+  assert.equal(tid('machine-legacy-note'), null);
+  const neutral = t('sidebar.unknown.notRead');
+  assert.notEqual(neutral, 'sidebar.unknown.notRead', 'the text exists');
+  assert.ok(!/升级|旧/.test(neutral), neutral);
+  // The entries are off (nothing is known about the worktrees yet), with the neutral reason.
+  const nw = tid('project-new-worktree', projectRow('devflow'));
+  assert.equal(nw.disabled, true);
+  assert.equal(nw.title, neutral);
+  const row = tall('worktree-row').find((r) => r.querySelector('.worktree-label').textContent === WT_BRANCH);
+  click(tid('worktree-menu', row));
+  assert.equal(tid('worktree-delete').disabled, true);
+  assert.equal(tid('worktree-delete').parentElement.querySelector('.menu-note').textContent, neutral);
+  document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+  assert.ok(!document.getElementById('machine-list').textContent.includes(t('sidebar.legacy.needUpgrade')));
+
+  // Deleting a worktree-mode session: which of the two happens to its worktree
+  // depends on a version that is not known. Neither is promised.
+  click(sessionRow(WT_ID).querySelector('.session-close'));
+  await settle();
+  let dialog = document.querySelector('.modal-overlay [data-testid="delete-session-dialog"]');
+  let note = tid('delete-session-note', dialog);
+  assert.equal(note.textContent, t('session.delete.unknownWorktree'));
+  assert.notEqual(t('session.delete.unknownWorktree'), 'session.delete.unknownWorktree', 'the text exists');
+  assert.notEqual(note.textContent, t('session.delete.legacyWorktree'));
+  assert.ok(!note.textContent.includes('是旧版'), 'it does not say the daemon is old');
+  assert.ok(!dialog.textContent.includes('都会保留'), 'and does not promise the worktree is kept');
+  click(tid('dialog-cancel', dialog));
+  await settle();
+  // A plain session: nothing to say about a worktree, as ever.
+  click(sessionRow('notes-1').querySelector('.session-close'));
+  await settle();
+  dialog = document.querySelector('.modal-overlay [data-testid="delete-session-dialog"]');
+  assert.equal(tid('delete-session-note', dialog), null);
+  click(tid('dialog-cancel', dialog));
+  await settle();
+
+  // Once the daemon turns out to be a protocol 3 one, the old-daemon texts are back.
+  env.daemon.projectsStatus = 0;
+  await env.app.refreshAllMachines(true, MK);
+  assert.equal(env.app.machineCaps.get(MK), 'legacy');
+  assert.ok(tid('machine-legacy-note'));
+  assert.equal(tid('project-new-worktree', projectRow('devflow')).title, t('sidebar.legacy.needUpgrade'));
+  click(sessionRow(WT_ID).querySelector('.session-close'));
+  await settle();
+  note = tid('delete-session-note', document.querySelector('.modal-overlay'));
+  assert.equal(note.textContent, t('session.delete.legacyWorktree'));
+  click(tid('dialog-cancel', document.querySelector('.modal-overlay')));
+  await settle();
   teardown(env);
 });
 

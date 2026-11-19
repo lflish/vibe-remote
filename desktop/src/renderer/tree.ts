@@ -216,11 +216,14 @@ function finalizeProject(ip: IProject, byId: Map<string, SessionInfo>): TreeProj
     managed: w.managed,
     sessions: nameSessions(w.ids, byId, false),
   }));
-  // A git project is flat with 0 or 1 worktree; a non-git project is always
-  // flat (design 4.10). gone sessions live at the project level of a git
-  // project with no error.
-  const flat = !ip.git || worktrees.length <= 1;
-  const branchLabel = ip.git && worktrees.length === 1 ? worktrees[0].label : undefined;
+  // A git project is flat when all there is to show is its main directory (or
+  // nothing: its list could not be read); a non-git project is always flat
+  // (design 4.10). One listed worktree that is not the main directory — the
+  // main one is outside the daemon's allowed roots (R2.6) — is not the project
+  // itself: it keeps its own row, where it can be deleted. gone sessions live
+  // at the project level of a git project with no error.
+  const flat = !ip.git || worktrees.length === 0 || (worktrees.length === 1 && worktrees[0].main);
+  const branchLabel = ip.git && flat && worktrees.length === 1 ? worktrees[0].label : undefined;
   const gone = ip.git && !ip.error;
   return {
     id: ip.id,

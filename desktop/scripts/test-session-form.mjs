@@ -149,6 +149,65 @@ test('plan_failure_is_shown_and_not_ready', async () => {
   s.remove();
 });
 
+// The daemon may refuse for a reason this desktop has no text for (a newer
+// daemon; e.g. a repository with no commit to start from). It is a refusal
+// all the same: the daemon's own words are shown, and the name is not usable.
+test('unknown_plan_reason_is_shown_not_taken_for_success', async () => {
+  const refuse = (over) => (name) => Promise.resolve({ ok: false, error: 'source_has_no_commits', message: 'the repository has no commits yet', project: '/r/devflow', projectName: 'devflow', ...over });
+  // Asked about a typed name.
+  const s = mountSection(refuse({}));
+  typeInto(s.input, 'fix-login');
+  await afterDebounce();
+  assert.equal(s.error.textContent, 'the repository has no commits yet');
+  assert.equal(s.error.hidden, false);
+  assert.equal(s.section.ready(), false);
+  assert.equal(await s.section.confirm(), null, 'confirming does not go through either');
+  assert.equal(tid('wt-target-path', s.section.el).textContent, '—');
+  assert.equal(s.input.disabled, false, 'the field stays usable: the reason may not be about the directory');
+  s.remove();
+
+  // No message with it: a general sentence, never an empty error or the bare code.
+  const bare = mountSection(refuse({ message: undefined }));
+  typeInto(bare.input, 'fix-login');
+  await afterDebounce();
+  assert.equal(bare.error.textContent, t('wt.error.refused'));
+  assert.notEqual(t('wt.error.refused'), 'wt.error.refused', 'the text exists');
+  assert.equal(bare.section.ready(), false);
+  bare.remove();
+  // Not even a reason code.
+  const empty = mountSection(() => Promise.resolve({ ok: false }));
+  typeInto(empty.input, 'fix-login');
+  await afterDebounce();
+  assert.equal(empty.error.textContent, t('wt.error.refused'));
+  assert.equal(empty.section.ready(), false);
+  empty.remove();
+
+  // Already known when the dialog opens (the first question carries no name):
+  // shown at once, before anything is typed.
+  const early = mountSection(refuse({}));
+  early.section.refresh();
+  await settle();
+  assert.equal(early.error.textContent, 'the repository has no commits yet');
+  assert.equal(early.error.hidden, false);
+  assert.equal(early.section.ready(), false);
+  // The usual answer to the nameless first question stays silent.
+  early.remove();
+  const quiet = mountSection(async (name) => planFor(name));
+  quiet.section.refresh();
+  await settle();
+  assert.equal(quiet.error.textContent, '', 'an untouched empty name shows no error');
+  quiet.remove();
+
+  // In the picker the confirm button stays off.
+  const p = await openPicker('worktree', { plan: (workdir, name) => ({ ok: false, error: 'source_has_no_commits', message: 'the repository has no commits yet' }) });
+  assert.equal(tid('wt-name-error', p.root).textContent, 'the repository has no commits yet');
+  typeInto(tid('wt-name-input', p.root), 'fix-login');
+  await afterDebounce();
+  assert.equal(tid('wt-name-error', p.root).textContent, 'the repository has no commits yet');
+  assert.equal(p.confirm.disabled, true);
+  await closePicker(p);
+});
+
 test('picker_worktree_mode_name_segment', async () => {
   const p = await openPicker('worktree', { plan: pickerPlan });
   for (const id of ['wt-name-input', 'wt-name-error', 'wt-base-info', 'wt-target-path']) {
@@ -229,6 +288,77 @@ test('picker_normal_mode_unchanged', async () => {
   p.daemon.restore();
 });
 
+// The machine info can arrive after the folder listing (or not at all). Until
+// it is in, the picker does not know whether the daemon names worktrees, nor
+// which launch options are on by default: confirming then created a worktree
+// with no name (`vibe/<session id>`) and dropped the default options.
+test('picker_waits_for_machine_info', async () => {
+  let release;
+  const gate = new Promise((resolve) => { release = resolve; });
+  const p = await openPicker('worktree', { plan: pickerPlan, info: async () => { await gate; return INFO_V4; } });
+  assert.equal(p.root.querySelector('.modal-path').textContent, '/r/devflow', 'the folder listing is in');
+  assert.equal(tid('wt-name-input', p.root), null, 'the info is not: no name field yet');
+  assert.equal(p.confirm.disabled, true, 'Worktree mode cannot be confirmed before the machine info is in');
+  const cards = [...p.root.querySelectorAll('.modal-mode-card:not(.modal-ui-card)')];
+  click(cards[0]);
+  await settle();
+  assert.equal(p.confirm.disabled, true, 'normal mode waits as well: the default launch options are not known yet');
+  click(cards[1]);
+  await settle();
+  assert.equal(p.confirm.disabled, true);
+
+  release();
+  await settle(8);
+  assert.ok(tid('wt-name-input', p.root), 'the name field appears once the daemon is known to be protocol 4');
+  assert.equal(p.confirm.disabled, true, 'and an empty name keeps the button off');
+  typeInto(tid('wt-name-input', p.root), 'fix-login');
+  await afterDebounce();
+  assert.equal(p.confirm.disabled, false);
+  click(p.confirm);
+  assert.deepEqual(await p.result, {
+    workdir: '/r/devflow', flags: ['skip'], mode: 'worktree', ui: 'terminal',
+    worktreeName: 'fix-login', worktreePath: '/r/devflow-worktrees/fix-login',
+  });
+  p.daemon.restore();
+
+  // Normal mode, late info: the default options are sent once it is in.
+  let release2;
+  const gate2 = new Promise((resolve) => { release2 = resolve; });
+  const q = await openPicker('normal', { info: async () => { await gate2; return INFO_V4; } });
+  assert.equal(q.confirm.disabled, true);
+  release2();
+  await settle(8);
+  assert.equal(q.confirm.disabled, false);
+  click(q.confirm);
+  assert.deepEqual(await q.result, { workdir: '/r/devflow', flags: ['skip'], mode: 'normal', ui: 'terminal' });
+  q.daemon.restore();
+});
+
+test('picker_info_failed', async () => {
+  const p = await openPicker('normal', { plan: pickerPlan, info: new Error('offline') });
+  assert.equal(p.confirm.disabled, false, 'a folder can still be opened in a terminal session');
+  assert.equal(tid('picker-worktree-unavailable', p.root), null);
+  const cards = [...p.root.querySelectorAll('.modal-mode-card:not(.modal-ui-card)')];
+  click(cards[1]);
+  await settle();
+  // Whether this daemon names worktrees is unknown: creating one could leave
+  // an unnamed worktree and branch behind.
+  assert.equal(p.confirm.disabled, true, 'Worktree mode is off when the machine info could not be read');
+  const why = tid('picker-worktree-unavailable', p.root);
+  assert.ok(why && !why.hidden, 'and the dialog says why');
+  assert.equal(why.textContent, t('picker.worktreeNeedsInfo'));
+  assert.notEqual(t('picker.worktreeNeedsInfo'), 'picker.worktreeNeedsInfo', 'the text exists');
+  assert.equal(tid('wt-name-input', p.root), null);
+  assert.deepEqual(p.daemon.plans(), [], 'no plan is asked for');
+  click(cards[0]);
+  await settle();
+  assert.equal(p.confirm.disabled, false);
+  assert.equal(tid('picker-worktree-unavailable', p.root), null, 'the reason goes away with the mode');
+  click(p.confirm);
+  assert.deepEqual(await p.result, { workdir: '/r/devflow', flags: [], mode: 'normal', ui: 'terminal' });
+  p.daemon.restore();
+});
+
 // --- T15: what -c does when the directory already has a session (R6) ---
 
 const flagBox = (root, id) => root.querySelector(`.modal-flag input[name="claude-flag-${id}"]`);
@@ -257,6 +387,35 @@ test('continue_note_shown', async () => {
   click(p.confirm);
   assert.deepEqual(await p.result, { workdir: '/r/devflow', flags: ['continue', 'skip'], mode: 'normal', ui: 'terminal' });
   p.daemon.restore();
+});
+
+// In a short window the launch options sit at the bottom edge of the dialog's
+// scrolling body: the note that appears under the option the user just ticked
+// has to be brought into view, or it explains nothing (review D11; the real
+// geometry is measured by shell-layout.mjs).
+test('continue_note_is_scrolled_into_view_when_ticked', async () => {
+  const scrolled = [];
+  const proto = window.HTMLElement.prototype;
+  const original = proto.scrollIntoView;
+  proto.scrollIntoView = function (opts) { scrolled.push([this.dataset.testid, opts]); };
+  try {
+    const p = await openPicker('normal', { info: DEFAULT_CONTINUE }, { sessionCountAt: () => 1 });
+    assert.ok(tid('continue-note', p.root), 'on by default: the note is there from the start');
+    assert.deepEqual(scrolled, [], 'opening the dialog scrolls nothing: the user has not asked for anything yet');
+    click(flagBox(p.root, 'continue'));
+    assert.equal(tid('continue-note', p.root), null);
+    assert.deepEqual(scrolled, []);
+    click(flagBox(p.root, 'continue'));
+    assert.ok(tid('continue-note', p.root));
+    assert.deepEqual(scrolled, [['continue-note', { block: 'nearest' }]], 'ticking the option brings its note into view');
+    // Another option does not move the dialog.
+    click(flagBox(p.root, 'skip'));
+    assert.equal(scrolled.length, 1);
+    await closePicker(p);
+  } finally {
+    if (original) proto.scrollIntoView = original;
+    else delete proto.scrollIntoView;
+  }
 });
 
 test('continue_note_hidden_without_sessions', async () => {

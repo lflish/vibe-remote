@@ -7,7 +7,7 @@ import type { MachineConfig, SessionInfo } from '../shared/protocol';
 import type { Dot } from './chat/activity';
 import { t } from './i18n';
 import { projectHue, projectRollup, type Capability, type TreeProject, type TreeSession, type TreeWorktree } from './tree';
-import { openMenu } from './menu';
+import { closeMenu, menuAnchor, moveMenu, openMenu } from './menu';
 
 export interface SidebarMachine {
   machine: MachineConfig;
@@ -26,6 +26,8 @@ export interface SidebarModel {
   dotOf(machineKey: string, sessionId: string): Dot;
   isOpen(viewKey: string): boolean;
   isReloading(viewKey: string): boolean;
+  /** A removal request for this worktree is in flight (optional: absent = never). */
+  isRemoving?(machineKey: string, worktreePath: string): boolean;
 }
 
 export interface SidebarActions {
@@ -68,6 +70,16 @@ export function rendererIcon(name: 'machine' | 'terminal' | 'chat' | 'branch' | 
   return svg;
 }
 
+// capReason says why the worktree entries are off on this machine, or '' when
+// they are not. Only a daemon known to be old is asked to upgrade: `unknown`
+// means its project list has not been read yet (slow, or the request failed),
+// which says nothing about its version.
+function capReason(cap: Capability): string {
+  if (cap === 'legacy') return t('sidebar.legacy.needUpgrade');
+  if (cap === 'unknown') return t('sidebar.unknown.notRead');
+  return '';
+}
+
 function countSessions(project: TreeProject): number {
   let n = project.sessions.length;
   for (const w of project.worktrees) n += w.sessions.length;
@@ -81,13 +93,77 @@ function stateLabel(dot: Dot): string {
   return '';
 }
 
-export function renderSidebar(container: HTMLElement, model: SidebarModel, actions: SidebarActions): void {
-  container.textContent = '';
+// Where an element of the sidebar sits: its machine, project, worktree and
+// session (whichever apply) and what it is within that row. The sidebar is
+// rebuilt from scratch on every change, so this is how "the same button" is
+// found again afterwards.
+interface RowIdentity {
+  machine: string;
+  project?: string;
+  worktree?: string;
+  session?: string;
+  own: string; // a selector, unique within the innermost scope
+}
 
+// The focusable parts of a row that carry no test id, by the class that names them.
+const FOCUSABLE_CLASSES = ['machine-toggle', 'machine-name', 'project-toggle', 'session-label', 'session-reload', 'session-close'];
+
+function identify(container: HTMLElement, el: Element | null): RowIdentity | null {
+  if (!(el instanceof HTMLElement) || el === container || !container.contains(el)) return null;
+  const machine = el.closest<HTMLElement>('.machine-group')?.dataset.machineKey;
+  // Test ids and class names are fixed strings from this file.
+  const ownClass = FOCUSABLE_CLASSES.find((c) => el.classList.contains(c));
+  const own = el.dataset.testid ? `[data-testid="${el.dataset.testid}"]` : ownClass ? `.${ownClass}` : '';
+  if (machine === undefined || !own) return null;
+  return {
+    machine,
+    project: el.closest<HTMLElement>('.project-group')?.dataset.projectId,
+    worktree: el.closest<HTMLElement>('.worktree-group')?.dataset.path,
+    session: el.closest<HTMLElement>('.session-item')?.dataset.sessionId,
+    own,
+  };
+}
+
+// Ids, paths and keys are compared as values, never put into a selector.
+function locate(container: HTMLElement, id: RowIdentity): HTMLElement | null {
+  const within = (root: HTMLElement | null, selector: string, key: string, value: string | undefined): HTMLElement | null => {
+    if (!root || value === undefined) return root;
+    return [...root.querySelectorAll<HTMLElement>(selector)].find((e) => e.dataset[key] === value) ?? null;
+  };
+  let scope = within(container, '.machine-group', 'machineKey', id.machine);
+  scope = within(scope, '.project-group', 'projectId', id.project);
+  scope = within(scope, '.worktree-group', 'path', id.worktree);
+  scope = within(scope, '.session-item', 'sessionId', id.session);
+  return scope?.querySelector<HTMLElement>(id.own) ?? null;
+}
+
+export function renderSidebar(container: HTMLElement, model: SidebarModel, actions: SidebarActions): void {
+  // What the rebuild is about to throw away: the element holding the keyboard
+  // focus (the row buttons are only visible while their row has it) and the
+  // button an open row menu belongs to.
+  const focused = identify(container, document.activeElement);
+  const anchor = menuAnchor();
+  const menuOpenHere = anchor !== null && container.contains(anchor);
+  const menuOwner = menuOpenHere ? identify(container, anchor) : null;
+
+  container.textContent = '';
+  buildSidebar(container, model, actions);
+
+  if (menuOpenHere) {
+    // The menu stays with its row, or goes when the row is gone or hidden.
+    const next = menuOwner && locate(container, menuOwner);
+    if (next && !next.closest('[hidden]')) moveMenu(next);
+    else closeMenu();
+  }
+  if (focused) locate(container, focused)?.focus({ preventScroll: true });
+}
+
+function buildSidebar(container: HTMLElement, model: SidebarModel, actions: SidebarActions): void {
   for (const m of model.machines) {
     const machine = m.machine;
     const group = document.createElement('div');
     group.className = 'machine-group';
+    group.dataset.machineKey = m.key;
 
     const total = m.tree.reduce((sum, p) => sum + countSessions(p), 0);
     const collapsed = m.collapsed;
@@ -99,7 +175,9 @@ export function renderSidebar(container: HTMLElement, model: SidebarModel, actio
     toggle.appendChild(rendererIcon('chevron'));
     toggle.setAttribute('aria-expanded', String(!collapsed));
     toggle.setAttribute('aria-label', t('a11y.actionTarget', { action: collapsed ? t('sidebar.expand') : t('sidebar.collapse'), target: machine.name }));
-    toggle.disabled = total === 0;
+    // Disabled only when there is nothing under the machine. A machine with no
+    // sessions can still have projects and worktrees to show (R2.2).
+    toggle.disabled = m.tree.length === 0;
     toggle.addEventListener('click', () => {
       actions.toggleMachine(m.key);
     });
@@ -209,7 +287,7 @@ function renderProject(list: HTMLElement, m: SidebarMachine, project: TreeProjec
   const rowActions = document.createElement('div');
   rowActions.className = 'row-actions';
   const hasMain = project.worktrees.some((w) => w.main);
-  const upgradeTitle = m.cap !== 'v4' ? t('sidebar.legacy.needUpgrade') : '';
+  const upgradeTitle = capReason(m.cap);
 
   if (project.flat && !project.error && actions.newSession) {
     const btn = iconButton('project-new-session', 'plus', t('sidebar.project.newSession'));
@@ -225,7 +303,11 @@ function renderProject(list: HTMLElement, m: SidebarMachine, project: TreeProjec
     const btn = iconButton('project-new-worktree', 'branch', t('sidebar.project.newWorktree'));
     if (m.cap !== 'v4' || !hasMain) {
       btn.disabled = true;
-      if (upgradeTitle) btn.title = upgradeTitle;
+      // A new worktree starts from the main directory; when that is not
+      // listed (outside the allowed roots, R2.6) the button says so.
+      const why = upgradeTitle || t('sidebar.project.noMain');
+      btn.title = why;
+      btn.setAttribute('aria-label', why);
     }
     btn.addEventListener('click', (e) => { e.stopPropagation(); actions.newWorktree!(m.machine, project); });
     rowActions.appendChild(btn);
@@ -276,7 +358,14 @@ function renderWorktree(pg: HTMLElement, m: SidebarMachine, project: TreeProject
   label.textContent = wt.label;
   row.appendChild(label);
 
-  if (wt.main) {
+  // The daemon is removing it (it ends the sessions first, which takes a
+  // while): the row says so and offers nothing until the answer is in.
+  const removing = model.isRemoving?.(m.key, wt.path) ?? false;
+  if (removing) {
+    row.dataset.removing = 'true';
+    row.setAttribute('aria-busy', 'true');
+    row.appendChild(worktreeTag('worktree-removing', t('sidebar.worktree.removing')));
+  } else if (wt.main) {
     row.appendChild(worktreeTag('worktree-tag-main', t('sidebar.worktree.main')));
   } else if (!wt.managed) {
     const tag = worktreeTag('worktree-tag-external', t('sidebar.worktree.external'));
@@ -288,6 +377,7 @@ function renderWorktree(pg: HTMLElement, m: SidebarMachine, project: TreeProject
   rowActions.className = 'row-actions';
   if (actions.newSession) {
     const btn = iconButton('worktree-new-session', 'plus', t('sidebar.project.newSession'));
+    btn.disabled = removing;
     btn.addEventListener('click', (e) => { e.stopPropagation(); actions.newSession!(m.machine, project, wt); });
     rowActions.appendChild(btn);
   }
@@ -298,8 +388,8 @@ function renderWorktree(pg: HTMLElement, m: SidebarMachine, project: TreeProject
       openMenu(btn, [{
         label: t('sidebar.worktree.delete'),
         testid: 'worktree-delete',
-        disabled: m.cap !== 'v4',
-        note: m.cap !== 'v4' ? t('sidebar.legacy.needUpgrade') : undefined,
+        disabled: m.cap !== 'v4' || removing,
+        note: capReason(m.cap) || undefined,
         onClick: () => actions.deleteWorktree!(m.machine, project, wt),
       }]);
     });
@@ -322,6 +412,7 @@ function renderWorktree(pg: HTMLElement, m: SidebarMachine, project: TreeProject
       start.className = 'worktree-empty-action';
       start.dataset.testid = 'worktree-empty-new-session';
       start.textContent = t('sidebar.project.newSession');
+      start.disabled = removing;
       start.addEventListener('click', (e) => { e.stopPropagation(); actions.newSession!(m.machine, project, wt); });
       empty.appendChild(start);
     }
