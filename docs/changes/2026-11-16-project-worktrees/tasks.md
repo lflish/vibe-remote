@@ -1,6 +1,6 @@
 # 任务：按项目和 worktree 组织会话，并更换视觉风格
 
-依据：spec.md、design.md　共 21 个任务（T1–T20，其中 T6 拆成 T6a 和 T6b；开发中另加返工任务 T6c）　更新：2026-11-19（按第二轮工程评审和用户的三个决定修订，decisions #28–#40、d28–d31、c5；上一次是 2026-11-18 按第一轮工程评审修订，#16–#27、d22–d27、c4）
+依据：spec.md、design.md　共 21 个任务（T1–T20，其中 T6 拆成 T6a 和 T6b；开发中另加返工任务 T6c；关口 C 第 1 轮不通过后加返工任务 T21–T28）　更新：2026-11-19（按第二轮工程评审和用户的三个决定修订，decisions #28–#40、d28–d31、c5；上一次是 2026-11-18 按第一轮工程评审修订，#16–#27、d22–d27、c4）
 
 ## 约定
 
@@ -884,6 +884,90 @@
   - `grep -n "当前为 3\|worktree 模式查所选的源目录本身（不是仓库根，也不是新 worktree）。只读这一个字段" CLAUDE.md` 没有输出（旧表述已更新）
   - `git diff --stat HEAD~1` 只列出这 3 个文件
 - 依赖：T3、T4、T6b、T7、T8、T10、T12、T13
+
+### 关口 C 第 1 轮返工（T21–T28）
+
+机器关口 C 第 1 轮（验证者 codex，评审对象 `91e0fab`）不通过，拦下 7 个问题，测试阶段的问题编号接着编为 X9–X15（验证结论的 P1–P7）；另有「放松检查」一节的两条备注。每个任务：先把验证者的反例写成回归测试并确认失败，再修；修完做一次变异核对（去掉这次加的关键判断，回归测试要失败；临时改动不提交）；单独提交。做的先后：T22 → T23 → T21 → T25 → T24 → T26 → T27 → T28。所有命令带独立的 `TMUX_TMPDIR`，`go test` 带 `-timeout`。
+
+### T21 返工（X9）：创建失败的撤销不动别人在同一路径上建的 worktree
+- 状态：待办
+- 来源：X9（验证结论 P1，严重）。自己的 `git worktree add` 因目录已被占而失败时，撤销把另一个进程在同一路径上建的 worktree（同分支，或 detached 在同一提交）认成本次建的，用 `worktree remove --force --force` 删掉，对方的文件和分支一起丢
+- 文件：修改 `vibe-remoted/internal/session/worktree.go`（`CreateWorktree` 区分「`git worktree add` 自己报错退出」和「被时限杀掉」；`worktreeClaim.undo`）；测试 `vibe-remoted/internal/session/gate_c_test.go`（新建，本轮返工的回归测试都放这里）；`CLAUDE.md`、`.devflow.yml`（「撤销只清本次建的」那几句）
+- 场景：R3.5（不覆盖已有目录）、R3.8（创建失败不留东西，也不动别人的）
+- 测试：
+  - `TestUndoLeavesAWorktreeSomeoneElseAddedAtTheSamePath/same_branch`、`/detached_at_the_same_commit`：验证者的两个反例；创建失败，对方的 `precious.txt`、worktree 登记、对方检出的分支原样保留，错误的 message 写明目录留着
+  - `TestUndoAfterWorktreeAddFailedOnItsOwn`：`worktree add` 自己失败（没有别人插手）时目录和本次的分支都清掉；本次建的分支被别的 worktree 检出时不删
+  - `TestUndoAfterWorktreeAddWasKilled`：`worktree add` 到时限被杀后留下的（带 `locked initializing`）那一项仍按原规则认领并删除（现有 `TestCreateTimeoutLeavesNothing…` 一类用例继续通过）
+- 完成定义：`cd vibe-remoted && TMUX_TMPDIR=$(mktemp -d) go test -race -count=1 -timeout 10m ./internal/session -run 'TestUndo|TestCreate'` 一行 `ok`；`.devflow.yml` 第 18 条规则的 check 加上新用例后原样执行退出 0
+- 依赖：无
+
+### T22 返工（X10）：删除 worktree 时确认每个会话确实结束了
+- 状态：待办
+- 来源：X10（验证结论 P2，严重）。删除 worktree 的途中 tmux 的 socket 文件被删：`kill-session` 失败只记了一条日志，会话从表里去掉、目录照删，没结束的会话被报成已结束
+- 文件：修改 `vibe-remoted/internal/session/projects.go`（`RemoveWorktree` 结束会话之后的确认）、`manager.go`（删除 worktree 用的结束会话函数）、`runner.go`（`Kill` 把 `kill-session` 的失败交还调用方）；测试 `gate_c_test.go`
+- 场景：R5.6、R5.12
+- 测试：
+  - `TestRemoveWorktreeStopsWhenASessionDidNotEnd`：验证者的反例（对自己启动的 tmux server，标记之后删 socket 文件）：返回 `*WorktreeRemoveError`，`EndedSessions` 为空，目录和分支在，socket 恢复后 tmux 会话还活着、会话仍在表里
+  - `TestRemoveWorktreeConfirmsSessionsAgainstTmux`：结束会话的函数说成功而 tmux 里会话还在 → 同上，不删目录
+- 完成定义：`cd vibe-remoted && TMUX_TMPDIR=$(mktemp -d) go test -race -count=1 -timeout 10m ./internal/session ./internal/server -run 'TestRemove'` 两行 `ok`；`.devflow.yml` 第 15 条规则的 check 加上新用例后原样执行退出 0
+- 依赖：无
+
+### T23 返工（X11）：tmux 列表有一行解析不了就算读取失败；当前目录挪到最后一列
+- 状态：待办
+- 来源：X11（验证结论 P3，严重）。会话当前目录的名字里有换行或制表符时，`list-sessions` 的行解析不了或列错位，读取仍算成功，删除 worktree 漏掉活着的会话
+- 文件：修改 `vibe-remoted/internal/session/runner.go`（格式串把 `pane_current_path` 挪到最后一列；`parseTmuxSessionLine` 列数必须等于格式串的列数、只对最后一列用 `SplitN`；`readTmuxSessions` 任何一行解析不了整次读取失败并写明原因）、相关测试里按列写的行；`CLAUDE.md`（列数与解析那一句）；测试 `gate_c_test.go`
+- 场景：R5.6（H19：归属按创建时算）
+- 测试：
+  - `TestTmuxReadFailsWhenALineDoesNotParse`（换行）：`liveTmuxSessions` 返回 `ok=false`；`RemoveWorktree` 被拒（`*WorktreeRemoveError`，message 写明出路），目录、分支、tmux 会话都在
+  - `TestTabInCurrentDirectoryKeepsAttribution`（制表符，重启后的空表）：读取成功，`status.sessions` 含该会话，删除时把它结束
+  - `TestParseTmuxSessionLine…`：列数不对的行被拒；最后一列里的制表符原样保留
+- 完成定义：`cd vibe-remoted && TMUX_TMPDIR=$(mktemp -d) go test -race -count=1 -timeout 10m ./internal/session -run 'TestTmux|TestParseTmux|TestTab|TestRemove|TestReconcile|TestSessionsOf'` 一行 `ok`
+- 依赖：无
+
+### T24 返工（X12）：`isNoTmuxServer` 只认 tmux 的那两句话
+- 状态：待办
+- 来源：X12（验证结论 P4）。tmux 报错里的 socket 路径含 `no sessions` 字样（`TMUX_TMPDIR` 的目录名）时被当成「没有会话」，绕过第 ④ 条
+- 文件：修改 `vibe-remoted/internal/session/runner.go`（`isNoTmuxServer` 按行比较：以 `no server running on ` 开头，或整行等于 `no sessions`）；`CLAUDE.md`（第 ② 条）；测试 `gate_c_test.go`
+- 场景：R5.6
+- 测试：`TestIsNoTmuxServerGoesByTheWholeLine`（表驱动：两句原话、带路径的 `error connecting to …/vr-no sessions-…`、路径里有 `no server running`）；`TestSocketPathSayingNoSessionsIsNotAnEmptySet`：验证者的反例（`TMUX_TMPDIR` 名字含 `no sessions`，删自己的 socket 文件）：`ok=false`，删除被拒，会话还活着
+- 完成定义：`cd vibe-remoted && TMUX_TMPDIR=$(mktemp -d) go test -race -count=1 -timeout 10m ./internal/session -run 'TestIsNoTmuxServer|TestSocketPath|TestMissingSocket|TestNoTmuxProgram|TestSocketFileGone'` 一行 `ok`
+- 依赖：T23（同一个文件）
+
+### T25 返工（X13）：结束会话之后连分支一起复核
+- 状态：待办
+- 来源：X13（验证结论 P5）。结束会话之后只比较 HEAD 的提交：期间切到同一提交的另一个分支或 detached，仍删目录和原分支
+- 文件：修改 `vibe-remoted/internal/session/projects.go`（结束会话后重读列表里的这一项，分支、detached 与否、HEAD 都与确认时一致才继续）；`docs/protocol.md`（409 的条件）、`CLAUDE.md`、`.devflow.yml`；测试 `gate_c_test.go`
+- 场景：R5.9、设计 4.6 / 6.2
+- 测试：`TestRemoveBranchSwitchedWhileEndingSessions/other_branch_at_the_same_commit`、`/detached_at_the_same_commit`：返回 `*WorktreeChangedError`，带真实的 `EndedSessions` 和最新状态（分支 / detached），目录和原分支都在
+- 完成定义：`cd vibe-remoted && TMUX_TMPDIR=$(mktemp -d) go test -race -count=1 -timeout 10m ./internal/session ./internal/server -run 'TestRemove'` 两行 `ok`
+- 依赖：T22（同一段代码）
+
+### T26 返工（X14）：worktree 列表用 `-z` 读，旧 git 退回按行解析
+- 状态：待办
+- 来源：X14（验证结论 P6）。路径里有换行的外部 worktree 列不出来、查不了状态
+- 文件：修改 `vibe-remoted/internal/session/worktree.go`（`ListWorktrees` 先用 `git worktree list --porcelain -z`，git 不认 `-z`（用法错误的退出码 129）时退回按行解析）；`CLAUDE.md`、tasks.md「后续」（退回模式的已知限制）；测试 `gate_c_test.go`
+- 场景：R2.1、R4.2
+- 测试：`TestListWorktreesPathWithNewline`（验证者的反例：列得出、`WorktreeStatus` 可用）；`TestListWorktreesFallsBackWithoutZ`（用包一层的假 git 让 `-z` 以 129 退出：普通 worktree 照常列出）；`TestParseWorktreeList`（两种分隔的解析结果相同，含 `locked` 的原因、`prunable`、`bare`、`detached`）
+- 完成定义：`cd vibe-remoted && TMUX_TMPDIR=$(mktemp -d) go test -race -count=1 -timeout 10m ./internal/session ./internal/server -run 'TestListWorktrees|TestParseWorktreeList|TestProjects|TestChatTrust'` 两行 `ok`；在自己临时目录里构建的旧版 git（低于 2.36）上跑退回模式的用例和 worktree 相关的测试，结果写进报告
+- 依赖：无
+
+### T27 返工（X15）：预检端点区分「目录不存在」和「不在允许范围内」
+- 状态：待办
+- 来源：X15（验证结论 P7）。`GET /api/v1/worktrees/plan` 对白名单内但不存在的目录返回 403「path not in allowed roots」
+- 文件：修改 `vibe-remoted/internal/server/projects.go`（只改预检端点；status / remove 对不符合的路径统一 404 是有意的，不动）；`docs/protocol.md`；测试 `vibe-remoted/internal/server/projects_test.go`
+- 场景：R3.9（预检的原因要准确）
+- 测试：`TestPlanMissingWorkdirIs400`：白名单内不存在 → 400 `invalid_request`，message 写明目录不存在；白名单外（存在或不存在）→ 仍是 403；普通文件 → 仍是 400
+- 完成定义：`cd vibe-remoted && TMUX_TMPDIR=$(mktemp -d) go test -race -count=1 -timeout 10m ./internal/server -run 'TestPlan'` 一行 `ok`；`docs/protocol.md` 该端点的状态码表与实现一致
+- 依赖：无
+
+### T28 测试修正（两条备注）
+- 状态：待办
+- 来源：验证结论「放松检查」一节的两条备注。备注 1：`TestGitTimeoutKillsProcess` 在本机每次都 SKIP（假 git 没记下 PID），等于没有断言；备注 2（c6）：`TestGitEnvKeepsInheritedConfig` 的跳过条件比「git 低于 2.31」宽，探测命令本身失败也会跳过
+- 文件：只改测试：`vibe-remoted/internal/session/` 里这两个用例所在的文件
+- 场景：无（不改产品行为）
+- 测试：`TestGitTimeoutKillsProcess` 在本机真的执行「进程确实被杀」的断言（PID 记录可靠；只有平台确实做不到才跳过）；c6 的探测只有**成功运行且结果表明 git 不读 `GIT_CONFIG_COUNT`** 时才跳过，探测失败算测试失败
+- 完成定义：`cd vibe-remoted && TMUX_TMPDIR=$(mktemp -d) go test -race -count=3 -timeout 10m -v ./internal/session -run 'TestGitTimeoutKillsProcess|TestGitEnvKeepsInheritedConfig'` 的输出里没有 `SKIP`（本机 git 2.50.1）；c6 仍等用户决定
+- 依赖：无
 
 ## 进度
 

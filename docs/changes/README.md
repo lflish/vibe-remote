@@ -3,4 +3,4 @@
 | 需求 | 状态 | 等级 | 规模 | 说明 | 等你的事 | 更新 |
 |------|------|------|------|------|----------|------|
 | [2026-11-13-dual-mode](2026-11-13-dual-mode/spec.md) | 测试中 | L1 | 标准 | 新建会话可选终端或对话界面；对话模式由 daemon 以 stream-json 驱动远程 claude | c6 | 2026-11-14 |
-| [2026-11-16-project-worktrees](2026-11-16-project-worktrees/spec.md) | 测试中 | L1 | 标准 | 侧边栏按 机器 → 项目 → worktree 组织会话；worktree 可命名、可打开已有的、与会话分开管理；更换视觉风格 | c6 | 2026-11-20 |
+| [2026-11-16-project-worktrees](2026-11-16-project-worktrees/spec.md) | 开发中 | L1 | 标准 | 侧边栏按 机器 → 项目 → worktree 组织会话；worktree 可命名、可打开已有的、与会话分开管理；更换视觉风格 | c6 | 2026-11-20 |
