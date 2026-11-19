@@ -449,7 +449,7 @@ v3 对话会话的条目另带（终端条目一律省略）：
 |------|------|--------|------|
 | `ok` | bool | | 以当前状态用这个名字新建，动手之前的检查是否都能通过。之后才会出现的失败（例如磁盘满）预检不覆盖 |
 | `error` | string | ✓ | `ok:false` 时的原因，按这个先后只给出第一个：`not_git`（`workdir` 不在 git 仓库里）、`unsupported_repo`（仓库是子模块或用了独立的 git 目录，不能在其中新建命名 worktree）、`no_commits`（`workdir` 所在的 worktree 还没有任何提交——刚 `git init` 的仓库，或分支还没有提交的 worktree；新 worktree 要基于一个提交）、`invalid_worktree_name`（含名字为空）、`worktree_path_not_allowed`、`worktree_branch_exists`、`worktree_path_exists`。前三个与名字无关，换什么名字都一样；后四个与 attach 的 error 帧代码同名同义（attach 遇到前三种情况是 `create_failed`） |
-| `message` | string | ✓ | `ok:false` 时给人看的说明；`worktree_path_not_allowed` 时含完整路径，`worktree_branch_exists` 时写明与哪个分支冲突 |
+| `message` | string | ✓ | `ok:false` 时给人看的说明；`worktree_path_not_allowed` 时含完整路径，`worktree_branch_exists` 时写明与哪个分支冲突；`invalid_worktree_name` 且是不需要 git 就能判断的规则没通过时，末尾括号里是那条规则的名字：`empty`、`whitespace`、`dotdot`、`leading_dash`、`invalid`（含 `@{` 或控制字符，git 也不接受）、`invisible`（含不显示的字符）、`too_long`（超过 250 字节）——后两条是 vibe-remote 自己的规则，git 本身接受这样的名字。它不是协议字段：桌面端用同一份规则自己判断并给出各自的文案，不解析这段文字 |
 | `conflict` | string | ✓ | 只在 `worktree_branch_exists` 时有：挡住这个名字的已有分支。等于 `branch` 是同名分支已存在；不等是两个名字不能并存（名字 `fix/login` 被已有的 `fix` 挡住，名字 `change` 被已有的 `change/foo` 挡住） |
 | `project`、`projectName` | string | ✓ | 项目 id（主目录）和名字；`not_git` 时没有 |
 | `base` | object | ✓ | 新 worktree 将基于什么：`{branch?, head, detached?}`，`workdir` 所在 worktree 当前的分支和提交前 7 位；不在任何分支上时没有 `branch`、`detached:true`。`not_git` 时没有；`no_commits` 时 `head` 是 `0000000` |

@@ -110,71 +110,131 @@
  {
   "name": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
   "ok": false,
-  "reason": "invalid",
+  "reason": "too_long",
   "local": true
  },
  {
   "name": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
   "ok": false,
-  "reason": "invalid",
+  "reason": "too_long",
   "local": true
  },
  {
   "name": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
   "ok": false,
-  "reason": "invalid",
+  "reason": "too_long",
   "local": true
  },
  {
   "name": "\u529f\u529f\u529f\u529f\u529f\u529f\u529f\u529f\u529f\u529f\u529f\u529f\u529f\u529f\u529f\u529f\u529f\u529f\u529f\u529f\u529f\u529f\u529f\u529f\u529f\u529f\u529f\u529f\u529f\u529f\u529f\u529f\u529f\u529f\u529f\u529f\u529f\u529f\u529f\u529f\u529f\u529f\u529f\u529f\u529f\u529f\u529f\u529f\u529f\u529f\u529f\u529f\u529f\u529f\u529f\u529f\u529f\u529f\u529f\u529f\u529f\u529f\u529f\u529f\u529f\u529f\u529f\u529f\u529f\u529f\u529f\u529f\u529f\u529f\u529f\u529f\u529f\u529f\u529f\u529f\u529f\u529f\u529f\u529f",
   "ok": false,
-  "reason": "invalid",
+  "reason": "too_long",
   "local": true
  },
  {
   "name": "a\u200bb",
   "ok": false,
-  "reason": "invalid",
+  "reason": "invisible",
   "local": true
  },
  {
   "name": "a\u200db",
   "ok": false,
-  "reason": "invalid",
+  "reason": "invisible",
   "local": true
  },
  {
   "name": "a\u202eb",
   "ok": false,
-  "reason": "invalid",
+  "reason": "invisible",
   "local": true
  },
  {
   "name": "a\u200eb",
   "ok": false,
-  "reason": "invalid",
+  "reason": "invisible",
   "local": true
  },
  {
   "name": "a\ufeffb",
   "ok": false,
-  "reason": "invalid",
+  "reason": "invisible",
   "local": true
  },
  {
   "name": "a\u00adb",
   "ok": false,
-  "reason": "invalid",
+  "reason": "invisible",
   "local": true
  },
  {
   "name": "a\u2060b",
   "ok": false,
-  "reason": "invalid",
+  "reason": "invisible",
   "local": true
  },
  {
   "name": "a\udb40\udc41b",
+  "ok": false,
+  "reason": "invisible",
+  "local": true
+ },
+ {
+  "name": "fix-\ud83d\udc68\u200d\ud83d\udcbb",
+  "ok": false,
+  "reason": "invisible",
+  "local": true
+ },
+ {
+  "name": "a\u200cb",
+  "ok": false,
+  "reason": "invisible",
+  "local": true
+ },
+ {
+  "name": "a\u200fb",
+  "ok": false,
+  "reason": "invisible",
+  "local": true
+ },
+ {
+  "name": "a\u061cb",
+  "ok": false,
+  "reason": "invisible",
+  "local": true
+ },
+ {
+  "name": "a\u0600b",
+  "ok": false,
+  "reason": "invisible",
+  "local": true
+ },
+ {
+  "name": "\u200ba\u0007",
+  "ok": false,
+  "reason": "invalid",
+  "local": true
+ },
+ {
+  "name": "a@{\u200b",
+  "ok": false,
+  "reason": "invalid",
+  "local": true
+ },
+ {
+  "name": "\u200bxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+  "ok": false,
+  "reason": "invisible",
+  "local": true
+ },
+ {
+  "name": "a@{xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+  "ok": false,
+  "reason": "invalid",
+  "local": true
+ },
+ {
+  "name": "a\u0007xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
   "ok": false,
   "reason": "invalid",
   "local": true

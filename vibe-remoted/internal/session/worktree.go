@@ -452,10 +452,12 @@ func gitExitCode(err error) (int, bool) {
 
 // worktreeNameProblem applies the name rules that need no git (design 4.1,
 // rule 1) and returns the reason code of the first one broken, or "": empty,
-// white space, "..", a leading "-", then (all "invalid") "@{", control and
-// invisible characters, more than maxWorktreeNameBytes. The desktop applies
-// the same rules in the same order; both sides are held to
-// testdata/worktree-names.json.
+// white space, "..", a leading "-", then "@{" and control characters (both
+// "invalid": git refuses them too), characters that are not shown
+// ("invisible"), more than maxWorktreeNameBytes ("too_long"). The last two are
+// vibe-remote's own rules — git would take those names — so each has a reason
+// of its own for the desktop to explain. The desktop applies the same rules in
+// the same order; both sides are held to testdata/worktree-names.json.
 func worktreeNameProblem(name string) string {
 	if name == "" {
 		return "empty"
@@ -476,16 +478,21 @@ func worktreeNameProblem(name string) string {
 		return "invalid"
 	}
 	for _, r := range name {
-		// Control characters, and the ones that are not shown at all (format
-		// characters such as a zero width space or a right-to-left override,
-		// and the line and paragraph separators): with those a branch can look
-		// exactly like another one, or read in another order.
-		if unicode.IsControl(r) || unicode.In(r, unicode.Cf, unicode.Zl, unicode.Zp) {
+		if unicode.IsControl(r) {
 			return "invalid"
 		}
 	}
+	for _, r := range name {
+		// The ones that are not shown at all (format characters such as a zero
+		// width space or a right-to-left override, and the line and paragraph
+		// separators): with those a branch can look exactly like another one,
+		// or read in another order.
+		if unicode.In(r, unicode.Cf, unicode.Zl, unicode.Zp) {
+			return "invisible"
+		}
+	}
 	if len(name) > maxWorktreeNameBytes {
-		return "invalid"
+		return "too_long"
 	}
 	return ""
 }

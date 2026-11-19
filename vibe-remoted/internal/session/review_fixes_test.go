@@ -746,28 +746,29 @@ func TestGitEnvKeepsInheritedConfig(t *testing.T) {
 var reviewNameVectors = []struct {
 	label, name string
 	ok          bool
+	reason      string // the local rule a refused name breaks
 }{
 	// The name becomes one directory name (slashes turn into hyphens) and each
 	// part of it a ref file with ".lock" appended while it is written: more
 	// than 250 bytes cannot be created.
-	{"250 bytes", strings.Repeat("x", 250), true},
-	{"251 bytes", strings.Repeat("x", 251), false},
-	{"252 bytes", strings.Repeat("x", 252), false},
-	{"300 bytes", strings.Repeat("x", 300), false},
-	{"251 bytes in two parts", strings.Repeat("a", 125) + "/" + strings.Repeat("b", 125), false},
-	{"250 bytes in two parts", strings.Repeat("a", 125) + "/" + strings.Repeat("b", 124), true},
-	{"84 CJK characters = 252 bytes", strings.Repeat("功", 84), false},
-	{"83 CJK characters = 249 bytes", strings.Repeat("功", 83), true},
+	{"250 bytes", strings.Repeat("x", 250), true, ""},
+	{"251 bytes", strings.Repeat("x", 251), false, "too_long"},
+	{"252 bytes", strings.Repeat("x", 252), false, "too_long"},
+	{"300 bytes", strings.Repeat("x", 300), false, "too_long"},
+	{"251 bytes in two parts", strings.Repeat("a", 125) + "/" + strings.Repeat("b", 125), false, "too_long"},
+	{"250 bytes in two parts", strings.Repeat("a", 125) + "/" + strings.Repeat("b", 124), true, ""},
+	{"84 CJK characters = 252 bytes", strings.Repeat("功", 84), false, "too_long"},
+	{"83 CJK characters = 249 bytes", strings.Repeat("功", 83), true, ""},
 	// Characters that are not shown (Unicode Cf): a name that looks exactly
 	// like another branch, or reads in another order.
-	{"zero width space", "a\u200bb", false},
-	{"zero width joiner", "a\u200db", false},
-	{"right-to-left override", "a\u202eb", false},
-	{"left-to-right mark", "a\u200eb", false},
-	{"byte order mark", "a\ufeffb", false},
-	{"soft hyphen", "a\u00adb", false},
-	{"word joiner", "a\u2060b", false},
-	{"tag character", "a\U000e0041b", false},
+	{"zero width space", "a\u200bb", false, "invisible"},
+	{"zero width joiner", "a\u200db", false, "invisible"},
+	{"right-to-left override", "a\u202eb", false, "invisible"},
+	{"left-to-right mark", "a\u200eb", false, "invisible"},
+	{"byte order mark", "a\ufeffb", false, "invisible"},
+	{"soft hyphen", "a\u00adb", false, "invisible"},
+	{"word joiner", "a\u2060b", false, "invisible"},
+	{"tag character", "a\U000e0041b", false, "invisible"},
 }
 
 func TestWorktreeNameLengthAndInvisibleCharacters(t *testing.T) {
@@ -781,8 +782,11 @@ func TestWorktreeNameLengthAndInvisibleCharacters(t *testing.T) {
 				t.Fatalf("PlanWorktree: %v", err)
 			}
 			if !v.ok {
-				if problem != "invalid" {
-					t.Errorf("local rules report %q, want invalid", problem)
+				if problem != v.reason {
+					t.Errorf("local rules report %q, want %s", problem, v.reason)
+				}
+				if !strings.Contains(plan.Message, "("+v.reason+")") {
+					t.Errorf("plan message %q does not name the rule (%s)", plan.Message, v.reason)
 				}
 				if plan.OK || plan.Error != "invalid_worktree_name" {
 					t.Errorf("plan = {ok:%v error:%q}, want invalid_worktree_name", plan.OK, plan.Error)

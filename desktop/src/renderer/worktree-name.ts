@@ -4,7 +4,10 @@
 // shared vectors in testdata/worktree-names.json).
 import { t } from './i18n';
 
-export type WorktreeNameProblem = 'empty' | 'whitespace' | 'dotdot' | 'leading_dash' | 'invalid';
+// `invalid` is what git refuses as well ("@{", control characters). `invisible`
+// and `too_long` are vibe-remote's own rules: git would take those names, so
+// each has a sentence of its own (wt.name.<reason>).
+export type WorktreeNameProblem = 'empty' | 'whitespace' | 'dotdot' | 'leading_dash' | 'invalid' | 'invisible' | 'too_long';
 
 // Go's unicode.IsSpace and unicode.IsControl, spelled out: JavaScript's \s
 // differs from the former (it has U+FEFF and lacks U+0085).
@@ -28,8 +31,8 @@ export function validateWorktreeName(name: string): WorktreeNameProblem | null {
   if (name.startsWith('-')) return 'leading_dash';
   // "@{" is git's syntax for the previous or upstream branch.
   if (name.includes('@{') || CONTROL.test(name)) return 'invalid';
-  if (INVISIBLE.test(name)) return 'invalid';
-  if (utf8.encode(name).length > MAX_NAME_BYTES) return 'invalid';
+  if (INVISIBLE.test(name)) return 'invisible';
+  if (utf8.encode(name).length > MAX_NAME_BYTES) return 'too_long';
   return null;
 }
 

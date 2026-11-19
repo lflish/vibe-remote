@@ -64,7 +64,7 @@ test('invalid_name_disables_confirm', async () => {
     checked++;
   }
   assert.ok(checked >= 12);
-  for (const reason of ['empty', 'whitespace', 'dotdot', 'leading_dash', 'invalid']) {
+  for (const reason of ['empty', 'whitespace', 'dotdot', 'leading_dash', 'invalid', 'invisible', 'too_long']) {
     assert.notEqual(t(`wt.name.${reason}`), `wt.name.${reason}`, `wt.name.${reason} exists`);
   }
   // None of those reached the daemon: the local rules answered.

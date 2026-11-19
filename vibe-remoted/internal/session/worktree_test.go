@@ -677,6 +677,9 @@ func TestValidateWorktreeName(t *testing.T) {
 		strings.Repeat("a", 125) + "/" + strings.Repeat("b", 124), strings.Repeat("a", 125) + "/" + strings.Repeat("b", 125),
 		strings.Repeat("功", 83), strings.Repeat("功", 84),
 		"a\u200bb", "a\u200db", "a\u202eb", "a\u200eb", "a\ufeffb", "a\u00adb", "a\u2060b", "a\U000e0041b",
+		// Each of the two has a reason of its own (invisible, too_long), and
+		// where a name breaks several rules both ends name the same one.
+		"fix-\U0001f468\u200d\U0001f4bb", "\u200ba\u0007", "a@{\u200b", "\u200b" + strings.Repeat("x", 300),
 	} {
 		must[n] = false
 	}
