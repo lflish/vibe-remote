@@ -635,7 +635,7 @@
 - 依赖：T6b、T9、T10
 
 ### T12 删除会话不再动 worktree 和分支；删除确认换成应用内对话框
-- 状态：待办
+- 状态：进行中
 - 文件：
   - 修改 `vibe-remoted/internal/session/manager.go`（`Delete` 去掉对 `CleanupWorktree` 的调用）、`vibe-remoted/internal/session/chat_manager.go`（`deleteChat` 同样）、`vibe-remoted/internal/server/server.go`（`handleDeleteSession` 删掉 409 `worktree_preserved` 的分支）、`docs/protocol.md`（`DELETE /api/v1/sessions/{id}`：协议 4 起一律 204、不清理 worktree；版本表第 4 行补这一条）。`protocol.go`、`protocol.ts` 没有类型变化；`rest.ts` 的 `DeleteSessionError` 保留（还可能连着旧 daemon）
   - 按 spec 改写断言的现有测试（decisions #11，新旧断言见 design 7.1 的表）：`chat_manager_test.go` 的 `TestChatWorktreeAndFlags` 末段；`manager_test.go` 的 `TestManagerDeleteRecoveredCleanWorktreeRemovesGitResources`（改名 `…KeepsGitResources`）和 `TestManagerDeleteDirtyWorktreeStopsSessionAndPreservesGitResources`；`server/worktree_test.go` 的 `TestDeleteDirtyWorktreeReturnsStructuredConflict`（改名 `TestDeleteSessionNeverReturnsPreserved`）。T1 的过渡测试 `TestDeleteCleanWorktreeWithUnmergedCommitsReturns409` 删除，它的断言（目录、分支、2 个提交都在）并入 `TestDeleteSessionNeverReturnsPreserved`

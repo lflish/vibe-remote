@@ -81,7 +81,7 @@ func TestManagerDeleteRecoversLiveTmuxSessionBeforeLookup(t *testing.T) {
 	}
 }
 
-func TestManagerDeleteRecoveredCleanWorktreeRemovesGitResources(t *testing.T) {
+func TestManagerDeleteRecoveredCleanWorktreeKeepsGitResources(t *testing.T) {
 	repo := tempRepo(t)
 	created, err := CreateWorktree(WorktreeSpec{Source: repo, SessionID: "recovered-clean"})
 	meta, mapped := created.Meta, created.Workdir
@@ -104,11 +104,14 @@ func TestManagerDeleteRecoveredCleanWorktreeRemovesGitResources(t *testing.T) {
 	if err := m.Delete("recovered-clean"); err != nil {
 		t.Fatalf("Delete recovered worktree: %v", err)
 	}
-	if _, err := os.Stat(meta.WorktreeRoot); !os.IsNotExist(err) {
-		t.Fatalf("recovered worktree still exists: %v", err)
+	if _, ok := m.Get("recovered-clean"); ok {
+		t.Fatal("the session is still registered")
 	}
-	if got := runGit(t, repo, "branch", "--list", meta.Branch); got != "" {
-		t.Fatalf("recovered worktree branch still exists: %q", got)
+	if _, err := os.Stat(meta.WorktreeRoot); err != nil {
+		t.Fatalf("deleting the session removed its worktree: %v", err)
+	}
+	if branchOID(t, repo, meta.Branch) == "" {
+		t.Fatal("deleting the session removed its branch")
 	}
 }
 
@@ -119,32 +122,141 @@ func TestManagerDeleteDirtyWorktreeStopsSessionAndPreservesGitResources(t *testi
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(r.WorktreeRoot, "changed"), []byte("keep"), 0o644); err != nil {
+	changed := filepath.Join(r.WorktreeRoot, "changed")
+	if err := os.WriteFile(changed, []byte("keep"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
-	err = m.Delete(r.ID)
-	var preserved *WorktreePreservedError
-	if !errors.As(err, &preserved) {
-		t.Fatalf("err = %T %v, want WorktreePreservedError", err, err)
+	if err := m.Delete(r.ID); err != nil {
+		t.Fatalf("Delete = %v, want nil", err)
 	}
-	if _, ok := m.Get(r.ID); !ok {
-		t.Fatal("preserved worktree metadata was discarded")
+	if _, ok := m.Get(r.ID); ok {
+		t.Fatal("the session is still registered")
 	}
-	if _, err := os.Stat(r.WorktreeRoot); err != nil {
-		t.Fatalf("worktree not preserved: %v", err)
+	if !r.bareProcessGone() {
+		t.Fatal("the session's process was not stopped")
 	}
-	if got := runGit(t, repo, "branch", "--list", r.Branch); !strings.Contains(got, r.Branch) {
-		t.Fatalf("branch not preserved: %q", got)
+	if data, err := os.ReadFile(changed); err != nil || string(data) != "keep" {
+		t.Fatalf("uncommitted file: %q, %v", data, err)
 	}
-	if err := os.Remove(filepath.Join(r.WorktreeRoot, "changed")); err != nil {
+	if branchOID(t, repo, r.Branch) == "" {
+		t.Fatal("branch not preserved")
+	}
+}
+
+// worktreeRow is the row for path in a project tree, or nil.
+func worktreeRow(ps []protocol.Project, path string) *protocol.ProjectWorktree {
+	for i := range ps {
+		for j := range ps[i].Worktrees {
+			if ps[i].Worktrees[j].Path == path {
+				return &ps[i].Worktrees[j]
+			}
+		}
+	}
+	return nil
+}
+
+// R5.1: deleting the session of a worktree keeps the directory, the branch and
+// its commits; the row stays, without sessions.
+func TestDeleteSessionKeepsWorktreeAndBranch(t *testing.T) {
+	check := func(t *testing.T, m *Manager, repo, id string) {
+		t.Helper()
+		root := filepath.Join(containerOf(repo), "fix-login")
+		runGit(t, root, "commit", "--allow-empty", "-m", "c1")
+		runGit(t, root, "commit", "--allow-empty", "-m", "c2")
+		if err := m.Delete(id); err != nil {
+			t.Fatalf("Delete = %v, want nil", err)
+		}
+		if !pathExists(root) {
+			t.Fatal("the worktree directory was removed")
+		}
+		if branchOID(t, repo, "fix-login") == "" {
+			t.Fatal("the branch was removed")
+		}
+		if got := runGit(t, repo, "rev-list", "--count", "refs/heads/main..refs/heads/fix-login"); got != "2" {
+			t.Fatalf("commits on fix-login = %s, want 2", got)
+		}
+		row := worktreeRow(m.Projects(nil), root)
+		if row == nil || len(row.Sessions) != 0 || !row.Managed || row.Branch != "fix-login" {
+			t.Fatalf("fix-login row = %+v, want a managed row without sessions", row)
+		}
+	}
+	t.Run("terminal", func(t *testing.T) {
+		repo := devflowRepo(t)
+		m := NewManager(false, "/bin/cat", false, "")
+		m.SetProjectStore(NewMemoryProjectStore())
+		r, err := m.Create(CreateOptions{Workdir: repo, Mode: protocol.SessionModeWorktree, WorktreeName: "fix-login", Cols: 80, Rows: 24})
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { r.Kill() })
+		check(t, m, repo, r.ID)
+	})
+	t.Run("chat", func(t *testing.T) {
+		f := newChatFixture(t, false)
+		f.m.SetProjectStore(NewMemoryProjectStore())
+		repo := devflowRepo(t)
+		id := newID("keep")
+		if _, err := f.m.CreateChat(ChatCreateOptions{ID: id, Workdir: repo, Mode: protocol.SessionModeWorktree,
+			WorktreeName: "fix-login", Parsed: parsed(t, f.exe)}); err != nil {
+			t.Fatal(err)
+		}
+		check(t, f.m, repo, id)
+	})
+}
+
+// Two sessions share a worktree (R4.5): deleting one must not take the
+// directory from under the other.
+func TestDeleteOneOfTwoSessionsKeepsWorktree(t *testing.T) {
+	repo := devflowRepo(t)
+	m := NewManager(false, "/bin/cat", false, "")
+	m.SetProjectStore(NewMemoryProjectStore())
+	first, err := m.Create(CreateOptions{Workdir: repo, Mode: protocol.SessionModeWorktree, WorktreeName: "fix-login", Cols: 80, Rows: 24})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { first.Kill() })
+	second, err := m.Create(CreateOptions{Workdir: first.WorktreeRoot, Cols: 80, Rows: 24})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { second.Kill() })
+
+	if err := m.Delete(first.ID); err != nil {
+		t.Fatalf("Delete = %v, want nil", err)
+	}
+	if got, ok := m.Get(second.ID); !ok || got != second {
+		t.Fatal("the other session is gone from the table")
+	}
+	if info, err := os.Stat(second.CurrentWorkdir()); err != nil || !info.IsDir() {
+		t.Fatalf("the other session's workdir: %v", err)
+	}
+	if second.bareProcessGone() {
+		t.Fatal("the other session's process was stopped")
+	}
+}
+
+// Deleting a session no longer tidies up after a worktree someone removed.
+func TestDeleteSessionWhenWorktreeDirGone(t *testing.T) {
+	repo := devflowRepo(t)
+	m := NewManager(false, "/bin/cat", false, "")
+	m.SetProjectStore(NewMemoryProjectStore())
+	r, err := m.Create(CreateOptions{Workdir: repo, Mode: protocol.SessionModeWorktree, WorktreeName: "fix-login", Cols: 80, Rows: 24})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { r.Kill() })
+	if err := os.RemoveAll(r.WorktreeRoot); err != nil {
 		t.Fatal(err)
 	}
 	if err := m.Delete(r.ID); err != nil {
-		t.Fatalf("retry delete: %v", err)
+		t.Fatalf("Delete = %v, want nil", err)
 	}
 	if _, ok := m.Get(r.ID); ok {
-		t.Fatal("metadata remains after successful retry")
+		t.Fatal("the session is still registered")
+	}
+	if branchOID(t, repo, "fix-login") == "" {
+		t.Fatal("the branch was removed")
 	}
 }
 

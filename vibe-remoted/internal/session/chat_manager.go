@@ -431,8 +431,8 @@ func (m *Manager) renameChat(id, name string) bool {
 	return true
 }
 
-// deleteChat stops the process, removes the record and cleans the worktree
-// (unless a terminal session took it over). The transcript stays (R15.2).
+// deleteChat stops the process and removes the record. The transcript stays
+// (R15.2), and so do a worktree session's directory and branch (H16).
 func (m *Manager) deleteChat(id string, e *chatEntry) error {
 	var err error
 	e.sess.WithOp(func(ops chat.OpHandle) {
@@ -445,17 +445,12 @@ func (m *Manager) deleteChat(id string, e *chatEntry) error {
 		}
 		_ = ops.StopLocked(protocol.EndReasonStopped)
 		m.mu.Lock()
-		rec := e.rec
 		delete(m.chats, id)
 		m.releaseOwnerLocked(id)
 		m.gen++
 		m.persistLocked()
 		m.mu.Unlock()
 		e.sess.Close()
-		if protocol.SessionMode(rec.Mode) == protocol.SessionModeWorktree && !rec.WorktreeHandedOff {
-			err = CleanupWorktree(WorktreeMetadata{SourceWorkdir: rec.SourceWorkdir, SourceRepo: rec.SourceRepo,
-				WorktreeRoot: rec.WorktreeRoot, Branch: rec.Branch})
-		}
 	})
 	return err
 }

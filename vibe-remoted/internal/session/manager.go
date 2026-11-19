@@ -595,8 +595,8 @@ func (m *Manager) syncFromTmux() (map[string]tmuxSessionInfo, bool) {
 	return live, true
 }
 
-// Delete kills and removes a session. Worktree cleanup happens after the
-// runner is stopped; dirty resources are intentionally preserved and surfaced.
+// Delete kills and removes a session. A worktree session's directory and
+// branch stay (H16): removing a worktree is its own operation.
 func (m *Manager) Delete(id string) error {
 	m.mu.RLock()
 	entry := m.chats[id]
@@ -614,22 +614,8 @@ func (m *Manager) Delete(id string) error {
 
 	runner.Kill()
 	m.mu.Lock()
-	m.releaseOwnerLocked(id) // its claude process is gone with the tmux session
-	m.mu.Unlock()
-	if meta := runner.Metadata(); meta.Mode == protocol.SessionModeWorktree {
-		err := CleanupWorktree(WorktreeMetadata{
-			SourceWorkdir: meta.SourceWorkdir,
-			SourceRepo:    meta.SourceRepo,
-			WorktreeRoot:  meta.WorktreeRoot,
-			Branch:        meta.Branch,
-		})
-		if err != nil {
-			return err
-		}
-	}
-	m.mu.Lock()
 	delete(m.sessions, id)
-	m.releaseOwnerLocked(id)
+	m.releaseOwnerLocked(id) // its claude process is gone with the tmux session
 	m.gen++
 	m.mu.Unlock()
 	return nil

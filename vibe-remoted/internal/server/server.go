@@ -321,15 +321,6 @@ func (s *Server) handleDeleteSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := s.mgr.Delete(id); err != nil {
-		if preserved, ok := err.(*session.WorktreePreservedError); ok {
-			writeJSON(w, http.StatusConflict, map[string]string{
-				"error":        "worktree_preserved",
-				"message":      preserved.Error(),
-				"worktreeRoot": preserved.WorktreeRoot,
-				"branch":       preserved.Branch,
-			})
-			return
-		}
 		if strings.Contains(err.Error(), "not found") {
 			writeJSON(w, http.StatusNotFound, map[string]string{"error": err.Error()})
 			return

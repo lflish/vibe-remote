@@ -494,15 +494,12 @@ func TestProjectsDropsStaleWorktreeRecord(t *testing.T) {
 	mgr := projMgr(t)
 	rw := mustCreate(t, mgr, session.CreateOptions{Workdir: repo, Mode: protocol.SessionModeWorktree})
 	s := projServer(t, mgr, root)
-	// The managed worktree is recorded; remove it externally and end its session.
+	// The managed worktree is recorded; end its session and remove it externally.
 	wtRoot := rw.WorktreeRoot
 	if err := mgr.Delete(rw.ID); err != nil {
 		t.Fatal(err)
 	}
-	serverGit(t, repo, "worktree", "prune")
-	if _, err := os.Stat(wtRoot); err == nil {
-		os.RemoveAll(wtRoot)
-	}
+	serverGit(t, repo, "worktree", "remove", "--force", wtRoot)
 	// After a Projects() read, the stale record is dropped; a same-path manual
 	// worktree is then not managed.
 	getProjects(t, s)

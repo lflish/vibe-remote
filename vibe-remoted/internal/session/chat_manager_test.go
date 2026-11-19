@@ -250,8 +250,11 @@ func TestChatWorktreeAndFlags(t *testing.T) {
 	if err := f.m.Delete(id); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := os.Stat(info.WorktreeRoot); !os.IsNotExist(err) {
-		t.Fatal("clean worktree not removed with the session")
+	if _, err := os.Stat(info.WorktreeRoot); err != nil {
+		t.Fatalf("deleting the session removed its worktree: %v", err)
+	}
+	if branchOID(t, repo, "vibe/"+id) == "" {
+		t.Fatal("deleting the session removed its branch")
 	}
 }
 

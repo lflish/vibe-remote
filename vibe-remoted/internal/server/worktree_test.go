@@ -16,82 +16,79 @@ import (
 	"github.com/lflish/vibe-remote/vibe-remoted/internal/session"
 )
 
-func TestDeleteDirtyWorktreeReturnsStructuredConflict(t *testing.T) {
-	repo := serverTempRepo(t)
-	mgr := session.NewManager(false, "/bin/cat", false, "")
-	runner, err := mgr.Create(session.CreateOptions{
-		Workdir: repo,
-		Mode:    protocol.SessionModeWorktree,
-		Cols:    80,
-		Rows:    24,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(runner.WorktreeRoot, "changed"), []byte("keep"), 0o644); err != nil {
-		t.Fatal(err)
-	}
+// R5.10: DELETE /api/v1/sessions/{id} — all an older desktop sends — never
+// touches the worktree or its branch, whatever state they are in.
+func TestDeleteSessionNeverReturnsPreserved(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		prepare func(t *testing.T, root string)
+	}{
+		{"clean_with_unmerged_commits", func(t *testing.T, root string) {
+			serverGit(t, root, "commit", "--allow-empty", "-m", "c1")
+			serverGit(t, root, "commit", "--allow-empty", "-m", "c2")
+		}},
+		{"uncommitted_file", func(t *testing.T, root string) {
+			if err := os.WriteFile(filepath.Join(root, "changed"), []byte("keep"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+		}},
+		{"ignored_only", func(t *testing.T, root string) {
+			if err := os.WriteFile(filepath.Join(root, "ignored.txt"), []byte("keep"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			repo := serverTempRepo(t)
+			if err := os.WriteFile(filepath.Join(repo, ".gitignore"), []byte("ignored.txt\n"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			serverGit(t, repo, "add", ".gitignore")
+			serverGit(t, repo, "commit", "-m", "ignore")
+			base := serverGitOut(t, repo, "rev-parse", "HEAD")
+			mgr := session.NewManager(false, "/bin/cat", false, "")
+			runner, err := mgr.Create(session.CreateOptions{Workdir: repo, Mode: protocol.SessionModeWorktree, Cols: 80, Rows: 24})
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { runner.Kill() })
+			tc.prepare(t, runner.WorktreeRoot)
+			tip := serverGitOut(t, runner.WorktreeRoot, "rev-parse", "HEAD")
+			entries, err := os.ReadDir(runner.WorktreeRoot)
+			if err != nil {
+				t.Fatal(err)
+			}
 
-	s := New(&config.Config{Token: "secret"}, mgr)
-	req := httptest.NewRequest(http.MethodDelete, "/api/v1/sessions/"+runner.ID, nil)
-	req.Header.Set("Authorization", "Bearer secret")
-	w := httptest.NewRecorder()
-	s.mux.ServeHTTP(w, req)
+			s := New(&config.Config{Token: "secret"}, mgr)
+			req := httptest.NewRequest(http.MethodDelete, "/api/v1/sessions/"+runner.ID, nil)
+			req.Header.Set("Authorization", "Bearer secret")
+			w := httptest.NewRecorder()
+			s.mux.ServeHTTP(w, req)
 
-	if w.Code != http.StatusConflict {
-		t.Fatalf("status = %d, want 409; body=%s", w.Code, w.Body.String())
-	}
-	var body struct {
-		Error        string `json:"error"`
-		Message      string `json:"message"`
-		WorktreeRoot string `json:"worktreeRoot"`
-		Branch       string `json:"branch"`
-	}
-	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
-		t.Fatal(err)
-	}
-	if body.Error != "worktree_preserved" || body.Message == "" || body.WorktreeRoot != runner.WorktreeRoot || body.Branch != runner.Branch {
-		t.Fatalf("body = %#v", body)
-	}
-}
-
-func TestDeleteCleanWorktreeWithUnmergedCommitsReturns409(t *testing.T) {
-	repo := serverTempRepo(t)
-	mgr := session.NewManager(false, "/bin/cat", false, "")
-	runner, err := mgr.Create(session.CreateOptions{
-		Workdir: repo,
-		Mode:    protocol.SessionModeWorktree,
-		Cols:    80,
-		Rows:    24,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	serverGit(t, runner.WorktreeRoot, "commit", "--allow-empty", "-m", "c1")
-	serverGit(t, runner.WorktreeRoot, "commit", "--allow-empty", "-m", "c2")
-
-	s := New(&config.Config{Token: "secret"}, mgr)
-	req := httptest.NewRequest(http.MethodDelete, "/api/v1/sessions/"+runner.ID, nil)
-	req.Header.Set("Authorization", "Bearer secret")
-	w := httptest.NewRecorder()
-	s.mux.ServeHTTP(w, req)
-
-	if w.Code != http.StatusConflict {
-		t.Fatalf("status = %d, want 409; body=%s", w.Code, w.Body.String())
-	}
-	var body struct {
-		Error        string `json:"error"`
-		WorktreeRoot string `json:"worktreeRoot"`
-		Branch       string `json:"branch"`
-	}
-	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
-		t.Fatal(err)
-	}
-	if body.Error != "worktree_preserved" || body.WorktreeRoot != runner.WorktreeRoot || body.Branch != runner.Branch {
-		t.Fatalf("body = %#v", body)
-	}
-	if _, err := os.Stat(runner.WorktreeRoot); err != nil {
-		t.Fatalf("worktree dir was removed: %v", err)
+			if w.Code != http.StatusNoContent || w.Body.Len() != 0 {
+				t.Fatalf("status = %d, body = %q; want 204 with an empty body", w.Code, w.Body.String())
+			}
+			if _, ok := mgr.Get(runner.ID); ok {
+				t.Fatal("the session is still registered")
+			}
+			after, err := os.ReadDir(runner.WorktreeRoot)
+			if err != nil {
+				t.Fatalf("worktree dir was removed: %v", err)
+			}
+			if len(after) != len(entries) {
+				t.Fatalf("worktree content changed: %v → %v", entries, after)
+			}
+			if got := serverGitOut(t, repo, "rev-parse", "refs/heads/"+runner.Branch); got != tip {
+				t.Fatalf("branch at %q, want %q", got, tip)
+			}
+			want := "0"
+			if tc.name == "clean_with_unmerged_commits" {
+				want = "2"
+			}
+			if got := serverGitOut(t, repo, "rev-list", "--count", base+"..refs/heads/"+runner.Branch); got != want {
+				t.Fatalf("commits on the branch = %s, want %s", got, want)
+			}
+		})
 	}
 }
 
