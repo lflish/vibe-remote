@@ -423,7 +423,7 @@ v3 对话会话的条目另带（终端条目一律省略）：
 | 字段 | 类型 | 可缺省 | 说明 |
 |------|------|--------|------|
 | `id`、`name` | string | | 项目 id（git 项目是仓库主目录的规范路径，非 git 目录是会话的工作目录）；名字是 id 的最后一段 |
-| `git` | bool | | 是不是 git 项目。会话所在目录不是仓库主目录本身时（例如会话建在普通目录里、之后上层目录才成为仓库）仍是 `false` |
+| `git` | bool | | `id` 是一个仓库的主目录时为 `true`。非 git 目录的项目是 `false`，包括会话建在普通目录里、之后上层目录才成为仓库的情况（归属在创建会话时算一次，那个目录不是仓库的主目录） |
 | `error` | string | ✓ | 这个项目本轮没读成：`repo_missing`（主目录已经不存在）、`git_failed`（`git worktree list` 执行失败或超时）。只有项目清单里的 git 项目才会带；带 `error` 时 `git` 为 `true`、`worktrees` 为 `[]`，它的会话全部列在项目级的 `sessions` 里，不丢。客户端按字符串处理，不认识的取值当作读取失败 |
 | `errorMessage` | string | ✓ | 只在 `git_failed` 时有：失败原因的第一行（含 git 的输出） |
 | `worktrees` | object[] | | 该仓库 `git worktree list` 里在 `allowed_roots` 内、目录还在的各项，主目录在最前；非 git 项目和读取失败的项目是 `[]` |
@@ -485,7 +485,7 @@ HTTP 错误：缺 `workdir`，或 `workdir` 不是目录 → 400 `{"error":"inva
 | `dirtyFiles` | number | | 未提交或未跟踪的文件数，不含被 git 忽略的 |
 | `unmergedCommits` | number | | 有分支：该分支上不被任何其他本地分支或远程跟踪分支包含的提交数；不在分支上：`HEAD` 上不被任何本地分支或远程跟踪分支包含的提交数 |
 | `ignoredFiles` | number | | 被 git 忽略、会随目录一起删除的文件数（逐个文件数，目录不折叠；嵌在被忽略目录里的另一个 git 仓库算 1）。恒有值；`-1` 表示没数出来（这一项超时或失败不影响其它字段）。它只是给人看的说明：没有对应的同意项，删除时 daemon 不比对它 |
-| `sessions` | string[] | | 会随这个 worktree 一起结束的会话：归属它的（含已结束的对话会话），以及还没有归属、工作目录在它下面的。恒为数组 |
+| `sessions` | string[] | | 会随这个 worktree 一起结束的会话：归属它的（含已结束的对话会话），以及工作目录在它里面的——不管归属算在哪里（还没有归属的；开在其中另一个仓库里的，例如被忽略目录下的独立仓库）。恒为数组 |
 
 错误：缺 `path` → 400 `{"error":"invalid_request"}`；404 `worktree_not_found`（见上；仓库是子模块或用了独立的 git 目录时也是它；删除删到一半、git 已经不再登记而目录还剩一部分时也是它）；git 执行失败或超时 → 500 `{"error":"git_failed","message"}`。
 
