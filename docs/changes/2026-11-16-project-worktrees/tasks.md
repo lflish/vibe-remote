@@ -995,5 +995,6 @@ spec「推迟到以后」的条目：
 - 新建后读回登记项两次都失败、撤销又没能确认 worktree 已删时，worktree 和分支都留着但没有创建记录，按「外部」显示（decisions #116）。可以改成退回 `filepath.EvalSymlinks` 得到的路径加原分支名、不判创建失败。
 - daemon 重启后找回的终端会话，`sessions[].workdir`、默认标题和重载用的目录仍是进程现在的目录（`pane_current_path`），重启前是创建时的目录；这次只让「算不算在某个 worktree 里」不随重启变（decisions #118）。可以让找回的 `Workdir` 也取 `@vibe_remote_workdir`。
 - 没有 `@vibe_remote_workdir` 的旧终端会话（这个选项出现之前建的）只按归属算在不在某个 worktree 里；其中还没有归属的会话，在 `Projects()` 补归属之前不会被算进去。升级后重开一次会话即有该选项。
+- tmux 的 socket 文件被外部删掉而 server 还活着（清理 `/tmp` 的定时任务、手动 `rm`）时，tmux 查询失败、socket 不存在，现在按「没有终端会话」处理（decisions #114）：会话表里的终端会话会被对账清掉，删除 worktree 也不会先结束里面的会话。这些会话此时本来就接不上（tmux 客户端同样连不上，要 `pkill -USR1 tmux` 让 server 重建 socket，之后对账会把它们找回来）。没有见到实际发生，没有加处理；可以在「内存表里还有本 daemon 启动过的终端会话、socket 却不见了」时仍按查询失败处理。
 - `tmuxSocketPath` 按 tmux 的默认查找顺序（`$TMUX_TMPDIR`，否则 `/tmp`）拼路径；改过编译期 `TMUX_SOCK` 的 tmux 会用别的目录。那种机器上只有 tmux 查询本身失败时才会走到这一步，结果是把一次失败的查询当成「没有会话」（decisions #114）。
 - `TestProjectStoreRemoveWorktreeIfSame` 这次又在与其它用例同跑时连续失败两次、单独跑 6 次和再同跑一次都通过：`nowStamp()` 的精度是微秒，先删再加同一条记录的两次时间戳可能相同（上面「评审修复期间……三个用例」那条已有记录）。可以让替换后的记录带一个递增的序号，不依赖时钟。
