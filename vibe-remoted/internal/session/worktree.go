@@ -6,6 +6,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 )
 
@@ -117,8 +118,39 @@ func RollbackWorktree(meta WorktreeMetadata) error {
 	return nil
 }
 
+// UnmergedCommits counts commits on branch that no other local branch or
+// remote-tracking ref contains (H9, design 3). An empty branch counts the
+// commits reachable from dir's detached HEAD instead. The branch is always
+// named by its full ref form (refs/heads/<branch>): a short name that
+// collides with a same-named tag would resolve to the tag and report 0 (V10).
+func UnmergedCommits(dir, branch string) (int, error) {
+	var args []string
+	if branch == "" {
+		args = []string{"rev-list", "--count", "HEAD", "--not", "--branches", "--remotes"}
+	} else {
+		args = []string{"rev-list", "--count", "refs/heads/" + branch, "--not", "--exclude=" + branch, "--branches", "--remotes"}
+	}
+	out, err := gitAt(dir, args...)
+	if err != nil {
+		return 0, fmt.Errorf("count unmerged commits: %w", err)
+	}
+	n, err := strconv.Atoi(strings.TrimSpace(string(out)))
+	if err != nil {
+		return 0, fmt.Errorf("parse unmerged commit count: %w", err)
+	}
+	return n, nil
+}
+
 func CleanupWorktree(meta WorktreeMetadata) error {
 	if _, statErr := os.Stat(meta.WorktreeRoot); os.IsNotExist(statErr) {
+		// The directory is gone but the branch may still hold unpushed work.
+		n, err := UnmergedCommits(meta.SourceRepo, meta.Branch)
+		if err != nil {
+			return err
+		}
+		if n > 0 {
+			return &WorktreePreservedError{WorktreeRoot: meta.WorktreeRoot, Branch: meta.Branch}
+		}
 		return RollbackWorktree(meta)
 	}
 	out, err := gitAt(meta.WorktreeRoot, "status", "--ignored", "--untracked-files=all", "--porcelain")
@@ -126,6 +158,15 @@ func CleanupWorktree(meta WorktreeMetadata) error {
 		return fmt.Errorf("check worktree status: %w", err)
 	}
 	if strings.TrimSpace(string(out)) != "" {
+		return &WorktreePreservedError{WorktreeRoot: meta.WorktreeRoot, Branch: meta.Branch}
+	}
+	// A clean worktree can still carry commits that live nowhere else; preserve
+	// both the directory and the branch so the work is not lost.
+	n, err := UnmergedCommits(meta.SourceRepo, meta.Branch)
+	if err != nil {
+		return err
+	}
+	if n > 0 {
 		return &WorktreePreservedError{WorktreeRoot: meta.WorktreeRoot, Branch: meta.Branch}
 	}
 	if _, err := gitAt(meta.SourceRepo, "worktree", "remove", meta.WorktreeRoot); err != nil && !isMissingWorktreeError(err) {

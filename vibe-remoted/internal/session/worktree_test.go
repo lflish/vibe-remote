@@ -239,3 +239,133 @@ func asPreserved(err error, target **WorktreePreservedError) bool {
 	}
 	return ok
 }
+
+func TestUnmergedCommits(t *testing.T) {
+	repo := tempRepo(t)
+	base := runGit(t, repo, "rev-parse", "HEAD")
+	runGit(t, repo, "update-ref", "refs/heads/fix-login", base)
+	wt := filepath.Join(t.TempDir(), "wt")
+	runGit(t, repo, "worktree", "add", wt, "fix-login")
+	runGit(t, wt, "commit", "--allow-empty", "-m", "c1")
+	runGit(t, wt, "commit", "--allow-empty", "-m", "c2")
+	tip := runGit(t, wt, "rev-parse", "HEAD")
+
+	if n, err := UnmergedCommits(repo, "fix-login"); err != nil || n != 2 {
+		t.Fatalf("UnmergedCommits = %d, %v; want 2, nil", n, err)
+	}
+
+	// A second local branch pointing at the tip covers the commits → 0.
+	runGit(t, repo, "update-ref", "refs/heads/other", tip)
+	if n, err := UnmergedCommits(repo, "fix-login"); err != nil || n != 0 {
+		t.Fatalf("after local branch: %d, %v; want 0, nil", n, err)
+	}
+	runGit(t, repo, "update-ref", "-d", "refs/heads/other")
+
+	// Only a remote-tracking ref covers them → 0.
+	runGit(t, repo, "update-ref", "refs/remotes/origin/fix-login", tip)
+	if n, err := UnmergedCommits(repo, "fix-login"); err != nil || n != 0 {
+		t.Fatalf("after remote ref: %d, %v; want 0, nil", n, err)
+	}
+	runGit(t, repo, "update-ref", "-d", "refs/remotes/origin/fix-login")
+
+	t.Run("detached", func(t *testing.T) {
+		repo := tempRepo(t)
+		base := runGit(t, repo, "rev-parse", "HEAD")
+		wt := filepath.Join(t.TempDir(), "wt")
+		runGit(t, repo, "worktree", "add", "--detach", wt, base)
+		runGit(t, wt, "commit", "--allow-empty", "-m", "d1")
+		runGit(t, wt, "commit", "--allow-empty", "-m", "d2")
+		if n, err := UnmergedCommits(wt, ""); err != nil || n != 2 {
+			t.Fatalf("UnmergedCommits = %d, %v; want 2, nil", n, err)
+		}
+	})
+
+	t.Run("tag_with_same_name", func(t *testing.T) {
+		repo := tempRepo(t)
+		base := runGit(t, repo, "rev-parse", "HEAD")
+		runGit(t, repo, "update-ref", "refs/heads/fix-login", base)
+		wt := filepath.Join(t.TempDir(), "wt")
+		runGit(t, repo, "worktree", "add", wt, "fix-login")
+		runGit(t, wt, "commit", "--allow-empty", "-m", "c1")
+		runGit(t, wt, "commit", "--allow-empty", "-m", "c2")
+		// A tag with the same short name pointing at main must not be mistaken
+		// for the branch (full ref form avoids the tag-wins resolution, V10).
+		runGit(t, repo, "tag", "fix-login", base)
+		if n, err := UnmergedCommits(repo, "fix-login"); err != nil || n != 2 {
+			t.Fatalf("UnmergedCommits = %d, %v; want 2, nil", n, err)
+		}
+	})
+}
+
+func TestCleanupKeepsCleanWorktreeWithUnmergedCommits(t *testing.T) {
+	repo := tempRepo(t)
+	base := runGit(t, repo, "rev-parse", "HEAD")
+	meta, _, err := CreateWorktree(repo, "unmerged")
+	if err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, meta.WorktreeRoot, "commit", "--allow-empty", "-m", "c1")
+	runGit(t, meta.WorktreeRoot, "commit", "--allow-empty", "-m", "c2")
+
+	err = CleanupWorktree(meta)
+	var preserved *WorktreePreservedError
+	if !asPreserved(err, &preserved) {
+		t.Fatalf("err=%T %v", err, err)
+	}
+	if _, statErr := os.Stat(meta.WorktreeRoot); statErr != nil {
+		t.Fatalf("worktree dir was removed: %v", statErr)
+	}
+	if got := runGit(t, repo, "branch", "--list", meta.Branch); !strings.Contains(got, meta.Branch) {
+		t.Fatalf("branch removed: %q", got)
+	}
+	if got := runGit(t, repo, "rev-list", "--count", base+".."+"refs/heads/"+meta.Branch); got != "2" {
+		t.Fatalf("unmerged count = %q, want 2", got)
+	}
+}
+
+func TestCleanupKeepsBranchWhenWorktreeDirMissing(t *testing.T) {
+	repo := tempRepo(t)
+	meta, _, err := CreateWorktree(repo, "missingdir")
+	if err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, meta.WorktreeRoot, "commit", "--allow-empty", "-m", "c1")
+	runGit(t, meta.WorktreeRoot, "commit", "--allow-empty", "-m", "c2")
+	if err := os.RemoveAll(meta.WorktreeRoot); err != nil {
+		t.Fatal(err)
+	}
+
+	err = CleanupWorktree(meta)
+	var preserved *WorktreePreservedError
+	if !asPreserved(err, &preserved) {
+		t.Fatalf("err=%T %v", err, err)
+	}
+	if got := runGit(t, repo, "branch", "--list", meta.Branch); !strings.Contains(got, meta.Branch) {
+		t.Fatalf("branch removed: %q", got)
+	}
+}
+
+func TestCleanupFailsClosedWhenUnmergedCheckFails(t *testing.T) {
+	repo := tempRepo(t)
+	meta, _, err := CreateWorktree(repo, "failclosed")
+	if err != nil {
+		t.Fatal(err)
+	}
+	broken := meta
+	broken.SourceRepo = filepath.Join(t.TempDir(), "does-not-exist")
+
+	err = CleanupWorktree(broken)
+	if err == nil {
+		t.Fatal("expected error when the unmerged check fails")
+	}
+	var preserved *WorktreePreservedError
+	if asPreserved(err, &preserved) {
+		t.Fatalf("want a plain error, got preserved: %v", err)
+	}
+	if _, statErr := os.Stat(meta.WorktreeRoot); statErr != nil {
+		t.Fatalf("worktree dir was removed: %v", statErr)
+	}
+	if got := runGit(t, repo, "branch", "--list", meta.Branch); !strings.Contains(got, meta.Branch) {
+		t.Fatalf("branch removed: %q", got)
+	}
+}

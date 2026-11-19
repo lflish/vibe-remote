@@ -53,6 +53,46 @@ func TestDeleteDirtyWorktreeReturnsStructuredConflict(t *testing.T) {
 	}
 }
 
+func TestDeleteCleanWorktreeWithUnmergedCommitsReturns409(t *testing.T) {
+	repo := serverTempRepo(t)
+	mgr := session.NewManager(false, "/bin/cat", false, "")
+	runner, err := mgr.Create(session.CreateOptions{
+		Workdir: repo,
+		Mode:    protocol.SessionModeWorktree,
+		Cols:    80,
+		Rows:    24,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	serverGit(t, runner.WorktreeRoot, "commit", "--allow-empty", "-m", "c1")
+	serverGit(t, runner.WorktreeRoot, "commit", "--allow-empty", "-m", "c2")
+
+	s := New(&config.Config{Token: "secret"}, mgr)
+	req := httptest.NewRequest(http.MethodDelete, "/api/v1/sessions/"+runner.ID, nil)
+	req.Header.Set("Authorization", "Bearer secret")
+	w := httptest.NewRecorder()
+	s.mux.ServeHTTP(w, req)
+
+	if w.Code != http.StatusConflict {
+		t.Fatalf("status = %d, want 409; body=%s", w.Code, w.Body.String())
+	}
+	var body struct {
+		Error        string `json:"error"`
+		WorktreeRoot string `json:"worktreeRoot"`
+		Branch       string `json:"branch"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if body.Error != "worktree_preserved" || body.WorktreeRoot != runner.WorktreeRoot || body.Branch != runner.Branch {
+		t.Fatalf("body = %#v", body)
+	}
+	if _, err := os.Stat(runner.WorktreeRoot); err != nil {
+		t.Fatalf("worktree dir was removed: %v", err)
+	}
+}
+
 func serverTempRepo(t *testing.T) string {
 	t.Helper()
 	d := t.TempDir()
