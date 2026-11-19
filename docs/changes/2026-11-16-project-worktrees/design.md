@@ -938,6 +938,7 @@ CSS 变量：保留现有变量名（`styles.css` 里到处在用），换成 M1
 - T8：`CreateWorktree` 的第 1–5 步提成包内函数 `precheckWorktree`，`PlanWorktree` 直接调用它，所以预检和新建对同一个名字不会给出不同的结论（decisions #56）。`TestPlanWorktreeHTTPErrors` 里「git 失败 → 500 `git_failed`」用一个立刻失败的假 git 测；超时那一种放在 session 包的 `TestPlanWorktreeGitTimeout`（`gitTimeout` 是包内变量，server 包调不到，decisions #55）。
 - T9：`session-form.ts` 的段比 4.10 / 任务多三个成员：启动选项段 `setUI(ui)`，名字段 `refresh()` 和 `input`（decisions #57）。名字段在目录选择器里只在「Worktree 模式且 `info.proto >= 4`」时挂进对话框，其余时候不在 DOM 里；所列目录不在 git 仓库里（plan 返回 `not_git`）时输入框和确认按钮不可用，换目录后恢复。新增文案键 `wt.error.planFailed`（预检请求本身失败，decisions #58）。空名字在用户输入之前不报错（d32）；名字输入框里回车 = 确认（d33）。新对话框的标题是 `div.modal-header > h2.modal-title + div.modal-subtitle`，仍是 `.modal` 的三个直接子元素之一。
 - T9：`index.ts` 里新建会话的两条路径（目录选择器、新建 worktree 对话框）合到 `startPicked()`；attach 的 error 帧带 `worktreeName` 对应的四个错误码时，状态栏和终端里的报错改用 `worktreeErrorText` 的文案，其它错误码和没带名字的新建不变。
+- T10：`session.ChatTrust` 在 7.3 的 5 步之外再从受信任的主目录自己读一次 `git worktree list`，目标目录在两份列表里都是不带 `prunable` 的后续项才算 `trusted`（decisions #59）。比 7.3 严，不比它宽；7.3 列的每个拒绝条件都保留。除任务列的反例外另加了 `forged_commondir`（私有 git 目录的 `commondir` 指向受信任仓库）、`forged_git_symlink`（`.git` 是指向受信任仓库 `.git` 的符号链接）、`symlink_to_worktree`（指向 worktree 根的符号链接路径不算）、`nested_repo_in_main`（嵌在受信任主目录里的另一个仓库和它的 worktree）、`child_of_main_trusted`、`git_timeout`（git 超时一律拒绝）。
 
 ## 11. 方案验证（机器关口 B）
 

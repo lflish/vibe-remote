@@ -17,7 +17,7 @@ PTY 字节数据使用 base64 编码传输（`data` 帧）。
 | 1 | 初始版本（隐式） |
 | 2 | `attach.newSessionId`（新建会话幂等）、`error.code` / `error.fatal`、`proto` 字段本身、服务端 WebSocket 心跳 |
 | 3 | 对话界面：`attach.ui` / `epoch` / `since` / `handoffFrom`，`chat` / `chat_sync` / `chat_state` / `chat_ack`（含 send 的 `duplicate` / `completed`）/ `chat_send` / `chat_respond` / `chat_interrupt` / `chat_set_mode` 帧，`ready.ui` / `claudeSessionId` / `existing` / `handoffFrom`，`sessions[].ui` / `state` / `activitySeq` / `epoch` / `endReason`，`/api/v1/info.chat`（含 `?recheck=1`），`/api/v1/fs` 的 `chatTrust`，对话会话 reload 返回 202，错误码 `ui_mismatch` / `chat_unsupported` / `claude_session_busy` / `shutting_down`。终端会话的 `ready` / `sessions` / `data` / `exit` / `error` 帧除 `proto` 值外与 v2 逐字节相同 |
-| 4 | `attach.worktreeName`，错误码 `invalid_worktree_name` / `worktree_branch_exists` / `worktree_path_exists` / `worktree_path_not_allowed`；`GET /api/v1/projects`、`POST /api/v1/projects/remove`、`GET /api/v1/worktrees/plan`。所有 S→C 帧的字段与 v3 相同 |
+| 4 | `attach.worktreeName`，错误码 `invalid_worktree_name` / `worktree_branch_exists` / `worktree_path_exists` / `worktree_path_not_allowed`；`GET /api/v1/projects`、`POST /api/v1/projects/remove`、`GET /api/v1/worktrees/plan`；`/api/v1/fs.chatTrust` 的 worktree 规则（主目录被信任的 worktree 根也是 `trusted`，新建对话会话的 attach 同样放行）。所有 S→C 帧的字段与 v3 相同 |
 
 兼容规则：新增字段在接收端一律可选；未知帧类型、未知 `notify.kind`、未知 `error.code` 均忽略（未知 code 只按 `fatal` 处理）。客户端发现 `proto` 低于自身版本时应提示用户更新 daemon——旧 daemon 会接受请求但**静默忽略**不认识的字段。
 
@@ -364,7 +364,7 @@ v3 对话会话的条目另带（终端条目一律省略）：
 | DELETE | `/api/v1/sessions/{id}` | 关闭指定会话，成功 204，不存在 404。对话会话：停进程、按 worktree 规则清理、删记录，claude 的 JSONL 对话记录保留。worktree 模式的会话在 worktree 有未提交改动时保留 worktree 与分支，返回 409 `{"error":"worktree_preserved","message","worktreeRoot","branch"}`（会话本身已关闭） |
 | POST | `/api/v1/sessions/{id}/rename` | 重命名会话，body `{"name":"..."}`，终端会话名字存 tmux 用户选项，对话会话存 daemon 的 `chat-sessions.json` |
 | POST | `/api/v1/sessions/{id}/reload` | 终端会话：在原 tmux 会话和工作目录中重启 CLI，并继续最近的对话，成功 204。对话会话（v3）：立即返回 **202**，在后台停进程后以同一 claude 会话重新启动，进度与结果经 `chat_state` 广播（重载中再调用也是 202）；该 claude 会话正被别的会话持有 → 409 `{"error":"claude_session_busy","owner":"<会话 id>","message":"…"}`；会话不存在 → 404。持有 claude 会话的终端会话（交接创建或带 continue 启动）在其被别人持有时同样 409；daemon 未启用 tmux 时终端会话 reload 返回 409 `{"error":"…"}` |
-| GET | `/api/v1/fs?path=<dir>` | 列目录（仅目录项），供远程目录选择器用。返回 `{path, parent, entries, chatTrust}`：`chatTrust`（v3）为该目录在 claude 里的信任状态 `trusted` / `untrusted` / `unknown`，只有 `trusted` 可新建对话会话；`parent` 是规范化后的上级目录，**仅在其本身也可列出时才返回**，已在 `allowed_roots` 顶层时为空串。客户端据此隐藏「上一级」，避免点出必然的 403（`allowed_roots` 配的是符号链接解析前的路径如 `/tmp`，而 `path` 是规范化后的 `/private/tmp`，客户端无法自行比较） |
+| GET | `/api/v1/fs?path=<dir>` | 列目录（仅目录项），供远程目录选择器用。返回 `{path, parent, entries, chatTrust}`：`chatTrust`（v3）为能否在该目录新建对话会话：`trusted` / `untrusted` / `unknown`，只有 `trusted` 可以。v3 只看 claude 对该目录本身的信任记录；v4 起另认一种情况：该目录是某个仓库的 worktree 根（以该仓库自己的 `git worktree list` 为准，不看目录里的 `.git` 文件），且仓库主目录（精确到这一个路径）被 claude 信任。主目录本身、worktree 里的子目录、裸仓库 / 子模块 / `--separate-git-dir` 仓库的 worktree 仍只看自己的记录；信任文件缺失或损坏是 `unknown`。新建对话会话的 attach 用同一条规则（worktree 模式查所选的源目录），不满足时是 fatal 的 `chat_unsupported`（`workdir_untrusted`）；`parent` 是规范化后的上级目录，**仅在其本身也可列出时才返回**，已在 `allowed_roots` 顶层时为空串。客户端据此隐藏「上一级」，避免点出必然的 403（`allowed_roots` 配的是符号链接解析前的路径如 `/tmp`，而 `path` 是规范化后的 `/private/tmp`，客户端无法自行比较） |
 | POST | `/api/v1/events` | 带外事件上报，body `{sessionId,kind,message?}`，路由为该会话的 notify 帧。鉴权见下文，与其它端点不同 |
 
 请求体（rename、events）上限 64 KiB，超出返回 413。rename：会话不存在返回 404，tmux 设置失败等其它错误返回 500。

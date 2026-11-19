@@ -12,7 +12,8 @@
  *   4: attach.worktreeName, errors invalid_worktree_name/worktree_branch_exists/
  *      worktree_path_exists/worktree_path_not_allowed (fatal),
  *      GET /api/v1/projects, POST /api/v1/projects/remove,
- *      GET /api/v1/worktrees/plan (S→C frames unchanged)
+ *      GET /api/v1/worktrees/plan, fs chatTrust also 'trusted' for a worktree
+ *      root of a trusted main directory (S→C frames unchanged)
  */
 export const PROTOCOL_VERSION = 4;
 

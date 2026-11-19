@@ -80,8 +80,10 @@ func (s *Server) wsCreateChat(ctx context.Context, conn *websocket.Conn, frame p
 	}
 	// claude -p does not ask about workspace trust and runs a project's hooks
 	// regardless (probe V23): only directories the user already trusted in
-	// claude itself (c3). Worktree mode checks the directory it comes from.
-	if reason == "" && chat.WorkdirTrusted(workdir) != chat.TrustTrusted {
+	// claude itself (c3), or worktree roots of a repository whose main
+	// directory is (session.ChatTrust). Worktree mode checks the directory it
+	// comes from.
+	if reason == "" && session.ChatTrust(workdir) != chat.TrustTrusted {
 		reason = protocol.ChatReasonWorkdirUntrusted
 	}
 	if reason != "" {

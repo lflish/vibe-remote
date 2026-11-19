@@ -467,8 +467,9 @@ func (s *Server) handleFS(w http.ResponseWriter, r *http.Request) {
 		"parent":  parent,
 		"entries": dirs,
 		// Whether a chat session may start here (c3): claude's own trust
-		// answer for this directory.
-		"chatTrust": string(chat.WorkdirTrusted(absPath)),
+		// answer for this directory, or for the main directory of the
+		// repository it is a worktree root of.
+		"chatTrust": string(session.ChatTrust(absPath)),
 	})
 }
 

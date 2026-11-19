@@ -578,8 +578,8 @@
 - 依赖：T6b、T7、T8
 
 ### T10 daemon：对话界面的信任规则认「主目录已被信任的 worktree 根」
-- 状态：进行中
-- 文件：新建 `vibe-remoted/internal/session/trust.go`、`vibe-remoted/internal/session/trust_test.go`；修改 `vibe-remoted/internal/server/ws_chat.go`（`wsCreateChat` 里的 `chat.WorkdirTrusted(workdir)` 换成 `session.ChatTrust(workdir)`）、`vibe-remoted/internal/server/server.go`（`handleFS` 的 `chatTrust` 同样换）、`docs/protocol.md`（`/api/v1/fs` 的 `chatTrust` 说明改成 design 7.3 的规则，版本表第 4 行补「`/api/v1/fs.chatTrust` 的 worktree 规则」）；测试 `vibe-remoted/internal/server/ws_chat_test.go`、`fs_test.go`。`protocol.go`、`protocol.ts`、`rest.ts` 里 `chatTrust` 的取值不变，核对后不需要改
+- 状态：完成
+- 文件：新建 `vibe-remoted/internal/session/trust.go`、`vibe-remoted/internal/session/trust_test.go`；修改 `vibe-remoted/internal/server/ws_chat.go`（`wsCreateChat` 里的 `chat.WorkdirTrusted(workdir)` 换成 `session.ChatTrust(workdir)`）、`vibe-remoted/internal/server/server.go`（`handleFS` 的 `chatTrust` 同样换）、`docs/protocol.md`（`/api/v1/fs` 的 `chatTrust` 说明改成 design 7.3 的规则，版本表第 4 行补「`/api/v1/fs.chatTrust` 的 worktree 规则」）；测试 `vibe-remoted/internal/server/ws_chat_test.go`、`fs_test.go`。`protocol.go`、`protocol.ts`、`rest.ts` 里 `chatTrust` 的取值不变，核对后类型和常量不需要改；三处的版本说明注释（`protocol.go`、`protocol.ts` 的 v4 一行，`rest.ts` 里 `chatTrust` 的字段注释）跟着版本表补一句（decisions #59）
 - 接口：
   - 使用：`chat.WorkdirTrusted(dir)`、`chat.TrustState`（现有，`vibe-remoted/internal/chat/trust.go`，不改）；`ListWorktrees`（T2）
   - 提供：`ChatTrust(dir string) chat.TrustState`，5 步规则照 design 7.3；`dir` 是规范路径。第 2 步多一个拒绝条件：列表第一项认不出是主目录（没标 `bare`、它的路径下也没有 `.git`：子模块、`--separate-git-dir`）→ `untrusted`
@@ -893,6 +893,7 @@
 | T7 | 2026-11-19 15:20 | da251b7（失败的测试和接口骨架）、4657f4b（实现）、e35aa2c（协议三处、桌面端连接层、记录） | 完成定义的 `go test -race -count=1 ./internal/session ./internal/config ./internal/server -run '…'` 三行 `ok`（49 个用例和子用例 PASS，无 SKIP；并发用例各 20 轮）；`go test -race ./...` 全包 `ok`；`npm run typecheck`+`test:attach-replay` 退出 0；两条 grep 无输出；`attach.worktreeName` 和 4 个错误码在 protocol.go / protocol.ts / protocol.md 三处一致；`TMUX_TMPDIR=… make check` exit 0 |
 | T8 | 2026-11-19 15:28 | d378972 | 完成定义的 `go test -race -count=1 ./internal/session ./internal/server -run 'TestPlan\|TestNewEndpointsRequireToken'` 两行 `ok`；`npm run typecheck`+`test:rest-projects`(6) 退出 0；`WorktreePlan` / `WorktreeBase` 的字段和可缺省性在 protocol.go / protocol.ts / protocol.md 三处一致，路由、`rest.ts`、端点表一致；`TMUX_TMPDIR=… make check` exit 0；`gui-smoke.mjs` 33 行 PASS、`gui-chat-smoke.mjs` 29 行 PASS，都无 FAIL |
 | T9 | 2026-11-19 15:54 | df32cea（失败的测试和接口骨架）、0a6ef68（实现）、本行所在的提交（记录） | 完成定义的 `typecheck`+`test:worktree-name`(3)+`test:session-form`(9)+`test:worktree-dialogs`(6)+`test:dialog-layout`+`test:picker-layout`+`test:i18n-parity`(285 键) 全退出 0；`npm test` 退出 0；`TMUX_TMPDIR=… make check` exit 0；`gui-smoke.mjs` 33 行 PASS（含目录选择器 500/700/803 三档、侧边栏布局在每一行悬停时再量一遍：项目行的「新建 worktree」按钮已出现）、`gui-chat-smoke.mjs` 29 行 PASS，都无 FAIL；真实 Electron 临时实例里新建 worktree 对话框（中文正常态、出错态、长冲突文案、英文出错态）和目录选择器的 Worktree 模式在 800×500、800×700、1100×803 下主按钮都在对话框和窗口内且点得到，截图 `.devflow-tmp/build-shots/t9-*.png` |
+| T10 | 2026-11-19 16:07 | 468e871（失败的测试和骨架）、本行所在的提交（实现、协议文档、记录） | 完成定义的 `go test -race -count=1 ./internal/session ./internal/server ./internal/chat -run 'TestChatTrust\|TestFSChatTrust\|TestWSCreateChatInWorktree\|TestWSCreateChatWorktreeUntrusted\|TestCreateChatUntrustedWorkdir\|TestWorkdirTrusted\|TestNoCredentialAccess'` 三行 `ok`（`TestChatTrust` 24 个子用例全 PASS）；`grep -rn "chat.WorkdirTrusted" vibe-remoted/internal/server` 无输出；逐条去掉实现里的判断做了 4 次变异核对，对应的反例用例都会失败；`chatTrust` 的取值在 protocol.go / protocol.ts / rest.ts / protocol.md 一致；`TMUX_TMPDIR=… make check` 第一次在 `internal/chat` 的 `TestStopAccountsForEveryQueuedMessage/restart` 失败（假 claude 启动时以 139 退出，本任务没有改这个包），单独跑这个包 3 次、重跑 `make check` 都通过（decisions #60） |
 
 更正：T5 实际完成于 2026-11-19 12:39，T6a 13:11，T6b 14:04（以提交时间为准）。此后各行的时间用 `date '+%F %H:%M'` 取。
 
@@ -926,4 +927,5 @@ spec「推迟到以后」的条目：
 - 新流程建出的分支不跟随 `branch.autoSetupMerge`，`post-checkout` 钩子运行时 HEAD 还是 detached（design 6.1 第 9 步，d28）。有用户依赖这两点时，可以在 `symbolic-ref` 之后补写上游配置，或再触发一次钩子。
 - `/api/v1/projects` 的补归属对一直失败的会话每轮重试、没有退避（design 5.4）。实际遇到大量这种会话时再加。
 - 查 `go test -race ./...` 里 `internal/chat` 偶发卡住的原因（T6c 时 `make check` 卡了 10 分钟被外层超时杀掉，当时没有留下 goroutine 堆栈；单独跑这个包 18 秒通过，重跑 `make check` 通过；decisions #50）。下次遇到时给卡住的 `chat.test` 发 `SIGQUIT` 把堆栈留下来。
+- 查 `internal/chat` 的 `TestStopAccountsForEveryQueuedMessage/restart` 偶发失败的原因（T10 时 `make check` 里出现 1 次：`claude exited during startup (code 139)`，假 claude 在重启后以 SIGSEGV 退出；单独跑 3 次和重跑 `make check` 都通过，decisions #60）。
 - 查 `gui-chat-smoke` R7 偶发失败的原因（AskUserQuestion 表单：`answers echoed: on": "Pick a fruit"`；T6b 提交后 3 次里失败 1 次，decisions #47）。

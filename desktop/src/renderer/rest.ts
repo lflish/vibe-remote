@@ -229,6 +229,10 @@ export interface DirListing {
    * compare them reliably. Absent on older daemons — treat as "unknown".
    */
   parent?: string;
-  /** Whether claude trusts `path` (v3). Only 'trusted' allows a chat session. */
+  /**
+   * Whether a chat session may start in `path` (v3): claude trusts it, or (v4)
+   * it is a worktree root of a repository whose main directory claude trusts.
+   * Only 'trusted' allows a chat session.
+   */
   chatTrust?: ChatTrust;
 }
