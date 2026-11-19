@@ -1462,3 +1462,66 @@ func TestAttachRefusedWhileWorktreeRemoving(t *testing.T) {
 		t.Fatal("the directory is still there")
 	}
 }
+
+// X15 (gate C, round 1). The pre-check tells "this directory is not there"
+// from "this directory may not be used": a directory inside the allowed roots
+// that does not exist (it was removed after the user picked it) is a 400 that
+// says so, not the 403 of a path outside the roots. Outside the roots, whether
+// a path exists is not given away.
+func TestPlanMissingWorkdirIs400(t *testing.T) {
+	f := newPlanFixture(t)
+	decode := func(w *httptest.ResponseRecorder) map[string]string {
+		var body map[string]string
+		_ = json.Unmarshal(w.Body.Bytes(), &body)
+		return body
+	}
+
+	for name, missing := range map[string]string{
+		"in the allowed root":   filepath.Join(f.root, "missing"),
+		"deeper":                filepath.Join(f.root, "missing", "deeper", "still"),
+		"inside the repository": filepath.Join(f.repo, "no-such-dir"),
+	} {
+		w := getPlanRaw(t, f.s, missing, "fix-login")
+		body := decode(w)
+		if w.Code != http.StatusBadRequest || body["error"] != "invalid_request" || !strings.Contains(body["message"], "does not exist") {
+			t.Fatalf("missing directory %s: status %d body %s; want 400 invalid_request saying that it does not exist", name, w.Code, w.Body.String())
+		}
+		if strings.Contains(w.Body.String(), "allowed roots") {
+			t.Fatalf("missing directory %s: the answer speaks of allowed roots: %s", name, w.Body.String())
+		}
+	}
+
+	// Outside the allowed roots it stays 403, there or not.
+	outside := t.TempDir()
+	for name, path := range map[string]string{
+		"existing":                   outside,
+		"missing":                    filepath.Join(outside, "missing"),
+		"missing, by way of dot-dot": filepath.Join(f.root, "..", filepath.Base(outside), "missing"),
+	} {
+		w := getPlanRaw(t, f.s, path, "fix-login")
+		if w.Code != http.StatusForbidden || decode(w)["error"] != "path not in allowed roots" {
+			t.Fatalf("%s directory outside the allowed roots: status %d body %s; want 403", name, w.Code, w.Body.String())
+		}
+	}
+	// A link in the allowed root that points nowhere, or out of the roots, is
+	// not a missing directory of the roots.
+	if err := os.Symlink(filepath.Join(outside, "gone"), filepath.Join(f.root, "dangling")); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+	if err := os.Symlink(outside, filepath.Join(f.root, "out")); err != nil {
+		t.Fatal(err)
+	}
+	for _, path := range []string{filepath.Join(f.root, "dangling"), filepath.Join(f.root, "out", "missing")} {
+		if w := getPlanRaw(t, f.s, path, "fix-login"); w.Code != http.StatusForbidden {
+			t.Fatalf("%s: status %d body %s; want 403", path, w.Code, w.Body.String())
+		}
+	}
+
+	// A file is still "not a directory", and an existing directory still plans.
+	if w := getPlanRaw(t, f.s, filepath.Join(f.repo, "README"), "fix-login"); w.Code != http.StatusBadRequest || !strings.Contains(decode(w)["message"], "not a directory") {
+		t.Fatalf("a file: status %d body %s; want 400 saying that it is not a directory", w.Code, w.Body.String())
+	}
+	if plan := getPlan(t, f.s, f.repo, "fix-login"); !plan.OK {
+		t.Fatalf("plan for the repository = %+v", plan)
+	}
+}

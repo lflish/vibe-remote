@@ -987,6 +987,7 @@ CSS 变量：保留现有变量名（`styles.css` 里到处在用），换成 M1
   - X13（decisions #144）：6.2 第 9 步「结束会话之后再核对一次 HEAD」改为重读该 worktree 在 git 列表里的那一项，HEAD、分支、是否 detached 三样都与确认时一致才继续；不一致 → 409（`status` 是重读到的状态，`endedSessions` 是已结束的会话），目录和原分支保留。4.6 的 409 条件相应多一种：结束会话期间被切到同一提交上的另一个分支或被 detach。
   - X12（decisions #145）：4.9 四条规则的第 ② 条，「tmux 说没有 server」的判断从「stderr 里含 `no server running` 或 `no sessions`」收窄为「有一行以 `no server running on ` 开头，或整行是 `no sessions`」。
   - X14（decisions #146、#147）：4.9 的 `ListWorktrees` 用 `git worktree list --porcelain -z`；git 2.36 之前没有 `-z`（退出码 129），退回按行解析并记住这个 git。退回模式下路径里有换行的 worktree 列不出来（已知限制，见 tasks.md「后续」）。`ResolveHome` 对 `rev-parse --show-toplevel` 的输出只去掉末尾的一个换行。
+  - X15（decisions #148）：4.4 预检端点的 HTTP 错误多一种：`workdir` 在 `allowed_roots` 之内但不存在 → 400 `invalid_request`（`workdir does not exist`），不再是 403。
 
 ### 升级步骤
 

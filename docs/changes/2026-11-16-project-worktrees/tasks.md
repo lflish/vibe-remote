@@ -955,7 +955,7 @@
 - 实现时的调整（decisions #146、#147）：`ResolveHome` 读 `rev-parse --show-toplevel` 时只去掉末尾的一个换行（原来是 `TrimSpace`），否则名字以换行结尾的 worktree 列得出来却查不了状态；`TestListWorktreesPathWithNewline` 的 6 个子用例除了「列出、查状态」还在其中开会话并连会话一起删除；X11 的 `TestSessionCreatedInAnOddlyNamedDirectoryIsStillRead` 补上 worktree 路径带换行的 3 个子用例。路径带换行的子用例在不认 `-z` 的 git 上跳过（探测命令以 129 退出才跳过，别的失败算测试失败）
 
 ### T27 返工（X15）：预检端点区分「目录不存在」和「不在允许范围内」
-- 状态：待办
+- 状态：完成
 - 来源：X15（验证结论 P7）。`GET /api/v1/worktrees/plan` 对白名单内但不存在的目录返回 403「path not in allowed roots」
 - 文件：修改 `vibe-remoted/internal/server/projects.go`（只改预检端点；status / remove 对不符合的路径统一 404 是有意的，不动）；`docs/protocol.md`；测试 `vibe-remoted/internal/server/projects_test.go`
 - 场景：R3.9（预检的原因要准确）
@@ -1006,6 +1006,7 @@
 | T25 | 2026-11-20 05:07 | 本行所在的提交 | 修复前 `TestRemoveBranchSwitchedWhileEndingSessions` 2 个子用例 FAIL（`err = <nil>, want *WorktreeChangedError`）；修复后 `-run TestRemove` `ok`；`go test -race -count=1 -timeout 15m ./internal/session` `ok`（301 s）、`./internal/server` `ok`（61 s，其中 `TestWorktreeRemoveEndpoint/changed_after_sessions_ended` 的触发点从 daemon 的 `rev-parse HEAD` 改成结束会话后的那次 `worktree list`，断言没动）；`.devflow.yml` 第 15 条原样执行 exit 0；变异核对：复核里去掉分支和 detached → 2 个新子用例 FAIL，去掉 HEAD → 原有的 `TestRemoveHeadMovedWhileEndingSessions` 和上面那个 server 用例 FAIL |
 | T24 | 2026-11-20 05:14 | 本行所在的提交 | 修复前 `TestIsNoTmuxServerGoesByTheWholeLine` FAIL（5 行，如 `isNoTmuxServer("error connecting to /private/tmp/vr-no sessions-1/… (No such file or directory)") = true, want false`）、`TestSocketPathSayingNoSessionsIsNotAnEmptySet` FAIL（`liveTmuxSessions() = map[], true`）；修复后连同 `TestMissingSocket…`、`TestNoTmuxProgram…`、`TestSocketFileGone…`、`TestTmuxSocketPath…` `ok`；`go test -race -count=1 -timeout 15m ./internal/session ./internal/server` 两行 `ok`（304 s、69 s）；`.devflow.yml` 第 15 条原样执行 exit 0；变异核对：「整行等于」改回「包含」→ 两个用例 FAIL |
 | T26 | 2026-11-20 05:44 | 本行所在的提交 | 修复前 `TestListWorktreesPathWithNewline` 的 `newline`、`newline_at_end`、`nul_like` FAIL（路径被拆成两个条目）、`TestListWorktreesFallsBackWithoutZ` FAIL（`-z was tried 0 times`）；修复后连同 `TestParseWorktreeList`、`TestSessionCreatedInAnOddlyNamedDirectoryIsStillRead`（5 种目录名）`ok`；`go test -race -count=1 -timeout 15m ./internal/session ./internal/server` 两行 `ok`（323 s、66 s）；`.devflow.yml` 第 13、15、18 条原样执行 exit 0；旧版 git 实测见 evidence/gate-c-1-rework.md 第 3 节（2.34.1 和 2.30.2 上失败的用例与基准 `91e0fab` 相同，新增跳过只有路径带换行的 5 个子用例）；变异核对 4 种各有用例 FAIL |
+| T27 | 2026-11-20 05:46 | 本行所在的提交 | 修复前 `TestPlanMissingWorkdirIs400` FAIL（`missing directory in the allowed root: status 403 body {"error":"path not in allowed roots"}`）；修复后 `-run TestPlan` `ok`、`go test -race -count=1 -timeout 10m ./internal/server` `ok`（63 s）；`docs/protocol.md` 该端点的三种 400 的 `message` 与实现逐字相同；变异核对：去掉「落在白名单之内」的判断 → `missing directory outside the allowed roots: status 400 …; want 403` |
 
 更正：T5 实际完成于 2026-11-19 12:39，T6a 13:11，T6b 14:04（以提交时间为准）。此后各行的时间用 `date '+%F %H:%M'` 取。
 

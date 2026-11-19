@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"io/fs"
 	"net/http"
 	"os"
 
@@ -62,6 +63,16 @@ func (s *Server) handleWorktreePlan(w http.ResponseWriter, r *http.Request) {
 	}
 	canonical, err := s.cfg.ResolveAllowedWorkdir(workdir)
 	if err != nil {
+		// "Not there" is not "may not be used": a directory that would lie in
+		// the allowed roots but does not exist (removed since it was picked) is
+		// said to be missing. For a path outside the roots the answer does not
+		// depend on whether it exists.
+		if errors.Is(err, fs.ErrNotExist) {
+			if _, newErr := s.cfg.ResolveAllowedNewPath(workdir); newErr == nil {
+				writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid_request", "message": "workdir does not exist"})
+				return
+			}
+		}
 		writeJSON(w, http.StatusForbidden, map[string]string{"error": "path not in allowed roots"})
 		return
 	}
