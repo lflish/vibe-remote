@@ -930,6 +930,7 @@ CSS 变量：保留现有变量名（`styles.css` 里到处在用），换成 M1
 - T6a：`index.ts` 净减少 155 行（完成定义估计 ≥200）。model/actions 接线和 `handleReload`（用到 `rests`/`updateStatusBar`/`refreshAllMachines`/`reloadChat`，不能移出 index）比估计大；搬家本身完整（快照逐字节不变、两份 gui 冒烟全绿）（decisions #45）。
 - T6b：侧边栏树在 `buildSidebarModel`（渲染处）现算并写入 `machineTrees`，而非在 `refreshAllMachines` 里建；为此多存原始 `machineProjects`。对外行为与 7.4 一致（decisions #46）。
 - T2：list-sessions 扩到 13 列后，现有测试 `TestParseTmuxSessionLineReadsClaudeU` 的「10 列含 tab 仍接受」一段改为断言 10 列被拒绝（decisions #43）。
+- T6c（返工）：侧边栏行的排版。会话行改成两行的 grid（名字独占第一行），项目行的分支和读取失败原因用名字剩下的宽度，项目行、worktree 行的操作按钮悬停或聚焦时才占位置；DOM 与 7.4 相同（decisions #48、#49）。
 - T7：6.1 第 10 步在建映射出的子目录**之前**也对最终工作目录调一次 `AllowPath`（建好之后那一次照旧）。发起处是「提交里是符号链接」那个目录的更深一层（`<仓库>/linkdir/sub`）时，`os.MkdirAll` 会顺着链接在白名单之外建出 `sub`，之后的检查虽然拒绝，目录已经留下（decisions #52）。
 - T7：名字的本地规则按固定顺序给出原因：空 → 空白 → `..` → 以 `-` 开头 → 含 `@{` → 其它控制字符，后两种的原因都是 `invalid`；共用向量 `testdata/worktree-names.json` 按这个顺序写，T9 的桌面端预检照此实现（decisions #53）。
 - T7：会话启动失败后撤销 worktree 时，返回的错误以原来的失败原因为主体（`errors.Is` 仍能认出 `claude_session_busy`、`shutting_down`），撤销没清掉的东西附在后面；此前是反过来包的。`ValidateWorkdir` 现在会被调两次（建之前查根、建之后查最终工作目录），现有测试 `TestShutdownWaitsForInFlightChatCreate` 用来卡住创建的回调相应改成只在路径已存在的那一次卡住（decisions #51）。
