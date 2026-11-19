@@ -864,7 +864,7 @@
 | 任务 | 完成时间 | 提交 | 测试 |
 |------|----------|------|------|
 | T1 | 2026-11-19 11:01 | 948a65b | `go test -race ./internal/session ./internal/server -run 'TestUnmergedCommits\|TestCleanup\|TestWorktree\|TestDelete'` 两行 `ok`；`make check` exit 0；cherry-pick 到 change/dual-mode 后 `make check` exit 0 |
-| T2 | 2026-11-19 11:40 | _pending_ | 三条完成命令全 `ok`（含 `-race`、`TZ=Asia/Shanghai`、golden 未动）；`make check` exit 0 |
+| T2 | 2026-11-19 11:40 | eb6143b | 三条完成命令全 `ok`（含 `-race`、`TZ=Asia/Shanghai`、golden 未动）；`make check` exit 0 |
 
 ## 后续
 
