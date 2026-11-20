@@ -1,0 +1,44 @@
+// What one comparison costs: the screen is repainted (every row written
+// again, as tmux does), then screenText is timed on its own.
+import { readFileSync } from 'node:fs';
+import { createRequire } from 'node:module';
+import { load } from './chat-test-util.mjs';
+const { screenText, ScreenWatch } = await load('src/renderer/terminal-activity.ts');
+const { Terminal } = createRequire(import.meta.url)('@xterm/xterm');
+const { captures } = JSON.parse(readFileSync(new URL('./fixtures/tmux-redraw.json', import.meta.url), 'utf8'));
+const write = (term, data) => new Promise((r) => term.write(data, r));
+const us = (ms) => (ms * 1000).toFixed(1);
+console.log(`runtime: ${process.versions.electron ? 'electron ' + process.versions.electron + ' (as node)' : 'node ' + process.versions.node}, v8 ${process.versions.v8}`);
+for (const cap of captures) {
+  for (const full of [false, true]) {
+    const term = new Terminal({ cols: cap.cols, rows: cap.rows, scrollback: 10000, allowProposedApi: true });
+    await write(term, new Uint8Array(Buffer.from(cap.attach, 'base64')));
+    let repaint = new Uint8Array(Buffer.from(cap.redraw, 'base64'));
+    if (full) { // every cell of every row holds a character, colours on each row
+      let s = '\x1b[H';
+      for (let y = 0; y < cap.rows; y++) s += `\x1b[3${y % 7 + 1}m` + ('│ box abc ─ xyz '.repeat(cap.cols)).slice(0, cap.cols) + (y < cap.rows - 1 ? '\r\n' : '');
+      repaint = new TextEncoder().encode(s + '\x1b[0m');
+      await write(term, repaint);
+    }
+    const watch = new ScreenWatch(term);
+    watch.remember();
+    const snap = [], cmp = [], parse = [];
+    for (let i = 0; i < 600; i++) {
+      const t0 = performance.now();
+      await write(term, repaint);
+      const t1 = performance.now();
+      screenText(term);
+      const t2 = performance.now();
+      const changed = watch.changed();
+      const t3 = performance.now();
+      if (changed) throw new Error('the repaint changed the screen');
+      if (i >= 100) { parse.push(t1 - t0); snap.push(t2 - t1); cmp.push(t3 - t2); }
+    }
+    const stat = (a) => { a.sort((x, y) => x - y); return `median ${us(a[a.length >> 1])} µs, p95 ${us(a[Math.floor(a.length * 0.95)])} µs, max ${us(a[a.length - 1])} µs`; };
+    console.log(`${cap.cols}x${cap.rows} ${full ? 'every cell filled' : 'the captured screen'} (${screenText(term).length} chars, repaint ${repaint.length} bytes)`);
+    console.log(`   screenText after a repaint:      ${stat(snap)}`);
+    console.log(`   snapshot + compare (changed()):  ${stat(cmp)}`);
+    console.log(`   for scale, xterm taking the repaint in (write → callback): ${stat(parse)}`);
+    term.dispose();
+  }
+}

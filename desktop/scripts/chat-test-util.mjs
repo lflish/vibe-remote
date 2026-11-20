@@ -61,8 +61,11 @@ export async function indexDom() {
  * Bundles the renderer entry (src/renderer/index.ts) without its boot code and
  * imports it, exposing its module state as `__test`. xterm is stubbed; the
  * caller sets up a DOM (document, window, …) before calling this.
+ * `realXterm`: the terminal is the real xterm, never opened into the page — it
+ * parses what is written to it and has a screen buffer, which is all a test
+ * of what a session's output does needs.
  */
-export async function loadIndex() {
+export async function loadIndex({ realXterm = false } = {}) {
   const dir = mkdtempSync(join(tmpdir(), 'vr-chat-index-'));
   dirs.push(dir);
   const outfile = join(dir, 'index.mjs');
@@ -84,6 +87,11 @@ export const __test = {
       b.onLoad({ filter: /.*/, namespace: 'stub' }, (args) => ({
         contents: args.path.endsWith('.css')
           ? ''
+          : realXterm
+            ? `import { createRequire } from 'node:module';
+               const { Terminal: Real } = createRequire(${JSON.stringify(pathToFileURL(join(process.cwd(), 'package.json')).href)})('@xterm/xterm');
+               export class Terminal extends Real { constructor(o) { super({ ...o, cols: 80, rows: 24 }); } open() {} focus() {} attachCustomKeyEventHandler() {} }
+               export class FitAddon { activate() {} dispose() {} fit() {} proposeDimensions() { return undefined; } }`
           : `export class Terminal { constructor() { this.cols = 80; this.rows = 24; }
                open() {} loadAddon() {} onData() {} onResize() {} write() {} clear() {} focus() {} dispose() {}
                attachCustomKeyEventHandler() {} hasSelection() { return false; } getSelection() { return ''; } }
@@ -98,6 +106,7 @@ export const __test = {
     bundle: true,
     format: 'esm',
     platform: 'browser',
+    external: ['node:module'],
     plugins: [stub],
     logLevel: 'silent',
   });

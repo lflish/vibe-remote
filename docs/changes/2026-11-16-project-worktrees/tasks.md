@@ -1004,7 +1004,7 @@
 - 实现时的调整（decisions #156、#157、d73；evidence/gate-c-3-rework.md 第 2 节）：「新出现的、且 `gitdir` 指向本次目录的那一条」单独不够——别人的 add 插在「记下登记」和「本次的 add 自己检查路径」之间时，它的登记同样是新出现的、同样指向本次的目录，本次的 add 因此以 128 退出（用例 `…/at_the_same_path_on_the_same_branch`、`…/at_the_same_path_detached_at_the_same`，只按用户确认的规则做时它们失败，别人的 worktree 被删）。所以多一个条件：add 的退出码是 git 自己放弃时的 128 / 129 时不认领（钩子的退出码 git 原样传出来，git-lfs、husky 的钩子都不是 128）。反过来的先后（本次的 add 已经登记了路径，别人再在同一路径上 add）在测试里证实不会发生（`…/git_refuses_a_second_add_at_a_registered_path`：从钩子里、也就是本次的 add 运行期间发起的第二次 add 被 git 拒绝）。分不清而保守处理的一种：钩子自己以 128 退出，worktree 留下（进「后续」）。原有的 `TestUndoAfterWorktreeAddFailedOnItsOwn/post_checkout_hook_fails` 断言的正是旧结果（worktree 留下），按 c8 改成断言不留。实际的用例：`TestCreateFailedByPostCheckoutHookLeavesNothing`（3 个子用例）、`TestUndoLeavesAWorktreeSomeoneElseAddedWhileTheAddRan`（7 个子用例）；GUI 冒烟加了 `R3.8.hook`
 
 ### T31 返工（c7）：后台终端会话在屏幕内容没变时不亮「有新消息」
-- 状态：待办
+- 状态：完成
 - 来源：关口 C 已放行，先改 c7（evidence/exploration-findings.md 的 X1）。新建或重命名任何终端会话时 tmux 重绘所有客户端，其它打开着的后台终端会话都收到字节、都亮「有新消息」
 - 文件：桌面端 `desktop/src/renderer/`（点亮逻辑：`index.ts` 里终端收到数据到 `nextDot` 的路径；新的比较函数放独立文件）；测试 `desktop/scripts/`（新单元测试，接进 `npm test`）；`.claude/skills/verify/scripts/gui-smoke.mjs` 或 `gui-worktree-smoke.mjs`（真实应用的用例）；`CLAUDE.md`（「第二批体验增强」「客户端会话模型」的相关说法）、design 第 10 节
 - 约束：终端模式纯字节透传，客户端不解析、不解释 PTY 输出。只允许做「前后是否相同」的比较：字节写入 xterm 并处理完之后，对 xterm 已经渲染出的可见屏幕取快照，与上一次的比较；字节仍原样、无条件写入 xterm
@@ -1015,6 +1015,7 @@
   - 现有断言不放宽（`gui-smoke.mjs` 第 9 步的状态点、`test-chat-activity`）；描述旧行为「重绘也亮」的断言逐个列出、按新规则改并写明依据（c7）
 - 完成定义：`cd desktop && npm run typecheck && npm test` 退出 0；真实应用的用例通过；报告里给出一次快照的耗时（80×24 和 200×60）
 - 依赖：无
+- 实现时的调整（decisions #158、d74、d75；evidence/gate-c-3-rework.md 第 3 节）：新文件 `desktop/src/renderer/terminal-activity.ts`（`screenText`、`ScreenWatch`、`writeWatched`），`index.ts` 的 `client.onData` 改成经它写入；单元测试 `desktop/scripts/test-terminal-activity.mjs`（11 个用例，接进 `npm test`），用真的 xterm（不 `open` 也能解析）和真的 tmux 发出的重绘字节（`scripts/fixtures/tmux-redraw.json`，80×24 和 200×60 各一份）；`chat-test-util.mjs` 的 `loadIndex` 多一个 `realXterm` 选项（默认行为不变）。真实应用的用例是 `gui-worktree-smoke.mjs` 的 `X1.redraw`。比较在每一帧处理完之后立刻做，没有加「等输出停下来再比」的定时器：实测 tmux 的重绘是逐行原地重写、不先清屏，切成任意大小的片段中途的屏幕文字都与重绘前相同。没有任何已有断言描述「重绘也亮」的旧行为，所以没有改已有断言（`gui-smoke.mjs` 第 9 步、`gui-worktree-smoke.mjs` 的 R8.4 用的是 hook 事件和真实输出）
 
 ### T32 返工（c9）：写明支持的 git 版本
 - 状态：待办
@@ -1063,6 +1064,7 @@
 | T28 | 2026-11-20 05:47 | 本行所在的提交 | 改之前 `go test -count=8 -v -run TestGitTimeoutKillsProcess`：8 次 SKIP；改之后完成定义的 `go test -race -count=3 -timeout 10m -v ./internal/session -run 'TestGitTimeoutKillsProcess\|TestGitEnvKeepsInheritedConfig'` 12 行 PASS、没有 SKIP（本机 git 2.50.1）；git 2.30.2 上 `GIT_CONFIG_COUNT` 子用例 SKIP（探测输出 `not-read`）、其余 PASS，2.34.1 上全部 PASS；`.devflow.yml` 第 19 条原样执行 exit 0；变异核对：超时后的 SIGKILL 换成信号 0 → `gitAtTimeout took 1.06s, want < 1s` |
 | T29 | 2026-11-20 11:05 | 本行所在的提交 | 修复前 `TestFallbackListNeverInventsAWorktree` 15 个子用例 FAIL 13 个（例：`a\nfoo` 读到 `{Path:…/devflow-worktrees/a Branch:odd}`）、`TestFallbackListFailsWhenTheMainDirectoryCannotBeRead` 3 个全 FAIL、`TestParseWorktreeListByLine` 25 个全 FAIL；修复后完成定义的命令两行 `ok`；`go test -race -count=1 -timeout 20m ./internal/session ./internal/server` 两行 `ok`（360 s、70 s）；`.devflow.yml`「对话界面的信任…」和「只删 daemon 自己读到的…」两条的 check 原样执行 exit 0；真的 git 2.34.1（临时目录里从源码构建）：列表和信任相关的用例 127 行 PASS、0 FAIL，整包 658 行 PASS、2 个 FAIL 都是基准上就有的（evidence/gate-c-3-rework.md 1.4）；变异核对 6 种各有用例 FAIL（同文件 1.3） |
 | T30 | 2026-11-20 11:22 | 本行所在的提交 | 修复前 `TestCreateFailedByPostCheckoutHookLeavesNothing` 3 个子用例 FAIL（`…/fix-login is still there: [.git README]`、`git still has a worktree registered: [fix-login]`）、`TestUndoLeavesAWorktreeSomeoneElseAddedWhileTheAddRan` 2 个 FAIL、改过断言的 `TestUndoAfterWorktreeAddFailedOnItsOwn/post_checkout_hook_fails` FAIL；GUI `R3.8.hook` 对着修复前的 daemon FAIL（`the daemon says it left something behind`）。修复后完成定义的命令 `ok`；`go test -race -count=1 -timeout 20m ./internal/session ./internal/server` 两行 `ok`（371 s、72 s）；`.devflow.yml` 第 18 条原样执行 exit 0；`gui-worktree-smoke.mjs --only=R3.8`：`2 cases: R3 2/2`；git 2.34.1 上相关用例 `ok`；X9 的三个反例原样通过；变异核对 4 种各有用例 FAIL（evidence/gate-c-3-rework.md 第 2 节） |
+| T31 | 2026-11-20 11:37 | 本行所在的提交 | 修复前真实应用的用例 `X1.redraw` FAIL（`dots before anything happened (A in the background, B shown): got ["output","none"], want ["none","none"]`）；单元测试在旧规则（任何字节都算变化）下 FAIL（`the repaint in pieces of 1976 bytes was taken for new output`）。修复后 `test-terminal-activity checks passed (11)`；`npm run typecheck` 退出 0；`npm test` 退出 0（`ok` 行 311 → 322）；`gui-worktree-smoke.mjs --only=X1.redraw,X2.rename,R8.4,R1.6`：`4 cases: R1 1/1, R8 1/1, other 2/2`（`X1.redraw`：12 帧重绘不亮、改名不亮、真有输出亮）；一次比较 80×24 约 33–117 µs、200×60 约 104–411 µs（中位数，evidence/gate-c-3-rework.md 3.3）；变异核对 8 种各有用例 FAIL（同文件 3.4）；没有改任何已有断言 |
 
 关口 C 第 1 轮返工各行写「本行所在的提交」的，提交分别是：T22 `6282332`，T23 `44c049d`，T21 `f86be13`，T25 `f94ea31`，T24 `465945a`，T26 `771dcc6`，T27 `694e3f5`，T28 `3c9cff8`。全部修完后的一轮检查（`make check`、三份 ws 冒烟、18 条命令型规则）在 `3c9cff8` 上，结果见 evidence/gate-c-1-rework.md 第 5 节；三份 GUI 冒烟没有跑，等主会话安排。（之后回到测试阶段，在同一份代码上做了全量运行：`make check`、三份 GUI 冒烟、三份接口冒烟、18 条命令型规则都通过，见 test-report.md。）
 
@@ -1167,7 +1169,7 @@ spec「推迟到以后」的条目：
 - **已知限制（X14；T29 之后的实际行为，decisions #154、#155）**：git 低于 2.36（没有 `git worktree list -z`；Ubuntu 22.04 自带 2.34、Debian 11 是 2.30）的机器上，路径里有换行的 worktree 不列出，也就不能在界面里打开和删除；它的路径被拆出来的任何一段都不会被当成 worktree（不出现在侧边栏、不通过对话界面的信任规则、查不到状态）。相邻的条目也可能不列出：被拆出来的一段恰好是同一仓库另一个真 worktree 的路径时，那个 worktree 也不列出（两个同路径的条目分不出哪个是真的）。主目录自己的路径带换行的仓库在这样的 git 上读不了（项目行显示读取失败，原因里写明要 git 2.36）。别的字符（制表符、引号、反斜线）不受影响。升级 git 即可。
 
 
-- **X1，交给用户决定（c7）**：新建或重命名任何一个终端会话时，本窗口里所有打开着的后台终端会话都会亮起「有新消息」。原因：daemon 用 `tmux set-option` 写会话的名字和归属，tmux 每执行一次 `set-option` 就重绘这台 server 上的全部客户端，重绘的字节到达后台会话，而点亮规则是「后台会话有任何字节到达即亮」。基准 `6d88e45` 上同样（每次新建 7 次 `set-option`，现在 11 次；`index.ts` 里判定的那几行逐字相同），但本需求让同时开多个会话成了常态。要去掉它得改点亮规则（例如屏幕内容没变就不亮），或换一种不触发重绘的存法（tmux 会话环境变量 `set-environment -t` 不重绘，但 `list-sessions` 的格式串读不到它）；两种都改动已确认的取舍，没有自己定。
+- **X1（T31 已处理，decisions #153、#158：后台终端会话收到字节后屏幕上的文字没变就不亮；`X1.redraw` 守着）**，原记录：新建或重命名任何一个终端会话时，本窗口里所有打开着的后台终端会话都会亮起「有新消息」。原因：daemon 用 `tmux set-option` 写会话的名字和归属，tmux 每执行一次 `set-option` 就重绘这台 server 上的全部客户端，重绘的字节到达后台会话，而点亮规则是「后台会话有任何字节到达即亮」。基准 `6d88e45` 上同样（每次新建 7 次 `set-option`，现在 11 次；`index.ts` 里判定的那几行逐字相同），但本需求让同时开多个会话成了常态。要去掉它得改点亮规则（例如屏幕内容没变就不亮），或换一种不触发重绘的存法（tmux 会话环境变量 `set-environment -t` 不重绘，但 `list-sessions` 的格式串读不到它）；两种都改动已确认的取舍，没有自己定。
 - X4：删除 worktree 时，其中在本窗口开着的终端会话会在状态栏报一次「会话已退出（代码 -1）」（daemon 先结束会话，exit 帧先于删除的应答到达）；删除是用户自己确认的，这句提示多余，还会盖在切过去的另一个会话上。可以在删除请求在途时不显示这些会话的退出提示。
 - X5：名字 `@`（单个字符）预检通过，创建时 git 失败（`git worktree add <目录>/@` 报 `could not find created worktree '@'`，git 自己不能在名为 `@` 的目录里建 worktree），状态栏显示 git 的原始报错；目录和分支都没有留下，`.git/worktrees/` 里留下一个空的 `-` 目录（git 自己留的，`git worktree prune` 会清）。可以在名字的本地规则里加一条「不能是 `@`」（Go、桌面端和共用向量三处一起改）。
 - X7：正在看的对话会话出现待答的权限请求后切到别的会话，这个会话的行和折叠的项目行都不亮「等你处理」——点只在请求到达时会话不在前台才亮（`chat/activity.ts`，双模式会话的规则，本需求没有改）。同时开多条工作线时，「看了一眼先去忙别的」正是容易忘的情况；可以在离开一个有待答请求的会话时把它的点置为「等你处理」。
@@ -1193,3 +1195,9 @@ spec「推迟到以后」的条目：
 - N-5（来源：verdict.md N-5）：预检 `GET /api/v1/worktrees/plan` 的 `workdir` 路径中间是一个普通文件时（`<白名单内>/afile/x`）回答 403「不在白名单内」：`EvalSymlinks` 给的是 ENOTDIR，没走 X15 新加的 400；`docs/protocol.md` 两种都没写到这一种。目录选择器选不出这样的路径。
 - 说明（来源：verdict.md「说明」1）：`TestProjectStoreRemoveWorktreeIfSame` 不带 `-race` 时单独重跑 200 次失败 33 次（带 `-race` 0 次；`make check` 一直带 `-race`）。原因是 `RemoveWorktreeIfSame` 靠微秒时间戳区分新旧记录，先删再加同一条记录的两次时间戳可能相同；上面两处把它记成「偶发」，实际频率高得多。验证者建议提前做（给记录加一个递增的序号，不依赖时钟）。
 - 说明（来源：verdict.md「待验证项」）：其它版本的 tmux 没有实测。返工改了读 tmux 的格式（全部终端会话的入口），验证者只在 3.6a 上跑过；Ubuntu 22.04 的 3.2a、Debian 12 的 3.3a、Ubuntu 24.04 的 3.4 要在目标 Linux 上跑一次 `ws-worktree-smoke.mjs` 和 `go test ./internal/session -run 'OddlyNamed|TmuxReadFails'`。
+
+关口 C 放行后的返工（T29–T32）之后留下的：
+
+- T31 的点亮规则只在 tmux 3.6a 上看过重绘的字节（逐行原地重写、不先清屏，evidence/gate-c-3-rework.md 3.1）。别的版本的 tmux（Ubuntu 22.04 的 3.2a、Debian 12 的 3.3a、Ubuntu 24.04 的 3.4）如果先清屏再重画，重绘被切成几帧时中途的一帧会被判成屏幕变了，点会误亮（等于 T31 之前的行为，不会漏报）。真遇到时把比较改成「输出停下来之后再比」（d75）。
+- T31 只比较文字：只变颜色不变文字的输出（一行字从暗变亮、选中项的高亮换了位置而文字没动）不会点亮「有新消息」（d74）。真有 agent 靠这个表示进展时，把每个单元格的属性也算进快照（贵一个量级）。
+- T31：窗口尺寸变化、终端被重新 `fit` 之后 tmux 会按新的宽度重排，文字换行的位置变了就算屏幕变了，后台会话会亮点（T31 之前同样会亮；后台的终端容器是 `display:none`，平时不会被 `fit`）。

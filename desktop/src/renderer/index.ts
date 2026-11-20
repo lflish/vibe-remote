@@ -15,6 +15,7 @@ import { attachMacClipboardShortcuts } from './terminal-clipboard';
 import { terminalTheme } from './theme';
 import { ChatView } from './chat/view';
 import { nextDot, type ActivityEvent, type Dot, type RestSnapshot } from './chat/activity';
+import { ScreenWatch, writeWatched } from './terminal-activity';
 import type { Prompt } from './chat/types';
 import { renderSidebar as renderSidebarView, renderToolbarTitle, rendererIcon, type SidebarModel, type SidebarActions } from './sidebar';
 import { buildTree, countActiveSessionsAt, nextCapability, projectHue, sessionContext, sessionProject, notificationTitle, visibleSessions, type Capability, type TreeProject, type TreeWorktree } from './tree';
@@ -39,6 +40,7 @@ interface SessionView {
   banner: HTMLElement; // reconnect banner overlay, hidden by default
   activity: Dot; // sidebar dot state
   suppressUntil: number; // ms timestamp: ignore onData activity until then (attach repaint)
+  screen: ScreenWatch; // the screen as it was when the session went to the background (terminal-activity.ts)
   warnedProto: boolean; // already told the user this daemon is older than the client
 }
 
@@ -965,7 +967,7 @@ function openSession(machine: MachineConfig, sessionId: string, workdir?: string
   const banner = document.createElement('div');
   banner.className = 'reconnect-banner';
   banner.style.display = 'none';
-  const view: SessionView = { ui: 'terminal', key, machine, sessionId, client, terminal: term, fitAddon: fit, container, banner, activity: 'none', suppressUntil: 0, warnedProto: false };
+  const view: SessionView = { ui: 'terminal', key, machine, sessionId, client, terminal: term, fitAddon: fit, container, banner, activity: 'none', suppressUntil: 0, screen: new ScreenWatch(term), warnedProto: false };
   views.set(key, view);
 
   // Classed so a locale switch can retranslate banners that already exist:
@@ -989,16 +991,24 @@ function openSession(machine: MachineConfig, sessionId: string, workdir?: string
 
   // Server PTY bytes → terminal (Uint8Array so xterm decodes UTF-8 itself)
   client.onData = (payload: string) => {
-    term.write(base64ToBytes(payload));
-    // Mark background activity as a dot — but not during the post-attach
-    // suppression window (tmux full repaint would false-trigger it), and not
-    // for the session the user is actively viewing.
-    if (view.key !== activeKey && Date.now() >= view.suppressUntil) {
-      if (view.activity === 'none') {
+    const bytes = base64ToBytes(payload);
+    // The session being looked at shows no dot, a dot that is lit already
+    // cannot be lit by output again, and the full repaint that follows an
+    // attach is not news: the bytes go to xterm and that is all.
+    if (view.key === activeKey || view.activity !== 'none' || Date.now() < view.suppressUntil) {
+      term.write(bytes);
+      return;
+    }
+    // A background session with no dot: "new messages" if the screen is
+    // another one once xterm has taken these bytes in. Bytes alone do not say
+    // so — tmux repaints every client when any session is created or renamed.
+    // The bytes are written as they came either way.
+    writeWatched(term, bytes, view.screen, () => {
+      if (view.key !== activeKey && view.activity === 'none') {
         view.activity = 'output';
         renderSidebar();
       }
-    }
+    });
   };
 
   client.onReady = (sid: string, _workdir: string, proto: number) => {
@@ -1018,6 +1028,7 @@ function openSession(machine: MachineConfig, sessionId: string, workdir?: string
     // Suppress activity marking briefly so the tmux full repaint on (re)attach
     // doesn't false-light the dot. 500ms is an empirical, tunable value.
     view.suppressUntil = Date.now() + 500;
+    view.screen.forget(); // the screen was just reset; compare from what the repaint leaves
     refreshAllMachines();
     updateStatusBar();
     // An older daemon accepts the attach but silently ignores what it doesn't
@@ -1215,6 +1226,8 @@ function setActive(key: string) {
   if (activeView && activeView.activity !== 'none') {
     activeView.activity = 'none';
   }
+  // What is on its screen from now on is seen as it comes; nothing to compare with.
+  if (activeView?.ui === 'terminal') activeView.screen.forget();
   sessionDots.delete(key);
   if (activeView) {
     const activeMachineKey = machineKey(activeView.machine);

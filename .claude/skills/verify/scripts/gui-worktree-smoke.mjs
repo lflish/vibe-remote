@@ -2773,6 +2773,63 @@ test('X2.rename', 'double-clicking the name of a session that is open here renam
   }
 });
 
+// Exploration X1, changed after gate C (c7): tmux repaints every client when a
+// session option is set, which the daemon does whenever a session is created
+// or renamed. A background terminal session then receives bytes, but its
+// screen is the one it had: no "new messages" dot. Output that changes the
+// screen still lights it.
+test('X1.redraw', 'a background terminal session shows "new messages" only when its screen changed (exploration X1, c7)', async () => {
+  const flag = join(work, 'x1-go');
+  const dotOf = (id) => ev(`${srow(id)}?.dataset.dot ?? null`);
+  // data frames a session's connection has received since `count` was first called for it
+  const count = (id) => ev(`(() => { const s = window.__vrSock(${J(id)}); if (!s) return false; if (s.__x1 === undefined) { s.__x1 = 0; s.addEventListener('message', (e) => { try { if (JSON.parse(e.data).type === 'data') s.__x1++; } catch {} }); } return true; })()`);
+  const frames = (id) => ev(`window.__vrSock(${J(id)})?.__x1 ?? -1`);
+  rmSync(flag, { force: true });
+  let third = '';
+  try {
+    // A waits for a file to appear and then prints a line; B is the session shown
+    await openSession(fx.api1);
+    await shell(`while [ ! -e ${flag} ]; do sleep 0.2; done; echo late-$((6*7))`, 'do sleep 0.2');
+    await openSession(fx.api2);
+    await sleep(1200); // past the echo of what was typed and the repaint of the session just shown
+    await refresh();
+    eq([await dotOf(fx.api1), await dotOf(fx.api2)], ['none', 'none'], 'dots before anything happened (A in the background, B shown)');
+    assert(await count(fx.api1), 'the connection of the background session');
+    const before = await frames(fx.api1);
+    // a third terminal session is created and renamed from another desktop
+    third = await terminalIn(WT, fx.newApi);
+    await rename(WT, third, 'x1 third');
+    await waitFor(async () => (await frames(fx.api1)) > before, 10000, 'bytes for the background session: tmux repainting it');
+    await sleep(1000);
+    await refresh();
+    const repaints = (await frames(fx.api1)) - before;
+    eq(await dotOf(fx.api1), 'none', `the dot of the background session after ${repaints} data frames that repaint the screen it already shows`);
+    // renaming the background session itself: the same
+    const mid = await frames(fx.api1);
+    await rename(WT, fx.api1, 'x1 renamed');
+    await waitFor(async () => (await frames(fx.api1)) > mid, 10000, 'bytes for the session that was renamed');
+    await waitFor(async () => (await text(`${srow(fx.api1)}?.querySelector('.session-label-text')`)) === 'x1 renamed', 8000, 'the sidebar shows the new name');
+    await sleep(500);
+    eq(await dotOf(fx.api1), 'none', 'the dot of the background session after it was renamed');
+    // now it prints a line
+    writeFileSync(flag, '');
+    await waitFor(async () => (await dotOf(fx.api1)) === 'output', 10000, 'the dot of the background session after it printed a line');
+    eq(await text(`${srow(fx.api1)}?.querySelector('.session-meta')`), '终端 · 有新消息', 'what its row says');
+    await evidence('X1.redraw', '#sidebar', srow(fx.api1));
+    await openSession(fx.api1);
+    await waitFor(async () => (await screen()).includes('late-42'), 8000, 'the line it printed, on its screen');
+    eq(await dotOf(fx.api1), 'none', 'its dot once it is the session shown');
+    return `${repaints} data frames repainted the background session when another session was created and renamed: no dot; renamed itself: no dot; it printed a line: "终端 · 有新消息"`;
+  } finally {
+    writeFileSync(flag, '');
+    if (third) await endSession(WT, third);
+    await rename(WT, fx.api1, '');
+    await sleep(400);
+    rmSync(flag, { force: true });
+    await refresh();
+  }
+});
+
 test('X8.menu', 'a row menu opened with the pointer stays at its button when the sidebar is rebuilt (exploration X8)', async () => {
   await managedWorktree(LAB, fx.del, 'x8m');
   await rowShown(LAB, 'del', 'x8m');

@@ -991,6 +991,7 @@ CSS 变量：保留现有变量名（`styles.css` 里到处在用），换成 M1
 - 关口 C 放行后的返工（用户回复 `all`，decisions #153 起；T29–T32）：
   - T29（d71；decisions #154、#155、d72）：4.9 的 `ListWorktrees` 在退回模式（git 不认 `-z`）下不再单独采信按行读的结果。`parseWorktreeList` 按行读时要求每一项是 git 写的固定形状和顺序，不符合的去掉，前面不是空行的 `worktree` 行连前一项一起去掉，第一项不完整就什么都不返回；`worktreesFromLines` 再对照仓库登记的反向指针（`<git 公共目录>/worktrees/*/gitdir`，公共目录由 `gitCommonDirOf` 在文件系统上找，不起 git 进程）：其余各项的路径必须正好是其中之一，同一路径出现两次的都不留，第一项必须就是这个仓库，否则整次读取失败。上面 X14 那条的「退回模式下路径里有换行的 worktree 列不出来」改为：不列出，被拆出来的任何一段也不列出；被拆出来的一段是另一个真 worktree 的路径时那个也不列出；主目录路径带换行的仓库读不了。7.3 的信任规则不变（它只认列表），所以在旧 git 上也不再有反例。
   - T30（c8；decisions #156、#157、d73，推翻 d70 的代价部分）：6.1 的撤销，上面 X9 那条的「为假时（add 还没运行，或自己报错退出）该路径上登记的任何 worktree 都不认领」收窄。`CreateWorktree` 在运行自己的 `git worktree add` 之前记下仓库已有的 worktree 登记（`registeredBeforeAdd`：`<git 公共目录>/worktrees/` 下每一项的名字和 `gitdir` 指向）；add 以非零退出后再读一次，指向本次目录的登记正好一条、是 add 之前没有的、并且 add 的退出码不是 128 / 129，`added` 也为真（`addLeftItsWorktree`），这一项照原来的办法认领并删除（仍要在本次的分支上或 detached 在本次的提交上）。post-checkout 钩子失败因此不再留下 worktree：目录、登记、分支都清掉，同名可以再建。add 之前就在的登记、add 以 128 退出时出现的登记、读不到登记时，都和原来一样不动。钩子自己以 128 退出时 worktree 仍会留下（tasks.md「后续」）。
+  - T31（c7；decisions #158、d74、d75）：桌面端终端会话「有新消息」点的规则，从「后台会话有字节到达即亮」改为「后台会话收到字节后屏幕上的文字变了才亮」。这条规则在本需求之前就有，design 原文没有写它；7.4 的状态点文案和三种点的含义不变。实现在 `desktop/src/renderer/terminal-activity.ts`：字节原样、无条件写进 xterm，写之前记下屏幕文字（当前缓冲区、`baseY`、各行去掉行尾空白的文字，不含光标和颜色），`term.write` 的回调里再取一次，只比较是否相同；前台会话、已经有点的会话、attach 之后 500 ms 内不取快照；会话切到前台或 attach 清屏时忘掉记下的屏幕。终端模式「客户端不解析 PTY 输出」的约束不变（只做相等比较）。对话会话的点、hook 事件的点不变。
 
 ### 升级步骤
 
