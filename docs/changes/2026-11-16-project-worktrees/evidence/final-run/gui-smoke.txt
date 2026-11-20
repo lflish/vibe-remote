@@ -1,7 +1,8 @@
-start 2026-11-20 06:14:46
-work dir /var/folders/yq/p60klk5x4rddkhlf74cnj38m0000gn/T/vr-gui-57YNef
-PASS daemon up on 127.0.0.1:21966
-PASS chat daemon (fake claude) up on 127.0.0.1:23683
+$ TMUX_TMPDIR=<own /tmp/vr-XXXXXX> node .claude/skills/verify/scripts/gui-smoke.mjs
+start 2026-11-20 11:57:07
+work dir /var/folders/yq/p60klk5x4rddkhlf74cnj38m0000gn/T/vr-gui-rc1rAR
+PASS daemon up on 127.0.0.1:25345
+PASS chat daemon (fake claude) up on 127.0.0.1:24837
 
 (!) Some chunks are larger than 500 kB after minification. Consider:
 - Using dynamic import() to code-split the application
@@ -59,5 +60,4 @@ PASS no uncaught renderer exceptions
 
 all GUI checks passed
 exit=0
-end 2026-11-20 06:15:09
-b99c6400cdcab14bd3be87a1c9bdb86998322998
+commit bbc2e9bf8903a31033bcf560001bae1dfa1e2697

@@ -1,7 +1,8 @@
-start 2026-11-20 06:19:22
+$ VR_TOKEN=<a token made for this run> node .claude/skills/verify/scripts/ws-smoke.mjs 127.0.0.1:<a random port> <its own temp directory>   # a throwaway daemon built from this code: /bin/bash, its own state_dir and tmux directory, allowed_roots = that temp directory only
+start 2026-11-20 12:00:38
 PASS /healthz
 PASS /api/v1/info version=dev
-PASS session A ready id=1795126762723-6a5c15b0
+PASS session A ready id=1795147238678-b0946000
 PASS A sees its own VIBE_REMOTE_SESSION_ID
 PASS A got a hook token distinct from the main token
 PASS hook token → events 204
@@ -9,9 +10,9 @@ PASS notify frame delivered to session A
 PASS hook token rejected for another sessionId
 PASS hook token rejected on /api/v1/info
 PASS B sees its own VIBE_REMOTE_SESSION_ID (no env bleed from A)
-PASS deleted 1795126762723-6a5c15b0
-PASS deleted 1795126762920-fb1e7d8a
+PASS deleted 1795147238678-b0946000
+PASS deleted 1795147238890-c7ffb74b
 
 all checks passed
 exit=0
-b99c6400cdcab14bd3be87a1c9bdb86998322998
+commit bbc2e9bf8903a31033bcf560001bae1dfa1e2697

@@ -1,21 +1,14 @@
-Rule 2 of .devflow.yml (/protocol-sync) is a skill, not a command. What was checked in this round (code 3c9cff8):
+Rule 2 of .devflow.yml (/protocol-sync) is a skill, not a command. What was checked in this round (code bbc2e9b):
 
-$ git diff --stat 5d8878c..HEAD -- vibe-remoted/internal/protocol desktop/src/shared/protocol.ts desktop/src/renderer/rest.ts vibe-remoted/internal/server/server.go
-(no output: the Go types, the TS interfaces, rest.ts and the routes are byte-identical to the commit on which the
- mechanical comparison of round 1 ran: 29 types / 146 fields, 14 routes, version 4 on both sides, no differences)
+$ git diff --stat b77fcd1..bbc2e9b -- vibe-remoted/internal/protocol desktop/src/shared desktop/src/renderer/rest.ts vibe-remoted/internal/server docs/protocol.md
+(no output: the rework after gate C was passed, T29-T32, changed no frame, no REST endpoint, no status code and no
+ line of docs/protocol.md; the Go types, the TS interfaces, rest.ts, the routes and the document are byte-identical
+ to the commit the round-2 verifier checked, 482ab63 - git diff --stat 482ab63..b77fcd1 on the same paths is empty too)
 
-$ git diff --stat 5d8878c..HEAD -- docs/protocol.md
- docs/protocol.md | 6 +++---        (three lines, commits f94ea31 and 694e3f5)
-
-The three changed lines against the implementation:
-- GET /api/v1/worktrees/plan, the 400 messages: "workdir is required", "workdir does not exist", "workdir is not a directory"
-  are the literal strings in vibe-remoted/internal/server/projects.go (lines 61, 72, 80); 400 inside the allowed roots and
-  403 outside them is what TestPlanMissingWorkdirIs400 asserts (PASS in this run).
-- POST /api/v1/worktrees/remove, 409 after the sessions were ended (branch switched or detached at the same commit):
-  TestRemoveBranchSwitchedWhileEndingSessions, TestRemoveHeadMovedWhileEndingSessions (PASS in this run).
-- POST /api/v1/worktrees/remove, 500 (a session that did not end; a tmux answer that cannot be read as a list):
-  TestRemoveWorktreeStopsWhenASessionDidNotEnd, TestRemoveWorktreeConfirmsSessionsAgainstTmux,
-  TestTmuxReadFailsWhenARecordDoesNotParse (PASS in this run).
-- version: protocol.go "const Version = 4", protocol.ts "PROTOCOL_VERSION = 4", "CHAT_MIN_PROTO = 3".
+What the rework does change that a client can observe, none of it in the protocol's shape:
+- attach with mode "worktree" in a repository whose post-checkout hook fails: still the fatal error create_failed, the
+  message still carries git's output; it no longer ends with "cleanup: directory ... not removed" (T30).
+- /api/v1/projects, /api/v1/fs (chatTrust), /api/v1/worktrees/status on a git without "worktree list -z": a directory
+  that is not a registered worktree is no longer listed, trusted or given a status (T29).
 
 Not done in this round: the full by-hand pass of the skill over the open sets (error codes, chat_ack codes).
