@@ -103,3 +103,89 @@ func TestProjectsDir(t *testing.T) {
 		t.Fatalf("ProjectsDir = %q", got)
 	}
 }
+
+// X4: claude names a project directory by replacing "/" and "." in the path
+// with "-", so …/a-b, …/a.b and …/a/b share one directory. "The latest
+// conversation of this workdir" (-c) must be one that was recorded in this
+// workdir, not the newest file of the shared directory.
+func TestLatestSessionChecksTranscriptCwd(t *testing.T) {
+	root, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	projects := filepath.Join(root, "projects")
+	a := filepath.Join(root, "a-b")
+	b := filepath.Join(root, "a", "b")
+	dotted := filepath.Join(root, "a.b")
+	for _, d := range []string{a, b, dotted} {
+		if err := os.MkdirAll(d, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if EncodeProjectDir(a) != EncodeProjectDir(b) || EncodeProjectDir(a) != EncodeProjectDir(dotted) {
+		t.Fatalf("fixture: %q, %q and %q should share a project dir", a, b, dotted)
+	}
+	shared := filepath.Join(projects, EncodeProjectDir(a))
+	user := func(cwd string) string {
+		return `{"type":"user","cwd":"` + cwd + `","message":{"role":"user","content":"hi"}}`
+	}
+	latest := func(workdir string) string {
+		t.Helper()
+		u, ok := LatestSessionForWorkdir(projects, workdir)
+		if !ok {
+			return ""
+		}
+		return u
+	}
+
+	// Only b has a conversation: a (and a.b) have nothing to continue.
+	ub := "bbbbbbbb-0000-4000-8000-00000000000b"
+	writeJSONL(t, filepath.Join(shared, ub+".jsonl"), user(b))
+	setMtime(t, filepath.Join(shared, ub+".jsonl"), time.Minute)
+	if got := latest(a); got != "" {
+		t.Fatalf("workdir a-b with no conversation got %s — the conversation of a/b", got)
+	}
+	if got := latest(dotted); got != "" {
+		t.Fatalf("workdir a.b with no conversation got %s", got)
+	}
+	if got := latest(b); got != ub {
+		t.Fatalf("workdir a/b: latest %q, want its own %s", got, ub)
+	}
+
+	// a has an older one: each directory continues its own.
+	ua := "aaaaaaaa-0000-4000-8000-00000000000a"
+	writeJSONL(t, filepath.Join(shared, ua+".jsonl"), user(a))
+	setMtime(t, filepath.Join(shared, ua+".jsonl"), time.Hour)
+	if got := latest(a); got != ua {
+		t.Fatalf("workdir a-b: latest %q, want %s (the newer file belongs to a/b)", got, ua)
+	}
+	if got := latest(b); got != ub {
+		t.Fatalf("workdir a/b: latest %q, want %s", got, ub)
+	}
+
+	// A transcript that records no cwd is nobody's to continue, however new.
+	un := "cccccccc-0000-4000-8000-00000000000c"
+	writeJSONL(t, filepath.Join(shared, un+".jsonl"), `{"type":"summary","summary":"no cwd anywhere"}`, `{"type":"user","message":{"role":"user","content":"hi"}}`)
+	setMtime(t, filepath.Join(shared, un+".jsonl"), time.Second)
+	if got := latest(a); got != ua {
+		t.Fatalf("workdir a-b: latest %q, want %s (the newest file has no cwd)", got, ua)
+	}
+	if got := latest(b); got != ub {
+		t.Fatalf("workdir a/b: latest %q, want %s (the newest file has no cwd)", got, ub)
+	}
+
+	// The cwd is on a later line (claude's files can start with other
+	// records), followed by a long tail that is not needed to decide.
+	uq := "dddddddd-0000-4000-8000-00000000000d"
+	lines := []string{`{"type":"queue-operation","operation":"enqueue"}`, user(a)}
+	for i := 0; i < 2000; i++ {
+		lines = append(lines, `{"type":"assistant","cwd":"`+b+`","message":{"role":"assistant","content":[{"type":"text","text":"`+strings.Repeat("x", 500)+`"}]}}`)
+	}
+	writeJSONL(t, filepath.Join(shared, uq+".jsonl"), lines...)
+	if got := latest(a); got != uq {
+		t.Fatalf("workdir a-b: latest %q, want the newest of its own %s", got, uq)
+	}
+	if got := latest(b); got != ub {
+		t.Fatalf("workdir a/b: latest %q, want %s", got, ub)
+	}
+}

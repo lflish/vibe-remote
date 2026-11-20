@@ -881,6 +881,45 @@ func tmuxOption(t *testing.T, id, key string) string {
 	return strings.TrimSpace(string(out))
 }
 
+// X4: the terminal continue rewrite uses the same lookup — a terminal session
+// started with -c in …/a-b must not be rewritten to --resume the conversation
+// of …/a/b (same claude project directory).
+func TestTerminalContinueIgnoresOtherDirectorySharingProjectDir(t *testing.T) {
+	f := newChatFixture(t, true)
+	root := f.workdir()
+	a := filepath.Join(root, "a-b")
+	b := filepath.Join(root, "a", "b")
+	for _, d := range []string{a, b} {
+		if err := os.MkdirAll(d, 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if chat.EncodeProjectDir(a) != chat.EncodeProjectDir(b) {
+		t.Fatal("fixture: the two directories should share a project dir")
+	}
+	ub := chat.NewUUID()
+	f.transcript(b, ub, time.Now().Add(-time.Minute))
+
+	ta := newID("ta")
+	if _, err := f.createTerminal(f.m, ta, a, f.exe+" -c"); err != nil {
+		t.Fatal(err)
+	}
+	argv := f.waitArgv(1)
+	if has(argv, "--resume", "") || !has(argv, "--session-id", "") || has(argv, "-c", "") {
+		t.Fatalf("terminal -c in a-b (no conversation of its own): argv %v, want a new --session-id", argv)
+	}
+	if o := f.owner(f.m, ub); o != "" {
+		t.Fatalf("the conversation of a/b is claimed by %q", o)
+	}
+	tb := newID("tb")
+	if _, err := f.createTerminal(f.m, tb, b, f.exe+" -c"); err != nil {
+		t.Fatal(err)
+	}
+	if argv := f.waitArgv(2); !has(argv, "--resume", ub) {
+		t.Fatalf("terminal -c in a/b: argv %v, want --resume %s", argv, ub)
+	}
+}
+
 func TestTerminalContinueClaimsLatest(t *testing.T) {
 	f := newChatFixture(t, true)
 	cont := f.exe + " -c"

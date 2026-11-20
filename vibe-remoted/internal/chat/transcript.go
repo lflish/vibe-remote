@@ -21,9 +21,9 @@ func ProjectsDir() string {
 }
 
 // EncodeProjectDir is claude's directory name for a workdir: the absolute
-// path with "/" and "." replaced by "-" (measured, probe V4). Other special
-// characters were not measured; LatestSessionForWorkdir falls back to the
-// transcripts' own cwd for those.
+// path with "/" and "." replaced by "-" (measured, probe V4). Different paths
+// can share a name, and other special characters were not measured:
+// LatestSessionForWorkdir decides by the transcripts' own cwd.
 func EncodeProjectDir(workdir string) string {
 	return strings.NewReplacer("/", "-", ".", "-").Replace(workdir)
 }
@@ -81,21 +81,27 @@ func newest(files []transcriptFile) []transcriptFile {
 }
 
 // cwdFallbackScan bounds how many recent transcripts are opened when the
-// workdir's own directory is missing.
+// workdir's own directory holds no conversation of it.
 const cwdFallbackScan = 10
 
-// LatestSessionForWorkdir returns the claude conversation `claude -c` would
-// continue in workdir: the most recently modified transcript in the
-// workdir's project directory. When that directory does not exist (or holds
-// no transcript), the most recent transcripts across all projects are
-// checked for a first "cwd" equal to workdir.
+// LatestSessionForWorkdir returns the claude conversation of workdir that
+// `-c` continues: the most recently modified transcript in the workdir's
+// project directory that was recorded in this workdir. The directory name
+// alone does not say so — "/" and "." both become "-", so …/a-b, …/a.b and
+// …/a/b share one directory — so each candidate's own "cwd" is checked, and a
+// transcript that records none is not taken. When the directory holds no
+// conversation of workdir (or does not exist: characters whose encoding was
+// never measured), the most recent transcripts across all projects are
+// checked the same way.
 func LatestSessionForWorkdir(projectsDir, workdir string) (string, bool) {
 	if canon, err := filepath.EvalSymlinks(workdir); err == nil {
 		workdir = canon
 	}
 	workdir = filepath.Clean(workdir)
-	if files := newest(listTranscripts(filepath.Join(projectsDir, EncodeProjectDir(workdir)))); len(files) > 0 {
-		return files[0].id, true
+	for _, f := range newest(listTranscripts(filepath.Join(projectsDir, EncodeProjectDir(workdir)))) {
+		if transcriptCwd(f.path) == workdir {
+			return f.id, true
+		}
 	}
 	dirs, err := os.ReadDir(projectsDir)
 	if err != nil {
@@ -119,7 +125,9 @@ func LatestSessionForWorkdir(projectsDir, workdir string) (string, bool) {
 	return "", false
 }
 
-// transcriptCwd returns the first "cwd" recorded in a transcript.
+// transcriptCwd returns the first "cwd" recorded in a transcript — the
+// directory the conversation was started in. Only the head of the file is
+// read (the first 100 lines at most), never the whole transcript.
 func transcriptCwd(path string) string {
 	f, err := os.Open(path)
 	if err != nil {

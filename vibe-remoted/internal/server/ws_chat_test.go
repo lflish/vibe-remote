@@ -1429,3 +1429,48 @@ func TestCreateChatDuringShutdownIsRetryable(t *testing.T) {
 		t.Fatalf("error during shutdown: %+v", f)
 	}
 }
+
+// X4 (R1.5, H6): a new chat session with -c in a directory that has no
+// conversation must not pick up the conversation of another directory whose
+// path claude encodes to the same project directory (…/a-b vs …/a/b).
+func TestContinueIgnoresOtherDirectorySharingProjectDir(t *testing.T) {
+	c := newChatServer(t, withFlags(config.ClaudeFlag{ID: "continue", Label: "continue", Arg: "-c"}))
+	a := filepath.Join(c.root, "a-b")
+	b := filepath.Join(c.root, "a", "b")
+	for _, d := range []string{a, b} {
+		if err := os.MkdirAll(d, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		chattest.TrustDir(t, c.env.ConfigDir, d)
+	}
+	if chat.EncodeProjectDir(a) != chat.EncodeProjectDir(b) {
+		t.Fatal("fixture: the two directories should share a project dir")
+	}
+	u := chat.NewUUID()
+	dir := filepath.Join(c.env.ConfigDir, "projects", chat.EncodeProjectDir(b))
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	line, _ := json.Marshal(map[string]any{"type": "user", "cwd": b, "sessionId": u,
+		"message": map[string]any{"role": "user", "content": "conversation that belongs to directory a/b"}})
+	if err := os.WriteFile(filepath.Join(dir, u+".jsonl"), append(line, '\n'), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	w := c.connect()
+	ra := c.attachChat(w, protocol.AttachFrame{NewSessionID: newSID("collide-a"), Workdir: a, Flags: []string{"continue"}})
+	defer c.mgr.Delete(ra.SessionID)
+	if ra.Workdir != a {
+		t.Fatalf("session workdir %q, want %q", ra.Workdir, a)
+	}
+	if ra.ClaudeSessionID == u {
+		t.Fatalf("-c in %s (no conversation of its own) resumed %s, the conversation of %s", a, u, b)
+	}
+	// The directory the conversation belongs to still continues it.
+	w2 := c.connect()
+	rb := c.attachChat(w2, protocol.AttachFrame{NewSessionID: newSID("collide-b"), Workdir: b, Flags: []string{"continue"}})
+	defer c.mgr.Delete(rb.SessionID)
+	if rb.ClaudeSessionID != u {
+		t.Fatalf("-c in %s got %s, want its own conversation %s", b, rb.ClaudeSessionID, u)
+	}
+}
