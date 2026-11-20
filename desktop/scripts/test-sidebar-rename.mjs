@@ -408,6 +408,60 @@ test('X10 rename committed by a click into a field elsewhere, or a dialog: the k
   t.close();
 });
 
+// A session opened from the sidebar has the keyboard: its input, its prompt
+// card, the terminal. The sidebar hands the focus back to "the same control"
+// when it is rebuilt, and that is for a focus that was in the sidebar: a
+// rebuild that comes after the session took the keyboard must leave it there.
+// (M.X7 of gui-worktree-smoke once ended with the keyboard nowhere after a
+// session was opened from its row; this is the path that was suspected.)
+test('a sidebar rebuild after a session was opened from its name leaves the keyboard in the session (input, prompt card, terminal)', async () => {
+  const t = await setup();
+  const c1 = t.openChat('c1');
+  const c2 = t.openChat('c2', [bash('p1')]); // a prompt is waiting in it
+  const term = t.terminal('t1');
+  t.page.flushFrames();
+  /** Something the sidebar shows changes (the shell moved to another directory): the list is rebuilt. */
+  let moves = 0;
+  const rebuild = () => {
+    const old = t.label('shell');
+    t.sessions[1].workdir = `/w/t1/dir-${++moves}`;
+    t.app.machineSessions.set(mk, t.sessions.map((s) => ({ ...s })));
+    t.app.renderSidebar();
+    assert.equal(old.isConnected, false, 'fixture: the list was rebuilt');
+  };
+  /** A press on a session's name: the button takes the focus, then the click. */
+  const press = (title) => {
+    const l = t.label(title);
+    l.focus();
+    l.dispatchEvent(new MouseEvent('click', { bubbles: true, detail: 1 }));
+  };
+
+  press('conversation');
+  // A rebuild before the session has taken the keyboard: the focus is still on
+  // the name, and stays on it (the rebuilt one) — the session takes it next.
+  rebuild();
+  assert.equal(document.activeElement, t.label('conversation'), 'before the session takes it, the focus is on the pressed name');
+  t.page.flushFrames();
+  assert.equal(document.activeElement, c1.input, 'the chat session opened from its name has the keyboard in its input');
+  rebuild();
+  rebuild();
+  assert.equal(document.activeElement, c1.input, 'rebuilds afterwards leave the keyboard in the input');
+
+  press('other');
+  t.page.flushFrames();
+  t.page.flushFrames();
+  assert.equal(document.activeElement, c2.card(), 'a session with a prompt waiting has the keyboard on the card');
+  rebuild();
+  assert.equal(document.activeElement, c2.card(), 'a rebuild leaves the keyboard on the card');
+
+  press('shell');
+  t.page.flushFrames();
+  assert.equal(document.activeElement, term.helper, 'the terminal session has the keyboard');
+  rebuild();
+  assert.equal(document.activeElement, term.helper, 'a rebuild leaves the keyboard in the terminal');
+  t.close();
+});
+
 test('X10 opening a session whose prompt is waiting: the keyboard is on the card, 1 answers it and the input has it afterwards', async () => {
   const t = await setup();
   const c1 = t.openChat('c1');
