@@ -227,6 +227,11 @@ func worktreesFromLines(dir, out string) ([]Worktree, error) {
 		return nil, errWorktreeLines(dir, "the entry of the main directory is not whole")
 	}
 	common, err := gitCommonDirOf(dir)
+	if err == nil {
+		// The directory itself, as the file system has it: the path may still
+		// have a ".." in it (a linked worktree's commondir is "../..").
+		common, err = filepath.EvalSymlinks(common)
+	}
 	if err != nil {
 		return nil, errWorktreeLines(dir, err.Error())
 	}
@@ -301,8 +306,8 @@ func gitCommonDirOf(dir string) (string, error) {
 }
 
 // commonDirOfGitDir follows gitDir's commondir file. The path is put together
-// without cleaning it: a ".." in it is resolved by the file system, as git
-// does.
+// without cleaning it: a ".." in it is for the file system to resolve, as git
+// does (the caller does, with EvalSymlinks).
 func commonDirOfGitDir(gitDir string) string {
 	data, err := os.ReadFile(filepath.Join(gitDir, "commondir"))
 	if err != nil {

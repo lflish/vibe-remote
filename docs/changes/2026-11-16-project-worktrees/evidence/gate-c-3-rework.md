@@ -197,3 +197,9 @@ AssertionError [ERR_ASSERTION]: the repaint in pieces of 1976 bytes was taken fo
 | M6 快照含光标位置 | `a tmux repaint of the same screen is not a change (80×24)`：`the repaint in pieces of 1000 bytes was taken for new output`——重绘被切开时中途的光标位置和重绘前不同 |
 | M7 已经亮着的点（hook 状态）被输出覆盖 | `index: the session shown gets no dot; hook events are not affected`（`output does not take a hook state back to "new messages"`） |
 | M8 前台会话也亮点 | `index: a repaint does not light the dot…` |
+
+## 4. 四处改完之后的补充
+
+- 自查时改的一处（T29 的后续，单独提交）：`worktreesFromLines` 拿到公共目录之后先用 `filepath.EvalSymlinks` 解析成文件系统上的那个目录，再去读它下面的 `worktrees/`。从链接 worktree 里读列表时公共目录是 `<主目录>/.git/worktrees/<名字>/../..`，原来靠 `filepath.Join` 按字面消掉 `..`；管理目录是符号链接时按字面消和文件系统的结果不同，git 自己是按文件系统解析的。行为在普通仓库上不变。
+- 之后在真的 git 2.34.1 上重跑：`go test -count=1 -timeout 10m -v ./internal/session -run 'TestFallbackList|TestParseWorktreeList|TestListWorktrees|TestChatTrust|TestProjects|TestResolveHome|TestManaged|TestUndo|TestWorktreeStatus|TestCreateFailedByPostCheckoutHook'` → `ok`（75 s），139 行 PASS、0 FAIL、3 个 SKIP（同 1.4 的那 3 个）。
+- T31 的回调会不会在会话关闭之后才触发：实验（临时脚本，没有保留）在 `writeWatched` 之后立刻 `term.dispose()`，300 ms 内回调一次都没有触发；对已经 dispose 的终端调用 `screenText` 不抛异常。所以没有给回调加保护。
