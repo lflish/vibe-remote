@@ -1,0 +1,8 @@
+code under test 4c1e78c, 2026-11-20 17:50; one run each; what each probe returned:
+
+PASS probe: a prompt card arriving while the user types — typing in the chat input: keyboard went to chat-perm; then "1" → card answered (gone); draft kept: "half a sentence " || machine manager open, typing an address: keyboard went to chat-perm; then "1" → request ANSWERED; field value "10.0."
+
+PASS probe: while renaming, a real click on another session (no delay added to the rename request) — 0/5 clicks switched the session (name saved every time): not switched/session-label, not switched/session-label, not switched/session-label, not switched/session-label, not switched/session-label
+
+PASS probe: a real click on a background session the moment its yellow dot appears — 8/8 clicks opened the session; lost: none
+

@@ -1,120 +1,138 @@
 # 测试报告：按项目和 worktree 组织会话，并更换视觉风格
 
-日期：2026-11-20　分支：change/project-worktrees　提交：bbc2e9b（被测的代码；运行时的 HEAD 就是它，工作区里只多了一处还没提交的文档改动：归档到 `verdict-history.md` 的第 2 轮结论；其后的提交只改 `docs/changes/` 下的文档和记录）
+日期：2026-11-20　分支：change/project-worktrees　提交：4c1e78c（被测的代码；其后的提交只改 `docs/changes/` 下的文档和 `gui-worktree-smoke.mjs` 里一处注释中写错的数字；中途给 `CLAUDE.md` 加过两段又原样撤回，见 decisions c13）
 
-> ⚠️ **关口 C 用户放行后的返工（T29–T32）之后的第 3 轮全量运行，复验结论见之后的 verdict.md。** 第 2 轮的报告对应代码 `3c9cff8`，那一轮的验证结论（被测 `482ab63`，通过，有备注）已原样归档到 `verdict-history.md` 末尾的「第 2 轮（提交 482ab63）」；仓库里的 `verdict.md` 仍是那一轮的，下一轮验证者会覆盖它。用户对关口 C 汇总的回复是 `all`：放行，进入发布之前先改四处（d71、c8、c7、c9；c6 保留）。四处改了什么、各自的回归测试和这一轮的结果见下面「关口 C 放行后的返工」一节。
-> ⚠️ 端到端测试：**已完成**。58 个验收场景每个都有在真实应用里运行的用例（CDP 驱动构建产物，本机有界面的 Electron 临时实例），这一轮运行 67 个用例全部通过（比上一轮多 2 个：`R3.8.hook`、`X1.redraw`，是这次返工加的）；另有不带界面的接口冒烟 30 行全部通过。
+> ⚠️ **这是合并 `change/dual-mode` 的关口 C 返工（X3–X10）之后的全量运行（第 4 轮）。** 对话模式在本分支分出去（`6d88e45`）之后又做了两轮返工、21 个提交，到 `64e8b5e` 定稿；这一轮把它合并进来（合并提交 `c28c001`，任务 T33），解决冲突，把对话模式的修复接到三层侧边栏上，再在合并后的代码上跑全部检查。合并了什么、怎么取舍、哪些测试改写了、补了哪些用例，见下面「合并 change/dual-mode」一节。第 3 轮的报告对应代码 `bbc2e9b`。仓库里的 `verdict.md` 仍是关口 C 第 2 轮的（被测 `482ab63`）；合并后的代码没有做独立验证。
+> ⚠️ 端到端测试：**已完成**。三份 GUI 冒烟（CDP 驱动构建产物，本机有界面的 Electron 临时实例）各连续运行 2 次，三份接口冒烟各 1 次。
 > 浏览器环节：适用（桌面应用，裸 CDP；没有用 Playwright，跟随项目已有的做法）。
-> 测试环境：e2e_env = local。被测的是临时 daemon（终端会话跑 `/bin/bash`，对话会话跑假 claude）和本机的 git 2.50.1、tmux 3.6a，**不是真实的 claude，也不是远程 Linux**。T29、T30 另在从源码构建的真 git 2.34.1 上跑过（`evidence/gate-c-3-rework.md` 1.4、2.1、第 4 节）。返工后的独立验证（关口 C 第 3 轮）还没有做，结论见之后的 verdict.md。
-> 这一轮的全量运行没有出现失败，已知偶发的用例一次都没有出现，没有重跑。返工改了 daemon（`worktree.go`）和桌面端（终端会话的「有新消息」点）；探索式检查是第 1 轮做的，这一轮没有重做，只把其中的 X1 改掉并加了真实应用里的用例。返工的 5 个代码提交没有做独立代码评审（不派子 agent 是这次返工的约束），由下一轮独立验证者把关。
+> 测试环境：e2e_env = local。被测的是临时 daemon（终端会话跑 `/bin/bash`，对话会话跑假 claude）和本机的 git 2.50.1、tmux 3.6a，**不是真实的 claude，也不是远程 Linux**。
+> **最终代码（`4c1e78c`）上的这一轮没有失败**：每一项都是第一次运行就通过；`gui-chat-smoke.mjs` 第 2 次运行里有 1 次「双击被侧边栏重建吞掉后重做」（脚本打印了 `NOTE`，见下）。**到达这份代码之前有过失败**，其中一个是合并带来的真问题（已修），两个没有复现出来、原因没有查清，全部列在「合并 change/dual-mode」的「运行过程中的失败」里。
+> ⚠️ **有两处改动了检查本身，等用户裁决（decisions c10、c11），另有一条断言换了内容（c12）**：`gui-chat-smoke.mjs` 的双击在被侧边栏重建吞掉时重做；`gui-worktree-smoke.mjs` 的 R8.3 把「旧脚本的断言行不减少」的基准加上了合并进来的版本；`test-sidebar-rename` 里「终端会话的删除确认写着画面会丢失」换成了本需求确认框的文案。不这样做全量运行过不了；理由和放弃的做法在各自的条目里。
+> ⚠️ **发现并改掉一处测试环境的问题**（decisions #164）：三份 GUI 冒烟里没有自己 claude 配置目录的临时 daemon 会读本机真实的 `~/.claude.json`（只读，只看 `hasTrustDialogAccepted` 一个字段，什么都不打印不保存）。两个分支此前每一轮都是这样；这一轮在发现之前的运行也是。脚本已改，最终这一轮全部在改过的脚本上、带空的 `CLAUDE_CONFIG_DIR` 运行。
 
 ## 汇总
 
-| 类别 | 通过 | 失败 | 跳过 | 合计 |
-|------|------|------|------|------|
-| 单元 + 集成：Go（`make check` 里的 `go test -race -count=1 ./...`） | 5 个包全部 `ok`；带 `-v` 另跑的一遍：459 个顶层测试函数（session 248、server 99、chat 95、config 15、protocol 2）和 439 个子用例全部 PASS | 0 | 0 | 5 个包，459 个顶层测试（第 2 轮是 454；多出的 5 个是 T29、T30 的回归测试，子用例多 53 个） |
-| 单元：桌面端（`make check` 里的 `npm test`，34 步） | 322 | 0 | 0 | 322（第 2 轮 311；多出的 11 行是 T31 的 `test-terminal-activity`） |
-| 端到端（浏览器）：`gui-worktree-smoke.mjs` | 67 | 0 | 0 | 67（62 个按场景命名的 + 探索式检查后加的 5 个；`--list` 列出 67 个；输出 70 行 PASS） |
-| 端到端（浏览器）：`gui-smoke.mjs` | 46 行 PASS | 0 | 0 | 46（脚本里 `check(` 30 处，未减少；脚本这次没有改） |
-| 端到端（浏览器）：`gui-chat-smoke.mjs` | 29 行 PASS | 0 | 0 | 29（脚本里 `^test(` 26 处，未减少；脚本这次没有改） |
-| 端到端（接口）：`ws-smoke.mjs` / `ws-chat-smoke.mjs` / `ws-worktree-smoke.mjs` | 12 / 9 / 9 | 0 | 0 | 30 |
-| `.devflow.yml` 的不变规则（19 条） | 18 条命令原样执行，退出码全是 0，没有 `(cached)`；第 2 条是 `/protocol-sync` skill，这一轮没有任何协议改动（见下） | 0 | 0 | 19 |
+| 类别 | 通过 | 失败 | 跳过 | 合计 | 合并前：本分支（`bbc2e9b`） / 对话模式（`64e8b5e`） |
+|------|------|------|------|------|------|
+| 单元 + 集成：Go（`make check` 里的 `go test -race -count=1 ./...`） | 5 个包全部 `ok`；带 `-v` 另跑的一遍：468 个顶层测试函数（session 251、server 101、chat 99、config 15、protocol 2）和 458 个子用例全部 PASS | 0 | 0 | 468 | 459（248 / 99 / 95 / 15 / 2） / 265（95 / 56 / 98 / 14 / 2） |
+| 单元：桌面端（`make check` 里的 `npm test`，36 步） | 365 行 `ok` | 0 | 0 | 365 | 322 行、34 步 / 141 个用例、24 个脚本 + 1 项检查 |
+| 端到端（浏览器）：`gui-worktree-smoke.mjs` 第 1 / 2 次 | 71 / 71 个用例（74 / 74 行 PASS） | 0 / 0 | 0 | 71 | 67 个用例（70 行） / 没有这份脚本 |
+| 端到端（浏览器）：`gui-smoke.mjs` 第 1 / 2 次 | 46 / 46 行 PASS（脚本里 `check(` 30 处） | 0 / 0 | 0 | 46 | 46 行（`check(` 30） / 30 行（`check(` 14） |
+| 端到端（浏览器）：`gui-chat-smoke.mjs` 第 1 / 2 次 | 37 / 37 行 PASS（`^test(` 34 个；第 2 次有 1 行 `NOTE`：一次双击被吞后重做） | 0 / 0 | 0 | 37 | 29 行（`^test(` 26） / 37 行（`^test(` 34） |
+| 端到端（接口）：`ws-smoke.mjs` / `ws-chat-smoke.mjs` / `ws-worktree-smoke.mjs` | 12 / 9 / 9 | 0 | 0 | 30 | 12 / 9 / 9；对话模式 12 / 9 / 没有第三份 |
+| `.devflow.yml` 的不变规则（19 条） | 18 条命令原样执行，退出码全是 0，没有 `(cached)`；第 2 条是 `/protocol-sync` skill，见下 | 0 | 0 | 19 | 19 条 / 11 条 |
 
-每一项都是退出码 0、第一次运行就通过，没有重跑。都在 HEAD `bbc2e9b` 上运行（2026-11-20 11:43–12:05），一个一个跑，各带独立的 `TMUX_TMPDIR`（`/tmp/vr-XXXXXX`）；临时 daemon 的 `allowed_roots` 只有自己在 `/tmp` 下建的目录。运行期间本机另有一个不属于这次任务的会话在跑别的需求的检查（`/tmp/vr-dm-*`、`/tmp/vr-fix-*`），机器不是空闲的。
+数量对照：每一类都不少于合并前两边各自的数量。
 
-已知偶发的用例（`gui-smoke.mjs` 的「drag-select + ⌘C」、第 4 步等选区目标、第 9 步状态点；`gui-chat-smoke.mjs` 的 R1.1、R7、R13.2 / R14.2；`TestStopAccountsForEveryQueuedMessage/restart`、`TestProjectsOneGitCallPerProject/unresolved_session`、`TestProjectStoreRemoveWorktreeIfSame`、`TestWorktreeStatus/ignored_timeout`）**这一轮的全量运行里一次都没有出现**：三份 GUI 冒烟各跑 1 次，Go 全套跑了 2 次（`make check` 一次、带 `-v` 一次），这四个 Go 用例在带 `-v` 的那次逐个看到是 PASS。返工途中（不是这一轮全量运行）在真的 git 2.34.1 上、不带 `-race` 的整包运行里 `TestProjectStoreRemoveWorktreeIfSame` 失败过 1 次，带 `-race` 单独重跑 5 次都通过（`evidence/gate-c-3-rework.md` 1.4；验证者上一轮量过：不带 `-race` 200 次里失败 33 次）。它们偶发的原因仍然没有查清。
+- Go：对话模式返工新增的 8 个顶层测试全部在（chat 4 个：`TestLatestSessionChecksTranscriptCwd`、`TestLatestSessionReadsUntilFirstCwd`、`TestLatestSessionComparesCanonicalCwd`、`TestTailOverflowKeepsMessageStart`；server 2 个、session 2 个：`Test(Terminal)ContinueIgnoresOtherDirectorySharingProjectDir`、`Test(Terminal)ContinueFindsLateOrAliasedCwd`），加这一轮新增的 `TestContinueInWorktreesSharingProjectDir`：459 + 8 + 1 = 468。对话模式那边有、这里没有的测试名有 7 个（`TestDeleteDirtyWorktreeReturnsStructuredConflict`、`TestInfoAndReadyProto3`、`TestManagerDeleteRecoveredCleanWorktreeRemovesGitResources`、`TestWorktreeCleanCleanupRemovesWorktreeAndBranch`、`TestWorktreeDirtyCleanupPreservesBoth`、`TestWorktreeIgnoredFileIsPreserved`、`TestWorktreeRollbackToleratesMissingWorktreeOrBranch`）：都是分叉点就有、本需求在合并之前自己替换掉的（删会话不再清 worktree、协议升到 4），对话模式的返工没有动过它们，不是这次合并去掉的。本分支合并前的测试名一个不少。
+- 桌面端单元：322 + 对话模式返工带来的 43（`test-chat-activity` 6 → 8、`test-chat-session` 18 → 20、`test-chat-view` 17 → 22、`test-sidebar-rename` 在这里是 34 行：对话模式的 15 个用例在两种位置各跑一遍 = 30，加这一轮新增的 2 个 × 2 = 4）= 365；另有不输出 `ok` 行的 `test-source-bytes`（40 个文件）。
+- `gui-chat-smoke.mjs` 运行时 37 项、`gui-smoke.mjs` 运行时 46 项（对话模式 30 项里的每一项都在，多出的是本需求的侧边栏布局和快捷键）。
 
-运行命令和结果（完整输出在 `evidence/final-run/`，这一轮覆盖了第 2 轮的同名文件）：
+每一项都是退出码 0。都在 `4c1e78c` 的代码上运行（2026-11-20 16:50–17:50），一个一个跑；每条命令带独立的 `TMUX_TMPDIR`（`/tmp/vr-t33-XXXXXX`）和一个空的 `CLAUDE_CONFIG_DIR`；临时 daemon 的 `allowed_roots` 只有自己在 `/tmp` 下建的目录；需要旧版 daemon 的两份脚本用的是从 `git archive main` / `git archive 6d88e45` 导出到 `/tmp` 后构建的二进制（`VR_MAIN_DAEMON`、`VR_BASE_DAEMON`），没有对项目仓库做 `git worktree add`。每次启动 Electron 前都看过没有别的测试实例。
+
+已知偶发的用例（`gui-smoke.mjs` 的「drag-select + ⌘C」、第 4 步等选区目标、第 9 步状态点；`gui-chat-smoke.mjs` 的 R1.1、R7、R13.2 / R14.2；`TestStopAccountsForEveryQueuedMessage/restart`、`TestProjectsOneGitCallPerProject/unresolved_session`、`TestProjectStoreRemoveWorktreeIfSame`、`TestWorktreeStatus/ignored_timeout`）**这一轮一次都没有出现**（四个 Go 用例在带 `-v` 的那次逐个看到是 PASS）。这一轮新列入偶发清单的两个：`gui-chat-smoke.mjs` 的 `X7-send`、`gui-worktree-smoke.mjs` 的 `M.X7`（见「运行过程中的失败」第 4、6 条）。
+
+运行命令和结果（完整输出在 `evidence/final-run/`，覆盖了第 3 轮的同名文件；两次运行的第 2 次是 `*-2.txt`）：
 
 ```
-$ TMUX_TMPDIR=<临时目录> make check
+$ TMUX_TMPDIR=<临时目录> CLAUDE_CONFIG_DIR=<空的临时目录> make check
 cd vibe-remoted && go vet ./...
 cd vibe-remoted && go test -race -count=1 ./...
-ok  	github.com/lflish/vibe-remote/vibe-remoted/internal/chat	17.156s
-ok  	github.com/lflish/vibe-remote/vibe-remoted/internal/config	1.941s
-ok  	github.com/lflish/vibe-remote/vibe-remoted/internal/protocol	2.334s
-ok  	github.com/lflish/vibe-remote/vibe-remoted/internal/server	69.347s
-ok  	github.com/lflish/vibe-remote/vibe-remoted/internal/session	373.323s
+ok  	github.com/lflish/vibe-remote/vibe-remoted/internal/chat	18.930s
+ok  	github.com/lflish/vibe-remote/vibe-remoted/internal/config	1.901s
+ok  	github.com/lflish/vibe-remote/vibe-remoted/internal/protocol	2.293s
+ok  	github.com/lflish/vibe-remote/vibe-remoted/internal/server	75.978s
+ok  	github.com/lflish/vibe-remote/vibe-remoted/internal/session	401.892s
 cd desktop && npm run typecheck
 > tsc --noEmit
 cd desktop && npm test
-…（322 行 ok，0 行 not ok / FAIL）
-test-terminal-activity checks passed (11)
-…
+…（365 行 ok，0 行 not ok / FAIL）
 test-theme-tokens checks passed (16)
+…
+test-sidebar-rename checks passed (34)
+…
+source bytes check passed (40 files, no NUL)
 exit=0
+files in the empty claude config dir afterwards: 0
 
-$ cd vibe-remoted && TMUX_TMPDIR=<临时目录> go test -race -count=1 -v -timeout 25m ./...     # 为了数通过和跳过另跑的一遍（evidence/final-run/go-test-v-summary.txt）
-ok  	…/internal/chat	17.457s
-ok  	…/internal/config	1.514s
-ok  	…/internal/protocol	2.319s
-ok  	…/internal/server	70.726s
-ok  	…/internal/session	373.460s
-exit=0                                              # 顶层 PASS 459 / FAIL 0 / SKIP 0；子用例 PASS 439 / FAIL 0 / SKIP 0
+$ cd vibe-remoted && TMUX_TMPDIR=<临时目录> CLAUDE_CONFIG_DIR=<空的临时目录> go test -race -count=1 -v -timeout 25m ./...     # 为了数通过和跳过另跑的一遍（evidence/final-run/go-test-v-summary.txt）
+ok  	…/internal/chat	19.094s
+ok  	…/internal/config	1.494s
+ok  	…/internal/protocol	2.257s
+ok  	…/internal/server	76.795s
+ok  	…/internal/session	476.306s
+exit=0                                              # 顶层 PASS 468 / FAIL 0 / SKIP 0；子用例 PASS 458 / FAIL 0 / SKIP 0
 
-$ TMUX_TMPDIR=<临时目录> node .claude/skills/verify/scripts/gui-smoke.mjs
+$ TMUX_TMPDIR=<临时目录> CLAUDE_CONFIG_DIR=<空的临时目录> node .claude/skills/verify/scripts/gui-smoke.mjs          # ×2
 …
-PASS the switching keys pressed in a focused terminal send no bytes to the remote
-PASS ordinary keys typed afterwards still reach the remote shell
+PASS sidebar rows are readable at the default width (names, badges, state text, dots)
+PASS the "more" menu of a project row and of a worktree row at the bottom of the sidebar stays inside an 800×500 window and takes a click
+PASS under a long branch the toolbar title of an 800×500 window shortens the branch and keeps the session name whole
+PASS in an 800×500 window the note under "continue" is fully visible once the option is ticked
+…
+PASS drag-select under mouse reporting + ⌘C copies the text
+…
 PASS no uncaught renderer exceptions
-
 all GUI checks passed
-exit=0                                              # 46 行 PASS、0 行 FAIL
+exit=0                                              # 两次都是 46 行 PASS、0 行 FAIL；NOTE 4 行是脚本每次都打印的测量值
 
-$ TMUX_TMPDIR=<临时目录> node .claude/skills/verify/scripts/gui-chat-smoke.mjs
+$ TMUX_TMPDIR=<临时目录> CLAUDE_CONFIG_DIR=<空的临时目录> VR_MAIN_DAEMON=<从 main 构建的 daemon> node .claude/skills/verify/scripts/gui-chat-smoke.mjs --no-build          # ×2
+…
+PASS X7 scrolled up with the wheel: a typed message and its reply show; replies do not drag the view; reaching the bottom shows them — …
+PASS X7 background session got more than a screen: back at the bottom with the newest, a typed message shows; left scrolled up → same place — …
+PASS X8 double click on an open chat session (current, then background) renames it; the name is not sent to claude; the sidebar keeps updating — …
+PASS X8 double click on an open terminal session (current ×3, background ×2) renames it; nothing is typed into the shell — 5 renames, last "bg box 2"
+PASS X10 a background chat session asks for permission (yellow dot): a real click opens it, then 1 answers / Esc interrupts without clicking the card, and typing goes on in the input — …
+PASS X10 after renaming a chat session (Enter, Esc, a click on another session) the next keys go into the current session, without a click — …
+PASS X10 after renaming a terminal session (Enter, Esc) the next keys go into the terminal, without a click — …
+…
+PASS R16.3 current session while the window is in the background: yellow dot on it + notification; cleared once the window is focused again — …     # X6
 …
 PASS no uncaught renderer exceptions
-
 all GUI chat checks passed
-exit=0                                              # 29 行 PASS、0 行 FAIL
+exit=0                                              # 两次都是 37 行 PASS、0 行 FAIL
+                                                    # 第 2 次多 1 行：NOTE double click on sidebar item bg box: the sidebar was rebuilt 8× while the button was down and the click was lost (known, not fixed); doing it again (attempt 2)
 
-$ TMUX_TMPDIR=<临时目录> node .claude/skills/verify/scripts/gui-worktree-smoke.mjs     # 自己建 /tmp/vr-wt-*、给每台 daemon 单独的 tmux 目录；连 desktop/dist 和几台 daemon 一起重新构建
-PASS 5 daemons up (this-mac:<端口> proto 4, lab-mac:<端口> proto 4, keep-mac:<端口> proto 4, narrow-mac:<端口> proto 4, old-mac:<端口> proto 3)
-PASS app started with 5 machines (zh), hooks installed
+$ VR_BASE_DAEMON=<从 6d88e45 构建的 daemon> node .claude/skills/verify/scripts/gui-worktree-smoke.mjs --no-build          # ×2；自己建 /tmp/vr-wt-*，给每台 daemon 单独的 tmux 目录和 claude 配置目录
 …
-PASS R3.8 git fails while creating — 错误：create session: create worktree: git worktree add --detach …/failrepo-worktrees/will-fail <oid>: exit status 128: … fatal: could not create directory of '.git/worktrees/will-fail': Permission denied
-PASS R3.8 the post-checkout hook fails while creating — two attempts failed with the hook's message and left nothing (no directory, no registration, no branch, no row); with the hook gone the same name was created (session <id>)
+PASS R8.3 the two existing GUI scripts keep every case of the version before this change — gui-smoke.mjs: 14 → 30 cases (14 in the merged 64e8b5e), no asserting line removed; 1 of the version before replaced by that branch itself; gui-chat-smoke.mjs: 26 → 34 cases (34 in the merged 64e8b5e), no asserting line removed; 1 of the version before replaced by that branch itself (…)
 …
 PASS double-clicking the name of a session that is open here renames it (exploration X2) — …
-PASS a background terminal session shows "new messages" only when its screen changed (exploration X1, c7) — 12 data frames repainted the background session when another session was created and renamed: no dot; renamed itself: no dot; it printed a line: "终端 · 有新消息"
-PASS a row menu opened with the pointer stays at its button when the sidebar is rebuilt (exploration X8) — …
-PASS the row menus work from the keyboard alone (exploration X3) — …
-PASS switching with the keys scrolls the session's row into view (exploration X6) — …
+…
+PASS under a worktree row: double click renames a chat and a terminal session, the name is not typed into the session, and the next keys go into it without a click (chat sessions X8, X10) — …
+PASS under a worktree row: a background chat session asks for permission (yellow dot on its row), a real click opens it, 1 answers without clicking the card, then the input has the keyboard (chat sessions X10) — …
+PASS under a worktree row: the chat session shown asks for permission while the window is in the background: its row shows the yellow dot until the window is focused again (chat sessions X6) — …
+PASS under a worktree row: a chat session that got more than a screen in the background is at the bottom with the newest message when opened again, and a message typed then shows (chat sessions X7) — …
 PASS performance: 20 projects × 5 worktrees add at most 200 ms to the lists — …
 PASS no uncaught renderer exceptions
 
-67 cases: R1 8/8, R2 7/7, R3 11/11, R4 6/6, R5 12/12, R6 2/2, R7 5/5, R8 6/6, R9 2/2, other 8/8
+71 cases: R1 8/8, R2 7/7, R3 11/11, R4 6/6, R5 12/12, R6 2/2, R7 5/5, R8 6/6, R9 2/2, other 12/12
 
 all GUI worktree checks passed
-exit=0                                              # 70 行 PASS、0 行 FAIL
+exit=0                                              # 两次都是 74 行 PASS、0 行 FAIL
 
-$ VR_TOKEN=<临时 token> node .claude/skills/verify/scripts/ws-smoke.mjs 127.0.0.1:<随机端口> <临时目录>     # 自建的临时 daemon：从这份代码 go build，随机端口，/bin/bash，独立的 state_dir 和 tmux 目录，allowed_roots 只有这个临时目录
-PASS /healthz
-PASS /api/v1/info version=dev
-…
+$ VR_TOKEN=<临时 token> node .claude/skills/verify/scripts/ws-smoke.mjs 127.0.0.1:<随机端口> <临时目录>     # 自建的临时 daemon：从这份代码 go build，随机端口，/bin/bash，独立的 state_dir、tmux 目录和 claude 配置目录，allowed_roots 只有这个临时目录
 all checks passed
 exit=0                                              # 12 行 PASS
 
-$ TMUX_TMPDIR=<临时目录> node .claude/skills/verify/scripts/ws-chat-smoke.mjs
-all chat checks passed
+$ node .claude/skills/verify/scripts/ws-chat-smoke.mjs
 exit=0                                              # 9 行 PASS
 
-$ TMUX_TMPDIR=<临时目录> node .claude/skills/verify/scripts/ws-worktree-smoke.mjs
-git: git version 2.50.1 (Apple Git-155) (the one on PATH); tmux: tmux 3.6a
-all worktree checks passed
+$ node .claude/skills/verify/scripts/ws-worktree-smoke.mjs
 exit=0                                              # 9 行 PASS
 
-$ .devflow.yml 的 invariants：18 条 check 命令原样交给 zsh，环境里加 GOFLAGS=-count=1 和各自的 TMUX_TMPDIR（evidence/final-run/invariants.txt）
-1 exit=0 (58 s)   3 exit=0   4 exit=0 (16 s)   5 exit=0   6 exit=0   7 exit=0   8 exit=0   9 exit=0   10 exit=0   11 exit=0
-12 exit=0   13 exit=0 (12 s)   14 exit=0   15 exit=0 (82 s)   16 exit=0   17 exit=0 (22 s)   18 exit=0 (41 s)   19 exit=0 (12 s)
+$ .devflow.yml 的 invariants：18 条 check 命令原样交给 zsh，环境里加 GOFLAGS=-count=1、各自的 TMUX_TMPDIR 和空的 CLAUDE_CONFIG_DIR（evidence/final-run/invariants.txt）
+1 exit=0   3 exit=0   4 exit=0   5 exit=0   6 exit=0   7 exit=0   8 exit=0   9 exit=0   10 exit=0   11 exit=0
+12 exit=0   13 exit=0   14 exit=0   15 exit=0   16 exit=0   17 exit=0   18 exit=0   19 exit=0
 ```
 
-关于不变规则的四点说明：
+布局测量脚本（`picker-layout.mjs`、`slash-menu-layout.mjs`、`sidebar-layout.mjs`、`shell-layout.mjs`、`dialog-layout.mjs`）不是能单独运行的命令，是三份 GUI 冒烟导入的模块，在上面的运行里都执行了：目录选择器在 500 / 700 / 803 px 高的窗口里（终端和对话各 3 行 PASS）、侧边栏默认宽度下各行可读、800×500 下的行菜单 / 标题 / `-c` 的说明（`gui-smoke.mjs`）；斜杠菜单在 800×500 和 1280×800（`gui-chat-smoke.mjs`）；R8.5 在 800×500、中英文各量 13 个画面共 26 次测量（`gui-worktree-smoke.mjs`）。对应的单元测试 `test-picker-layout`、`test-slash-menu-layout`、`test-dialog-layout` 在 `npm test` 里。
 
-- 第 2 条「协议三处一致」的 check 是 `/protocol-sync` skill，不是命令。这一轮做的是：确认返工没有碰协议——`git diff --stat b77fcd1..bbc2e9b -- vibe-remoted/internal/protocol desktop/src/shared desktop/src/renderer/rest.ts vibe-remoted/internal/server docs/protocol.md` 没有输出，这些文件与第 2 轮验证者核对过的提交 `482ab63` 逐字节相同（`evidence/final-run/protocol-sync.txt`）。返工改变的对外行为都不在协议的形状里：错误帧的 `message` 少了一段「cleanup: … not removed」（T30），旧版 git 上不该列出的目录不再出现在 `/api/v1/projects`、`chatTrust`、`worktrees/status` 里（T29）。错误码表、`chat_ack` 码这类开放集合这一轮没有重新逐项核对。
-- 加 `GOFLAGS=-count=1` 是为了让 `go test` 真的运行，18 条的输出里都没有 `(cached)`。命令本身没有改。
-- 第 13 条的命令里 `./internal/server` 那一半输出 `[no tests to run]`：点名的测试都在 session 包里，命令原文如此，没有改。第 12–19 条自带 `TMUX_TMPDIR=$(mktemp -d)`，以命令自己的为准。
-- 返工改了两条规则的文字和 check（只加用例名，没有去掉的）：第 17 条（对话界面的信任）加了 `TestFallbackListNeverInventsAWorktree`、`TestFallbackListFailsWhenTheMainDirectoryCannotBeRead`、`TestParseWorktreeListByLine`；第 18 条（撤销只清本次建的）加了 `TestCreateFailedByPostCheckoutHookLeavesNothing`、`TestUndoLeavesAWorktreeSomeoneElseAddedWhileTheAddRan`。18 条命令的 `-run` 里共 76 个用例名，逐个在测试源码里核对过，都存在。第 1 条（终端模式纯字节透传，`cd desktop && npm test`）现在包含 `test-terminal-activity` 的「字节原样、按原顺序写进 xterm」一例。
+关于不变规则：
+
+- 19 条 = 合并前本分支的 19 条（其中前 11 条就是对话模式的 11 条）；合并只改了第 4 条「同一 claude 会话 id 任何时刻最多一个 claude 进程」的 check，现在与 `64e8b5e` 上的逐字节相同（多了 `TestLatestSession…` 3 个和 `…SharingProjectDir`、`…LateOrAliasedCwd` 4 个用例名）。这一轮没有改 `.devflow.yml`（新增的 `TestContinueInWorktreesSharingProjectDir` 没有加进第 4 条：改 invariants 要用户同意）。
+- 第 2 条「协议三处一致」的 check 是 `/protocol-sync` skill，不是命令。这一轮做的（`evidence/final-run/protocol-sync.txt`）：合并在协议涉及的文件里只带来 `docs/protocol.md` 的三处文字（对话模式 X5：流式尾巴的上限、`chat_ack.ok`、`chat_ack.message`），Go 类型、TS 接口、`rest.ts`、路由都没有变；三处文字逐条对过代码（`TailMax` / `TailBytesMax`；`ok` 两边都不可省；`message` 两边都可省，`nackMsg` 的调用处正是文档列的三种）；`chat_ack` 的字段和 9 个错误码在三处逐个相同；版本仍是 4（`protocol.Version`、`PROTOCOL_VERSION`、版本表），本需求协议 4 的段落合并后原样。**没有做**：skill 第 2–5 步对所有帧和端点的完整手工核对（上一次完整核对是关口 C 第 2 轮的验证者在 `482ab63` 上做的，此后这些文件里只有上面三处变化）。
+- 加 `GOFLAGS=-count=1` 是为了让 `go test` 真的运行，输出里没有 `(cached)`。第 13 条的命令里 `./internal/server` 那一半输出 `[no tests to run]`（点名的测试都在 session 包里，命令原文如此，前几轮相同）。
 
 ## 场景对照
 
@@ -366,6 +384,104 @@ $ .devflow.yml 的 invariants：18 条 check 命令原样交给 zsh，环境里�
 这 5 个代码提交（`7f4d4e1`、`72456fe`、`525ab9f`、`bbc2e9b`，加文档提交 `e5f52f0` 里对 verify skill 的一处用例数）没有做独立代码评审，由下一轮独立验证者把关。
 
 
+## 合并 change/dual-mode
+
+实际的分叉点是 `6d88e45`（`git merge-base`）；分叉之后本分支 202 个提交，对话模式 21 个提交（到 `64e8b5e`）。`git merge --no-ff change/dual-mode`，合并提交 `c28c001`。`docs/changes/2026-11-13-dual-mode/` 本分支没有改过，整个是对话模式的版本（`git diff --stat change/dual-mode..HEAD -- docs/changes/2026-11-13-dual-mode` 为空）。
+
+### git 报的冲突（5 个文件）
+
+| 文件 | 取舍 |
+|------|------|
+| `desktop/src/renderer/index.ts`（5 处） | 取本分支的结构：`notifyTitleFor`、`expandActiveProject`、`buildSidebarModel`、`sidebarActions`。对话模式那边的旧 `renderSidebar` 循环体（约 170 行）和旧 `startInlineRename` 不要——本分支已经把它们搬到 `sidebar.ts`。保留对话模式新增的 `focusView`、`focusAfterRename`、`selectOpenSession` |
+| `desktop/package.json` | `test` 清单取并集：本分支的 34 步后面接 `test:sidebar-rename`、`test:source-bytes`；两个脚本定义都在 |
+| `desktop/scripts/chat-test-util.mjs` | `__test` 导出取并集（本分支的 `machineTrees`、`machineCaps`、`machineProjects`、`refreshAllMachines`、`pollMachines` + 对话模式的 `rests`、`ChatView`） |
+| `.claude/skills/verify/scripts/gui-smoke.mjs` | bash daemon 的配置两边都要：本分支的 `claude_flags`，对话模式的「`default_workdir` / `allowed_roots` 只给本次运行的目录」 |
+| `docs/changes/README.md` | 两个需求各一行，对话模式那行取它的（已验证 / 待人工合并） |
+
+自动合并、没有冲突的：`CLAUDE.md`（continue 改写那一条）、`.devflow.yml`（第 4 条的 check）、`.claude/skills/verify/SKILL.md`（X 用例的说明）、`docs/protocol.md`（3 处）、`i18n.ts`、`chat/` 下 5 个文件、4 个 `test-chat-*`、Go 的 7 个文件、`gui-chat-smoke.mjs`。`CHANGELOG.md` 两边在分叉之后都没有改过。
+
+### 没有报冲突、但语义上要处理的
+
+| # | 发现了什么 | 怎么处理 | 哪个用例守着 |
+|---|-----------|----------|--------------|
+| 1 | **X6**：对话模式把「当前对话会话在窗口失焦时有待答请求也显示黄点」写在旧侧边栏的循环里，git 把它连同整个旧循环放进了冲突块；新侧边栏的 `renderSession` 仍是「当前会话一律不显示」。window `focus` 监听和点亮逻辑在 `index.ts`，自动合入了 | 判断搬到 `sidebar.ts` 的 `renderSession`：状态点和第二行的状态文字共用一个 `showState` | 合并后、改之前 `test-chat-activity` 的 X6 用例失败（`'none' !== 'waiting'`）；改后通过。真实应用：`gui-chat-smoke` 的 `X6`，`gui-worktree-smoke` 的 `M.X6`（worktree 行下） |
+| 2 | **X8 / X10 的改名**：两套做法。本分支：`sidebar.ts` 里 `startInlineRename` + `actions.setRenaming`，点击处理里 `e.detail > 1` 的第二次点击不打开；对话模式：`index.ts` 里 `selectOpenSession`（点当前会话不重建）、`startInlineRename` 里「标签不在文档里就不开始」、结束时 `focusAfterRename`、`focusView` 在改名期间不抢键盘。合并后 `setActive` 里的 `focusView` 是生效的，其余几处落在被丢掉的旧代码里 | 合成一套：点击路径用本分支的（保留 `detail > 1`），`SidebarActions.open` 接 `selectOpenSession`；`sidebar.ts` 的 `startInlineRename` 加上「不在文档里就不开始」；`setRenaming(false)` 里重建之后调 `focusAfterRename`。`renamingActive` 只有 `index.ts` 的一个，改名入口只有 `sidebar.ts` 的一个 | 合并后、改之前 `test-sidebar-rename` 在新侧边栏上 15 个里 6 个失败（`evidence/merge-dual-mode/before-port-test-sidebar-rename.txt`）；改后 15 个在两种位置都过。真实应用：`gui-chat-smoke` 的 `X8-chat`、`X8-terminal`、`X10-rename-chat`、`X10-rename-terminal`，`gui-worktree-smoke` 的 `X2.rename`、`M.X8` |
+| 3 | **`focusAfterRename` 与本分支的「重建后找回焦点」相冲**（合并后才出现，两边单独都没有）：点另一个会话的名字结束改名之后，本分支的侧边栏会把焦点还给那个名字按钮，对话模式的 `focusAfterRename` 看到焦点不在 `body` 上就不动——键盘停在侧边栏上，接着打的字哪也不去 | `focusView` 在改名期间被调用时记一笔（`focusHeldByRename`），`focusAfterRename` 据此在焦点停在侧边栏控件上时也把键盘交给当前会话；Tab 离开改名框不算。单独提交 `0734e1a` | 真实应用里先失败：`X10-rename-chat`（`the keyboard was on: session-label`）。补了会失败的单元用例「rename committed by pressing another session's name (which takes the focus)」，修后通过；另加「rename left with Tab」，变异核对（总是从侧边栏拿走焦点）失败 |
+| 4 | **删除对话会话的确认文案**：对话模式改的是 `window.confirm(deleteConfirmText(…))`；本分支的删除入口是应用内确认框 `confirmDeleteSession`，合并后那句话没有任何调用处 | 对话会话的确认框正文换成那句话（`session.delete.chatBody`），`confirmDeleteSession` 多一个 `chat` 参数；没有调用处的 `chat.delete.confirm`、`deleteConfirmText` 删掉。删 worktree 的确认框（`delete-wt-dialog`）说的是 worktree 和里面的会话数，不分对话和终端，没有改 | `test-sidebar-rename` 的 delete confirmation 用例（改写过，见下）；`test-worktree-dialogs` 的 4 个 `delete_session_*` 不变 |
+| 5 | **`gui-smoke.mjs` 的侧边栏布局用例**（本分支加的）把测试仓库建在 `/tmp` 下；对话模式把 bash daemon 的 `allowed_roots` 收到本次运行的目录之后，这些仓库它够不着 | 仓库建在 bash daemon 自己的目录里（`makeSidebarRepos(termWorkdir)`） | `gui-smoke.mjs` 的「sidebar shows the projects, worktrees and sessions under test」 |
+| 6 | **X4 / X9 在 worktree 会话上**：读代码确认三个调用处用的是同一个 `chat.LatestSessionForWorkdir`，传的都是会话自己的工作目录（`manager.go:382` 终端新建，新建 worktree 时是新 worktree 里的目录；`manager.go:856` 重载，`runner.CurrentWorkdir()`；`chat_manager.go:251` 对话新建，worktree 模式不查）。没有要改的 | 补 `TestContinueInWorktreesSharingProjectDir`：分支 `fix/login` 和 `fix.login` 的 worktree 目录是同一个 claude 项目目录 | 该测试；变异核对（不看 `cwd`）失败：`this claude conversation is already open in session "fix-login"` |
+| 7 | `gui-worktree-smoke.mjs` 的 **R8.3**（旧脚本的断言行不减少）以分叉点的版本为基准，而对话模式自己在返工里换掉了两行 | 见 decisions c11：再对照合并进来的版本 | R8.3 自己 |
+| 8 | `test-source-bytes`（NUL 字节）遍历整个 `desktop/src`，本分支新增的 `sidebar.ts`、`tree.ts`、`worktree-dialogs.ts` 等都在内（40 个文件）；`test-chat-render-guard` 只看 `chat/`（15 个文件），本分支没有往 `chat/` 里加会写 HTML 的文件 | 不用改 | 两个检查本轮通过 |
+
+### 对话模式返工的每一项在合并后是否生效
+
+| 返工 | 是否生效 | 依据 |
+|------|----------|------|
+| X3 流式途中重连只显示一条回复 | 生效（直接合入，`chat/session.go`、`chat/session.ts`） | `TestTailOverflowKeepsMessageStart`、`test-chat-session` 20 个，本轮通过 |
+| X4 / X9 `-c` 按 JSONL 的 `cwd` 认领 | 生效；worktree 会话走同一个函数、目录传得对 | 对话模式的 7 个 Go 测试 + `TestContinueInWorktreesSharingProjectDir`（新增，变异核对过） |
+| X5 `docs/protocol.md` 的 `chat_ack` | 两边的修改都在 | `evidence/final-run/protocol-sync.txt` |
+| X6 窗口失焦时当前会话的黄点 | 生效（要搬，上表 1） | `test-chat-activity`；`gui-chat-smoke` `X6`；`gui-worktree-smoke` `M.X6`（新增）。变异核对：`showState` 改回「当前会话一律不显示」→ `M.X6` 失败（`timeout: yellow dot on the row of the session shown`） |
+| X7 不贴底时发消息 / 后台收到内容后切回 | 生效（直接合入，`chat/window.ts`、`chat/view.ts`；`setActive` 里 `view.show()` 是唯一的调用处，合并后还在） | `test-chat-view` 22、`test-chat-window` 3；`gui-chat-smoke` `X7-send`、`X7-background`；`gui-worktree-smoke` `M.X7`（新增）。变异核对：去掉 `show()` 里的 `if (this.pinned) this.toBottom = true` → `M.X7` 失败（`the view is 785px above the newest message`） |
+| X8 已打开的会话双击改名 | 生效（要合成一套，上表 2） | `test-sidebar-rename`；`gui-chat-smoke` `X8-chat`、`X8-terminal`；`gui-worktree-smoke` `X2.rename`、`M.X8`（新增） |
+| X10 改名后和点开待答会话后的键盘 | 生效（要接线，上表 2、3） | `test-sidebar-rename` 的 X10 用例；`gui-chat-smoke` `X10-prompt`、`X10-rename-chat`、`X10-rename-terminal`；`gui-worktree-smoke` `M.X8`、`M.X10`（新增）。变异核对：`setRenaming(false)` 不调 `focusAfterRename` → `M.X8` 失败（`where the keyboard is after Enter: got "nowhere"`）；`ChatView.focus()` 不看卡片 → `M.X10` 失败（`got "session-label", want "chat-perm"`） |
+| 删除对话会话的确认文案 | 生效（搬进应用内确认框，上表 4） | `test-sidebar-rename` delete confirmation |
+| `prompts.ts` 的 NUL 字节和源码字节检查 | 生效，覆盖到本分支的新文件 | `test-source-bytes`：40 个文件 |
+| `TestOrphanCleanup` 的等待上限 | 直接合入 | 本轮通过 |
+| 拖选用例的加固、bash daemon 的 `allowed_roots` | 在（冲突里两边都留，上表 5） | `gui-smoke.mjs` 两次运行「drag-select … ⌘C」都通过，没有打印重量的 `NOTE` |
+
+### 补的用例
+
+| 用例 | 测什么 | 变异核对 |
+|------|--------|----------|
+| `gui-worktree-smoke.mjs` `M.X8` | worktree 行 `fix-login` 下：真实双击改名对话会话（回车保存，名字没发给 claude）→ 不点击直接打字，字进了这个会话；Esc 不改名、键盘也回来；同一行下的终端会话双击改名 → 不点击直接敲命令，命令在终端里执行 | 去掉 `focusAfterRename` 的调用 → 失败 |
+| `M.X10` | worktree 行下的后台对话会话来权限请求 → 行上黄点和「等你处理」→ 真实点击点开 → 键盘在卡片上 → 按 `1` 卡片关闭、回合继续 → 键盘在输入框 | `ChatView.focus()` 不看卡片 → 失败 |
+| `M.X6` | worktree 行下的对话会话是当前会话、应用真的隐藏时来权限请求 → 它的行显示黄点和「等你处理」→ 窗口回到前台后消失 | `showState` 去掉例外 → 失败 |
+| `M.X7` | worktree 行下的对话会话在后台收到 40 条消息 → 点回来贴着底、最新一条在屏幕上、键盘在输入框 → 直接打字，消息和回复都显示 | 去掉 `show()` 里回到底部那一行 → 失败 |
+| `test-sidebar-rename`：每个用例在「项目行下 / worktree 行下」各跑一遍 | 对话模式的 15 个用例在两种 DOM 层级上都成立 | —（同一批断言） |
+| `test-sidebar-rename`：「rename committed by pressing another session's name (which takes the focus)」「rename left with Tab」 | 上一节第 3 行 | 见上一节第 3 行 |
+| `TestContinueInWorktreesSharingProjectDir` | 上一节第 6 行 | 不看 `cwd` → 失败 |
+
+四个 `M.*` 的变异核对是在 `desktop/` 的副本里各放一处缺陷、单独构建后用 `VR_DESKTOP_DIR` 跑的（`evidence/merge-dual-mode/mutation-checks-worktree-row-cases.txt`），副本已删，仓库里的代码没有动。截图 `evidence/merge-dual-mode/M.X6.png`、`M.X7.png`、`M.X8.png`、`M.X10.png`，以及对话模式 7 个 X 用例在三层侧边栏上的画面 `X7-send.png` … `X10-rename-terminal.png`。
+
+### 被改写的测试
+
+| 用例 | 原来 | 现在 | 断言是否原样 |
+|------|------|------|--------------|
+| `test-sidebar-rename` 的 `setup()`（全部 15 个用例共用） | 只给 `machineSessions` 和带 `renameSession` / `listSessions` 的 REST 替身；终端替身没有 `screen` | 另给项目树（`machineProjects`、`machineCaps = 'v4'`、`listProjects`），会话按用例所在的位置挂在项目的主目录或 worktree `fix-login` 下；终端替身多一个 `screen.forget()`（本分支的 `setActive` 会调）；多一条断言「会话行确实挂在这一层下面」 | 原样。定位用的类名（`.session-item`、`.session-label`、`.session-label-text`、`.session-rename-input`、`.session-close`）两边相同，没有改 |
+| `test-sidebar-rename`「delete confirmation…」 | 把 `window.confirm` 换成记录参数的函数，点两行的删除按钮，断言两次的参数分别等于 `chat.delete.confirm`、`session.deleteConfirm` 代入名字；词典断言：对话文案含 `JSONL` 和 `{name}`、不含「当前画面会丢失」；终端文案含「当前画面会丢失」 | 点删除按钮后读应用内确认框（`delete-session-dialog`）的标题和正文，点取消；断言标题 = `session.delete.title` 代入名字，正文 = `session.delete.chatBody`（对话）/ `session.delete.body`（终端）；没有弹系统确认框；拒绝后什么都没删。词典断言：对话正文含 `JSONL`、不含「当前画面会丢失 / 无法撤销」；标题含 `{name}`；终端正文含「无法撤销」、不含 `JSONL` | **不完全原样**：「对话写明记录留在 JSONL、不说丢失」「拒绝后不删」原样；**「终端会话的确认写着当前画面会丢失」换成了「写着无法撤销」**——本分支的确认框（R5.1，T12）早就把终端的那句话换成了「会话会结束，远程进程会被终止，无法撤销」，`session.deleteConfirm` 这个键在本分支已经不存在。记为 decisions c12，等用户裁决 |
+| `gui-chat-smoke.mjs` 的 `pointOf`（所有真实点击共用） | 取元素中心，要求该点命中元素 | 元素在侧边栏列表里时先 `scrollIntoView({ block: 'nearest' })` 再取；要求不变 | 原样 |
+| `gui-chat-smoke.mjs` 的改名双击（`renameByDoubleClick`、`X10-rename-chat` 两处、`X10-rename-terminal` 一处） | `realClick(…, 2)` | `doubleClickName(…)`：先等侧边栏 300 ms 没有重建；双击期间侧边栏在按键按下时重建过、且改名没有开始，就打印 `NOTE` 重做，最多两次 | 双击之后的断言原样；**多了重做**（decisions c10，等用户裁决） |
+| `gui-chat-smoke.mjs` `X7-send` 的最后一条断言 | — | 断言之前加了一段只在它将要失败时打印位置的 `NOTE` | 原样（就是对话模式的那一行） |
+| `gui-smoke.mjs`、`gui-chat-smoke.mjs`、`gui-worktree-smoke.mjs` 的 daemon 启动 | 没有自己 claude 配置目录的 daemon 不设 `CLAUDE_CONFIG_DIR` | 给一个本次运行的空目录 | 不涉及断言 |
+| `gui-smoke.mjs` 侧边栏布局用例的夹具 | 仓库建在 `/tmp` | 建在 bash daemon 自己的目录 | 原样 |
+| `gui-worktree-smoke.mjs` `R8.3` | 两份旧脚本对照分叉点 `6d88e45` 的版本：用例数不减，每一行断言都在 | 再对照合并进来的 `64e8b5e`：它的每一行断言都在，用例数不少于两个版本；分叉点版本的断言行只有在对话模式自己已经没有时才允许不在（现在各 1 行：R5.6 的永真断言、拖选目标的等待） | **改了判断的口径**（decisions c11，等用户裁决） |
+
+对话模式的脚本相对 `64e8b5e`：`gui-smoke.mjs`、`gui-chat-smoke.mjs` 里带 `check(` / `assert(` / `test(` / `waitFor(` / `fail(` 的行一行不少（R8.3 每次运行都机械地比）。没有删除、跳过任何用例，没有调大任何超时。
+
+**认为不再有意义、留给用户裁决的用例**：没有整个用例。有一条断言（上表第 2 行「终端会话的删除确认写着当前画面会丢失」，c12）和一个被删掉的词条（`chat.delete.confirm`，d77）属于这一类：它们测的 / 服务的是 `window.confirm` 那个确认框，本需求有意把它换成了应用内确认框。
+
+### 运行过程中的失败
+
+最终代码上的一轮全过；到那之前的失败，按出现的先后：
+
+1. 合并后、移植之前的单元测试：`test-sidebar-rename` 6 个、`test-chat-activity` 1 个失败——这就是上面「语义上要处理的」第 1、2、4 行，是预期中的（合并把修复放进了不再调用的代码）。
+2. 第一次跑 `gui-chat-smoke.mjs`：`X10-rename-chat` 失败，`sidebar item x10r: something else is on top of it`。测试的定位问题：三层侧边栏更长，目标行在可见区之外。改了 `pointOf`。
+3. 接着 `X10-rename-chat` 失败 `the keyboard was on: session-label`——**合并带来的真问题**（「语义」第 3 行），修了（`0734e1a`）。
+4. `X8-chat` / `X8-terminal` 多次失败 `no focused rename input 600 ms later (focus is on session-label)`。原因查清了（`evidence/merge-dual-mode/trace-rebuild-*.txt` 是当时在页面里记下的事件顺序）：双击的第二次按下和松开之间侧边栏重建了 7–10 次，按着的那个名字被换掉，`click` / `dblclick` 没有发出。这是对话模式「后续」里的已知问题，没有修（任务要求不修）；测试里加了重做（c10）。**`X7-send` 失败 1 次**（`at the bottom the newest reply is missing; last message: x7 from elsewhere`，7 个 X 用例连跑的 5 次里的第 4 次）：单独连跑 12 次、之后的 4 次全量运行都没有再出现，**没有查到原因**（d80）。
+5. 第一次跑完整的 `gui-worktree-smoke.mjs`：`R8.3` 失败（「语义」第 7 行，c11）；第二次另有 `M.X8` 失败 1 次（刚建完会话紧跟着的刷新吞掉了双击，同第 4 条的原因；`M.*` 用例改成点击前等侧边栏 400 ms 没有重建，此后含 `M.X8` 的 17 次运行没有再出现）。
+6. **`M.X7` 失败 1 次**（`where the keyboard is after opening the session: got "nowhere", want "chat-input"`，一次完整运行里）：之后只跑 M 用例 7 次、X 和 M 用例一起 5 次、完整运行 2 次都没有再出现，**没有查到原因**。用例里加了只在这种时候打印的焦点记录。如果是真的，用户看到的是「点开一个后台对话会话后要先点一下输入框才能打字」。
+7. 发现 #164（测试 daemon 读真实的 `~/.claude.json`）时停掉了正在跑的一次 `gui-worktree-smoke.mjs`（给它发 SIGTERM，脚本自己清理），那一次没有结果。
+
+### 对话模式的已知问题在三层侧边栏上
+
+对话模式 tasks.md「后续」里与侧边栏有关的三条，在合并后的构建上各实测一次（`evidence/merge-dual-mode/known-issues-probes.txt`，探针代码 `known-issues-probes.mjs.txt`；都没有修）：
+
+| 已知问题 | 在三层侧边栏上 |
+|----------|----------------|
+| 待答卡片一出现就拿走键盘，接着敲的数字可能误批准 | **同样存在，行为相同**（与侧边栏无关）。在对话输入框里打着半句话时来了卡片：键盘到了卡片上，`1` 回答了它，草稿还在。机器管理对话框开着、在文本框里打到 `10.0.` 时来了卡片：键盘被拿到卡片上，`1` 批准了请求，文本框里没有多出字符 |
+| 改名时点另一个会话，这次点击被吞 | **同样存在**：本机 daemon、按住 60 ms，5 次里 0 次切换成功（对话模式在本机上也是 0/5），名字每次都保存了。**有一处不同**：对话模式那边被吞之后键盘回到原来的会话；这里键盘停在被点的那个会话名上（侧边栏重建后把焦点还给了它），原来的会话仍然显示着，接着打的字哪也不去（不会打进看不见的会话）。再点一次即可 |
+| 侧边栏重建吞点击 | **同样存在，改名用的双击更容易碰到**。一次刷新在这里是每台机器两次重建（会话列表、项目树），测试里 5 台机器是 10 次、前后约 50 ms（对话模式是 5 次、几毫秒）；新建会话或改名之后紧跟着就有一次刷新。加重做之前 `X8-chat` / `X8-terminal` 在多次运行里因此失败；加之后含这两个用例的 9 次运行里重做了 3 次。「黄点一出现就去点」这一种：这一次实测 8 次点击 8 次都打开了（对话模式那边是 30 次丢 5 次、20 次丢 1 次）；只测了一轮，不能说它没有了 |
+
 ## 待验证项
 
 来自 review.md 的 13 条。实验是测试阶段前半做的（`evidence/pending-checks.md`，被测 `ba9caa4`），第 1 轮探索时对第 11 条有新的发现（X8）。关口 C 第 1 轮的两名验证者把这 13 条各看了一遍（`verdict-history.md` 两份结论的「待验证项」）：与这里不同的是第 7 条（被推翻了一部分），第 9、10、13 条由验证者独立重做后排除，第 3、4、8 条仍缺条件。这一轮（返工复验）没有重做这些实验，只按返工的结果更新了第 5、7 条。
@@ -414,6 +530,18 @@ $ .devflow.yml 的 invariants：18 条 check 命令原样交给 zsh，环境里�
 关口 C 放行后的返工（T29–T31）里，T29 和 T30 仍在关键路径上（读 worktree 列表的方式关系到对话界面的信任规则；创建失败的撤销会执行 `git worktree remove --force --force`）。T30 把第 1 轮返工收紧的认领规则放宽了一种情况，X9 的三个反例原样通过、另加了 5 个「不该认领」的子用例守着。T31 动的是桌面端终端数据的写入路径：字节照旧原样写入，只是在后台、没有点的会话上多了写入前后各一次屏幕文字的读取。修复前的失败输出、变异核对在 tasks.md「进度」的 T29–T32 各行和 `evidence/gate-c-3-rework.md`，是开发方自己做的，没有经过独立评审。
 
 ## 未覆盖和遗留
+
+- **合并对话模式返工之后（第 4 轮）新增的遗留**：
+  - **合并后的代码没有做独立验证，也没有做独立代码评审**（这次工作的约束是不派子 agent）。合并提交 `c28c001` 之后的代码 / 测试提交（`0734e1a`、`9fa11a7`、`847dd80`、`41bc280`、`db90678`、`4c1e78c`）都只有作者自己看过。
+  - **等用户裁决**：c10（双击被吞时重做）、c11（R8.3 的基准）、c12（终端会话删除确认的那条断言换了内容）。
+  - **`CLAUDE.md`、`.devflow.yml` 我没有改**（c13）：合并后逐句对照代码没有发现变成错的句子；缺的两段说明和一条 check 的建议在 tasks.md「后续」，等用户决定。`.claude/skills/verify/SKILL.md` 改了三处，列在 c13 里。
+  - **两个没有复现出来的失败**：`gui-chat-smoke.mjs` 的 `X7-send`、`gui-worktree-smoke.mjs` 的 `M.X7`，各 1 次，原因没有查清，现在都会在失败时打印现场。
+  - **侧边栏重建吞点击在三层侧边栏上更容易碰到**，没有修（见「合并 change/dual-mode」一节和 tasks.md「后续」）。
+  - `/protocol-sync` 没有做完整的手工核对，只核对了合并带来的三处和 `chat_ack`。
+  - 探索式检查没有重做：这一轮只对三条已知问题各实测了一次。
+  - 「交付预览」的截图仍是第 1 轮的；这一轮新存的截图只有 `evidence/merge-dual-mode/` 下的 11 张。`evidence/R*.png` 仍是此前各轮的。
+  - 这一轮在发现 #164 之前的运行里，测试用的临时 daemon 和 Go 测试读过本机真实的 `~/.claude.json`（只读、只看 `hasTrustDialogAccepted`；按代码推断，没有读 `~/.claude/projects`）。最终一轮没有。
+  - 本节以下各条是第 3 轮写的，其中「这一轮」指第 3 轮。
 
 - **没有真实的 claude 和远程 Linux 上的验证**。所有运行都在本机：临时 daemon、`/bin/bash`、假 claude、git 2.50.1、tmux 3.6a、macOS 文件系统。真实 claude 的 stream-json 和信任文件、Linux 上的 tmux 和 git 版本、经 Tailscale 的延迟都没有覆盖。
 - **没有真机上的原生通知**。未签名构建不显示原生通知（走 Dock 降级），断言的是应用发出的通知标题；点击原生通知打开会话只有模拟的点击。
@@ -472,3 +600,4 @@ $ .devflow.yml 的 invariants：18 条 check 命令原样交给 zsh，环境里�
 | 一致 | 成立 | 开发阶段的调整在 design.md 第 10 节和 decisions.md 里；第 1 轮的四个修复在第 10 节「测试阶段的修复」和 decisions #134、#135、d66、d67；返工的七个修复在第 10 节「关口 C 第 1 轮返工」和 decisions #140–#151、d68–d70，`CLAUDE.md`、`.devflow.yml`（第 13、15、18 条规则的文字和 check）、`docs/protocol.md` 三行随之改了，`.devflow.yml` 里新加进 check 的用例名都存在并在这一轮运行（第 13、15、18、19 条 exit 0）；这次返工的四处在第 10 节「关口 C 放行后的返工」和 decisions #153–#158、d72–d76，`CLAUDE.md`（列表读取、撤销、点亮规则、前置条件四处）、`.devflow.yml`（第 17、18 条规则的文字和 check）、README 两份、verify skill 的用例数随之改了；T31 改的点亮规则在本需求的 spec 里没有对应场景，依据是 spec「问答记录」2026-11-20 的用户确认 |
 | 干净 | 成立 | 提交后 `git status --short` 为空；`git diff bbc2e9b..HEAD` 只有 `docs/changes/` 下的文件，代码和测试没有动；这次返工新增的产品代码行（`worktree.go`、`desktop/src/renderer/`）里没有 `console.log`、`debugger`、`fmt.Print`、TODO / FIXME（这一轮 grep，0 处）；`.devflow-tmp/` 不在仓库里。全量运行前后 `git status` 里没有出现 `docs/changes/` 之外的改动（没有脚本改了不该改的文件）。量耗时的脚本和 tmux 捕获脚本没有留在 `desktop/scripts/` 里（前者的源码存在 `evidence/gate-c-3-bench-screen-text.mjs.txt`） |
 | 改全 | 成立 | 这次返工没有新增配置项、没有改协议（`git diff b77fcd1..HEAD` 里没有 `vibe-remoted.example.json`、`internal/config`、`internal/protocol`、`desktop/src/shared`、`docs/protocol.md`）。升级步骤在 design.md 第 10 节，第 3 步改成了用户确认的支持范围（T32）；没有新的升级动作：桌面端和 daemon 各自替换即可，T31 只在桌面端、T29 / T30 只在 daemon。没有停用的功能要清。19 条不变规则：18 条命令 exit 0，第 2 条（skill）这一轮确认了没有协议改动，见「汇总」下的说明 |
+| 合并（第 4 轮） | 成立，有等裁决的三项 | 两边的测试都在：数量不少于合并前两边各自的数量（「汇总」的对照）；对话模式的两份 GUI 脚本相对 `64e8b5e` 没有少一行断言；`docs/changes/2026-11-13-dual-mode/` 与对话模式的分支逐字节相同；T33 标完成；c10、c11、c12 改动了检查，等用户裁决；合并后的代码没有独立验证。本表以上各行是第 3 轮（`bbc2e9b`）写的，没有重写 |

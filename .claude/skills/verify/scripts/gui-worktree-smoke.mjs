@@ -3125,8 +3125,8 @@ test('M.X7', 'under a worktree row: a chat session that got more than a screen i
     await mSidebarQuiet(); // the row's dot was just drawn; a press during a rebuild is lost (known)
     // Where the focus goes from here on is recorded (listeners only, nothing of
     // the page is replaced) and printed when it does not end in the input: that
-    // happened once in a full run ("nowhere") and in none of 22 runs of the
-    // X and M cases alone.
+    // happened once in a full run ("nowhere") and in none of the 12 runs of the
+    // M cases (7 alone, 5 with the X cases) that followed.
     await ev(`(() => { const log = window.__mx7 = []; const t0 = performance.now(); const name = (e) => !e ? 'null' : e === document.body ? 'BODY' : (e.dataset?.testid || String(e.className) || e.tagName) + (e.isConnected ? '' : '(detached)') + (e.closest?.('.chat-instance') ? '@chat:' + (e.closest('.chat-instance').style.display || 'shown') : '');
       const say = (m) => { if (log.length < 200) log.push(Math.round(performance.now() - t0) + ' ' + m); };
       for (const type of ['mousedown', 'mouseup', 'click', 'focusin', 'focusout']) document.addEventListener(type, (e) => say(type + ' ' + name(e.target)), true);
