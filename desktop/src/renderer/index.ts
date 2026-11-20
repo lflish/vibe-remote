@@ -1303,7 +1303,7 @@ function renderSidebar() {
       close.addEventListener('click', (e) => {
         e.stopPropagation();
         const name = s.title || (s.workdir ? s.workdir.split('/').pop() : '') || s.id;
-        if (!window.confirm(t('session.deleteConfirm', { name }))) {
+        if (!window.confirm(deleteConfirmText(s, name))) {
           return;
         }
         closeSession(machine, s.id);
@@ -1317,6 +1317,13 @@ function renderSidebar() {
     group.append(groupHeader, list);
     container.appendChild(group);
   }
+}
+
+// deleteConfirmText is what the delete button asks first. Deleting a terminal
+// session loses its screen; a chat session's conversation stays in claude's
+// own history files on the remote machine (R15.2), so it says that instead.
+function deleteConfirmText(session: SessionInfo, name: string): string {
+  return t(session.ui === 'chat' ? 'chat.delete.confirm' : 'session.deleteConfirm', { name });
 }
 
 // startInlineRename replaces a session label with an input for in-place rename.

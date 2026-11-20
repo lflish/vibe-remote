@@ -10,7 +10,7 @@
 // dblclick goes to the element the second click hit — even if a handler took
 // that element out of the document in between.
 import { strict as assert } from 'node:assert';
-import { indexDom, loadIndex, runner } from './chat-test-util.mjs';
+import { indexDom, load, loadIndex, runner } from './chat-test-util.mjs';
 
 const { test, run } = runner('test-sidebar-rename');
 
@@ -188,6 +188,35 @@ test('a rename that cannot start (its label is no longer in the document) does n
   t.app.machineSessions.set(mk, t.sessions.map((s) => ({ ...s })));
   t.app.renderSidebar();
   assert.deepEqual(t.titles(), ['changed elsewhere', 'shell', 'other'], 'sidebar rebuilt');
+  t.page.dom.window.close();
+});
+
+// Same sidebar, the delete button: a chat session's conversation is kept in
+// claude's own history (R15.2), a terminal session's screen is not. The
+// confirmation must say which.
+test('delete confirmation: chat says the conversation stays in claude\'s history, terminal says the screen is lost (zh and en)', async () => {
+  const t = await setup();
+  const { dictionaries } = await load('src/renderer/i18n.ts');
+  for (const locale of ['zh', 'en']) {
+    const chat = dictionaries[locale]['chat.delete.confirm'];
+    assert.ok(chat, `chat.delete.confirm (${locale})`);
+    assert.match(chat, /JSONL/, `${locale}: says where the conversation stays`);
+    assert.match(chat, /\{name\}/);
+    assert.doesNotMatch(chat, /当前画面会丢失|current screen lost/, `${locale}: no "screen is lost" for a chat session`);
+    assert.match(dictionaries[locale]['session.deleteConfirm'], /当前画面会丢失|current screen lost/, `${locale}: terminal text unchanged`);
+  }
+
+  t.chat('c1');
+  t.app.renderSidebar();
+  const asked = [];
+  window.confirm = (msg) => { asked.push(msg); return false; };
+  const item = (title) => t.label(title).closest('.session-item');
+  item('conversation').querySelector('.session-close').dispatchEvent(new MouseEvent('click', { bubbles: true }));
+  item('shell').querySelector('.session-close').dispatchEvent(new MouseEvent('click', { bubbles: true }));
+  assert.equal(asked.length, 2);
+  assert.equal(asked[0], dictionaries.en['chat.delete.confirm'].replace('{name}', 'conversation'));
+  assert.equal(asked[1], dictionaries.en['session.deleteConfirm'].replace('{name}', 'shell'));
+  assert.deepEqual(t.titles(), ['conversation', 'shell', 'other'], 'declined: nothing deleted');
   t.page.dom.window.close();
 });
 
