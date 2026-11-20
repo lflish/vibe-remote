@@ -22,12 +22,13 @@ export function expandUp(win: Window, page = PAGE): Window {
 }
 
 /**
- * The window after the transcript grew or was rebuilt to `total` messages:
- * at the bottom it follows new messages, scrolled up it stays where it is. A
- * transcript shorter than the window (a reset rebuilt it) starts over.
+ * The window after the transcript grew or was rebuilt to `total` messages: its
+ * end always reaches the newest message, its start stays where the reader is
+ * (messages added below the viewport do not move it). Whether the view sticks
+ * to the bottom is the view's decision. A transcript shorter than the window
+ * (a reset rebuilt it) starts over.
  */
-export function follow(win: Window, total: number, atBottom: boolean): Window {
+export function follow(win: Window, total: number): Window {
   if (total < win.end) return initialWindow(total);
-  if (!atBottom) return win;
   return { start: win.start, end: total };
 }

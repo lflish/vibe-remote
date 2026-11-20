@@ -25,6 +25,8 @@
 //   DEVFLOW_EVIDENCE_DIR=<dir>  save a PNG per case (<case>.png)
 //   VR_MAIN_DAEMON=<path>       reuse a main-branch vibe-remoted build
 //   VR_CDP_PORT / VR_INSPECT_PORT  fixed debug ports (with --keep, for poking around)
+//   VR_ONLY=<id,id,…>           run only these cases (ids as in test('<id>', …)); only
+//                               for cases that set up their own sessions (X7-*, X8-*)
 // Requires Node 22+, Go, tmux, git; macOS with a display.
 
 import { spawn, spawnSync } from 'node:child_process';
@@ -269,6 +271,44 @@ async function pressKey(key, modifiers = 0) {
   await cdp.send('Input.dispatchKeyEvent', { type: 'keyUp', ...base });
 }
 
+// --- Real input ------------------------------------------------------------------
+// What a hand does, through the browser's input pipeline (hit testing, focus,
+// click / dblclick synthesis, wheel scrolling) — element.click() and setting
+// scrollTop skip all of that, which is how X7 and X8 went unnoticed.
+
+/** Centre of the element `expr` evaluates to; it must be what a pointer there hits. */
+async function pointOf(expr, what) {
+  const p = await ev(`(() => {
+    const e = ${expr};
+    if (!e) return null;
+    const r = e.getBoundingClientRect();
+    const x = r.left + r.width / 2, y = r.top + r.height / 2;
+    const hit = document.elementFromPoint(x, y);
+    return { x, y, hit: !!hit && (hit === e || e.contains(hit)) };
+  })()`);
+  assert(p, `${what}: not on the page`);
+  assert(p.hit, `${what}: something else is on top of it`);
+  return p;
+}
+
+/** A real click (count 2 = a double click at a human pace: 40 ms down, 90 ms between). */
+async function realClick(expr, what, count = 1) {
+  const p = await pointOf(expr, what);
+  await cdp.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: p.x, y: p.y });
+  for (let n = 1; n <= count; n++) {
+    await cdp.send('Input.dispatchMouseEvent', { type: 'mousePressed', x: p.x, y: p.y, button: 'left', clickCount: n });
+    await sleep(40);
+    await cdp.send('Input.dispatchMouseEvent', { type: 'mouseReleased', x: p.x, y: p.y, button: 'left', clickCount: n });
+    if (n < count) await sleep(90);
+  }
+}
+
+/** A real wheel turn over the element (deltaY > 0 scrolls down). */
+async function realWheel(expr, deltaY, what) {
+  const p = await pointOf(expr, what);
+  await cdp.send('Input.dispatchMouseEvent', { type: 'mouseWheel', x: p.x, y: p.y, deltaX: 0, deltaY });
+}
+
 async function evidence(name) {
   if (!EVIDENCE_DIR || !cdp) return;
   mkdirSync(EVIDENCE_DIR, { recursive: true });
@@ -403,6 +443,42 @@ const sidebarItem = (d, label, expr, ui = 'chat') => ev(`(() => {
   const it = [...g.querySelectorAll('.session-item')].find((i) => i.dataset.ui === ${JSON.stringify(ui)} && i.querySelector('.session-label-text')?.textContent === ${JSON.stringify(label)});
   return it ? (${expr}) : null; })()`);
 
+// Real-input variants (X7 / X8 cases).
+const TRANSCRIPT = inChat('[data-testid="chat-transcript"]');
+const INPUT = inChat('[data-testid="chat-input"]');
+const scrollState = () => ev(`(() => { const t = ${TRANSCRIPT}; return { top: t.scrollTop, gap: t.scrollHeight - t.scrollTop - t.clientHeight, client: t.clientHeight, height: t.scrollHeight }; })()`);
+const lastAssistant = () => ev(`[...${VC}.querySelectorAll('[data-testid="chat-msg-assistant"]')].pop()?.textContent.trim() || ''`);
+/** Is the last assistant message inside the transcript's viewport? */
+const lastAssistantOnScreen = () => ev(`(() => { const m = [...${VC}.querySelectorAll('[data-testid="chat-msg-assistant"]')].pop(); if (!m) return false; const r = m.getBoundingClientRect(), t = ${TRANSCRIPT}.getBoundingClientRect(); return r.bottom <= t.bottom + 1 && r.bottom > t.top; })()`);
+async function wheelTo(deltaY, pred, what) {
+  await realWheel(TRANSCRIPT, deltaY, 'chat transcript');
+  return waitFor(async () => { const s = await scrollState(); return pred(s) ? s : null; }, 4000, what);
+}
+/** Click into the input box and type `msg` + Enter, all as real input events. */
+async function typeChat(msg) {
+  await realClick(INPUT, 'chat input');
+  await waitFor(() => ev(`document.activeElement === ${INPUT}`), 3000, 'the click focused the chat input');
+  await cdp.send('Input.insertText', { text: msg });
+  await pressKey('Enter');
+}
+const sidebarLabel = (d, label, ui = 'chat') => `(() => {
+  const g = [...document.querySelectorAll('.machine-name')].find((b) => b.querySelector('.machine-name-label')?.textContent === ${JSON.stringify(d.name)})?.closest('.machine-group');
+  return [...(g?.querySelectorAll('.session-item') ?? [])].find((i) => i.dataset.ui === ${JSON.stringify(ui)} && i.querySelector('.session-label-text')?.textContent === ${JSON.stringify(label)})?.querySelector('.session-label') ?? null; })()`;
+/** Switch sessions with a real click on the sidebar. */
+async function clickSidebar(d, label, ui = 'chat') {
+  for (let attempt = 0; ; attempt++) {
+    await realClick(sidebarLabel(d, label, ui), `sidebar item ${label}`);
+    try {
+      await waitFor(() => sidebarItem(d, label, `it.classList.contains('active')`, ui), 1500, `${label} is the current session`);
+      return;
+    } catch (e) {
+      // The sidebar is rebuilt every 5 s; a rebuild between press and release
+      // swallows that click (tasks.md follow-up list). One more try.
+      if (attempt >= 1) throw e;
+    }
+  }
+}
+
 // --- Cases ------------------------------------------------------------------------
 
 const cases = [];
@@ -413,6 +489,7 @@ let chatRoot = '';
 let histU = '';
 let other = null; // second desktop on the main chat session
 let S1 = ''; // main chat session id (dir "main")
+let X7 = ''; // the X7 cases' own chat session (dir "x7")
 const dialogs = [];
 
 test('R1.3', 'R1.3 bash machine: chat card disabled with the reason', async () => {
@@ -530,6 +607,77 @@ test('R1.6', 'R1.6/R11.2 bypass: mode fixed, no permission prompts', async () =>
   }, 15000, 'Bash ran');
   assert(!sawPrompt, 'a permission prompt appeared in bypass');
   return `menu ${menu.modes.join()} (${menu.why})`;
+});
+
+test('X7-send', 'X7 scrolled up with the wheel: a typed message and its reply show; replies do not drag the view; reaching the bottom shows them', async () => {
+  X7 = await newChat(CHAT, 'x7');
+  await sendChat('burst 80');
+  await waitFor(async () => (await lastAssistant()) === 'burst 80', 15000, 'burst 80 rendered');
+  await idle();
+  const s0 = await scrollState();
+  assert(s0.gap < 48 && s0.height > s0.client + 400, `expected more than a screen of content, at the bottom: ${JSON.stringify(s0)}`);
+  // (1) not at the bottom → send
+  await wheelTo(-300, (s) => s.gap >= 200, 'scrolled up 300px');
+  await typeChat('echo x7 can you see this');
+  await waitFor(async () => (await userCount('echo x7 can you see this')) === 1, 5000, 'own message shown after sending while scrolled up');
+  await waitAssistant('x7 can you see this', 8000);
+  await idle();
+  const s1 = await scrollState();
+  assert(s1.gap < 48 && (await lastAssistantOnScreen()), `after sending the view is not at the bottom: ${JSON.stringify(s1)}`);
+  await evidence('X7-send');
+  // (4) reading history: a reply from elsewhere does not drag the view …
+  const up = await wheelTo(-300, (s) => s.gap >= 200, 'scrolled up again');
+  const c = await Conn.open(CHAT);
+  try {
+    await c.attachChat(X7);
+    await c.turn(c.chat('echo x7 from elsewhere'));
+    await sleep(600);
+    const s2 = await scrollState();
+    assert(Math.abs(s2.top - up.top) < 2, `the view moved while reading history: ${up.top} → ${s2.top}`);
+    // (2) … and is there on reaching the bottom, with no further session update.
+    await wheelTo(100000, (s) => s.gap < 2, 'wheel down to the bottom');
+    await sleep(300);
+    assert((await lastAssistant()).includes('x7 from elsewhere') && (await lastAssistantOnScreen()), `at the bottom the newest reply is missing; last message: ${await lastAssistant()}`);
+  } finally {
+    c.close();
+  }
+  return `gap after sending ${Math.round(s1.gap)}px; history kept at ${Math.round(up.top)}px while a reply arrived`;
+});
+
+test('X7-background', 'X7 background session got more than a screen: back at the bottom with the newest, a typed message shows; left scrolled up → same place', async () => {
+  const c = await Conn.open(CHAT);
+  try {
+    await c.attachChat(X7);
+    await clickSidebar(CHAT, 'x7');
+    await wheelTo(100000, (s) => s.gap < 2, 'x7 at the bottom');
+    await newChat(CHAT, 'x7b'); // x7 is now a background session
+    await c.turn(c.chat('burst 40'), 30000);
+    await clickSidebar(CHAT, 'x7');
+    await waitFor(async () => (await lastAssistant()) === 'burst 40', 5000, 'newest message rendered on return');
+    await sleep(400);
+    const s = await scrollState();
+    assert(s.gap < 48 && (await lastAssistantOnScreen()), `back from the background the view is ${Math.round(s.gap)}px above the newest message`);
+    await typeChat('echo x7 back');
+    await waitFor(async () => (await userCount('echo x7 back')) === 1, 5000, 'message typed right after returning is shown');
+    await waitAssistant('x7 back', 8000);
+    await idle();
+    assert((await scrollState()).gap < 48, 'not at the bottom after sending');
+    await evidence('X7-background');
+    // left scrolled up: same place on return, the newest is rendered below
+    const up = await wheelTo(-400, (st) => st.gap >= 300, 'scrolled up 400px');
+    await clickSidebar(CHAT, 'x7b');
+    await c.turn(c.chat('burst 6'), 15000);
+    await clickSidebar(CHAT, 'x7');
+    await waitFor(async () => (await lastAssistant()) === 'burst 6', 5000, 'newest message rendered on return (scrolled up)');
+    await sleep(400);
+    const s3 = await scrollState();
+    assert(Math.abs(s3.top - up.top) < 2, `left scrolled up at ${up.top}px, came back at ${s3.top}px`);
+    await wheelTo(100000, (st) => st.gap < 2, 'wheel down to the bottom');
+    assert(await lastAssistantOnScreen(), 'the newest message is not reachable by scrolling down');
+    return `back at the bottom (gap ${Math.round(s.gap)}px) after 40 messages in the background; scrolled-up place kept (${Math.round(up.top)}px)`;
+  } finally {
+    c.close();
+  }
 });
 
 test('S1', 'main chat session created (dir main)', async () => {
@@ -1087,7 +1235,7 @@ async function main() {
   MAIN = defineDaemon('gui-main', { bin: mainBin, cfg: bashCfg });
 
   chatRoot = join(work, 'gui-chat', 'proj');
-  const subs = ['main', 'bypass', 'hist'].map((s) => join(chatRoot, s));
+  const subs = ['main', 'bypass', 'hist', 'x7', 'x7b'].map((s) => join(chatRoot, s));
   for (const s of subs) mkdirSync(s, { recursive: true });
   const chatConfig = join(work, 'gui-chat', 'cc');
   CHAT = chatDaemon('gui-chat', chatConfig, [chatRoot, ...subs], {
@@ -1149,7 +1297,9 @@ async function main() {
   await cdp.evaluate(NET_HOOK);
   ok('app started with 5 machines (zh), network hook installed');
 
+  const only = process.env.VR_ONLY ? new Set(process.env.VR_ONLY.split(',')) : null;
   for (const c of cases) {
+    if (only && !only.has(c.id)) continue;
     try {
       const detail = await c.fn();
       ok(`${c.name}${detail ? ` — ${detail}` : ''}`);

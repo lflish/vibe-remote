@@ -450,7 +450,7 @@
 来源：两份验证结论（全文在 verdict-history.md「关口 C 第 1 轮」）和主会话的裁决。按 T14 → T20 的顺序做，每个任务先写能复现问题的测试并确认失败，再修，单独提交。界面问题除单元测试外，在 `gui-chat-smoke.mjs` 里加真实应用的用例，用 CDP 的真实指针 / 滚轮 / 按键事件（`Input.dispatchMouseEvent`、`dispatchKeyEvent`、`insertText`）。
 
 ### T14 X7：对话不在底部时发消息，消息和回复都不显示
-- 状态：待办
+- 状态：完成
 - 来源：界面验证者 P1（中高，拦）；R3.1、R16.1 / R16.2
 - 行为：(1) 用户自己发出消息时视图回到底部，显示这条消息和之后的回复；(2) 滚动到底部（距底小于现有 48px 阈值）时立即把窗口补齐到最新，不等下一次会话更新；(3) 后台会话切回前台：离开时贴底的回来仍贴底并显示最新内容，离开时不贴底的保持原位置、但窗口包含最新消息，滚到底能看到；(4) 用户上滑阅读历史时，新来的回复不把视图拽到底（保留）
 - 文件：修改 `desktop/src/renderer/chat/window.ts`、`desktop/src/renderer/chat/view.ts`；测试 `desktop/scripts/test-chat-window.mjs`、`desktop/scripts/test-chat-view.mjs`、`.claude/skills/verify/scripts/gui-chat-smoke.mjs`
@@ -525,6 +525,7 @@
 | T11 | 2026-11-14 10:28 | 878f4f1 | 新增 test-chat-availability 9 个用例（not_claude、proto 2 / 无 chat 字段 → 升级 vibe-remoted、claude_too_old → 升级 claude、其它原因、workdir untrusted（untrusted/unknown/缺省都置灰）、加载中/info 失败）、test-chat-activity 5 个用例（灰/绿/黄、REST activitySeq/epoch/state、fallback does not switch）；test-i18n-parity 223 个键通过；`npm run typecheck && npm test && npm run build` 成功（21 个测试脚本）；`make check` 全绿 |
 | T12 | 2026-11-14 10:35 | 7c5bbfb | test-chat-session 新增 reload success keeps history、ended states（共 17）；test-chat-view 新增 ended banner, restart tracking and retry（chat-ended/chat-restart/chat-recheck/chat-handoff/chat-open-terminal/chat-retry，重载 202 → restarting → stopped → 新 epoch 成功、restart_failed 显示 message；共 10）；i18n 244 个键；`npm run typecheck && npm test && npm run build` 成功；`make check` 全绿（第一次运行 TestTerminalFramesUnchangedV3 偶发「tmux session did not become ready」，未改 Go 代码，重跑通过）；decisions #33 |
 | T13 | 2026-11-14 10:46 | 60cce4b（验证脚本）、9b7ad05（文档） | `ws-chat-smoke.mjs` 9 个用例全 PASS（chat: create / replay before ready / two clients / pending survives reconnect / resync 50 / handoff / daemon restart → ended / state without hooks / delete keeps jsonl）；终端 `ws-smoke.mjs` 12 项全 PASS；`gui-smoke.mjs` 原有 20 项 + 对话 3 项（chat session created via picker、chat reply rendered、permission allow once resumes）+ 第二个 daemon 启动共 25 项全 PASS；/protocol-sync 约 100 行核对，修正 9 处文档/注释漂移后三处一致，版本表第 3 行齐全；CLAUDE.md 三处 grep（终端模式、对话模式、只支持 claude）均有结果，「绝不解析」句含「终端模式」；`.devflow.yml` 登记 9 条不变规则（c2）；`make check` 全绿（全量并行运行时 TestTerminalFramesUnchangedV3 偶发「tmux session did not become ready」，单独与 `make check-server` 重跑均通过，见 decisions #35）；decisions #34–#35 |
+| T14（X7） | 2026-11-20 12:03 | 本提交 | 修复前失败：`test-chat-window`「…the window always reaches the newest…」（end 3000 ≠ 3005）、`test-chat-view` 3 个 X7 用例（自己的消息不在 DOM / 最新回复不在 DOM / 切回后 2600 ≠ 4600）、`gui-chat-smoke` 的 X7-send（5 s 内自己的消息没出现）和 X7-background（切回后离最新消息 1420px）；修复后全部通过，`npm run typecheck && npm test` 全绿（test-chat-view 20、test-chat-window 3）。变异核对：去掉 show() 的回底 / 去掉发送时回底 / 窗口不跟到最新，三处各有用例失败 |
 
 ## 后续
 

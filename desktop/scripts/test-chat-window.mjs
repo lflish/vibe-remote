@@ -1,7 +1,7 @@
 // chat/window.ts: the virtual list window (d13). The full history is kept in
 // ChatSession; the DOM holds only [start, end). 3000 messages → the newest 300
-// first, 200 more per scroll to the top, following new messages only when the
-// user is at the bottom.
+// first, 200 more per scroll to the top; the window always reaches the newest
+// message (whether the view sticks to the bottom is the view's business).
 import { strict as assert } from 'node:assert';
 import { load, runner } from './chat-test-util.mjs';
 
@@ -31,13 +31,18 @@ test('expandUp adds 200 each time down to 0', () => {
   assert.deepEqual(W.expandUp({ start: 50, end: 400 }, 200), { start: 0, end: 400 });
 });
 
-test('new messages: follow at the bottom, stay put otherwise', () => {
+test('new messages: the window always reaches the newest, its start stays put', () => {
   const w = W.initialWindow(3000);
-  assert.deepEqual(W.follow(w, 3005, true), { start: 2700, end: 3005 });
-  assert.deepEqual(W.follow(w, 3005, false), w, 'scrolled up: window does not move');
+  assert.deepEqual(W.follow(w, 3005), { start: 2700, end: 3005 });
+  // Scrolled up into older pages: the reader's place (start) is kept, and the
+  // newest messages are still in the window — reaching the bottom shows them
+  // without waiting for another update (X7).
+  const up = W.expandUp(w);
+  assert.deepEqual(W.follow(up, 3005), { start: 2500, end: 3005 }, 'scrolled up: start does not move, the end reaches the newest');
+  assert.deepEqual(W.follow(up, 3000), up, 'nothing new: nothing moves');
   // A transcript reset (shorter than the window) starts over.
-  assert.deepEqual(W.follow(w, 40, true), { start: 0, end: 40 });
-  assert.deepEqual(W.follow(w, 40, false), { start: 0, end: 40 });
+  assert.deepEqual(W.follow(w, 40), { start: 0, end: 40 });
+  assert.deepEqual(W.follow(up, 40), { start: 0, end: 40 });
 });
 
 await run();
