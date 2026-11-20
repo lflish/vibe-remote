@@ -3123,6 +3123,15 @@ test('M.X7', 'under a worktree row: a chat session that got more than a screen i
     other.chat('burst 40');
     await other.wait((fs) => fs.some((f) => f.type === 'chat' && f.msg?.type === 'result'), 30000, 'the burst finished in the background', from);
     await mSidebarQuiet(); // the row's dot was just drawn; a press during a rebuild is lost (known)
+    // Where the focus goes from here on is recorded (listeners only, nothing of
+    // the page is replaced) and printed when it does not end in the input: that
+    // happened once in a full run ("nowhere") and in none of 22 runs of the
+    // X and M cases alone.
+    await ev(`(() => { const log = window.__mx7 = []; const t0 = performance.now(); const name = (e) => !e ? 'null' : e === document.body ? 'BODY' : (e.dataset?.testid || String(e.className) || e.tagName) + (e.isConnected ? '' : '(detached)') + (e.closest?.('.chat-instance') ? '@chat:' + (e.closest('.chat-instance').style.display || 'shown') : '');
+      const say = (m) => { if (log.length < 200) log.push(Math.round(performance.now() - t0) + ' ' + m); };
+      for (const type of ['mousedown', 'mouseup', 'click', 'focusin', 'focusout']) document.addEventListener(type, (e) => say(type + ' ' + name(e.target)), true);
+      new MutationObserver(() => say('sidebar rebuilt; focus on ' + name(document.activeElement))).observe(document.getElementById('machine-list'), { childList: true });
+      return true; })()`);
     await pointerClick(mLabel(id), 'the name of the session that got the burst');
     await waitFor(async () => (await activeId()) === id, 8000, 'back in the session');
     await waitFor(async () => (await lastOnScreen())?.text === 'burst 40', 5000, 'the newest message rendered on return');
@@ -3130,6 +3139,7 @@ test('M.X7', 'under a worktree row: a chat session that got more than a screen i
     const s = await scroll();
     assert(s.height > s.client + 400, `fixture: the burst is not more than a screen: ${J(s)}`);
     assert(s.gap < 48 && (await lastOnScreen()).on, `back from the background the view is ${Math.round(s.gap)}px above the newest message`);
+    if ((await mFocus()) !== 'chat-input') console.log(`NOTE M.X7 focus log (window focused: ${await ev('document.hasFocus()')}): ${J(await ev('window.__mx7'))}`);
     eq(await mFocus(), 'chat-input', 'where the keyboard is after opening the session');
     await cdp.send('Input.insertText', { text: 'echo back under the worktree' });
     await pressKey('Enter');
