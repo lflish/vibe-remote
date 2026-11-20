@@ -515,7 +515,7 @@
 来源：两份验证结论（指定小节和全文在 verdict-history.md「关口 C 第 2 轮」）和主会话的裁决（`rulings-2.md`）。按 T21 → T22 的顺序做，每个任务先写能复现问题的测试并确认失败，再修，单独提交。
 
 ### T21 X9：`-c` 的 cwd 检查漏掉已有历史
-- 状态：待办
+- 状态：完成
 - 来源：codex P4（中，拦；X4 的修复引入）；R1.5、H6、R17
 - 行为：判断一份 JSONL 属于哪个目录时，从头读到第一个带 `cwd` 的记录为止（没有行数上限；流式逐行读，不把文件读进内存，超长的行不出错）；整份文件都没有 `cwd` 才算读不到，仍不认领。记录里的 `cwd` 和请求的目录都规范化（`EvalSymlinks`）后再比较，记录侧解析失败时退回 `Clean` 后的字面比较
 - 文件：修改 `vibe-remoted/internal/chat/transcript.go`；测试 `vibe-remoted/internal/chat/transcript_test.go`、`vibe-remoted/internal/server/ws_chat_test.go`、`vibe-remoted/internal/session/chat_manager_test.go`；`.devflow.yml`（不变规则的 check 加 X4、X9 的回归测试，decisions #51）、`CLAUDE.md`（continue 改写那一句）
@@ -556,6 +556,7 @@
 | T18（X6） | 2026-11-20 12:21 | 6580bcf | 查证：spec R16.3 字面要求黄点，design / decisions 无相反决定（d12 写的是「Dock 弹跳 + 角标 + 侧边栏黄点」）→ 按 spec 修。修复前失败：`test-chat-activity`「pending prompt turns it yellow and notifies」（dot none ≠ waiting）、`gui-chat-smoke` 的 X6（10 s 内当前会话没有黄点）；修复后通过，`npm test` 全绿（test-chat-activity 8）。变异核对：聚焦不清点 / 侧边栏照旧隐藏当前会话的点 / 通知结果回来把点去掉，三处各有用例失败。改动的已有断言 1 条（见 test-report） |
 | T19（X5） | 2026-11-20 12:22 | af47ac8 | 按 /protocol-sync 的步骤把 `chat_ack` 逐字段再核对一遍（Go `ChatAckFrame` 的 json tag、TS `ChatAckFrame`、文档）：`type`/`op`（4 个值）/`ref?`/`ok`/`code?`（9 个码，与 `Ack*` 常量一致）/`message?`/`duplicate?`/`completed?` 三处一致；文档补上 `message`（由 `nackMsg` 在 `too_large`、`invalid_response`、回答非计划请求带 setMode 的 `invalid_mode` 时给出）和此前只出现在示例里的 `ok`。Go / TS 代码未改 |
 | T20（测试修正） | 2026-11-20 12:28 | 9135f77（删除确认文案、NUL 字节）、793eb80（其余）、5ce6f55（X6 用例的失焦方式，全量运行时发现） | ① R5.6 的永真断言改为三条真的断言（工具块还没有结果、claude 没有继续、daemon 没有记下回答或工具结果）；变异核对：让假 claude 在收到回答前就产出工具结果 → 用例失败「the tool block already has a result although the answer was never delivered」，恢复后通过。② `TestOrphanCleanup` 的两处 `<-gone` 改为最多等 15 s（正常约 1–3 s，本用例自己断言 ≤ 4 s）并报出原因；用一个总是失败的假 `ps` 放在 PATH 最前面核对：16 s 后失败并写明原因、不再挂住，假 claude 由清理函数杀掉。③ gui-smoke 拖选用例：等到「正好是输出的那一行 + 下一行回到提示符 + 相隔 150 ms 两次看到的屏幕和位置相同」再量坐标；拖完再量一次，屏幕动过就打印 NOTE 并重新量、重新拖（最多 3 次）；最后的断言（复制内容必须等于 `SELECT_ME_PLEASE`）不变。④ `prompts.ts` 的 3 个原始 NUL 字节改为 `'\\0other'`，新增 `test-source-bytes`（修复前失败并指出 3 行）。⑤ 删除对话会话的确认文案（中英文）+ `test-sidebar-rename` 的断言。两份冒烟里 bash daemon 的 `allowed_roots` 由 `/tmp` 改为本次运行自己的目录。`npm test` 全绿（25 个脚本），gui-smoke 30 项通过 |
+| T21（X9） | 2026-11-20 13:30 | 81024f1 | 修复前失败：`TestLatestSessionReadsUntilFirstCwd`（第 101 行、第 1001 行 / 2 MiB、超长行之后 3 个子用例：「LatestSessionForWorkdir = "", false; want found=true」）、`TestLatestSessionComparesCanonicalCwd`（记录的是符号链接别名的 3 个子用例）、`TestContinueFindsLateOrAliasedCwd`（经 WebSocket 带 continue 新建，5 个子用例里 4 个失败：「-c in … started <新 id> instead of continuing <原 id>」）、`TestTerminalContinueFindsLateOrAliasedCwd`（终端 `-c` 的 argv 是 `--session-id <新 id>` 而不是 `--resume <原 id>`）；修复后 `go test -race ./internal/chat ./internal/session ./internal/server` 全部 ok，X4 的 3 个回归用例原样通过。变异核对：加回 100 行上限 → 三个包里第 101 / 1001 行的用例都失败（终端的新建和重载各一条）；记录侧不解析符号链接 → 三个包里别名用例都失败；筛行时不认 `\u` 转义 → 「cwd key written with escapes」失败。`.devflow.yml` 改后的不变规则 check 原样运行通过（`GOFLAGS=-count=1`，独立 `TMUX_TMPDIR`）。耗时实测见 evidence/x9-cwd-scan-timing.txt；decisions #51、#52 |
 
 ## 后续
 
