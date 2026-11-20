@@ -1037,6 +1037,26 @@
 - 完成定义：`make check` 退出 0；三份 GUI 冒烟各 2 次、三份 ws 冒烟、布局测量脚本、`.devflow.yml` 全部命令型规则在合并后的代码上通过；用例数量不少于合并前两边各自的数量；`git diff --stat change/dual-mode..HEAD -- docs/changes/2026-11-13-dual-mode` 为空；协议三处一致，版本仍是 4
 - 依赖：无
 
+### c10–c13 裁决之后的返工（T34）
+
+来源：协调者对 decisions c10–c13 的裁决（2026-11-20）。c10 不接受「测试里把被吞的双击重做一遍」，改为修原因。
+
+### T34 侧边栏要显示的内容没变就不重建
+- 状态：进行中
+- 来源：c10 的裁决。一次刷新里每台机器的会话列表和项目树两个应答各自 `publish` → `renderSidebar()`，每次都整棵清空重建，哪怕数据一个字没变；5 台机器每 5 秒 10 次重建。鼠标按下和松开落在两棵不同的 DOM 上，点击 / 双击丢失——这是本需求带来的退化（对话模式那边是每台机器一次）
+- 文件：`desktop/src/renderer/index.ts`（`renderSidebar` 和模型的指纹）；`desktop/src/renderer/sidebar.ts` 只在必须把外部状态挪进模型时才动；`desktop/scripts/test-sidebar-refresh.mjs`（新）、`desktop/package.json`（`test` 清单）、`desktop/scripts/chat-test-util.mjs`（`__test` 导出）；依赖「没变也重建」来模拟轮询的已有单元用例（改成让数据真的变一下，断言不动）；`.claude/skills/verify/scripts/gui-worktree-smoke.mjs`（新用例；M 用例点击前的「等侧边栏安静」随之去掉）、`gui-chat-smoke.mjs`（撤掉 c10 的重做，恢复 `64e8b5e` 的单次真实双击，保留 d79 的「把目标行滚进可见区」）；`.claude/skills/verify/SKILL.md`（`NOTE` 重做那一条）
+- 行为：
+  1. 要渲染的内容与上一次渲染的完全相同时不动 DOM：`renderSidebar()` 给模型算一个指纹，与上次渲染的相同就返回。渲染读到的每一样状态都在指纹里（逐行核对 `sidebar.ts`）
+  2. 跳过渲染时，原来跟在 `renderSidebar()` 后面做的事照常做
+  3. `renamingActive` 期间暂停重建的规则不变；改名结束后的那次渲染一定发生（改名框换掉的标签要恢复）
+  4. 内容确实变了的重建照常发生；不做防抖、不加定时器
+- 测试（先写、先失败）：
+  - 单元：同样的数据再刷新一轮，`#machine-list` 下的节点是同一批对象；每一种会影响显示的变化之后界面确实更新（会话增 / 删 / 改名、状态点、`activitySeq` 引起的点、项目 / worktree 增删、机器上下线、折叠 / 展开、当前会话切换、窗口失焦的黄点、「正在删除…」、语言切换…），每种一条断言
+  - 真实应用：5 台机器安静状态下跨过至少两次 5 秒轮询，`#machine-list` 子树的重建次数为 0；轮询进行期间 20 次真实单击切换会话、10 次真实双击改名（按住 60 ms），全部生效。修复前失败
+  - 变异核对：去掉指纹比较 → 重建计数用例失败；指纹里漏掉一项状态 → 对应的单元断言失败（三项）
+- 完成定义：`make check` 退出 0；撤掉重做之后 `gui-chat-smoke.mjs` 5 次、`gui-worktree-smoke.mjs` 5 次、`gui-smoke.mjs` 2 次全部用例通过（已知偶发清单之外的失败都查清），日志里没有「重做」的 `NOTE`；三份 ws 冒烟、`.devflow.yml` 全部命令型规则通过；用例数量不少于 `7b295b0` 上的数量
+- 依赖：T33
+
 ## 进度
 
 （dev-build 每完成一个任务追加一行）
