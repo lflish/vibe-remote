@@ -972,6 +972,57 @@
 - 完成定义：`cd vibe-remoted && TMUX_TMPDIR=$(mktemp -d) go test -race -count=3 -timeout 10m -v ./internal/session -run 'TestGitTimeoutKillsProcess|TestGitEnvKeepsInheritedConfig'` 的输出里没有 `SKIP`（本机 git 2.50.1）；c6 仍等用户决定
 - 依赖：无
 
+### 关口 C 放行后的返工（T29–T32）
+
+用户对关口 C 的汇总回复 `all`（decisions #153）：关口 C 放行，进入发布之前先改四处。每个任务：先写回归测试并确认失败，再修；修完做一次变异核对（临时改动不提交）；单独提交。所有命令带独立的 `TMUX_TMPDIR`，`go test` 带 `-timeout`。做的先后：T29 → T30 → T31 → T32。
+
+### T29 返工（d71）：旧版 git 的退回模式下，带换行的路径不再被读成另一项
+- 状态：待办
+- 来源：关口 C 已放行，先改 d71（verdict.md N-1）。git 不认 `worktree list -z`（低于 2.36）时按行解析，路径带换行的 worktree 会被读成另一个路径上的一项（`…/a\nfoo` → `…/a`；`…/a\nworktree /别处/evil` → `/别处/evil`），那个目录随后通过对话界面的信任规则
+- 文件：修改 `vibe-remoted/internal/session/worktree.go`（`parseWorktreeList` 的按行读法）；测试 `vibe-remoted/internal/session/gate_c_test.go`；`CLAUDE.md`（「项目与 worktree」里讲列表读取的几句）、`.devflow.yml`（「对话界面的信任…」那条的 check 加新用例）、本文件「后续」的 X14 已知限制
+- 场景：R2.1、R4.2（列出的每一项都是真的 worktree）；`.devflow.yml`「对话界面的信任只认目录本身，或仓库自己列出的 worktree 根」
+- 测试：
+  - `TestFallbackListNeverInventsAWorktree`：验证者的两个反例（`a\nfoo` 旁边放一个带 `.git` 文件的普通目录 `a`；`a\nworktree <别处的绝对路径>`），git 用「`worktree list … -z` 回答 129、其余转给真 git」的包装脚本：退回模式下列表里不出现伪造的路径，`ChatTrust(伪造目录)` 是 untrusted，`WorktreeStatus(伪造目录)` 是 not found
+  - `TestParseWorktreeListByLineDropsSplitPaths`：表驱动，路径里的换行后面接 `worktree `、`HEAD `、`branch `、空行、任意文字、连续多个换行、以换行结尾；每一种拆出来的各段都不在结果里，主目录被拆时整次读取失败
+- 完成定义：`cd vibe-remoted && TMUX_TMPDIR=$(mktemp -d) go test -race -count=1 -timeout 10m ./internal/session ./internal/server -run 'TestFallbackList|TestParseWorktreeList|TestListWorktrees|TestChatTrust|TestProjects'` 两行 `ok`；`.devflow.yml` 那条规则的 check 原样执行退出 0；在自己临时目录里从源码构建的低于 2.36 的 git 上跑这个回归测试和列表、信任相关的用例，结果写进报告
+- 依赖：无
+
+### T30 返工（c8）：创建后的钩子失败时不再留下 worktree
+- 状态：待办
+- 来源：关口 C 已放行，先改 c8（verdict.md N-2，d70 的代价）。自己的 `git worktree add` 以非零退出时一律不认领路径上登记的 worktree，post-checkout 钩子失败（git 报失败而 worktree 已建完）会留下一个 detached 的 worktree
+- 文件：修改 `vibe-remoted/internal/session/worktree.go`（`CreateWorktree`：运行 add 之前读 `<git 公共目录>/worktrees/` 下的登记项名字集合，失败后只认领新出现的、且 `gitdir` 指向本次占到的目录的那一项；`worktreeClaim.undo`）；测试 `gate_c_test.go`；`CLAUDE.md`（讲撤销的那句）、`.devflow.yml` 第 18 条的 check、design 第 10 节；`.claude/skills/verify/scripts/gui-worktree-smoke.mjs`（能低成本加「钩子失败」的变体就加，只增不改）
+- 场景：R3.8（创建失败不留半截）、R3.5（不动别人的）
+- 测试：
+  - `TestCreateFailedByPostCheckoutHookLeavesNothing`：钩子 `exit 2` → 创建返回失败，目录、登记、分支都不留，同名可再建，错误信息里有钩子的输出
+  - `TestUndoLeavesAWorktreeSomeoneElseAddedAtTheSamePath` 的三个子用例原样仍然通过（别人在 add 之前建的属于「add 之前就存在的登记」）
+  - `TestUndoLeavesAWorktreeAddedElsewhereDuringTheAdd`：别人恰好在本次的 add 运行期间在别的路径上建了 worktree → 不被认领、不被删
+  - `TestWorktreeAddKilledDuringCheckoutIsUndone` 仍通过
+  - 同一路径上「本次的 add 失败、别人同时建成」在 git 自己的互斥下不可能同时成立：用测试证实；证实不了按不认领处理并写进「后续」
+- 完成定义：`cd vibe-remoted && TMUX_TMPDIR=$(mktemp -d) go test -race -count=1 -timeout 10m ./internal/session -run 'TestUndo|TestCreate|TestWorktreeAddKilled|TestGitNeverGetsShortBranchName'` 一行 `ok`；`.devflow.yml` 第 18 条的 check 加上新用例后原样执行退出 0
+- 依赖：T29（同一个文件）
+
+### T31 返工（c7）：后台终端会话在屏幕内容没变时不亮「有新消息」
+- 状态：待办
+- 来源：关口 C 已放行，先改 c7（evidence/exploration-findings.md 的 X1）。新建或重命名任何终端会话时 tmux 重绘所有客户端，其它打开着的后台终端会话都收到字节、都亮「有新消息」
+- 文件：桌面端 `desktop/src/renderer/`（点亮逻辑：`index.ts` 里终端收到数据到 `nextDot` 的路径；新的比较函数放独立文件）；测试 `desktop/scripts/`（新单元测试，接进 `npm test`）；`.claude/skills/verify/scripts/gui-smoke.mjs` 或 `gui-worktree-smoke.mjs`（真实应用的用例）；`CLAUDE.md`（「第二批体验增强」「客户端会话模型」的相关说法）、design 第 10 节
+- 约束：终端模式纯字节透传，客户端不解析、不解释 PTY 输出。只允许做「前后是否相同」的比较：字节写入 xterm 并处理完之后，对 xterm 已经渲染出的可见屏幕取快照，与上一次的比较；字节仍原样、无条件写入 xterm
+- 场景：本需求的 spec 没有对应场景（行为原属双模式会话之前的版本）；依据是 spec「问答记录」2026-11-20 的用户确认
+- 测试：
+  - 单元：快照比较的纯函数；接线（相同屏幕的重绘不产生输出事件，文本变化产生）
+  - 真实应用：开两个终端会话，A 在后台且没有点，新建第三个终端会话（或重命名一个）→ A 仍然没有点；随后让 A 真的输出一行 → A 亮点。修复前这个用例失败
+  - 现有断言不放宽（`gui-smoke.mjs` 第 9 步的状态点、`test-chat-activity`）；描述旧行为「重绘也亮」的断言逐个列出、按新规则改并写明依据（c7）
+- 完成定义：`cd desktop && npm run typecheck && npm test` 退出 0；真实应用的用例通过；报告里给出一次快照的耗时（80×24 和 200×60）
+- 依赖：无
+
+### T32 返工（c9）：写明支持的 git 版本
+- 状态：待办
+- 来源：关口 C 已放行，先改 c9。用户确认的文字：推荐 git 2.36 及以上；2.31–2.35 可用，但路径带换行的 worktree 不会列出；低于 2.31 不支持
+- 文件：`README.md`、`README.zh-CN.md`（前置条件）、`CLAUDE.md`（「前置条件与联调」）、`design.md`（「升级步骤」）
+- 场景：无（只改文档）
+- 测试：无新增；核对文档里没有与此矛盾的旧说法
+- 完成定义：四处都写了同一个结论和各一句原因（2.36：`worktree list -z`；2.31：`locked` / `prunable` 标记等）；不加运行时的版本检查（不采纳的理由记一行口味型决定）
+- 依赖：T29（2.31–2.35 的限制以 T29 之后的行为为准）
+
 ## 进度
 
 （dev-build 每完成一个任务追加一行）
