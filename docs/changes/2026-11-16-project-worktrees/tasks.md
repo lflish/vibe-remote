@@ -1026,6 +1026,17 @@
 - 完成定义：四处都写了同一个结论和各一句原因（2.36：`worktree list -z`；2.31：`locked` / `prunable` 标记等）；不加运行时的版本检查（不采纳的理由记一行口味型决定）
 - 依赖：T29（2.31–2.35 的限制以 T29 之后的行为为准）
 
+### 合并对话模式的关口 C 返工（T33）
+
+### T33 合并对话模式的关口 C 返工并解决冲突
+- 状态：进行中
+- 来源：`change/dual-mode` 在本分支分出去（`6d88e45`）之后做了两轮关口 C 返工（X3–X10，到 `64e8b5e`），已定稿并开了 PR；本分支叠在它上面，发布前要包含这些改动
+- 文件：`git merge --no-ff change/dual-mode` 报冲突的文件，以及没有报冲突但语义上要处理的文件（对话模式改的是 `desktop/src/renderer/index.ts` 里旧侧边栏的几处，本分支已把侧边栏搬到 `sidebar.ts` / `tree.ts`）；`docs/changes/2026-11-13-dual-mode/` 整个取 `change/dual-mode` 的版本；`CLAUDE.md`、`.devflow.yml`、`.claude/skills/verify/SKILL.md`、`CHANGELOG.md`、`docs/protocol.md`、`docs/changes/README.md` 两边的内容都保留
+- 场景：本需求 R1–R9 全部场景不变；对话模式返工的每一项（X3–X10 和其余几处）在三层侧边栏上同样成立，含 worktree 行下面的会话
+- 测试：两边的测试都保留并通过。对话模式的 `desktop/scripts/` 单元测试、`gui-chat-smoke.mjs`、`gui-smoke.mjs`（两边用例的并集）；本需求的 `gui-worktree-smoke.mjs`、`ws-worktree-smoke.mjs`、布局测量脚本、全部 Go 测试。因侧边栏结构不同要改写的用例只改定位方式、不改断言。X6、X7、X8、X10 各有在三层侧边栏上真实运行的用例，对 worktree 行下面的会话缺的补上，每个补的用例做一次变异核对
+- 完成定义：`make check` 退出 0；三份 GUI 冒烟各 2 次、三份 ws 冒烟、布局测量脚本、`.devflow.yml` 全部命令型规则在合并后的代码上通过；用例数量不少于合并前两边各自的数量；`git diff --stat change/dual-mode..HEAD -- docs/changes/2026-11-13-dual-mode` 为空；协议三处一致，版本仍是 4
+- 依赖：无
+
 ## 进度
 
 （dev-build 每完成一个任务追加一行）
