@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/lflish/vibe-remote/vibe-remoted/internal/chat"
+	"github.com/lflish/vibe-remote/vibe-remoted/internal/protocol"
 )
 
 // Regression tests for the findings of the first round of gate C of the
@@ -582,47 +583,25 @@ func TestUndoAfterWorktreeAddFailedOnItsOwn(t *testing.T) {
 	})
 
 	// git reports a failing post-checkout hook as a failed `git worktree add`,
-	// although the worktree is complete by then. This create cannot tell that
-	// worktree from one someone else added in the meantime, so it is left where
-	// it is (detached; the branch, which nothing is on, goes) and the error
-	// says so.
+	// although the worktree is complete by then. That worktree is this
+	// create's — its registration was not there before the add ran — so it is
+	// taken back like the rest: nothing of the failed create is left.
 	t.Run("post_checkout_hook_fails", func(t *testing.T) {
 		repo := devflowRepo(t)
-		oid := runGit(t, repo, "rev-parse", "HEAD")
-		hook := filepath.Join(repo, ".git", "hooks", "post-checkout")
-		if err := os.MkdirAll(filepath.Dir(hook), 0o755); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.WriteFile(hook, []byte("#!/bin/sh\necho 'the hook says no' >&2\nexit 2\n"), 0o755); err != nil {
-			t.Fatal(err)
-		}
+		failingPostCheckoutHook(t, repo, "echo 'the hook says no' >&2\nexit 2")
 		root := filepath.Join(containerOf(repo), "fix-login")
-		log := installArgLoggingGit(t)
 		_, err := CreateWorktree(WorktreeSpec{Source: repo, SessionID: "s1", Name: "fix-login"})
 		if err == nil {
 			t.Fatal("the create succeeded although git worktree add reported a failure")
 		}
-		noWorktreeRemove(t, log)
 		if branchOID(t, repo, "fix-login") != "" {
 			t.Fatal("the branch was left behind although no worktree is on it")
 		}
 		if !strings.Contains(err.Error(), "the hook says no") {
 			t.Fatalf("message %q does not carry git's own words", err)
 		}
-		if !worktreeListed(t, repo, root) {
-			// A git that takes the worktree back itself when the hook fails.
-			if pathExists(root) {
-				t.Fatalf("git lists no worktree at %s, but the directory is still there", root)
-			}
-			return
-		}
-		if got := runGit(t, root, "rev-parse", "HEAD"); got != oid {
-			t.Fatalf("HEAD in the worktree that was left = %q, want %s", got, oid)
-		}
-		for _, want := range []string{root, "not removed"} {
-			if !strings.Contains(err.Error(), want) {
-				t.Fatalf("message %q does not say %q", err, want)
-			}
+		if worktreeListed(t, repo, root) || pathExists(root) {
+			t.Fatalf("the worktree of the failed create is left at %s (listed: %v): %v", root, worktreeListed(t, repo, root), err)
 		}
 	})
 }
@@ -1236,4 +1215,335 @@ func TestParseWorktreeListByLine(t *testing.T) {
 	if got := parseWorktreeList(z, "\x00"); len(got) != 2 || got[1] != (Worktree{Path: "/r/a", Branch: "odd", Head: oid}) {
 		t.Fatalf("NUL-separated, unknown attributes: %+v", got)
 	}
+}
+
+// failingPostCheckoutHook gives repo a post-checkout hook with this body (sh).
+func failingPostCheckoutHook(t *testing.T, repo, body string) string {
+	t.Helper()
+	hook := filepath.Join(repo, ".git", "hooks", "post-checkout")
+	if err := os.MkdirAll(filepath.Dir(hook), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(hook, []byte("#!/bin/sh\n"+body+"\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	return hook
+}
+
+// registeredWorktrees returns the names under repo's .git/worktrees.
+func registeredWorktrees(t *testing.T, repo string) []string {
+	t.Helper()
+	entries, err := os.ReadDir(filepath.Join(repo, ".git", "worktrees"))
+	if err != nil && !os.IsNotExist(err) {
+		t.Fatal(err)
+	}
+	var names []string
+	for _, e := range entries {
+		names = append(names, e.Name())
+	}
+	return names
+}
+
+// N-2. A post-checkout hook that fails (git-lfs's hook where git-lfs is not on
+// the daemon's PATH, say) makes git report `git worktree add` as failed after
+// the worktree is complete. The create fails, and nothing of it is left: not
+// the directory, not the registration, not the branch. The same name can be
+// used again once the hook works.
+func TestCreateFailedByPostCheckoutHookLeavesNothing(t *testing.T) {
+	const lfs = `printf >&2 "\n%s\n\n" "This repository is configured for Git LFS but 'git-lfs' was not found on your path."` + "\nexit 2"
+	wantNothingLeft := func(t *testing.T, repo, root, branch string, err error) {
+		t.Helper()
+		if err == nil {
+			t.Fatal("the create succeeded although git worktree add reported a failure")
+		}
+		if !strings.Contains(err.Error(), "'git-lfs' was not found on your path") {
+			t.Errorf("message %q does not carry the hook's output", err)
+		}
+		if strings.Contains(err.Error(), "cleanup:") {
+			t.Errorf("the undo left something behind: %v", err)
+		}
+		if pathExists(root) {
+			t.Errorf("%s is still there: %v", root, dirNames(t, root))
+		}
+		if names := registeredWorktrees(t, repo); len(names) != 0 {
+			t.Errorf("git still has a worktree registered: %v", names)
+		}
+		if list := runGit(t, repo, "worktree", "list", "--porcelain"); strings.Count(list, "worktree ") != 1 {
+			t.Errorf("git lists more than the main directory:\n%s", list)
+		}
+		if branchOID(t, repo, branch) != "" {
+			t.Errorf("branch %s is left", branch)
+		}
+	}
+
+	t.Run("named", func(t *testing.T) {
+		repo := devflowRepo(t)
+		hook := failingPostCheckoutHook(t, repo, lfs)
+		store := NewMemoryProjectStore()
+		m := NewManager(false, "/bin/cat", false, "")
+		m.SetProjectStore(store)
+		create := func() (*Runner, error) {
+			return m.Create(CreateOptions{Workdir: repo, Mode: protocol.SessionModeWorktree, WorktreeName: "fix-login", Cols: 80, Rows: 24})
+		}
+		root := filepath.Join(containerOf(repo), "fix-login")
+		for attempt := 1; attempt <= 2; attempt++ {
+			_, err := create()
+			wantNothingLeft(t, repo, root, "fix-login", err)
+			if errors.Is(err, ErrWorktreePathExists) || errors.Is(err, ErrWorktreeBranchExists) {
+				t.Fatalf("attempt %d: %v; the failed attempt before it is in the way", attempt, err)
+			}
+			if pathExists(containerOf(repo)) {
+				t.Errorf("attempt %d: the container this create made is left", attempt)
+			}
+			if len(store.Worktrees()) != 0 || len(m.List()) != 0 {
+				t.Errorf("attempt %d: store keeps %v, sessions %v", attempt, store.Worktrees(), m.List())
+			}
+			if t.Failed() {
+				return
+			}
+		}
+		// The hook works again: the same name is free.
+		if err := os.Remove(hook); err != nil {
+			t.Fatal(err)
+		}
+		r, err := create()
+		if err != nil {
+			t.Fatalf("create after the hook was fixed: %v", err)
+		}
+		t.Cleanup(func() { r.Kill() })
+		if got := runGit(t, root, "symbolic-ref", "HEAD"); got != "refs/heads/fix-login" {
+			t.Fatalf("the new worktree is on %q", got)
+		}
+	})
+
+	// The original naming by session id, started from inside a linked worktree
+	// (the registrations are in the main directory's .git, not in the source's).
+	t.Run("from_a_linked_worktree", func(t *testing.T) {
+		repo := devflowRepo(t)
+		source := filepath.Join(t.TempDir(), "source")
+		runGit(t, repo, "worktree", "add", "-b", "source", source)
+		source = canonPath(t, source)
+		failingPostCheckoutHook(t, repo, lfs)
+		_, err := CreateWorktree(WorktreeSpec{Source: source, SessionID: "s1"})
+		root := filepath.Join(filepath.Dir(source), filepath.Base(source)+"-worktrees", "s1")
+		if err == nil {
+			t.Fatal("the create succeeded although git worktree add reported a failure")
+		}
+		if pathExists(root) || branchOID(t, repo, "vibe/s1") != "" {
+			t.Fatalf("left behind: directory %v, branch %q (%v)", pathExists(root), branchOID(t, repo, "vibe/s1"), err)
+		}
+		if names := registeredWorktrees(t, repo); !reflect.DeepEqual(names, []string{"source"}) {
+			t.Fatalf("registered worktrees = %v, want only the source", names)
+		}
+	})
+
+	// git registers the resolved path when the container is a symlink.
+	t.Run("container_is_a_symlink", func(t *testing.T) {
+		repo := devflowRepo(t)
+		elsewhere := canonPath(t, t.TempDir())
+		if err := os.Symlink(elsewhere, containerOf(repo)); err != nil {
+			t.Skipf("no symlinks here: %v", err)
+		}
+		failingPostCheckoutHook(t, repo, lfs)
+		_, err := CreateWorktree(WorktreeSpec{Source: repo, SessionID: "s1", Name: "fix-login"})
+		wantNothingLeft(t, repo, filepath.Join(elsewhere, "fix-login"), "fix-login", err)
+	})
+}
+
+// N-2. What a failed create takes back is only what its own `git worktree add`
+// registered. A worktree someone else added while that add was running is not
+// it: one at another path, and one at the very path this create had claimed.
+func TestUndoLeavesAWorktreeSomeoneElseAddedWhileTheAddRan(t *testing.T) {
+	// Their add runs inside this create's git call, right before the real git:
+	// after the create has looked at what is registered, before its own add
+	// looks at the path.
+	duringOwnAdd := func(t *testing.T, theirs string) {
+		t.Helper()
+		installGitWrapper(t, `if [ "$GIT_SUB $GIT_SUB2" = "worktree add" ] && [ -z "$THEIR_ADD" ]; then
+  ( export THEIR_ADD=1; `+theirs+` ) >/dev/null 2>&1 || echo "their add failed" >&2
+fi`)
+	}
+	precious := func(t *testing.T, dir string) {
+		t.Helper()
+		if data, err := os.ReadFile(filepath.Join(dir, "precious.txt")); err != nil || string(data) != "someone else's work" {
+			t.Fatalf("their file in %s: %q, %v; a failed create deleted someone else's work", dir, data, err)
+		}
+	}
+
+	t.Run("at_another_path", func(t *testing.T) {
+		repo := devflowRepo(t)
+		// The hook fails for this create's worktree only.
+		failingPostCheckoutHook(t, repo, `[ -n "$THEIR_ADD" ] && exit 0`+"\necho 'the hook says no' >&2\nexit 2")
+		theirs := filepath.Join(canonPath(t, t.TempDir()), "theirs")
+		root := filepath.Join(containerOf(repo), "fix-login")
+		duringOwnAdd(t, `"$REAL" -C '`+repo+`' worktree add -b theirs '`+theirs+`' HEAD && printf "someone else's work" > '`+theirs+`/precious.txt'`)
+		_, err := CreateWorktree(WorktreeSpec{Source: repo, SessionID: "s1", Name: "fix-login"})
+		if err == nil || !strings.Contains(err.Error(), "the hook says no") {
+			t.Fatalf("err = %v, want the failure of the hook", err)
+		}
+		precious(t, theirs)
+		if !worktreeListed(t, repo, theirs) || branchOID(t, repo, "theirs") == "" {
+			t.Fatal("their worktree or their branch is gone")
+		}
+		if worktreeListed(t, repo, root) || pathExists(root) || branchOID(t, repo, "fix-login") != "" {
+			t.Fatalf("this create's own worktree, directory or branch is left: %v", err)
+		}
+	})
+
+	for name, theirArgs := range map[string]string{
+		"at_the_same_path_on_the_same_branch":   "worktree add %s fix-login",
+		"at_the_same_path_detached_at_the_same": "worktree add --detach %s HEAD",
+	} {
+		t.Run(name, func(t *testing.T) {
+			repo := devflowRepo(t)
+			oid := runGit(t, repo, "rev-parse", "HEAD")
+			root := filepath.Join(containerOf(repo), "fix-login")
+			log := filepath.Join(t.TempDir(), "calls.log")
+			duringOwnAdd(t, `"$REAL" -C '`+repo+`' `+strings.Replace(theirArgs, "%s", "'"+root+"'", 1)+` && printf "someone else's work" > '`+root+`/precious.txt'`)
+			// Record what this create then asks git to do.
+			installGitWrapper(t, `[ -z "$THEIR_ADD" ] && echo "$GIT_SUB $GIT_SUB2" >> '`+log+`'`)
+			_, err := CreateWorktree(WorktreeSpec{Source: repo, SessionID: "s1", Name: "fix-login"})
+			if err == nil {
+				t.Fatal("the create succeeded although the directory had been taken")
+			}
+			if strings.Contains(err.Error(), "their add failed") {
+				t.Fatalf("the test did not get its worktree in: %v", err)
+			}
+			precious(t, root)
+			if !worktreeListed(t, repo, root) {
+				t.Fatal("their worktree is no longer registered")
+			}
+			if got := runGit(t, root, "rev-parse", "HEAD"); got != oid {
+				t.Fatalf("HEAD in their worktree = %q, want %s", got, oid)
+			}
+			calls, _ := os.ReadFile(log)
+			if strings.Contains(string(calls), "worktree remove") {
+				t.Fatalf("git worktree remove ran against a worktree that is not this create's:\n%s", calls)
+			}
+			if !strings.Contains(err.Error(), "not removed") {
+				t.Fatalf("message %q should say that the directory was not removed", err)
+			}
+		})
+	}
+
+	// The other order cannot happen: once this create's add has registered its
+	// worktree, git refuses anyone else's add at that path. Their attempt is
+	// made from the hook, that is, while this create's add is still running.
+	t.Run("git_refuses_a_second_add_at_a_registered_path", func(t *testing.T) {
+		repo := devflowRepo(t)
+		root := filepath.Join(containerOf(repo), "fix-login")
+		status := filepath.Join(t.TempDir(), "their-status")
+		failingPostCheckoutHook(t, repo, `[ -n "$THEIR_ADD" ] && exit 0
+( unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_PREFIX; THEIR_ADD=1 git -C '`+repo+`' worktree add --detach '`+root+`' HEAD >/dev/null 2>&1; echo $? > '`+status+`' )
+echo 'the hook says no' >&2
+exit 2`)
+		_, err := CreateWorktree(WorktreeSpec{Source: repo, SessionID: "s1", Name: "fix-login"})
+		if err == nil || !strings.Contains(err.Error(), "the hook says no") {
+			t.Fatalf("err = %v, want the failure of the hook", err)
+		}
+		data, rerr := os.ReadFile(status)
+		if rerr != nil {
+			t.Fatalf("the hook did not make its attempt: %v", rerr)
+		}
+		if got := strings.TrimSpace(string(data)); got == "0" {
+			t.Fatal("git let a second worktree be added at a path it had already registered")
+		}
+		if worktreeListed(t, repo, root) || pathExists(root) || branchOID(t, repo, "fix-login") != "" || len(registeredWorktrees(t, repo)) != 0 {
+			t.Fatalf("this create's own worktree is left: %v", err)
+		}
+	})
+
+	// Their worktree was there before this create's add ran, and the add ends
+	// with a status that is not the one git gives up with (a git, or a wrapper
+	// around it, with other exit statuses): what was registered before the add
+	// is still not this create's.
+	t.Run("registered_before_the_add_whatever_status_it_ends_with", func(t *testing.T) {
+		repo := devflowRepo(t)
+		root := filepath.Join(containerOf(repo), "fix-login")
+		testBeforeWorktreeAdd = func() {
+			runGit(t, repo, "worktree", "add", "--detach", root, "HEAD")
+			if err := os.WriteFile(filepath.Join(root, "precious.txt"), []byte("someone else's work"), 0o600); err != nil {
+				t.Error(err)
+			}
+		}
+		t.Cleanup(func() { testBeforeWorktreeAdd = nil })
+		log := filepath.Join(t.TempDir(), "calls.log")
+		installGitWrapper(t, `echo "$GIT_SUB $GIT_SUB2" >> '`+log+`'
+if [ "$GIT_SUB $GIT_SUB2" = "worktree add" ]; then
+  "$REAL" "$@"; s=$?
+  [ $s = 128 ] && exit 2
+  exit $s
+fi`)
+		_, err := CreateWorktree(WorktreeSpec{Source: repo, SessionID: "s1", Name: "fix-login"})
+		if err == nil || !strings.Contains(err.Error(), "exit status 2") {
+			t.Fatalf("err = %v, want the add to have failed with status 2", err)
+		}
+		precious(t, root)
+		if !worktreeListed(t, repo, root) {
+			t.Fatal("their worktree is no longer registered")
+		}
+		if calls, _ := os.ReadFile(log); strings.Contains(string(calls), "worktree remove") {
+			t.Fatalf("git worktree remove ran against a worktree that is not this create's:\n%s", calls)
+		}
+	})
+
+	// Two registrations of the path appeared while the add ran (two adds that
+	// both got past git's check of the path): which one is this create's cannot
+	// be told, so nothing is removed.
+	t.Run("two_registrations_of_the_path_appeared", func(t *testing.T) {
+		repo := devflowRepo(t)
+		root := filepath.Join(containerOf(repo), "fix-login")
+		failingPostCheckoutHook(t, repo, "echo 'the hook says no' >&2\nexit 2")
+		twin := filepath.Join(repo, ".git", "worktrees", "twin")
+		log := filepath.Join(t.TempDir(), "calls.log")
+		installGitWrapper(t, `echo "$GIT_SUB $GIT_SUB2" >> '`+log+`'
+if [ "$GIT_SUB $GIT_SUB2" = "worktree add" ]; then
+  "$REAL" "$@"; s=$?
+  mkdir -p '`+twin+`' && printf '%s\n' '`+root+`/.git' > '`+twin+`/gitdir'
+  exit $s
+fi`)
+		_, err := CreateWorktree(WorktreeSpec{Source: repo, SessionID: "s1", Name: "fix-login"})
+		if err == nil || !strings.Contains(err.Error(), "the hook says no") {
+			t.Fatalf("err = %v, want the failure of the hook", err)
+		}
+		if !pathExists(filepath.Join(root, "README")) || !pathExists(filepath.Join(repo, ".git", "worktrees", "fix-login")) {
+			t.Fatalf("a worktree was removed although two registrations name its directory: %v", err)
+		}
+		if calls, _ := os.ReadFile(log); strings.Contains(string(calls), "worktree remove") {
+			t.Fatalf("git worktree remove ran:\n%s", calls)
+		}
+		if !strings.Contains(err.Error(), "not removed") {
+			t.Fatalf("message %q should say that the directory was not removed", err)
+		}
+	})
+
+	// A hook that ends with the status git itself gives up with (128) cannot be
+	// told from git refusing the path because someone else had just taken it.
+	// The worktree is then left where it is, and the error says so.
+	t.Run("hook_ends_with_the_status_git_gives_up_with", func(t *testing.T) {
+		repo := devflowRepo(t)
+		oid := runGit(t, repo, "rev-parse", "HEAD")
+		failingPostCheckoutHook(t, repo, "echo 'the hook says no' >&2\nexit 128")
+		root := filepath.Join(containerOf(repo), "fix-login")
+		log := installArgLoggingGit(t)
+		_, err := CreateWorktree(WorktreeSpec{Source: repo, SessionID: "s1", Name: "fix-login"})
+		if err == nil {
+			t.Fatal("the create succeeded although git worktree add reported a failure")
+		}
+		noWorktreeRemove(t, log)
+		if !worktreeListed(t, repo, root) {
+			if pathExists(root) {
+				t.Fatalf("git lists no worktree at %s, but the directory is still there", root)
+			}
+			return // a git that takes the worktree back itself
+		}
+		if got := runGit(t, root, "rev-parse", "HEAD"); got != oid {
+			t.Fatalf("HEAD in the worktree that was left = %q, want %s", got, oid)
+		}
+		for _, want := range []string{root, "not removed", "the hook says no"} {
+			if !strings.Contains(err.Error(), want) {
+				t.Fatalf("message %q does not say %q", err, want)
+			}
+		}
+	})
 }

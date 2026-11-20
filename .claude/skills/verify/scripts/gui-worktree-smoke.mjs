@@ -1379,6 +1379,56 @@ test('R3.8', 'R3.8 git fails while creating', async () => {
   return msg;
 });
 
+// Gate C round 2, N-2: git reports a failing post-checkout hook as a failed
+// `git worktree add` although the worktree is complete by then. Nothing of the
+// failed create is left, so the same name works once the hook does.
+test('R3.8.hook', 'R3.8 the post-checkout hook fails while creating', async () => {
+  const hook = join(fx.failrepo, '.git', 'hooks', 'post-checkout');
+  const meta = join(fx.failrepo, '.git', 'worktrees');
+  const path = join(L, 'failrepo-worktrees', 'hooked');
+  const state = () => J({ branches: branches(fx.failrepo), worktrees: worktrees(fx.failrepo).map((w) => w.path), registered: readdirSync(meta).sort(), container: existsSync(join(L, 'failrepo-worktrees')) });
+  mkdirSync(join(fx.failrepo, '.git', 'hooks'), { recursive: true });
+  writeFileSync(hook, `#!/bin/sh\nprintf >&2 "\\n%s\\n\\n" "This repository is configured for Git LFS but 'git-lfs' was not found on your path."\nexit 2\n`, { mode: 0o755 });
+  try {
+    const before = state();
+    const count = (await sessions(LAB)).length;
+    for (const attempt of [1, 2]) {
+      await openNewWorktreeDialog(LAB, 'failrepo');
+      const s = await typeName('hooked');
+      eq([s.error, s.confirm, s.target], ['', true, path], `attempt ${attempt}: verdict on the name (a failed attempt must not be in the way of the next)`);
+      await click(`${DLG('new-worktree-dialog')}.querySelector('${tid('dialog-confirm')}')`, 'confirm');
+      // the error of this attempt: the one of the case before may still be showing
+      const msg = await waitFor(async () => { const m = await statusMessage(); return m.startsWith('错误：') && m.includes(path) ? m : null; }, 20000, 'the error in the status bar');
+      if (attempt === 1) await evidence('R3.8.hook');
+      assert(msg.includes("'git-lfs' was not found on your path"), `attempt ${attempt}: the message does not carry the hook's output: ${msg}`);
+      assert(!msg.includes('cleanup:') && !msg.includes('not removed'), `attempt ${attempt}: the daemon says it left something behind: ${msg}`);
+      await dialogGone();
+      await refresh();
+      assert(!(await worktreeRow(LAB, 'failrepo', 'hooked')), `attempt ${attempt}: a row for the failed worktree`);
+      assert(!existsSync(path), `attempt ${attempt}: the directory ${path} is left`);
+      eq(state(), before, `attempt ${attempt}: branches, worktrees, registrations and the container directory on disk`);
+      eq((await sessions(LAB)).length, count, `attempt ${attempt}: sessions on the daemon`);
+      eq(await activeId(), null, `attempt ${attempt}: a session view left open`);
+      await waitFor(async () => (await statusMessage()) === '', 15000, 'the status bar cleared');
+    }
+    // the hook works again: the same name is free
+    rmSync(hook);
+    const known = new Set((await sessions(LAB)).map((s) => s.id));
+    await openNewWorktreeDialog(LAB, 'failrepo');
+    const s = await typeName('hooked');
+    eq([s.error, s.target], ['', path], 'verdict on the name once the hook is gone');
+    await confirmNewWorktree();
+    const id = await waitNewSession(LAB, known);
+    const row = await waitFor(async () => { const r = await worktreeRow(LAB, 'failrepo', 'hooked'); return r?.sessions.some((x) => x.id === id) ? r : null; }, 10000, 'row hooked with the new session');
+    eq(row.tags, [], 'tags of the new row');
+    eq(git(path, 'symbolic-ref', '--short', 'HEAD'), 'hooked', 'branch checked out in the new directory');
+    await endSession(LAB, id);
+    return `two attempts failed with the hook's message and left nothing (no directory, no registration, no branch, no row); with the hook gone the same name was created (session ${id})`;
+  } finally {
+    rmSync(hook, { force: true });
+  }
+});
+
 test('R3.9', 'R3.9 Worktree mode from the machine overview asks for the name too', async () => {
   const before = new Set((await sessions(LAB)).map((s) => s.id));
   await openMachine(LAB);

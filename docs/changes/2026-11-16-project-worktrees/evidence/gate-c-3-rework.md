@@ -62,3 +62,62 @@
 - `TestProjectStoreRemoveWorktreeIfSame`：已知偶发（不带 `-race` 时先删再加同一条记录的两次时间戳落在同一微秒；关口 C 第 2 轮验证者实测 200 次失败 33 次）。在 2.34.1 上带 `-race` 单独重跑 5 次：`ok`。
 
 `TestProjectsOneGitCallPerProject`（一轮 `Projects()` 正好每个项目一个 git 进程）在 2.34.1 上通过：对照登记的路径只读文件，不另起 git 进程。
+
+## 2. T30（c8）：创建后的钩子失败时不再留下 worktree
+
+### 2.1 修复前后
+
+修复前（提交 `7f4d4e1` 的代码加回归用例；钩子内容照 git-lfs 的钩子在找不到 `git-lfs` 时的写法，`exit 2`）：
+
+```text
+--- FAIL: TestCreateFailedByPostCheckoutHookLeavesNothing/named
+    the undo left something behind: create worktree: git worktree add --detach …/devflow-worktrees/fix-login <oid>: exit status 2: Preparing worktree (detached HEAD 167d98f) …
+    …/devflow-worktrees/fix-login is still there: [.git README]
+    git still has a worktree registered: [fix-login]
+    git lists more than the main directory
+    attempt 1: the container this create made is left
+--- FAIL: TestCreateFailedByPostCheckoutHookLeavesNothing/from_a_linked_worktree     left behind: directory true, branch ""
+--- FAIL: TestCreateFailedByPostCheckoutHookLeavesNothing/container_is_a_symlink     同上（目录在解析后的路径上）
+--- FAIL: TestUndoAfterWorktreeAddFailedOnItsOwn/post_checkout_hook_fails            the worktree of the failed create is left at … (listed: true)
+--- FAIL: TestUndoLeavesAWorktreeSomeoneElseAddedWhileTheAddRan/at_another_path      this create's own worktree, directory or branch is left
+--- FAIL: TestUndoLeavesAWorktreeSomeoneElseAddedWhileTheAddRan/git_refuses_a_second_add_at_a_registered_path   this create's own worktree is left
+```
+
+真实应用（`gui-worktree-smoke.mjs --only=R3.8`，daemon 换成从 `7f4d4e1` 构建的，`VR_DAEMON=…`）：
+
+```text
+PASS R3.8 git fails while creating — …
+FAIL R3.8 the post-checkout hook fails while creating — attempt 1: the daemon says it left something behind: 错误：create session: create worktree: git worktree add --detach …/failrepo-worktrees/hooked <oid>: exit status 2: …
+2 cases: R3 1/2
+```
+
+修复后：
+
+- `go test -count=1 ./internal/session -run 'TestCreateFailedByPostCheckoutHook|TestUndo|TestCreate|TestWorktreeAddKilled|TestGitNeverGetsShortBranchName|…'` → `ok`；`go test -race -count=1 -timeout 20m ./internal/session ./internal/server` → `ok`（371 s、72 s）。
+- 第 1 轮 X9 的三个反例（`TestUndoLeavesAWorktreeSomeoneElseAddedAtTheSamePath` 的 `same_branch`、`detached_at_the_same_commit`、`added_before_the_branch_was_claimed`）一个字没改，仍然通过；`TestWorktreeAddKilledDuringCheckoutIsUndone` 仍然通过。
+- 真实应用：`PASS R3.8 the post-checkout hook fails while creating — two attempts failed with the hook's message and left nothing (no directory, no registration, no branch, no row); with the hook gone the same name was created`，`2 cases: R3 2/2`。
+- 真的 git 2.34.1 上：`-run 'TestCreateFailedByPostCheckoutHook|TestUndo|TestWorktreeAddKilled|TestCreate'` → `ok`（44 s）。
+
+### 2.2 「新出现且指向本次目录」单独不够
+
+任务说明里的设想：本次的 add 失败、别人同时在同一路径上建成，在 git 的互斥下不会同时成立。实验结果是只对了一半。
+
+- 本次的 add 先登记了路径，别人后到：git 拒绝后到的。用例 `git_refuses_a_second_add_at_a_registered_path` 从 post-checkout 钩子里（也就是本次的 add 还在运行、登记已经写好的时候）对同一路径再做一次 `git worktree add --detach`，它以非零退出；随后钩子失败，本次的 worktree 被认领并清掉。
+- 别人的 add 插在「记下登记」和「本次的 add 自己检查路径」之间：别人建成，本次的 add 因为路径已被登记而以 128 退出。这时别人的登记是新出现的、指向本次的目录，状态也可以对得上（检出本次刚建的分支，或 detached 在同一提交）。用例 `at_the_same_path_on_the_same_branch`、`at_the_same_path_detached_at_the_same`（别人的 add 由包装脚本在本次的 `git worktree add` 进程里、真 git 运行之前执行）在「只按新出现且指向本次目录」的实现上失败：
+
+```text
+--- FAIL: TestUndoLeavesAWorktreeSomeoneElseAddedWhileTheAddRan/at_the_same_path_on_the_same_branch
+--- FAIL: TestUndoLeavesAWorktreeSomeoneElseAddedWhileTheAddRan/at_the_same_path_detached_at_the_same
+    their file in …/fix-login: "", open …/precious.txt: no such file or directory; a failed create deleted someone else's work
+```
+
+所以多一个条件：add 的退出码是 128（git 自己放弃）或 129（用法错误）时不认领。git 拒绝路径发生在它登记任何东西之前，这样退出的 add 没有留下过自己的登记；钩子的退出码 git 原样传出（git-lfs 的钩子是 2）。分不开的只剩「钩子自己以 128 退出」，那时 worktree 留下（用例 `hook_ends_with_the_status_git_gives_up_with` 记着这个结果，tasks.md「后续」）。
+
+### 2.3 变异核对（临时改动，没有提交）
+
+| 改动 | 失败的用例 |
+|------|-----------|
+| 不看退出码（只按「新出现且指向本次目录」） | `…WhileTheAddRan/at_the_same_path_on_the_same_branch`、`/at_the_same_path_detached_at_the_same`、`/hook_ends_with_the_status_git_gives_up_with` |
+| add 之前就在的登记也算 | `…WhileTheAddRan/registered_before_the_add_whatever_status_it_ends_with` |
+| 新出现的登记多于一条也认领 | `…WhileTheAddRan/two_registrations_of_the_path_appeared` |
+| 永不认领（改之前的行为） | `TestCreateFailedByPostCheckoutHookLeavesNothing` 3 个、`TestUndoAfterWorktreeAddFailedOnItsOwn/post_checkout_hook_fails`、`…WhileTheAddRan/at_another_path`、`/git_refuses_a_second_add_at_a_registered_path` |

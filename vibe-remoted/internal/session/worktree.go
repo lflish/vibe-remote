@@ -327,11 +327,12 @@ func isGitDir(dir string) bool {
 	return true
 }
 
-// registeredWorktreePaths reads the paths of the linked worktrees a repository
-// has on record, the way git reads them for its list: each
-// <common dir>/worktrees/<id>/gitdir holds "<path>/.git". A file that cannot
-// be read or does not have that form is skipped, as git skips it.
-func registeredWorktreePaths(common string) (map[string]bool, error) {
+// worktreeRegistrations reads the linked worktrees a repository has on
+// record, the way git reads them for its list: each
+// <common dir>/worktrees/<id>/gitdir holds "<path>/.git". It returns the path
+// by id. A file that cannot be read or does not have that form is skipped, as
+// git skips it; no worktrees directory means there are none.
+func worktreeRegistrations(common string) (map[string]string, error) {
 	base := filepath.Join(common, "worktrees")
 	ids, err := os.ReadDir(base)
 	if errors.Is(err, os.ErrNotExist) {
@@ -340,17 +341,50 @@ func registeredWorktreePaths(common string) (map[string]bool, error) {
 	if err != nil {
 		return nil, err
 	}
-	paths := map[string]bool{}
+	paths := map[string]string{}
 	for _, id := range ids {
 		data, err := os.ReadFile(filepath.Join(base, id.Name(), "gitdir"))
 		if err != nil {
 			continue
 		}
 		if path, ok := strings.CutSuffix(strings.TrimRight(string(data), " \t\r\n"), "/.git"); ok && filepath.IsAbs(path) {
-			paths[path] = true
+			paths[id.Name()] = path
 		}
 	}
 	return paths, nil
+}
+
+// registeredWorktreePaths is worktreeRegistrations as a set of paths.
+func registeredWorktreePaths(common string) (map[string]bool, error) {
+	byID, err := worktreeRegistrations(common)
+	if err != nil {
+		return nil, err
+	}
+	paths := map[string]bool{}
+	for _, path := range byID {
+		paths[path] = true
+	}
+	return paths, nil
+}
+
+// gitCommonDir asks git for the git directory the worktrees of the repository
+// in dir share, as an absolute path.
+func gitCommonDir(dir string) (string, error) {
+	out, err := gitAtTimeout(dir, "rev-parse", "--git-common-dir")
+	if err != nil {
+		return "", err
+	}
+	common := strings.TrimSuffix(string(out), "\n")
+	if common == "" {
+		return "", fmt.Errorf("git rev-parse --git-common-dir in %s gave nothing", dir)
+	}
+	if !filepath.IsAbs(common) {
+		common = filepath.Join(dir, common)
+	}
+	if resolved, err := filepath.EvalSymlinks(common); err == nil {
+		common = resolved
+	}
+	return common, nil
 }
 
 var gitObjectName = regexp.MustCompile(`^(?:[0-9a-f]{40}|[0-9a-f]{64})$`)
@@ -1035,10 +1069,15 @@ func CreateWorktree(spec WorktreeSpec) (CreatedWorktree, error) {
 	if testBeforeWorktreeAdd != nil {
 		testBeforeWorktreeAdd()
 	}
+	// What the repository has registered right before this create's own add
+	// runs: a registration that is there now is not one that add made.
+	before := registeredBeforeAdd(w)
 	if _, err := gitWithin(gitTreeTimeout, w, "worktree", "add", "--detach", claim.root, claim.oid); err != nil {
-		// git that gives up on its own takes back what it had made of the
-		// worktree; only one that was stopped half-way leaves it behind.
-		claim.added = gitStopped(err)
+		// A git that was stopped half-way leaves what it had registered. One
+		// that gives up on its own takes back what it had made of the worktree
+		// — except when it was the post-checkout hook that failed: then the
+		// worktree is complete and stays, and git still reports a failure.
+		claim.added = gitStopped(err) || claim.addLeftItsWorktree(before, err)
 		return CreatedWorktree{}, withCleanup(fmt.Errorf("create worktree: %w", err), claim.undo())
 	}
 	claim.added = true
@@ -1110,14 +1149,86 @@ func withCleanup(err, cleanupErr error) error {
 // than from git's messages.
 //
 // added says whether a worktree of this claim can be in root at all: its own
-// `git worktree add` finished, or was stopped half-way (its time limit, a
-// signal) and so left what it had registered. While it is false — the add has
-// not run yet, or gave up on its own, which is when git takes back what it
-// made — any worktree git lists in root was put there by someone else, and is
-// never removed, whatever branch or commit it is on.
+// `git worktree add` finished; or was stopped half-way (its time limit, a
+// signal) and so left what it had registered; or failed after the worktree was
+// complete (a post-checkout hook), which shows as a registration of root that
+// was not there before the add ran (addLeftItsWorktree). While it is false —
+// the add has not run yet, or gave up on its own, which is when git takes back
+// what it made — any worktree git lists in root was put there by someone else,
+// and is never removed, whatever branch or commit it is on.
 type worktreeClaim struct {
 	w, root, branch, oid, container     string
 	dir, branchRef, newContainer, added bool
+}
+
+// worktreesBeforeAdd is what a repository had registered right before a
+// create's own `git worktree add` ran: the path by id, and the git directory
+// they were read from. known is false when that could not be read.
+type worktreesBeforeAdd struct {
+	common string
+	byID   map[string]string
+	known  bool
+}
+
+func registeredBeforeAdd(w string) worktreesBeforeAdd {
+	common, err := gitCommonDir(w)
+	if err != nil {
+		return worktreesBeforeAdd{}
+	}
+	byID, err := worktreeRegistrations(common)
+	if err != nil {
+		return worktreesBeforeAdd{}
+	}
+	return worktreesBeforeAdd{common: common, byID: byID, known: true}
+}
+
+// gitGaveUp is the exit status of a git command that refused to go on (die).
+const gitGaveUp = 128
+
+// addLeftItsWorktree reports whether this claim's own `git worktree add`,
+// which exited with the error addErr, left a worktree of its own registered in
+// c.root. That is so when all of this holds, and in no other case — when in
+// doubt the worktree in c.root is someone else's and stays:
+//
+//   - The repository now has exactly one registration that names c.root, and
+//     it was not there before the add ran. One that was there before is
+//     someone else's, added after this create took the empty directory.
+//   - The add did not end with the status git itself gives up with (128, or
+//     129 for a usage error). A git that refuses the path does so before it
+//     registers anything, so a registration that appeared while such an add
+//     ran is not its own: someone else's add got in between the look at
+//     `before` and this add's own look at the path, and this add then refused
+//     the path because of it. The other order does not happen — once this add
+//     has registered c.root, git refuses anyone else's add there. What is left
+//     to this rule is the add that got past its checks and failed afterwards:
+//     in its post-checkout hook, whose exit status git passes on. (A hook that
+//     itself exits with 128 cannot be told from git refusing, so its worktree
+//     stays.)
+//
+// Whether what is registered is still in the state this create left it in is
+// checked by undo, as for every worktree it removes.
+func (c worktreeClaim) addLeftItsWorktree(before worktreesBeforeAdd, addErr error) bool {
+	if !before.known {
+		return false
+	}
+	if code, exited := gitExitCode(addErr); !exited || code == gitGaveUp || code == gitUsageError {
+		return false
+	}
+	now, err := worktreeRegistrations(before.common)
+	if err != nil {
+		return false
+	}
+	fresh := 0
+	for id, path := range now {
+		if !sameDir(path, c.root) {
+			continue
+		}
+		if _, was := before.byID[id]; was {
+			return false
+		}
+		fresh++
+	}
+	return fresh == 1
 }
 
 // gitStopped reports whether a failed git call was stopped from outside — it
