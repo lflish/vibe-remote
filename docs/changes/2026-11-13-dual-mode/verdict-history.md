@@ -566,3 +566,624 @@ S:287–290 的 R9.3 约束的是尚在客户端队列的消息退回输入框�
 ### 11.6 记录保全
 
 本节只追加在原 design.md 第 671 行之后。原前缀 **101571 字节**，SHA256 为 `3e5b1f73b28b6a80bec3b9962cc02677b4dc88a3f4e188815a7ea2f5bfa0c977`；追加后逐字节核对该前缀，并核对 spec.md、tasks.md、decisions.md、verdict-history.md、evidence/probe-stream-json.md 的哈希未变。worktree 前后 HEAD 均为 `6a268651d1cabd037ec7bae7f137e0598ab081ad`，git status --short 与 git diff --name-only HEAD 均无输出。没有修改或提交仓库代码。
+
+
+# 关口 C 历史结论
+
+## 关口 C 第 1 轮（提交 e869add，2026-11-20，不通过）
+
+- 总结论：**不通过**。两名独立验证者都没写过被验代码，各自在独立的 worktree 里对同一提交 `e869add` 验证。
+- 分工：
+  - 非界面部分：codex（GPT-6）。Go 测试、`make check` 的各步骤、协议冒烟、`.devflow.yml` 命令型 invariants、/protocol-sync 核对、diff 与断言审计、探索实验。结论不通过，确认问题 3 个（P1 长回复 reset 补发后显示两次；P2 `-c` 接上别的目录的对话；P3 `docs/protocol.md` 漏了 `chat_ack.message`），另有 2 条测试备注（R5.6 用例里的永真断言；`TestOrphanCleanup/stubborn_needs_SIGKILL` 的等待没有上限）。
+  - 界面部分：同模型的全新验证者（Claude Fable 5）。真实 Electron，经 CDP 发真实指针 / 滚轮 / 按键事件；gui-smoke 5 次、gui-chat-smoke 1 次。结论不通过，问题 2 个（P1 不贴底时发消息不显示；P2 已打开的对话会话改不了名、新名字被当成消息发出、侧边栏随后冻结），另有 13 条备注。
+- 裁决（主会话）：全部采纳，编号接着此前的 X2：X3（codex P1）、X4（codex P2）、X5（codex P3）、X6（R16.3 当前会话 + 窗口失焦的黄点，先查依据再定）、X7（界面 P1）、X8（界面 P2），加测试修正。返工任务见 tasks.md 的 T14–T20。
+- 截图：`evidence/verdict-c1/`（8 张，界面验证者手工验证时截的，说明 X7 和 X8）。
+- 下面原样收入两份结论的全文（收入前核对过不含 token）。
+
+---
+
+# 关口 C 第 1 轮 · 验证结论全文（一）：非界面部分（codex）
+
+# 双模式会话独立验证结论
+
+- 结论：**不通过**（3 条确认问题：2 条功能问题、1 条协议文档错误；环境限制及GUI待汇总另列，不冒充产品缺陷）。
+
+- 提交：e869add03fd79e7735d45b740aa57d9af4c1b240
+- 验证快照：{"schema":1,"docs_dir":"docs/changes","head":"e869add03fd79e7735d45b740aa57d9af4c1b240","head_tree":"b58c4926876d6dca94d03f0e017504a74b2a24ec80eff298d3a5f37737ec1751","target":"7d25cbdeee006f7ad5bdf01879848274a383bb69","target_tree":"4d0d58c229e8bd52a71ea65ae7e10f56c3fa665383b7f15a91e05944ed9b569b"}
+- 验证者：Codex（GPT-6），独立验证者，未编写被验代码。
+- 环境版本（开始）：`git rev-parse HEAD` 输出 `e869add03fd79e7735d45b740aa57d9af4c1b240`；`git status --short` 输出为空（干净）。环境 local，cwd 为指定 verify-dm worktree。
+- 安全边界：所有 tmux 检查使用独立 TMUX_TMPDIR；不启动 Electron；不访问真实 8765；不修改已跟踪文件；临时数据仅 /tmp。
+
+## 检查（第一批）
+
+- `cd vibe-remoted && gofmt -l .`：exit 0，无文件输出。登录 shell 的 fnm 曾提示无法写 multishell 目录，命令本身正常；之后全部使用非登录 shell。
+- `cd vibe-remoted && GOCACHE=/tmp/vr-dm-gocache go vet ./...`：exit 0，无输出。
+- `cd desktop && npm run typecheck && npm test`：exit 0，全部测试脚本通过，没有安装依赖。
+- `TMUX_TMPDIR=$(mktemp -d /tmp/vr-dm-XXXXXX) GOCACHE=/tmp/vr-dm-gocache CLAUDE_CONFIG_DIR=/tmp/vr-dm-safe-config TMPDIR=/tmp node /Users/mac/github/vibe-remote/.devflow-tmp/verify-dm/.claude/skills/verify/scripts/ws-chat-smoke.mjs`：exit 0，临时端口 29309，临时数据 /private/tmp/vr-chat-IEc8xd。
+
+```text
+work dir /private/tmp/vr-chat-IEc8xd
+daemon up on 127.0.0.1:29309, claude 2.1.210 (fake)
+PASS chat: create — id=1795143180589-44313287
+PASS chat: replay before ready — one session, one process
+PASS chat: two clients — both saw both, same order, one process
+PASS chat: pending survives reconnect — request 4f149e55-8e66-4d7b-bf57-4b2f1a839106 answered after reconnect
+PASS chat: resync 50 — backlog 54, seq 14..67
+PASS chat: handoff — terminal 1795143181040-28dee999 runs --resume 658e8c18-ae12-4377-ad2c-24dacdb679dd
+PASS chat: daemon restart → ended — history 2, reloaded and replying
+PASS chat: state without hooks — idle → running → idle → waiting → idle
+PASS chat: delete keeps jsonl — process gone, transcript kept
+
+all chat checks passed
+```
+- `ps -axo pid,ppid,pgid,etime,command`：没有运行，原因：沙箱返回 `operation not permitted: ps`；不能据此宣称进程清单为空。
+
+## 探索实验（已完成部分）
+
+- 将 daemon 源码复制到 `/tmp/vr-dm-experiment/vibe-remoted`，只在副本增加 `independent_test.go`；原 worktree 无改动。
+- 命令：在临时副本运行 `TMUX_TMPDIR=$(mktemp -d /tmp/vr-dm-XXXXXX) TMPDIR=/tmp GOCACHE=/tmp/vr-dm-gocache CLAUDE_CONFIG_DIR=/tmp/vr-dm-safe-config go test -race -v -count=1 -timeout 2m ./internal/chat -run '^TestIndependent'`。第一次误在 repo 根执行返回“cannot find main module”，改在临时模块目录执行；没有修改检查来让复现通过。
+- 流式尾巴实验实际输出：`reset=true omitted=0 retained-deltas=20000 message_start=0 total-generated-deltas=20001`，`reset lost message identity: message_start=0, want 1`。起了 fake claude 后从实际 Session 注入协议消息，触发 TailMax 淘汰；没有伪造补发数组。
+- 再从原 worktree 用 esbuild 把 `desktop/src/renderer/chat/session.ts` 打包到 `/tmp/vr-dm-session.mjs`，Node 读取上述真实补发帧，再送完整 assistant 与 result。实际输出：`assistantCount: 2`；无 id 的残片长度 20000，`id=long-reply` 的完整回复长度 20001。
+- 问题 P1：**长回复 reset 补发后重复显示残片和完整回复**。严重程度：中；拦：是。证据：`internal/chat/session.go:931` 淘汰流式开头但不保留累积快照、不更新 reset 判断或省略数；`desktop/src/renderer/chat/session.ts:574` 无 message_start 时创建无 id 的预览，随后完整消息按 id 创建第二条。R12.4 应为“一条回复完整显示一次，没有半截重复”，实际两条。既有 `TestResyncMidStreamTail` 只发 60 个增量，`test-chat-session` 的 preview merged 只覆盖保留 message_start 的短回复，均未守此边界。
+
+## 运行环境备注（孤儿用例）
+
+- 全量 Go 与单进程 invariant 均卡在 `TestOrphanCleanup/stubborn_needs_SIGKILL`：macOS 沙箱禁止 `ps`，`cmdlineMentions` 因此不能确认假 claude 身份，清理不发信号，而用例直接 `<-gone` 没有本地等待上限。
+- 根据本次测试生成的 argv.log、会话 UUID、pid marker、创建时间和进程组核对，两个停住的假 claude 为 PID 52310、56480。尝试仅清理这两个自启动进程，`os.killpg(..., SIGKILL)` 和 `os.kill(..., SIGKILL)` 均被沙箱拒绝：`PermissionError: [Errno 1] Operation not permitted`。没有向其他进程发信号；此处不能声称清理完成，后续继续核对。
+
+- 目录碰撞实验：在临时副本运行 `go test -race -v -count=1 -timeout 2m ./internal/chat -run '^TestIndependentLatest'`（带独立 TMUX_TMPDIR 和临时 CLAUDE_CONFIG_DIR），exit 1。规范化后的 `a-b` 与 `a/b` 编码相同，仅 B 有 JSONL、A 没有历史，`LatestSessionForWorkdir(projects,A)` 却返回 B 的 UUID。初版实验忘了规范化 macOS `/tmp`，没有复现；改为真实 daemon 使用的 canonical path 后复现。
+- 再运行 `go test -race -v -count=1 -timeout 2m ./internal/server -run '^TestIndependentContinue'`（同样隔离），通过真实临时 WebSocket 新建 A + flag `continue`。实际输出：`selected-workdir=/private/tmp/TestIndependentContinueDirectoryCollisionWS4276680393/001/a-b history-cwd=/private/tmp/TestIndependentContinueDirectoryCollisionWS4276680393/001/a/b claude-id=4c90eead-5716-4caf-8fb5-2cc6c3453083 other-directory-id=4c90eead-5716-4caf-8fb5-2cc6c3453083`，exit 1。
+- 问题 P2：**不同工作目录的 `-c` 会接错对话**。严重程度：中；拦：是。`internal/chat/transcript.go:31` 的编码把 `/`、`.` 都替成 `-`；`:102` 在编码目录有文件时直接选最新 id，没有按 JSONL 的 cwd 核对。这会显示并继续另一个目录的历史，且终端 continue 同样调用该函数。R1.5 和 H6 应为“该目录最近一次对话”；实际 A 无历史却继续 B。既有 TestCreateContinueResumesLatest、TestFindTranscriptAndLatest 不覆盖编码碰撞。
+
+## 检查（分包与 invariants）
+
+- 全部 Go 命令使用 `GOCACHE=/tmp/vr-dm-gocache`；`CLAUDE_CONFIG_DIR=/tmp/vr-dm-safe-config` 防止访问真实 claude 配置；`TMPDIR=/tmp`；下面 TMUX_TMPDIR 为通过环境传给整个 check 的独立目录，涵盖 `&&` 后的所有命令。
+- `cd vibe-remoted && TMUX_TMPDIR=$(mktemp -d /tmp/vr-dm-XXXXXX) go test -race -count=1 -timeout 3m ./internal/session ./internal/server ./internal/config ./internal/protocol`：exit 1；session 仅 TestLoadChatsMarksDaemonRestart 因 `ps` 被禁而失败（timeout waiting for orphan gone）；其余三个包通过。输出：
+
+```text
+2026/11/20 10:57:49 warning: failed to kill tmux session vibe-remote-recovered: exit status 1
+2026/11/20 10:57:49 warning: failed to kill tmux session vibe-remote-recovered-clean: exit status 1
+--- FAIL: TestLoadChatsMarksDaemonRestart (15.22s)
+    chat_manager_test.go:513: timeout waiting for orphan gone
+FAIL
+FAIL	github.com/lflish/vibe-remote/vibe-remoted/internal/session	33.863s
+ok  	github.com/lflish/vibe-remote/vibe-remoted/internal/server	17.870s
+ok  	github.com/lflish/vibe-remote/vibe-remoted/internal/config	1.830s
+ok  	github.com/lflish/vibe-remote/vibe-remoted/internal/protocol	2.011s
+FAIL
+```
+- `cd vibe-remoted && go test -race -count=1 -timeout 3m -v ./internal/chat -run <除 TestOrphanCleanup 外全部测试的精确正则>`：exit 0，共 93 个顶层测试（以实际日志命令计数为准）；原始正则命令完整记录如下。这是对被环境阻塞包的剩余用例补跑，不替代失败的全量检查。
+
+```text
+命令：['go', 'test', '-race', '-count=1', '-timeout', '3m', '-v', './internal/chat', '-run', '^(TestDroppedMessageResendWithSameIDIsDelivered|TestResendDuplicateReportsCompleted|TestResendAfterWatchdogReportsCompleted|TestStoreRoundTrip|TestStorePermissions|TestStoreCorruptQuarantined|TestStoreAtomicWrite|TestHistoryFiltersSidechainAndMeta|TestHistoryFullStream|TestSyncHistoryBeforeCutoff|TestBypassLocksMode|TestBypassStillAsksQuestions|TestRespondAllowOnce|TestRespondAlwaysWithSuggestion|TestRespondDenyWithMessage|TestPendingWaitsWithoutClient|TestRespondFirstWins|TestCancelRequestResolves|TestPlanApproveSetsMode|TestPlanApproveManual|TestPlanReviseStaysPlan|TestAskAnswersRoundTrip|TestSetModeUpdatesState|TestRespondQueueFullKeepsPending|TestPlanSetModeQueueFull|TestRespondVsCancelRace|TestMultiplePending|TestRespondRejectsForeignRule|TestRespondFillsUpdatedInput|TestRespondRejectsBadInput|TestLockedSessionCanApprovePlan|TestRespondSetModeRespectsLock|TestRespondSetModeOnlyForPlan|TestParseVersion|TestProbeCachesAndRecheck|TestWorkdirTrusted|TestFindTranscriptAndLatest|TestProjectsDir|TestNoCredentialAccess|TestSendEchoAndStream|TestSendRejectsEmpty|TestSendUTF8|TestSendDedupClientMsgID|TestSendWhenNotRunning|TestInterruptStopsTurn|TestInterruptIdleNoop|TestInterruptResolvesPending|TestInterruptQueueFullKeepsPending|TestRingOverflowReset|TestResyncMidStreamTail|TestStaleEpochResets|TestSubscribeAtomicBacklog|TestSlowSubscriberDisconnected|TestPendingSurvivesRingEviction|TestCrashEmitsExitAndEnded|TestInitVersionTooOldEnds|TestInitCapabilitiesMissingDegrades|TestSlashCommandsPrecedence|TestInitResentEachTurnUpdatesMeta|TestHookLinesPassThrough|TestNonJSONLinesSkipped|TestOversizeLineDropped|TestUnknownControlRequestAnswered|TestDrainWithoutSubscribers|TestOutstandingRecoversAfterStaleTurn|TestLateResultAfterStaleTurn|TestStillQueuedIgnored|TestStopIsIdempotent|TestStopTimings|TestStopAccountsForEveryQueuedMessage|TestReaderJoinBeforeSettle|TestExitCallbackNoSessionLock|TestSingleProcessRestart|TestRestartWithoutTranscriptUsesSessionID|TestResumeMissingTranscriptFails|TestParseClaudeMdExample|TestParseNotClaude|TestParseRejectsShellSyntax|TestParseRejectsConflictingArgs|TestHandoffCommandQuoting|TestCommandFromConfigOnly|TestAssembledCommandRuns|TestParseOptionValuesAreNotFlags|TestHandoffKeepsContinueLikeOptionValues|TestChatArgvKeepsPromptValueContinue|TestDaemonArgsGoBeforeDashDash|TestValueOptionsCoverClaudeHelp|TestStopKillsTermIgnoringDescendantHoldingStdout|TestMainTokenEnvNotInheritedByProbe|TestMainTokenEnvFilteredFromChatProcess|TestFakeClaudeEcho|TestFakeClaudeMatchesProbe|TestFakeClaudeBehaviours)$']
+PASS
+ok  	github.com/lflish/vibe-remote/vibe-remoted/internal/chat	15.599s
+```
+- `cd vibe-remoted && go test -race -count=1 -timeout 2m ./internal/chat -run '^TestOrphanCleanup/(ended_records_unchanged|unrelated_process_untouched|ended_and_confirmed_gone|survivor_keeps_the_claim)$'`：exit 1，实际失败是 ended_and_confirmed_gone 与 survivor_keeps_the_claim（分别“orphan still running after cleanup”“orphans []”），原因同为 `ps` 不可用；另外两个子例通过。未修改或跳过任何源码。
+- 单进程 invariant 的 `&&` 后半段因前半段阻塞未到达，另以**原样后半段**单独补跑：
+
+```sh
+cd vibe-remoted && go test -race ./internal/session ./internal/server -run 'TestReloadWaitsForOldProcess|TestChatCreateReplaySameID|TestContinueReusesRunningSession|TestConcurrentContinueCreatesOneProcess|TestRestartRefusedWhenUResumedElsewhere|TestHandoffVsReloadOneWins|TestReloadVsDeleteSerialized|TestTerminalContinueBusyWhenChatOwns|TestTerminalContinueClaimsLatest'
+```
+
+ok  	github.com/lflish/vibe-remote/vibe-remoted/internal/session	5.337s
+ok  	github.com/lflish/vibe-remote/vibe-remoted/internal/server	9.119s
+exit 0。
+- 命令型 invariants 已完成结果（下方日志的 `$ TMUX_TMPDIR=…` 是 runner 的环境标注；runner 将变量传给整个 shell，实际 check 仍原样执行，变量并非只附在 cd 上）：
+
+```text
+$ TMUX_TMPDIR=/tmp/vr-dm-1jne0een cd vibe-remoted && go test -race ./internal/server -run TestTerminalFramesUnchangedV3
+ok  	github.com/lflish/vibe-remote/vibe-remoted/internal/server	1.882s
+exit=0
+
+$ TMUX_TMPDIR=/tmp/vr-dm-8l_kvjc_ cd vibe-remoted && go test -race ./internal/server -run TestChatDisconnectKeepsProcess
+ok  	github.com/lflish/vibe-remote/vibe-remoted/internal/server	4.179s
+exit=0
+
+$ TMUX_TMPDIR=/tmp/vr-dm-3y52ivih cd vibe-remoted && go test -race ./internal/chat -run TestPendingSurvivesRingEviction
+ok  	github.com/lflish/vibe-remote/vibe-remoted/internal/chat	1.912s
+exit=0
+
+$ TMUX_TMPDIR=/tmp/vr-dm-kx0zfhc7 cd vibe-remoted && go test -race ./internal/chat -run TestRespondRejectsForeignRule
+ok  	github.com/lflish/vibe-remote/vibe-remoted/internal/chat	1.878s
+exit=0
+
+$ TMUX_TMPDIR=/tmp/vr-dm-q2opch4a cd vibe-remoted && go test ./internal/chat -run TestCommandFromConfigOnly && go test ./internal/server -run TestAttachIgnoresCommandFields
+ok  	github.com/lflish/vibe-remote/vibe-remoted/internal/chat	0.459s
+ok  	github.com/lflish/vibe-remote/vibe-remoted/internal/server	1.045s
+exit=0
+
+$ TMUX_TMPDIR=/tmp/vr-dm-np2essyc cd desktop && npm run test:chat-markdown && npm run test:chat-render-guard
+
+> vibe-remote@0.1.3 test:chat-markdown
+> node scripts/test-chat-markdown.mjs
+
+ok - test-chat-markdown: DOMPurify runs on the injected window
+ok - test-chat-markdown: gfm
+ok - test-chat-markdown: code block copy button
+ok - test-chat-markdown: raw html escaped
+ok - test-chat-markdown: sanitizer drops what markdown-it might let through
+ok - test-chat-markdown: links get no target and are intercepted
+test-chat-markdown checks passed (6)
+
+> vibe-remote@0.1.3 test:chat-render-guard
+> node scripts/test-chat-render-guard.mjs
+
+chat render guard passed (15 files)
+exit=0
+
+$ TMUX_TMPDIR=/tmp/vr-dm-_wggcbn2 cd vibe-remoted && go test ./internal/session -run TestChatEnvHookTokenOnly
+ok  	github.com/lflish/vibe-remote/vibe-remoted/internal/session	1.201s
+exit=0
+
+$ TMUX_TMPDIR=/tmp/vr-dm-kjhkm2y4 cd vibe-remoted && go test ./internal/chat -run TestNoCredentialAccess
+ok  	github.com/lflish/vibe-remote/vibe-remoted/internal/chat	0.264s
+exit=0
+
+```
+
+- 项目 verify 的终端协议冒烟：从本 worktree `go build -o /tmp/<自建目录>/daemon ./cmd/vibe-remoted`，Python 启动 `/bin/bash` 临时 daemon，allowed_roots 只含自建 project，独立 tmux；运行 `VR_TOKEN=<临时 token> node .claude/skills/verify/scripts/ws-smoke.mjs 127.0.0.1:55961 /private/tmp/vr-dm-ws-term-lvx24ttn/project`：exit 0，12/12。随后 TERM 并 Wait 临时 daemon、清理自己的 tmux server。首次临时 config 错写 tmux（正确字段 use_tmux），daemon 拒绝未知字段，exit 1；修正验证脚本配置后完成。
+
+```text
+port=55961 data=/private/tmp/vr-dm-ws-term-lvx24ttn
+PASS /healthz
+PASS /api/v1/info version=dev
+PASS session A ready id=1795143558338-382e667c
+PASS A sees its own VIBE_REMOTE_SESSION_ID
+PASS A got a hook token distinct from the main token
+PASS hook token → events 204
+PASS notify frame delivered to session A
+PASS hook token rejected for another sessionId
+PASS hook token rejected on /api/v1/info
+PASS B sees its own VIBE_REMOTE_SESSION_ID (no env bleed from A)
+PASS deleted 1795143558338-382e667c
+PASS deleted 1795143558441-f430d69c
+
+all checks passed
+exit=0
+```
+
+- 环境工具版本：`go version` → `go1.26.2 darwin/arm64`；`node --version` → `v22.22.2`；`npm --version` → `10.9.7`。npm test 实际执行 23 个脚本，全部通过。
+- 原始全量命令 `cd vibe-remoted && TMUX_TMPDIR=$(mktemp -d /tmp/vr-dm-XXXXXX) go test -race -count=1 -timeout 20m ./...`（另有 GOCACHE、临时 CLAUDE_CONFIG_DIR、TMPDIR）：执行后卡在 chat 包 TestOrphanCleanup/stubborn_needs_SIGKILL 的 `<-gone`；已读代码并用其他子例确认是沙箱 ps 限制，约 8 分钟后通过本次 exec 会话的 Ctrl+C 中止，exit 130，**没有跑完，不能记通过**。全部其他包和 chat 剩余 93 个顶层用例已分包跑完。session 包的同类 TestLoadChatsMarksDaemonRestart 失败已单列。
+- 单进程 invariant 的原样前半段 `cd vibe-remoted && go test -race ./internal/chat -run 'TestSingleProcess|TestOrphanCleanup'` 同样卡住，通过其自启动 exec 会话的 Ctrl+C 中止，exit 130；不是成功。该 invariant 的后半段另跑原样命令通过。其余 invariants 原始 runner 在此阻塞后也中止，余下命令此前已逐条原样补跑通过。
+
+## protocol-sync 独立核对
+
+应用项目 `.claude/skills/protocol-sync/SKILL.md`：完整读取 protocol.go、protocol.ts、rest.ts、docs/protocol.md，并检查 server.routes 与 handler。下表的字段均逐项核对 JSON 名、类型、可选性；TS 的 ready.proto? 与 info.chat?/claudeVersion? 是兼容旧接收端，Go 新生产者始终给值，允许此宽松。
+
+| 帧 / 对象 / 端点 | Go 与 TS 的字段核对 | 文档核对 |
+|---|---|---|
+| auth | type、token 相同 | 相同 |
+| attach | sessionId?、newSessionId?、cols/rows（uint16↔number）、workdir?、flags?、mode?、ui?、epoch?、since?、handoffFrom? 相同 | 相同 |
+| ready | sessionId/workdir/proto/mode、worktree 元数据?、ui?/claudeSessionId?/existing?/handoffFrom? 相同 | 相同；“终端省略所有 chat 字段”只适用于普通终端，交接终端有 handoffFrom 的例外在下文明确 |
+| data | type/payload（base64 字符串）相同 | 相同 |
+| resize | type、cols/rows 相同 | 相同 |
+| sessions / SessionInfo | list；id/title/workdir/created/mode、worktree 元数据?、ui?/state?/activitySeq?/epoch?/endReason? 相同 | 相同 |
+| ping / pong | type 相同（Go 用 Frame 信封） | 相同 |
+| exit | type/code 相同 | 相同 |
+| error | type/message/code?/fatal? 相同 | 12 个错误码与 handler fatal 参数相同 |
+| notify / EventRequest | type（仅帧）、sessionId/kind/message? 相同 | 相同；未知 kind 不做错误处理 |
+| chat | type/seq/h?/msg，RawMessage↔对象 | 相同 |
+| chat_sync | type/epoch/reset/omitted/historyCount/backlog 相同 | 相同 |
+| chat_state | type/status/permissionMode/permissionLocked/pending/degraded?/slashCommands/claudeVersion/claudeSessionId/ended 相同 | 相同 |
+| PendingRequest | requestId/seq/request 相同 | 相同 |
+| SlashCommand | name/description?/argumentHint? 相同 | 相同 |
+| ChatEnded | reason/code?/message?/handedOffTo?/stderrTail?/claudeVersion?/minClaudeVersion? 相同 | 相同 |
+| chat_ack | type/op/ref?/ok/code?/message?/duplicate?/completed? 相同 | **遗漏 message?，见 P3** |
+| chat_send | type/clientMsgId/text 相同 | 相同 |
+| chat_respond / ChatResponse | type/requestId/response/setMode?；behavior/updatedInput?/updatedPermissions?/message?/interrupt? 相同 | 相同 |
+| chat_interrupt | type 相同 | 相同 |
+| chat_set_mode | type/mode 相同 | 相同 |
+| GET /healthz | 无鉴权；存活探针 | 相同 |
+| GET /api/v1/info（?recheck=1） | version/proto/hostname/tmux_enabled/default_workdir/allowed_roots/claude_flags/chat；chat supported/reason?/claudeVersion/minClaudeVersion；flag 不下发 arg | 相同 |
+| GET /api/v1/sessions | Bearer；返回 sessions/list | 相同 |
+| DELETE /api/v1/sessions/{id} | Bearer；204/404/409 worktree_preserved + message/worktreeRoot/branch | 相同 |
+| POST /api/v1/sessions/{id}/rename | Bearer；body name，204/404/500，64KiB 限制 | 相同 |
+| POST /api/v1/sessions/{id}/reload | Bearer；204 terminal、202 chat、409 busy error/owner/message、404 | 相同 |
+| GET /api/v1/fs | Bearer；path/entries/parent?/chatTrust? | 相同 |
+| POST /api/v1/events | 主 token 或对应 session hook token；sessionId/kind/message?；204/401/400/413 | 相同 |
+
+开放集合另外核对：ack 9 码、vr_resolved 5 outcomes、vr_notice 的 line_dropped/stale_turn/set_mode_failed/dropped_on_stop（stderr 保留）、vr_exit、vr_client_msg_id、vr_stale、ended.reason 6 值、chat.reason 7 值（含 workdir_untrusted）、chatTrust 3 值；实现、TS 和文档取值一致。未知 WS 帧两端忽略；TS 运行时 endedView 有 default，未知 error.code 只按 fatal 处理。版本号 Go/TS=3，文档第 3 行存在。
+
+- 问题 P3：**协议文档遗漏 chat_ack.message，R18.2 未成立**。严重程度：低；拦：是（需求明确要求三处无差异，用户指定文档错误可判不通过）。证据：`internal/protocol/protocol.go:314` 为 `Message string json:"message,omitempty"`；`desktop/src/shared/protocol.ts:252` 为 `message?: string`；`docs/protocol.md:325–336` 的 chat_ack 字段说明没有 message。nackMsg 的 too_large/invalid_response 实际会产出它，ChatView 会读它。test-report 已承认该遗漏，却把 R18.2 和完成条件记为通过；这一项应补文档后重核对。此问题不会改变当前 Go/TS 互通结果。
+
+## 场景逐项核对（R1–R10）
+
+说明：以下测试名由测试报告提供索引后，读取实际测试代码核对断言。Go 的非孤儿用例均已在本轮 race 分包运行，TS 脚本均在本轮 npm test 运行；“通过”仅指所述已运行的范围，不代替真实 Electron 验收。所有 GUI 行均只读代码，**运行由另一名验证者负责**；没有启动 Electron 或运行两个 GUI 脚本。测试脚本名的根目录为 desktop/scripts/，GUI 根目录为 .claude/skills/verify/scripts/。
+
+| 场景 | 守护测试、真实断言、是否运行 | 结果 |
+|---|---|---|
+| R1.1 默认终端 | Go TestAttachWithoutUIStaysTerminal 断言省略 ui 得到 terminal ready；已运行。GUI R1.1 断言新会话仅一个、ui=terminal、没有 chat view、active 侧栏是 terminal；运行由另一名验证者负责。 | 非 GUI 通过；默认选择及真实界面待其汇总 |
+| R1.2 新建对话 | Go TestWSChatCreateReady 断言 ready.ui=chat、claude UUID、sync/state 正常；WS chat:create 已运行。gui-smoke chat session created via picker 等待可用输入框和 chat 侧栏；运行由另一名验证者负责。 | 非 GUI 通过；真实界面待其汇总 |
+| R1.3 非 claude 置灰 | TestInfoChatNotClaude、TestParseNotClaude 拒绝 bash/codex；test-chat-availability not_claude 断言不可选和正确文案 key，均已运行。GUI R1.3 断言精确中文、disabled、点击仍未选、默认终端；运行由另一名验证者负责。 | 非 GUI 通过 |
+| R1.4 旧 claude / daemon | TestInfoChatTooOld、TestParseVersion 断言最低 2.1.210；availability 分别断言 proto2/缺 chat 升级 daemon、too_old 升级 claude 并带两版本，已运行。GUI R1.4/R17.2 精确原因和卡片禁用；运行由另一名验证者负责。 | 非 GUI 通过 |
+| R1.5 -c 最近完整历史 | TestCreateContinueResumesLatest 校验最新 UUID、argv 用 resume 且无 continue；TestHistoryFullStream/TestSyncHistoryBeforeCutoff 保留工具与历史顺序；test-chat-window 守 300 首屏和逐批到 0，已运行。GUI R1.5 核对 2000 条 user/assistant（3000 JSONL 行）、Read 工具、第一条可上滑找到、后续消息接尾、resume UUID；运行由另一名验证者负责。独立 a-b / a/b 实验从真实 WS 接错历史。 | **不通过，P2**；真 claude JSONL 保真部分仍未验证 |
+| R1.6 固定 bypass | TestBypassLocksMode 拒绝切模式、Bash/Edit/Write 不询问；TestBypassStillAsksQuestions 守 Ask/Plan 不被跳过，已运行。GUI R1.6 断言菜单只有 bypass、禁用、原因、无工具权限卡；运行由另一名验证者负责。 | 非 GUI 通过 |
+| R1.7 worktree / flag | TestChatWorktreeAndFlags 校验真实进程 cwd 在新 worktree，argv 的 model 与 append-system-prompt 值，分支和目录元数据，删除清理，已运行。 | 通过（本地 fake） |
+| R2.1 ready 前重放 | TestChatCreateReplaySameID/TestChatCreateConcurrentSameID 断言相同 session 指针/id、只一条启动记录；WS replay before ready 一会话一进程；test-chat-client create replay 断言重连保留 newSessionId/ui，均已运行。 | 通过 |
+| R2.2 重载先退旧进程 | TestReloadWaitsForOldProcess 1ms 采样 overlap=false、新 pid 不同、旧 pid gone、owner 不变；TestSingleProcessRestart/fake 违反唯一性日志为空、StopTimings，已运行。信号存在性测试的沙箱返回有限，fake 的 pid marker/唯一性日志与 Wait 是交叉证据。 | 本地正常重载通过；异常孤儿见 R2.5 |
+| R2.3 交接先停 | TestHandoffStopsChatFirst 校验 terminal 启动前对话 pid marker 已消失/无并存；handoff WS 冒烟用相同 UUID resume，均已运行。 | 通过 |
+| R2.4 两桌面共享 | TestTwoClientsShareProcess 两端各看到两条 user/reply，顺序相同，只有一 pid/启动；WS two clients 同断言，已运行。 | 通过 |
+| R2.5 daemon 重启 | WS daemon restart→ended 校验优雅退出后历史可读、ended/reload 续聊，已运行通过。TestLoadChatsMarksDaemonRestart 失败 timeout waiting for orphan gone；TestOrphanCleanup 卡住及两个子例失败，ps 沙箱被禁。 | **异常重启孤儿路径尚未验证**；不把环境失败认作已证实产品缺陷 |
+| R2.6 双 -c 同一对话 | TestContinueReusesRunningSession/TestConcurrentContinueCreatesOneProcess 断言 existing、相同 session、owner 和一个启动，已运行。 | 已有同目录正常身份通过；目录选择边界 P2 仍拦 |
+| R3.1 发送与流式 | TestSendEchoAndStream 验证 user echo、多个 delta、完整 assistant、result/idle；test-chat-session echo→stream→result 和 test-chat-view structure and send 校验立即气泡及一条回复，已运行。gui-smoke chat reply rendered 等待 user/reply；运行由另一名验证者负责。 | 非 GUI 通过 |
+| R3.2 Markdown | test-chat-markdown gfm / code block copy button 在真实 jsdom 上断言标题列表表格行内代码和按钮写剪贴板，已运行。GUI R3.2 补字体等宽和 Electron 剪贴板值；运行由另一名验证者负责。 | 非 GUI 通过；真实字体/剪贴板待其汇总 |
+| R3.3 HTML / 脚本 / 链接 | markdown 测试先断言 DOMPurify.isSupported=true，再断言 script/img/on* 无活节点、危险 href 无、raw 文本存在、点击链接被拦并转 IPC；render-guard 扫 HTML sinks；主进程只放行 URL protocol 白名单；已运行。GUI R3.3 stub open-external 并断言 https 参数、URL 未变、无 dialogs；运行由另一名验证者负责。 | 非 GUI 通过；系统浏览器实际拉起未覆盖（IPC 白名单代码已核对） |
+| R3.4 空输入 | TestSendRejectsEmpty 断言拒绝且无 stdin 写；test-chat-queue empty not sent 断言空白无发帧，已运行。 | 通过 |
+| R4.1 Read / Grep | test-chat-session tool pairing 断言按 tool_use_id 配对和结果内容；test-chat-view 断言 Read 路径、折叠和输出为 text；permission summarize 测 Grep 搜索词，已运行。GUI R4 断言 Read/Grep 默认折叠可展开；运行由另一名验证者负责。 | 非 GUI 通过 |
+| R4.2 Bash | tool pairing/view 断言 command、result、失败 error 状态及展开，已运行。GUI R4 测成功 Bash 与 echo 命令，运行由另一名验证者负责；GUI 的成功输出依赖工具文本抽取，TS pairing 对内容作精确断言。 | 非 GUI 通过 |
+| R4.3 Edit / Write | test-chat-diff 分别断言 Edit 旧新、Write 全新增、行号；view 断言 add/del 节点及文件参数，已运行。GUI R4 只测 Edit 的颜色类/展开，不单独测 Write；运行由另一名验证者负责。 | 逻辑/DOM 通过；真实分色待其汇总 |
+| R4.4 工具出错 | pairing 断言 is_error→isError=true 和错误文本；view 断言 Bash.error、默认展开并可见 exit 1，已运行。GUI R4 failed Bash 同测；运行由另一名验证者负责。 | 非 GUI 通过 |
+| R5.1 允许一次 | TestRespondAllowOnce 断言 tool 跑、resolved=allowed，第二次同请求仍待答；view 断言 response.allow 和原 input；已运行。gui-smoke allow once resumes 等卡消失和 done Bash；运行由另一名验证者负责。 | 非 GUI 通过 |
+| R5.2 允许并不再询问 | TestRespondAlwaysWithSuggestion 检查 updatedPermissions 转发、fake 第二次不问、daemon 未创建工作区 .claude；permission describe/grouping 守范围、destination、规则只来自建议；已运行。fake 写 FAKE_CLAUDE_RULES，并非真实 .claude/settings.local.json。 | **部分成立；真实 claude 落盘尚未验证**，不能记整个场景通过 |
+| R5.2b 无建议 | permission no suggestions 返回 null；view 只渲染可用选项，已运行。 | 通过（逻辑/DOM） |
+| R5.3 拒绝并说明 | TestRespondDenyWithMessage 断言 claude 复述意见、resolved=denied；permission buildAnswer 精确 deny/message，view 拒绝按钮送相同说明，已运行。 | 通过（本地 fake/DOM） |
+| R5.4 断线等待 | TestPendingWaitsWithoutClient 在无订阅者下等 2s，断言 pending 同 id、waiting、pid alive、control_response=0，已运行；读实现没有权限等待超时器。 | 通过；2s 有界实验加代码核对支撑“不自动答”，未作无期限实测 |
+| R5.5 重连待答重现 | TestResyncRestoresPending/tool 断线后创建请求、attach 后同 pending、答后 done Bash；TestPendingSurvivesRingEviction 独立 pending 不被 1000 环淘汰；WS pending survives reconnect，已运行。 | 通过 |
+| R5.6 回答送达前掉线 | session submitting reverts 断言 reset 和 incremental 后重回 open；RespondQueueFullKeepsPending 守写队列未接收不能 resolved，已运行。GUI R5.6 丢出站帧、submitting→open、再次答后 tool ok；运行由另一名验证者负责。其“回答未送达时未执行工具”的一条断言永真，见放松检查。 | 状态机通过；GUI 只部分覆盖 spec，须保留此缺口 |
+| R5.7 重复回答 | TestRespondFirstWins/TestTwoClientsRespondRace 校验第二次 nack=request_not_pending、claude 只收一次 response；view handledElsewhere 文案，已运行。GUI R5.7 扣入站帧后答、显示已在别处处理、vr_resolved=1；运行由另一名验证者负责。 | 非 GUI 通过 |
+| R5.8 请求取消 | TestCancelRequestResolves 断言 cancelled、pending 为空、后答 rejected；session cancelled/view 状态关闭，已运行。 | 通过 |
+| R6.1 批准自动编辑 | TestPlanApproveSetsMode 断言 response 后 set_permission_mode=acceptEdits、Write 不再问、最终模式；permission plan opt1 精确帧；已运行。GUI R6 等 acceptEdits；运行由另一名验证者负责。 | 非 GUI 通过 |
+| R6.2 批准逐个确认 | TestPlanApproveManual 校验 default、之后 Write pending；permission opt2 精确帧；已运行。GUI R6 等 default；运行由另一名验证者负责。 | 非 GUI 通过 |
+| R6.3 继续完善 | TestPlanReviseStaysPlan 断言 deny+意见被复述、不发模式切换、plan 保持；permission opt3 不带 setMode；已运行。GUI R6 等意见和新 requestId，但只记录 midMode 未断言 plan；运行由另一名验证者负责。 | Go 断言补齐 GUI 模式盲点，本地通过 |
+| R6.4 离线计划 | TestResyncRestoresPending/plan 的三种选项核对重连全文非空且等于原计划、响应效果，已运行。 | 通过（WS/fake）；实际卡片排版由另一名验证者负责 |
+| R7.1 单选多选 | TestAskAnswersRoundTrip 复述各答案；permission buildAnswer question 精确 answers map；view question prompt 单/多选提交，已运行。GUI R7 Banana/Blue，运行由另一名验证者负责。 | 非 GUI 通过 |
+| R7.2 其他答案 | 同上精确自由文本 Purple with green stripes；GUI R7 my own colour 复述，运行由另一名验证者负责。TS/Go 已运行。 | 非 GUI 通过 |
+| R7.3 未答完不可提交 | permission questionComplete 精确 complete=false/missing 索引；view question prompt 检查按钮 disabled；已运行。GUI R7 两题未答均标红、答一题只剩另一题、答齐可提交；运行由另一名验证者负责。 | 非 GUI 通过 |
+| R8.1 回复中断 | TestInterruptStopsTurn 断言 interrupt control 请求、result interrupted、idle 可续聊；session interrupted result/view stop，已运行。GUI R8 Esc 和按钮各增加一中断标记并再发；运行由另一名验证者负责。 | 非 GUI 通过 |
+| R8.2 权限等待中断 | TestInterruptResolvesPending 校验 interrupted、pending 清空且工具未执行；GUI R8 Esc 关闭卡、标中断、工具不为 ok；运行由另一名验证者负责。Go 已运行。 | 非 GUI 通过 |
+| R8.3 空闲 Esc | TestInterruptIdleNoop 无 control 请求/状态变化；GUI R8 transcript 长度与另一端 chat 帧数不变；运行由另一名验证者负责。Go 已运行。 | 非 GUI 通过 |
+| R9.1 忙时两条有序排队 | test-chat-queue busy: two queued messages go in order, one per result 精确一回合放一条及 FIFO；view 两项排队，已运行。GUI R9 在发两条后删除一条，只能证明保留一条发送，不能单靠 GUI 证明两条均依序发；运行由另一名验证者负责。 | 逻辑 FIFO 通过 |
+| R9.2 撤回 | queue remove 断言 withdrawn 永不发送；view withdraw，已运行。GUI R9 q-two userCount=0；运行由另一名验证者负责。 | 非 GUI 通过 |
+| R9.3 中断退回输入框 | queue interrupt 精确返回全部队列/不自动发送；view input 值，已运行。GUI R9 input 包含 q-three、userCount=0；运行由另一名验证者负责。 | 非 GUI 通过 |
+| R10.1 斜杠列表 | TestSlashCommandsPrecedence 守 init 来源/优先级；session state slashCommands；view 过滤、选择、标题与滚动；静态 slash-menu-layout，已运行。GUI R10 精确 compact/review/fake-skill、/re 过滤和 Enter /review；#40 另测两尺寸长行、title、方向键可见、鼠标选中；运行由另一名验证者负责。 | 非 GUI 通过；真实布局待其汇总 |
+| R10.2 终端专用命令 | queue terminal-only 对 login/theme 阻止发送；view 提示/交接入口、X1 结束关闭和换语言重标，已运行。GUI R10 /theme userCount=0、精确提示按钮；运行由另一名验证者负责。 | 非 GUI 通过 |
+
+## 场景逐项核对（R11–R19）
+
+| 场景 | 守护测试、真实断言、是否运行 | 结果 |
+|---|---|---|
+| R11.1 切换权限模式 | TestSetModeUpdatesState 核对发 set_permission_mode 后状态更新；Plan 两测试校验新模式对 Write 的作用；view mode switcher 精确发送模式，已运行。GUI R11 Shift+Tab 三态循环、菜单和 acceptEdits 下 Write 无提示；运行由另一名验证者负责。 | 非 GUI 通过 |
+| R11.2 bypass 只读 | TestBypassLocksMode 拒绝 setMode、无模式请求写入；view locked 模式选项，已运行。GUI R1.6 只有 bypass、按钮 disabled、说明原因；运行由另一名验证者负责。 | 非 GUI 通过 |
+| R12.1 断线继续运行 | TestChatDisconnectKeepsProcess 关闭 WS 后对话继续生成、进程仍在、再次 attach 可用且无真 exit；WS 离线补发实验同样不依赖 hook，已运行。 | 通过 |
+| R12.2 50 条有序补发 | TestResyncIncremental50 校验 reset=false、first seq=since+1、len=backlog、连续且不重复 seq、assistant=50；WS resync50 已运行。GUI R12 离线另一 WS 发 burst500 后分隔线≥500、末500条依次1..500、之后续聊；运行由另一名验证者负责。GUI order.slice(-500) 不单独证明更早没有重复，Go 连续 seq/TS 去重补充支持。 | 非 GUI 50 条通过；500 条真实渲染待其汇总 |
+| R12.3 超缓冲省略 | TestRingOverflowReset 用1200条完整消息，精确 omitted=204、backlog=1000、seq 连续；session omitted marker 检查200标记位置、空 backlog 也显示标记，已运行。 | 完整消息环场景通过；流式尾巴边界见 P1 |
+| R12.4 流式中途重连 | TestResyncMidStreamTail 校验60次增量的 incremental 连续 seq 和一个完整 assistant；session preview merged 在保留 message_start 时校验一条全文，已运行。独立真实 Session reset 尾巴淘汰后，实际 renderer 状态出现无id残片+带id全文。 | **不通过，P1** |
+| R13.1 回合错误重试 | session turn error 精确 error 与 retryText（含多消息FIFO）；view ended/retry 检查重新发送，已运行。GUI R13.1 显示529错误、重试使上一 userCount 增1、再次出现错误；运行由另一名验证者负责。 | 非 GUI 通过 |
+| R13.2 真退出恢复入口 | TestCrashEmitsExitAndEnded/TestCrashEmitsExitAndEndedWS 校验一 exit、code=1、vr_exit、ended.reason=exited；view ended banner/restart tracking 校验入口和重启后状态，已运行。GUI R13.2 结束中文、stderr、按钮、输入禁用、重启后续聊；运行由另一名验证者负责。 | 非 GUI 通过 |
+| R13.3 断线无 exit | TestChatDisconnectKeepsProcess、WS 断线保活已运行，退出仅由进程结束路径产生。 | 通过 |
+| R13.4 init 不支持 | TestInitVersionTooOldEnds 覆盖缺版本和低版本，校验 ended/version 信息；view ended states 有终端交接入口，已运行。GUI R13.4 精确最低版本、交接和3s sockets数不变/无reconnect横幅；运行由另一名验证者负责。 | 非 GUI 通过；真实窗口不重连待其汇总 |
+| R14.1 新终端接上 | TestHandoffCreatesTerminalWithResume/TestHandedOffTerminalReloadUsesResume 检查相同工作目录、resume同UUID、continue移除、原对话handed_off；WS handoff 等终端 fake interactive resume，已运行。 | 通过（fake 能验证命令和身份；真实 claude 历史显示未覆盖） |
+| R14.2 忙时确认再交接 | TestHandoffInterruptsRunningTurn 检查先interrupt/Stop再terminal启动；TestHandoffStopsChatFirst 辅助唯一性，已运行。GUI R14.2 确认文字含“中断当前回合”、终端有resume UUID、原chat ended/输入禁用；运行由另一名验证者负责。 | 非 GUI 通过；确认框交互待其汇总 |
+| R15.1 重命名持久化 | TestChatRenamePersists 去ANSI/空白后名字为my chat，shutdown+新Manager加载仍一致；TestChatRenameDeleteREST 守REST改名与list，已运行。双击及多桌面界面刷新只有旧探索文字，当前GUI脚本无独立完整场景。 | 远程落盘/列表通过；双击和另一真实桌面显示尚未在本轮验证 |
+| R15.2 删除保留JSONL | TestChatDeleteKeepsJSONL 校验进程退出、Manager/list/store移除、transcript仍在；WS delete keeps jsonl 同测，已运行。侧栏删除交互由另一名验证者负责。 | 非 GUI 通过 |
+| R15.3 重载历史续聊 | TestReloadChatReturns202/TestReloadPushesResetSync 校验202、reset新epoch、历史、续聊；TestReloadWaitsForOldProcess 校验先退旧；HandedOff拒绝重载，已运行。 | 非 GUI 通过；侧栏交互由另一名验证者负责 |
+| R16.1 灰点 | test-chat-activity chat frame / machine overview 与 index DOM integration 断言后台dot=output、active无点；已运行。真实侧栏打开后清除需GUI/探索，运行由另一名验证者负责。 | 非 GUI 通过 |
+| R16.2 绿点 | activity result turns it green 精确后台 idle/当前 none、REST running→idle 同测，已运行。 | 非 GUI 通过；真实显示由另一名验证者负责 |
+| R16.3 黄点与通知 | activity pending prompt、fallback does not switch、overview hidden-chat 集成断言后台黄点/notify=true、fallback不切、click才open；已运行。GUI R16.3 真实黄点、fallback日志/Dock角标、不自动切换、模拟notification-click后打开；运行由另一名验证者负责。原生通知显示不在脚本可证明范围；当前会话但窗口未聚焦的黄点覆盖边界见待验证项。 | 后台路径逻辑通过；原生通知/真实窗口及边界尚未验证 |
+| R16.4 不需hook | activity REST 断言activitySeq/epoch/state变更驱动点与通知；WS state without hooks 观察idle→running→idle→waiting→idle，已运行。 | 通过 |
+| R17.1 现有回归 | gofmt/vet/typecheck/npm test通过；Go全量未跑完，已分包完成非孤儿用例，session孤儿例失败。原终端断言diff无删改。gui-smoke 原有测试本轮没有运行，运行由另一名验证者负责；旧报告1次drag-select失败不能记无失败。 | **全量通过尚未成立**，环境受阻/GUI待汇总 |
+| R17.2 新桌面旧daemon | availability proto2与缺chat断言升级daemon且终端未禁用，已运行。GUI R17.2 使用main构建旧daemon，卡片精确文案及终端输入回显；运行由另一名验证者负责。 | 逻辑通过；旧daemon真实互连待其汇总 |
+| R17.3 旧桌面新daemon | TestTerminalAttachToChatIsUIMismatch 对无ui的旧attach返回明确fatal ui_mismatch；TestAttachWithoutUIStaysTerminal 保持默认终端；TestTerminalFramesUnchangedV3 对普通/worktree ready、sessions、exit、error的v2黄金字节除proto外相同，已运行。data原字节/base64和现有PTY回归也运行。 | 协议层通过；未用旧Electron实机，不声称全交互验证 |
+| R18.1 proto3 | TestInfoAndReadyProto3 分别断言info与terminal ready proto=3；WSChat ready 同测，已运行。 | 通过 |
+| R18.2 三处无差异 | 按protocol-sync完整手工核对四文件和handlers，Go/TS字段一致、版本表有3，但文档缺chat_ack.message。 | **不通过，P3** |
+| R19.1 架构文档 | 读CLAUDE.md:7–16，分别说明默认终端/PTY纯字节不解析、daemon stream-json/桌面结构化渲染、仅claude；grep/rg命中后读取上下文核对限定范围。 | 通过 |
+
+## 完成条件
+
+总体完成条件：**不成立**。
+
+| spec 的完成条件 | 判定 | 依据 |
+|---|---|---|
+| R1–R19 全部场景用 verify skill 跑通 | **不成立** | R1.5/R12.4 已复现违例，R18.2 文档错误；真实claude权限落盘、异常孤儿、若干真机范围未验证；GUI另方尚未汇总。 |
+| gui-smoke 新增对话端到端通过 | **尚未验证（本验证者）** | 已读创建/回复/允许一次三个有效GUI用例；依分工不执行，运行由另一名验证者负责。 |
+| make check 全绿 | **尚未验证** | 没有单独执行字面make check，已按用户清单执行它的gofmt/vet/typecheck/npm步骤及带20m timeout的race全量；全量中止/孤儿子例失败，不能记全绿。避免再启动同一受阻用例造成额外无法清理的fake。 |
+| protocol-sync 三处一致 | **不成立** | P3。两端实现一致不能代替文档一致。 |
+| 原终端测试不改断言照样通过 | **尚未验证（已运行部分通过）** | npm/非孤儿Go终端回归通过且原断言未删改；原gui-smoke由另方执行，已知drag-select失败须保留调查结论。 |
+
+非功能：500条≤2秒由另一名验证者测；旧报告46ms只证明当时ready到DOM末项这一指标，不能移作本轮e869add的结果。真实远程首字相对CLI延迟、Linux启动没有运行，属于已列明限制。安全检查的已运行范围与未验证范围另列，未发现sanitizer/命令字段注入的新绕过。
+
+## 差异与探索审阅
+
+- 命令：`git diff 7d25cbd...HEAD` 及按子系统读取 diff；`git show b88f4ae`。实际 `--stat` 为160文件（含流程文档和截图），b88f4ae 为12文件、3个产品TS/CSS文件加fakeclaude与测试。没有通过评审报告的“已修复”描述来代替当前实现核对。
+- **单进程与操作串行化**：读 chat_manager 的 claudeOwners 先claim后spawn、会话 WithOp/opMu、ReloadChat 的 reload 标记、handoff/delete 的持锁顺序、旧进程 Wait/reader join 后 restart。TestHandoffVsReloadOneWins、TestReloadVsDeleteSerialized、TestRestartRefusedWhenUResumedElsewhere、TestTerminalContinueBusyWhenChatOwns/ClaimsLatest、TestOrphanOwnerBlocksReloadUntilGone 都在非孤儿分包运行通过，断言只有一方成功、旧进程释放前不启动第二个、占用UUID时拒绝。未复现正常操作的双进程。异常daemon退出后的真实孤儿清理在本沙箱**未证成**，优雅重启WS不是它的替代验证。
+- **epoch/seq/reset 与待答**：读 Subscribe 的锁内历史切点/环快照/订阅原子注册、TS applySync/applyChat 完整sync才保存位置和seq去重。TestStaleEpochResets、TestSubscribeAtomicBacklog、TestSlowSubscriberDisconnected、chat-client“同步中途断线后重连仍走reset”均已运行。pending 另表不随ring/tail淘汰，TestPendingSurvivesRingEviction 实际压满完整消息环仍恢复同requestId，可答。未发现这一条造成权限请求丢失；但流式尾巴既非1000完整消息环也非累积快照，20000帧上限触发P1。
+- **模型输出进入DOM**：检查 markdown.ts、tools.ts、prompts.ts、view.ts 和主进程IPC。Markdown html:false后使用绑定真实window的DOMPurify；只有sanitize结果写innerHTML；工具参数、工具输出、diff和标题用textContent，复制取text。主进程用new URL判protocol，只放行http/https/mailto；will-navigate/window.open锁仍在。已运行恶意HTML/javascript/data/vbscript测试和15文件sink守卫，未找到新绕过。静态sink守卫不能等同任意未来字符串拼接的安全证明，结论限当前代码。
+- **客户端影响命令**：ParseCommand/ChatArgv/HandoffCommand 按服务端配置组合，attach只取flag白名单id；TestAttachIgnoresCommandFields 的真实WS恶意command/args/exe/未知flag最终argv都未出现，已运行。TestCommandFromConfigOnly、HandoffCommandQuoting、AssembledCommandRuns、取值选项和`--`分隔回归已运行；未发现客户端命令注入。
+- **工作区信任**：WorkdirTrusted读取临时CLAUDE_CONFIG_DIR中的hasTrustDialogAccepted；config路径检查后使用canonical目录，单独检查目录本身，父目录信任不继承，missing/corrupt为unknown并拒绝。TestWorkdirTrusted、TestCreateChatUntrustedWorkdir（含worktree）已运行。worktree准入看来源目录是用户批准设计/decisions #32 的规则；reload不重复准入也已在设计写明，不据此构造额外绕过问题。代码会读取全配置字节再只解码信任字段，凭据“不读取”的静态测试只守不访问凭据字段/专用凭据文件；本轮只用合成配置，没有接触真实 ~/.claude.json。
+- **终端互通**：黄金测试按路径/id/时间与proto做必要归一化后逐字节比对v2帧，不会吞新增chat字段；终端ui省略测试、data原字节/base64回归通过。旧客户端无ui打开chat返回fatal ui_mismatch。新客户端旧daemon完整Electron交互按分工待另一名验证者；本轮不访问真实daemon或8765。
+
+## b88f4ae 布局与拖选失败判断
+
+- 新建picker的header/body/footer分层和modal-body滚动，使路径和选项不被flex压扁。picker-layout实际测500/700/803px的modal、主按钮边界、elementFromPoint命中和路径高度，不只是调用element.click。静态 test-picker-layout 与slash-menu-layout以及view滚动断言已在npm test通过；真实尺寸运行由另一名验证者负责。
+- 机器管理对话框（machines.ts:61–89）仍是modal下直接header/list/error/footer；新 `.modal-body > *` 与 `.modal-body > .modal-list` 都不匹配它，通用header/footer新增flex:none及modal更大max-height没有静态明显破坏。机器列表仍自身滚动。没有专门量测机器管理多条机器/编辑错误状态的当前GUI断言，因此它的实际边界仍交另一名验证者，不能凭picker量测记机器对话框全通过。
+- slash的列布局限定在`.slash-menu .mi`，名称单行截断、描述最多两行，title保留全文；`revealSlashItem`重建后按item尺寸恢复/调整scrollTop，view测试模拟尺寸断言方向键选中可见。通用mode菜单未使用这种small描述行，未发现被改成slash排列。
+- gui-smoke的drag-select前新增pickerLayout尺寸模拟，恢复仅等innerHeight，没有等待xterm fit/resize/PTY重绘稳定；因此存在增加布局异步工作和测试时序干扰的机制。拖选测试先等待screenText包含目标（可能命中命令回显），再用当前DOM精确行取坐标，之后八次CDP移动和按键分多次调用；tmux/PTY重绘可能在定位后发生，坐标没有再次确认。
+- 报告失败原文 `"SELECT_ME_PLEASE\nbash-3.2$ \n"` 仍包含正确目标，却多选下一提示符行，指向选区跨行；不是凭据/其他剪贴板内容污染的证据。b88f没有修改终端、xterm选区和剪贴板产品代码。旧轮3次1败、新轮2次1败、另一旧轮27次无失败，不是受控对照，**不能证明b88f提高失败率，也不能证实为产品缺陷**。时序问题是有依据的候选解释，不写成已定位根因。按用户分工不做GUI实验，最终须保留该偶发失败及另一验证者的结论。
+
+## 放松检查审计
+
+- 执行并读取：`git diff 7d25cbd...HEAD -- '*_test.go' 'desktop/scripts/*.mjs' '.claude/skills/verify/scripts/*'`；完整输出保存在 `/tmp/vr-dm-test-diff.txt`。相对基准的测试删除行只有gui-smoke的4行：2行说明、import、旧单机器machines.json准备；现有Go/desktop测试断言没有删除或放宽，旧超时没有调大，没找到新忽略配置。terminal-selection新增依赖精确pin断言。
+- **新增永真断言**：gui-chat-smoke.mjs:623 `assert(!text0.endsWith('done Bash') || true, '')` 永远通过，未守R5.6“回答未送达时工具不执行”。同例open恢复/再次答后tool ok有有效断言；daemon待答与队列满测试也提供支持，但不能把这条永真断言当证据。属于新增测试的覆盖缺口，未单独证实产品错误，不计入3条产品/文档问题。
+- **新增条件跳过**：golden_test.go 的 TestTerminalFramesUnchangedV3、ws_chat_test.go 的测试fixture在找不到tmux时t.Skip；`VIBE_REMOTE_REQUIRE_TMUX=1` 则改为失败。本机已安装tmux并实际运行黄金/WS用例，因此此条件本轮没有触发。新chat等待上限为15s，属于新增测试的有界等待，没有扩大旧测试超时；孤儿stubborn的`<-gone`反而无局部上限，依赖Go全局timeout。
+- GUI通知例 `if (focusedAfter)` 才检查角标清除，避免macOS无法拉前台时误断言；但该分支没触发时只能说没有验证角标清除。通知点击是模拟IPC，不证明操作系统原生通知显示。GUI R6第三选项不assert midMode、R12只核对末500条也已在场景表写清，未抹去覆盖边界。
+- 本轮对chat包用精确正则排除受阻顶层孤儿例后补跑，且单列失败/卡住的原命令，没有改测试源码或把补跑结果冒充全量成功；全部原测试文件保持HEAD内容。
+
+## 评审待验证项与测试报告“未覆盖和遗留”复核
+
+- review.md 的正式待用户决定/不采纳项均为无；遗留的拖选偶发和沙箱ps限制是本轮需要核对的两项。b88f产品改动不在9b42ff0的旧评审范围，本轮已读其12文件diff、相关共用modal/mode-menu代码和测试，未用“低于再评审门槛”免除检查。
+- 读取历史原始证据（只读、未在该目录运行命令）：`/Users/mac/github/vibe-remote/.devflow-tmp/dual-test-out/` 中make-check.log、go-test-v.log、invariants-summary.txt、gui-smoke-run1/run2.log、gui-chat-smoke-run1.log。原make check日志末尾exit=0，正常环境的孤儿用例/LoadChats日志通过；这支持review的“正常环境通过”陈述，但不能覆盖本轮受限制环境。invariants日志10条exit=0，protocol-sync在该runner NOT-RUN，随后报告人工核对，文档遗漏确实还存在。
+- 原GUI日志真实包含第一次drag-select失败原文和exit=1、第二次通过exit=0；picker六项布局两轮均PASS；gui-chat末尾exit=0且R12有46ms、R16.3有fallback和聚焦后角标清除、模拟点击。这些数据与test-report一致。`git diff --stat 6d88e45..HEAD` 只有docs/changes文件/截图，产品代码相同，因此不是报告测了另一版产品；但历史运行不是本验证者的独立GUI运行，本轮仍依分工等待另一名验证者。
+- 真claude规则写盘：fakeclaude使用独立FAKE_CLAUDE_RULES，只模拟规则保存/下一回合不再问；daemon转发测试与UI建议测试都通过，仍不能证明实际设置落盘。设计探针V9/evidence确实记录真claude 2.1.210曾写settings.local.json并取消再次询问；它是协议前置验证，不是当前daemon→desktop整链路验收，测试报告保留未做是准确的。
+- 真JSONL完整工具历史：合成3000行与fake的JSONL断言能证明加载/过滤/窗口/配对；真实claude其他字段/较新版格式不由这些断言覆盖，报告“真机部分未做”有依据。但报告R1.5整项“通过”的常规目录断言不能挡P2。
+- 远程Linux、真实首字延迟、签名包原生通知显示/点击、DMG安装后降级行为均未在本轮运行；分别需要相应环境、模型调用或系统通知支持，不能推测结果。原生notification-click模拟只证明IPC路由，fallback日志和Dock角标证明未签名降级这一条。
+- 网络模拟：GUI通过包装WebSocket丢/扣帧，“另一桌面”是WS客户端，脚本确实没有两台真实桌面；本轮WS断线是真关闭临时连接，但未模拟物理断网/休眠。旧截图中多数来自2026-11-14，只有报告列的7张在2026-11-20更新；不把旧截图当当前GUI独立证据。
+- `.devflow.yml autonomy:L1` 与本需求文档L2不一致、旧daemon提示无内边距X2是报告明列的遗留；前者流程配置而非产品行为，本验证不变更流程；后者基准main已有且不拦本改动。X1终端专用提示结束/换语言的回归在本轮npm通过。
+- **报告结论需纠正**：protocol-sync“通过但遗漏message”与三处无差异互相冲突，计P3；R1.5/R12.4常规测试通过不能推出边界场景通过，计P2/P1。不把报告记录过的偶发失败删掉，也不把未做范围改成通过。
+
+## 待验证项（不计入确认问题）
+
+1. 真实Electron：由另一名验证者负责全部GUI运行；额外留意机器管理共用modal、小尺寸错误/编辑状态、drag-select定位后是否重绘，以及500条的当前渲染时间。此文件不合并尚未收到的GUI结论。
+2. 真claude完整链路：R5.2规则真实落盘、真实JSONL工具历史和远程Linux启动；原生通知显示和真实点击；实际物理断线/休眠。这些都有明确覆盖边界，不能用fake或IPC模拟代替。
+3. 异常daemon退出的孤儿清理：在允许ps与向自启动进程发信号的环境重跑原全量和单进程invariant；本轮有卡住/失败及未清理fake，不能据WS优雅重启宣称已证明。
+4. R16.3条件覆盖：activity.ts的shown按isActive无条件隐藏点；test-chat-activity对`isActive=true, windowFocused=false`明确期望`dot:none, notify:true`，而spec“窗口没有聚焦，或非当前会话”描述要求黄点。GUI R16.3只测非当前会话，未覆盖这个分支；需由GUI验证者从实际窗口入口核对当前会话在失焦时的侧栏表现。这里只列有依据的待验证偏差，不当作已跑出的GUI反例。
+5. drag-select根因：有坐标/重绘时序机制与失败原文支持，但本轮未跑GUI、未做前后受控实验；仍不能判定产品缺陷或b88f失败率提高。
+
+## 补充检查与证据定位
+
+- 补齐三个无测试文件包的构建检查：在vibe-remoted运行 `TMUX_TMPDIR=$(mktemp -d /tmp/vr-dm-XXXXXX) TMPDIR=/tmp GOCACHE=/tmp/vr-dm-gocache CLAUDE_CONFIG_DIR=/tmp/vr-dm-safe-config go test -race -count=1 -timeout 2m ./cmd/vibe-remoted ./internal/chat/chattest ./internal/chat/fakeclaude`：exit=0，三包均 `[no test files]`。没有派生被测进程。
+- 第1条命令型invariant `cd desktop && npm test` 原样runner执行，exit=0（独立环境标注TMUX_TMPDIR=/tmp/vr-dm-nkjn128y）；其余每条原命令及结果在“分包与invariants”已列。没有执行install或真实local.start/make smoke。
+- 本轮完整日志：`/tmp/vr-dm-npm.log`（23项脚本含preserved-notice）、`vr-dm-vet.log`、`vr-dm-go.log`（全量中止）、`vr-dm-go-split.log`、`vr-dm-chat-split.log`、`vr-dm-orphan-subcases.log`、`vr-dm-invariants.log`、`vr-dm-invariants-rest.log`、`vr-dm-owners-check.log`、`vr-dm-ws.log`、`vr-dm-ws-term.log`、`vr-dm-ws-term-daemon.log`；均在/tmp，无需到原worktree找新测试文件。
+- 反例：`/tmp/vr-dm-experiment/vibe-remoted/internal/chat/independent_test.go`、`internal/server/independent_test.go` 是临时源码副本上的独立用例；`vr-dm-experiment.log` 是P1及初版未规范化的目录实验，修正目录实验为`vr-dm-collision.log`/`vr-dm-collision-ws.log`。P1原Session补发帧是`vr-dm-tail-frames.json`，实际renderer逻辑打包是`vr-dm-session.mjs`，结果是`vr-dm-tail-ui.log`。首次未复现的目录实验没有被删除或当成通过证据。
+- P1除spec R12.4外也违反design 5.2声明的“尾巴截断记tailTruncated”；当前Session只有tail/tailBytes，无该标记。d8批准上限不等于批准截断后显示残片和全文两条。
+
+## 环境版本（结束）与清理核对
+
+在最后一个补充分包检查之后，分别在指定verify-dm worktree执行：
+
+- `git rev-parse HEAD`：exit=0，输出 `e869add03fd79e7735d45b740aa57d9af4c1b240`。
+- `git status --short`：exit=0，输出为空。
+- `git diff --exit-code`：exit=0，输出为空（已跟踪文件未变）。
+- `git diff --cached --exit-code`：exit=0，输出为空（索引未变）。
+- 额外 `git rev-parse HEAD^{tree}` 输出Git原始SHA-1 tree `fb20f1321ad7283d9663704d34c7127cebcb9579`。它不是验证快照的SHA-256代码摘要；读verification_snapshot.py后实际执行 `python3 /Users/mac/github/devflow/dev-workflow/scripts/verification_snapshot.py snapshot --repo /Users/mac/github/vibe-remote/.devflow-tmp/verify-dm --docs-dir docs/changes --head e869add03fd79e7735d45b740aa57d9af4c1b240 --target 7d25cbdeee006f7ad5bdf01879848274a383bb69`：exit=0，输出与首部用户给定JSON逐字相同。
+- 结论文件自检：spec的70个子场景均有一行对应核对，缺失[]，确认问题定义3条。该自检只检查报告完整性，不作为产品测试。
+
+测试进程清理：正常完成的WS脚本和终端临时daemon supervisor已走Stop/Wait/自己的tmux清理，临时副本用例也走fixture cleanup。Go全量/原invariant卡住时通过**各自exec会话**Ctrl+C结束，exit130。沙箱禁止ps，不能全局列进程证明所有派生进程为空。
+
+**清理尚未完成的明确例外**：结束时Python `os.getpgid` 与本轮pid marker核对仍得到：
+
+```text
+PID 52310: pgid=52310; 本轮测试pid marker存在=True
+PID 56480: pgid=56480; 本轮测试pid marker存在=True
+```
+
+两者为本轮TestOrphanCleanup/stubborn_needs_SIGKILL启动的fake claude，所属UUID/marker已在前文列明。前述仅针对这两只自启动进程的SIGKILL尝试被沙箱EPERM拒绝，stdin EOF也不使stubborn退出；原exec会话已结束，无法通过该会话清理独立进程组。没有进一步尝试越过沙箱，也没有对任何真实daemon/tmux或非本轮进程发信号。因此“本轮全部测试进程已退出”**不成立**，需在允许清理自有进程的环境处理这两只fake；这是本轮执行环境限制，不另算产品问题。临时证据保留在/tmp便于核对。
+
+本轮没有访问127.0.0.1:8765、没有使用默认tmux目录、没有启动Electron、没有修改已跟踪文件或真实claude/app用户数据，没有commit/push/checkout。唯一新建交付文件是本verdict（其余为/tmp临时实验与日志）。
+
+最终判定：**不通过，确认问题3条**（P1长回复reset重复；P2 -c跨目录接错历史；P3协议文档遗漏）。
+
+
+---
+
+# 关口 C 第 1 轮 · 验证结论全文（二）：界面部分（同模型的全新验证者）
+
+# 独立验证结论（界面部分）
+
+- 结论：**不通过**（2 个用户会遇到、与 spec 不符的界面问题 P1、P2；其余写成备注）
+- 提交：e869add03fd79e7735d45b740aa57d9af4c1b240
+- 验证快照：`{"schema":1,"docs_dir":"docs/changes","head":"e869add03fd79e7735d45b740aa57d9af4c1b240","head_tree":"b58c4926876d6dca94d03f0e017504a74b2a24ec80eff298d3a5f37737ec1751","target":"7d25cbdeee006f7ad5bdf01879848274a383bb69","target_tree":"4d0d58c229e8bd52a71ea65ae7e10f56c3fa665383b7f15a91e05944ed9b569b"}`
+- 验证者：Claude（Anthropic，模型 Fable 5，`claude-fable-5-2[1m]`），独立验证者，没写过这段代码，没有派子 agent。界面场景由我负责；Go 测试、`make check`、协议冒烟、diff 与断言核对由另一名验证者负责，我没有重复。
+
+## 环境版本
+
+worktree：`/Users/mac/github/vibe-remote/.devflow-tmp/verify-dm-gui`（detached）。
+
+```
+开始时
+$ git rev-parse HEAD
+e869add03fd79e7735d45b740aa57d9af4c1b240
+$ git status --short
+（无输出）
+
+结束时
+$ git rev-parse HEAD
+e869add03fd79e7735d45b740aa57d9af4c1b240
+$ git status --short
+（无输出）
+```
+
+Electron 44.7.0，Node v22.22.2，Go 1.26.2，macOS（darwin/arm64）。没有改任何已跟踪文件，没有提交。
+
+## 检查
+
+两份 GUI 冒烟逐个运行，每次各带独立的 `TMUX_TMPDIR=$(mktemp -d /tmp/vr-dmg-XXXXXX)`，开跑前都确认没有别的 Electron 测试实例（第 4 次等了一轮）。
+
+| # | 命令 | 结果 |
+|---|------|------|
+| 1 | `node .claude/skills/verify/scripts/gui-smoke.mjs` | 30 PASS / 0 FAIL，exit 0 |
+| 2 | 同上 | 30 PASS / 0 FAIL，exit 0 |
+| 3 | 同上 | 30 PASS / 0 FAIL，exit 0 |
+| 4 | 同上 | 30 PASS / 0 FAIL，exit 0 |
+| 5 | 同上 | 30 PASS / 0 FAIL，exit 0 |
+| 6 | `DEVFLOW_EVIDENCE_DIR=<gate-c-dm/shots/script> VR_MAIN_DAEMON=<见下> node .claude/skills/verify/scripts/gui-chat-smoke.mjs` | 29 PASS / 0 FAIL，exit 0（R12.2：补发 504 条，ready → 渲染完 72 ms） |
+
+- 日志：`gate-c-dm/logs/gui-smoke-{1..5}.log`、`logs/gui-chat-smoke-1.log`；脚本截图 33 张在 `shots/script/`。
+- 没有失败用例，所以没有「重跑区分偶发 / 稳定」的记录。
+- `gui-chat-smoke.mjs` 默认用 `git worktree add … main` 构建协议 2 的 daemon：会改共享仓库的 worktree 元数据，而且用的是本地 `main` 分支，不一定是基准提交。我改用 `git archive 7d25cbd` 把源码导出到自己的临时目录构建，经脚本自带的 `VR_MAIN_DAEMON` 传入（只读，确实是基准）。
+
+### drag-select 用例（`drag-select under mouse reporting + ⌘C copies the text`）
+
+- 5 次运行 **0 次失败**；我另外用真实拖拽手工做了一次（见场景表），也通过。没能复现。
+- 判断：**测试自身的时序问题，没有发现产品缺陷的迹象**；机制没有用实验坐实，依据和不确定之处如下：
+  1. 失败时的输出 `"SELECT_ME_PLEASE\nbash-3.2$ \n"` 是「目标行 + 其后两行」。用例里按下、拖动、松开用的是同一个 y，所以只能是按下到松开之间屏幕内容上移了两行（重绘 / 滚动），不是选区逻辑把范围算错。
+  2. 用例的同步点偏弱：`waitFor(screenText().includes('SELECT_ME_PLEASE'))` 会被**回显的命令行本身**满足（命令里就有这串字），并不等 `clear; echo` 画完、提示符稳定；随后只靠「⌥ 悬停直到出现 `enable-mouse-events`」间接等待。
+  3. 这次改动没有碰终端、xterm 配置、剪贴板代码（`git diff 7d25cbd..HEAD`：`terminal-clipboard.ts` / `terminal-layout.ts` 无改动；`index.ts` 里终端相关只多了 `ui:'terminal'` 字段和一处 `view?.ui === 'terminal'` 判断；xterm 版本没变）。
+  4. 针对「b88f4ae 加的窗口高度模拟会不会让终端建好后再变一次尺寸」做了实验：在自己的实例里照 `pickerLayout` 的顺序设 500 / 700 / 803 再恢复，然后新建终端并发同一条命令，每 30ms 采样终端行数和容器高度 5 秒，3 轮都是一建好就 51 行、之后没有变化——没有看到产品侧的迟到重排。
+- 建议（不拦）：量行位置前先等屏幕稳定（例如等到目标行下一行出现提示符），拖选前后各读一次目标行位置，不一致就重量。
+
+## 手工验证用的临时实例
+
+4 个临时 daemon + 1 个 Electron，全部在 `/tmp/vr-dmg-BxPFK6/` 下（已删除）：`v-term`=/bin/bash；`v-chat`=假 claude（`claude_flags`：`-c`、`--dangerously-skip-permissions`；`FAKE_CLAUDE_LONG_COMMANDS=1`）；`v-oldclaude`=假 claude 报 1.0.51；`v-olddaemon`=基准 7d25cbd 构建的协议 2 daemon。各自独立的 `TMUX_TMPDIR`、`state_dir`、`CLAUDE_CONFIG_DIR`，`allowed_roots` 只有该目录下的子目录；Electron 用临时 userData + `--use-mock-keychain` + 随机调试端口。所有操作经裸 CDP 的 `Input.dispatchMouseEvent` / `dispatchKeyEvent` / `insertText` 发给这个实例（点击前先做命中测试：元素中心必须真的点得到）；断网用我自己放在 daemon 前面的 TCP 代理（经机器管理界面把它加成第 5 台机器 `v-proxy`）；「另一台桌面」是直连 daemon 的 WebSocket 客户端。驱动脚本留在 `gate-c-dm/scripts-gui/`（不含 token），截图在 `gate-c-dm/shots/`（`m` 开头是手工的）。
+
+## 问题
+
+### P1（拦）对话不在底部时发消息：自己的消息和 Claude 的回复都不显示，滚到底也不出来
+
+- **复现 B（单个会话，真实滚轮 + 真实键盘；做了 1 次，复现）**：新建对话会话 → 发 `burst 30`（内容超过一屏）→ 滚轮上滑 300px → 点输入框输入 `echo 看得到吗` 回车。
+  - 实际：输入框清空，但对话里没有这条用户消息，也没有回复（等 3 秒，DOM 里用户消息数仍是 1）。daemon 已收到并回复（另一个 WebSocket 客户端能看到回复）。滚轮滚到最底再等 3 秒，仍然没有。再发一条 `echo 第二条`，两条消息和两条回复才一起出现。截图 `m47-BUG-B-1…4`。
+- **复现 A（R16 的主流程，全程不手动滚动；后台期间内容增高超过 48px 的 4 次全部复现）**：对话会话贴底 → 发一个持续几秒、产出超过一屏内容的回合（`slow 150 20` + 排队的 `burst 30`）→ 点别的会话去干活 → 侧边栏该会话变绿点（回合结束）→ 点回来。
+  - 实际：视图停在离开时的位置，离末尾还有 947px，没有「下面有新消息」的提示（点已清掉）。直接发 `echo 回来后 1`：输入框清空，消息和回复都不显示；滚到底仍没有；再发一条才一起出现。截图 `m49-BUG-A-1…3`。另有 2 次尝试不算数：1 次后台期间只来了一段不换行的回复（增高不到 48px，按下面写的原因本来就不触发），1 次切走的那次点击没生效、会话其实没进后台（见备注 11）。
+  - 同一状态下的其它表现：发 `fail` 后既没有用户消息也没有错误卡片（`m43x-after-fail`，同一会话的另一个视图里都有）；来了提问卡片，但卡片上方的对话还停在旧位置，看不到 Claude 提问前说了什么（`m58`）。
+- 按 spec 应有：R3.1「用户消息立即出现在对话里，claude 的回复随生成逐段出现」；R16.1 / R16.2 之后打开后台会话接着对话。
+- 原因（读代码确认）：`chat/view.ts` 的 `render()` 用 `atBottom()`（距底 <48px）决定虚拟列表窗口是否跟随，`chat/window.ts` 的 `follow()` 在不贴底时不动 `win.end`，所以新消息（包括用户自己刚发的）不生成 DOM；`onScroll()` 只处理滚到顶部，滚回底部不会触发重新渲染，要等下一次会话更新。后台会话的容器是 `display:none`，期间 `scrollTop` 设不上去，切回来时停在旧位置（内容增高 >48px 就不再贴底），于是不手动滚动也会进入这个状态。
+- 影响：消息其实发出去了，界面上却像丢了；用户很可能重发，claude 会收到两遍指令。回复还在流式输出时滚到底能恢复（有帧触发渲染），回合已结束时滚到底也不恢复。
+- 严重程度：中高（核心发送流程，看起来像丢消息；没有数据丢失）。**拦**。
+- 为什么自动化没发现：`test-chat-window` 断言的正是「不贴底时窗口不动」；gui-chat-smoke 的用例都在贴底状态下发送（多处先 `scrollBottom()`），也没有「后台收到内容再切回来」的用例。
+
+### P2（拦）已打开的对话会话双击改名不生效；接着输入的新名字被当成消息发给 Claude；侧边栏随后停止更新（R15.1）
+
+- 步骤（真实指针，按人的节奏：按下 40ms、两次间隔 90ms）：侧边栏里双击一个**已打开**的对话会话的名字（当前会话或后台会话都一样）→ 输入「登录页重构」→ 回车。
+- 实际：
+  1. 改名输入框最多闪现约 18ms 就消失（12 次尝试 0 次可用，其中 5 次按上面的人手节奏、7 次是无间隔的双击），焦点落在对话输入框。
+  2. 输入的名字进了对话输入框，回车后作为用户消息发给了 claude（对话里多出「登录页重构」和它的回复）；侧边栏名字和 REST `title` 都没变。截图 `m67-BUG-rename-*`。
+  3. 只双击一次之后，侧边栏就不再更新：点别的会话，主区域切过去了，侧边栏高亮还停在原会话；后台会话有新回合也不出状态点（`m70-BUG-sidebar-frozen-after-rename-attempt`）。在一个从没打开过的会话上成功进入改名再按 Esc 才恢复。
+- 对照：从没打开过的对话会话双击 → 输入框出现并聚焦，可改名。已打开的**终端**会话在本提交上 8 次里 3 次可用；我把基准 7d25cbd 的桌面端构建出来对同一个 daemon 试了 4 次，也是 2 次可用、2 次不可用——终端会话的这个竞态是基准就有的，不是这次引入的；对话会话上因为多了输入框抢焦点，变成每次都不可用。
+- 按 spec 应有：R15.1「用户双击侧边栏名字改名 → 新名字保存在远程」；R15「对话会话和终端会话一样支持重命名」。
+- 原因（读代码）：双击的两次 click 各触发一次 `openExisting` → `setActive` → `renderSidebar()`（换掉被点的标签）和 `ChatView.show()`（`requestAnimationFrame(() => this.composer.focus())`）。`startInlineRename` 要么作用在已被换掉的旧标签上（输入框没进文档、`renamingActive` 一直为 true，`renderSidebar` 从此直接返回），要么刚聚焦就被输入框抢走焦点、`blur` 即收起。
+- 影响：用户自己建的对话会话都是已打开的，等于界面上改不了名；新名字会被当作指令发给真实的 claude，触发一个没想要的回合；侧边栏冻结后当前会话高亮和 R16 的状态点不再更新（实测）；按代码 `renderSidebar()` 整个被跳过，新建 / 删除会话也不会刷新（这一点没有单独试），直到碰巧恢复或重启应用。
+- 严重程度：中。**拦**。测试报告对 R15.1 写的是「Go + 探索：通过」，自动化只有存储层（`TestChatRenamePersists`），没有界面用例。
+
+### 备注（不拦）
+
+1. **R16.3 当前会话 + 窗口失焦时没有黄点**：关掉焦点模拟、让自己的窗口失焦后，当前会话收到权限请求 → 发了通知（`[notify] fallback: v-chat · second`），但侧边栏该会话不显示黄点（`activity.ts` 里当前会话一律不显示点）。spec R16.3 字面是「窗口没有聚焦，或该会话不是当前打开的会话 → 侧边栏显示黄点，并发桌面通知」。低。
+2. **拒绝后的工具块标的是「失败」**：R5.3 拒绝并说明后，Edit 块状态为「失败」、输出是用户写的说明；没有单独的「已拒绝」标记（claude 的回复里有 `denied: …`）。低。
+3. **已结束的对话会话在侧边栏没有标记**：交接 / daemon 重启后，侧边栏条目和运行中的一样，只有打开后才看到横幅和「会话已结束」。R14.1 写的是「原对话会话标为已结束」。低。
+4. **删除对话会话的确认文案沿用终端的说法**：「…当前画面会丢失，且无法撤销」；对话会话的历史（JSONL）其实保留（实测删除前后 JSONL 文件数 5 → 5）。低。
+5. **小窗口里长命令把权限按钮挤到卡片折叠线以下**：800×500 时卡片高度封顶 310px、内部可滚，2200 字符的命令占满可见区，「是 / 否」要在卡片里滚动才看得到；键盘 1 / 2 / 3 和 Esc 可用。提问卡片同理（提交按钮要滚到底）。低。
+6. **断线期间状态没有收起**：断线后输入区仍显示「停止 Esc」和「思考中…」，同时提示「未连接：输入会保留，恢复后再发送」。低。
+7. **重新启动 / 重载后权限模式回到「编辑前询问」**：崩溃前是「自动编辑」，重启后是默认模式。符合新进程的实际状态，但用户可能没注意到。低。
+8. **`ExitPlanMode` / `AskUserQuestion` 在对话里显示成原始 JSON 摘要**（`{"plan":"# Plan…`），卡片本身渲染正常。外观问题。低。
+9. **从 JSONL 重建的历史里，出错的回合只有用户消息、没有错误卡片**（重开应用或 `-c` 后）。低。
+10. **状态点只靠颜色区分**（`aria-hidden`，没有 title）。低。
+11. **侧边栏每 5 秒整体重建（每台机器一次）**：按下和松开之间如果刚好重建，这次点击会丢（我强制让按下跨过一次重建，4 次里 4 次丢）。人手点击约 100ms，估算每次点击约 2% 的概率。应是基准就有的做法（没有在基准上单独验证），机器越多越明显。低。
+12. **`desktop/src/renderer/chat/prompts.ts` 里有 3 个原始 NUL 字节**（第 208 行附近的 `'\0other'` 写成了真正的 0x00）。系统 `grep` 把整个文件当二进制（「Binary file … matches」），代码搜索会悄悄漏掉这个文件——我的几次搜索就是这样漏掉它的。建议改成转义写法。属于代码卫生，转给另一名验证者 / 作者。低。
+13. **过程记录**：手工验证途中我的临时窗口被外部最小化并移动过（期间页面不渲染、截图超时）。我经该实例自己的主进程把它恢复后重做了受影响的步骤；结论里的数据都来自窗口可见时的运行。
+
+## 场景（亲手走过的）
+
+每行：场景 → 怎么验证（操作）→ 看到的结果 → 截图（`shots/` 下，省略 `.png`）。除特别说明外都是真实指针 / 按键事件。
+
+| 场景 | 怎么验证 | 结果 | 截图 |
+|------|----------|------|------|
+| R1.1 默认终端 | v-term 上点「打开现有目录」，没碰「界面」，点进 alpha，点「在此打开」 | 终端卡片默认选中；建出终端会话（侧边栏 `terminal:alpha`），shell 提示符出现 | m01, m02 |
+| R1.3 claude_cmd 不是 claude | 同一对话框看对话卡片；用真实指针点置灰的卡片 | 置灰，原因「对话界面只支持 claude：这台机器的 claude_cmd 不是 claude」；点了不会选中 | m01 |
+| R1.4 claude 过旧 | v-oldclaude 打开对话框，真实指针点对话卡片 | 置灰，「远程 claude 版本 1.0.51 低于对话界面要求的 2.1.210，请升级 claude」；点不中 | m05 |
+| R1.4/R17.2 daemon 过旧 | v-olddaemon（协议 2）打开对话框 | 置灰，「这台机器的 vibe-remoted（协议 2）不支持对话界面（需要协议 3），请升级 vibe-remoted」，另有旧 daemon 提示 | m06 |
+| 目录未被信任 | v-chat 进入没写进假 `.claude.json` 的 `untrusted` 目录 | 置灰，「先用终端界面在该目录打开一次 claude 以信任此目录」；先选了对话再进该目录 → 「在此打开」被禁用 | m07, m08 |
+| 建好后不能互换 | 看对话框文案；悬停终端 / 对话会话条目找切换入口 | 对话框写明「界面创建后不能在原会话上更换…」；会话条目只有「重新加载」「删除」两个按钮，没有切换界面的入口 | m01, m39 |
+| 新建对话框布局 800×500 / 1325×803 / 1440×900（真实窗口 `setContentSize`） | 每个尺寸各打开一次，进 30 个子目录的 `many`，依次选终端 / 对话 / Worktree，量对话框、路径栏、按钮；滚轮滚动中间内容；真实指针点「取消」 | 三个尺寸、三种选择下：对话框都在窗口内；路径栏 33/33px 未被压扁；「取消 / 在此打开」都在窗口内且中心点命中按钮本身；中间内容可滚（800×500 时 349/742px）；点「取消」关闭 | m09-picker-* |
+| 终端：输入、输出、中文 | 真实指针点终端，insertText + Enter：`echo TERM_$((20+3))_OK 中文✓` | 回显 `TERM_23_OK 中文✓` | m02 |
+| 终端：拖选 + ⌘C | 真实拖拽选中 `COPY_TARGET_LINE` 一行，⌘C | 剪贴板 = `COPY_TARGET_LINE`（事后已写回原内容） | m02 |
+| 终端：⌘V | 剪贴板放 `echo PASTED_$((3*3))_OK`，⌘V + Enter | 输出 `PASTED_9_OK` | — |
+| 终端：断线横幅与恢复 | 停掉 v-term daemon → 再启动 | 横幅「连接已断开，正在重连… 立即重试」出现；daemon 回来后自动消失，原 tmux 会话里之前的输出还在，可继续输入 | m03, m04 |
+| 机器管理对话框（共用样式） | 1440×900 与 800×500：打开列表 → 编辑 → 「测试连接」→ 取消 → 「+ 添加机器」填错端口 → 测试 → 取消 → 完成（全部真实指针） | 两个尺寸下对话框都在窗口内、无裁切，所有按钮可点；测试连接显示「连接成功」；错误端口提示「端口需在 1–65535 之间」；Token 输入框是 password 类型（截图里是圆点） | m10–m13 |
+| R1.2 新建对话会话 | v-chat → 进 main → 点「对话」卡片 → 「在此打开」 | 侧边栏出现带「对话」标记的 `main`，右侧对话界面，输入框可用；REST 列表 `ui:chat state:idle` | m14 |
+| R3.4 空输入 | 输入框空着按 Enter；输入 3 个空格按 Enter | 没有发出任何消息 | — |
+| R3.1/R3.2 Markdown | 发 `md` | 标题（17px 粗体）、圆点列表 2 项、带边框表格、行内代码、代码块（SF Mono、语言标签 go、「复制」按钮）；点「复制」→ 剪贴板 `fmt.Println("hi")`，按钮变「已复制」 | m15 |
+| R3.3 原始 HTML / 脚本 / javascript: 链接 | 同一条回复；真实指针点 `ok` 链接和 `[x](javascript:…)` 文字 | `<script>`、`<img onerror>` 以纯文本显示，DOM 里 0 个 script / img / onerror；`javascript:` 没有变成链接；`ok` 链接经主进程 open-external 打开（已打桩，收到 `https://example.com`），窗口没有跳转、没有弹窗、没有新窗口 | m15 |
+| R4.1 Read / Grep | 发 `tool Read`、`tool Grep`；真实指针点摘要展开再折叠 | 默认折叠，摘要显示 `README.md` / `TODO`；展开后有输入、输出；再点折叠 | m16 |
+| R4.2/R4.4 Bash 与失败 | `tool Bash`（允许后）、`tool Bash fail` | 成功的块显示命令；失败的块自动展开、标「失败」、显示 `Error: Bash failed` | m21 |
+| R4.3 Edit / Write diff | `tool Edit`、`tool Write` | 文件名 + `+1 −1` 统计，删行浅红、增行浅绿 | m20, m21 |
+| R5.1 允许一次 | `tool Bash` → 点「是」；再发一次 | 命令执行；第二次仍然询问 | m17 |
+| R5.2 不再询问 | 点「是，并且对 …/main 里的 echo fake 不再询问」；再发第三次 | 执行；假 claude 的规则日志（代表远程）写入 `Bash(echo fake)`；第三次不再询问；卡片脚注写明规则写入远程 `.claude/settings.local.json` | m17 |
+| R5.2b 无建议 | `perm ls -la` | 只有「是 / 否」两项；按键盘 `1` 即允许 | m18 |
+| R5.3 拒绝并说明 | `tool Edit` → 在「告诉 Claude 换个做法」里输入「先别改这个文件」→ 点「否」 | claude 回 `denied: 先别改这个文件`；Edit 块标「失败」，输出是这句说明（见备注 2） | m19, m20 |
+
+（场景表续）
+
+| 场景 | 怎么验证 | 结果 | 截图 |
+|------|----------|------|------|
+| R5（setMode 建议） | `tool Edit` → 「是，本会话内允许所有编辑」 | 编辑执行，模式切到「自动编辑」，随后 `tool Write` 不再询问 | m21 |
+| R6.1/R6.2/R6.3 计划评审 | `plan` → 填「请把第二步拆细」点「继续完善计划」→ 新计划卡片 → 点 1；再 `plan` → 点 2 | 计划以 Markdown 渲染 + 3 个选项；完善后 claude 收到意见并重新提交；选 1 → 模式「自动编辑」且 Write 不再询问；选 2 → 模式「编辑前询问」且 Write 重新询问 | m23, m24, m25 |
+| R7.1/R7.2/R7.3 提问表单 | `ask`：什么都不选点提交；选 Banana；多选 Red+Blue+其他「青色（自己填的）」；第二轮单选题只填其他「榴莲」 | 没答完时提交按钮禁用（真实点击无效）、未答题标红并列出「还没回答：第 1, 2 题」；答完后 claude 收到 `Banana` / `Red, Blue, 青色（自己填的）`；第二轮收到 `榴莲` / `Blue` | m26, m27, m28 |
+| R11.1 菜单切换 | 点模式按钮 → 菜单里点「编辑前询问」 | 菜单三项（当前项带 ✓），切换后按钮文字同步 | m22 |
+| R8.1 Esc / 停止按钮 | `slow 200 60` 流式输出中按 Esc；再来一次用真实指针点「停止」；之后再发一条 | 两次都立即停住并标「已中断」，会话回到空闲；随后的消息正常回复 | m29, m30 |
+| R8.2 有权限请求时 Esc | `perm touch r82.txt` → 卡片出现 → Esc | 卡片关闭，记录「Bash 的请求已中断」+「已中断」，工具块为失败（没执行） | m31 |
+| R8.3 空闲 Esc | 空闲时在输入框按 Esc | 对话内容没有任何变化 | — |
+| R9.1/R9.2 排队与移除 | 忙碌时连发 3 条；真实指针点第二条的 × | 三条显示「排队中」；移除后只剩两条；回合结束后按顺序发出第一、第三条，被移除的没发 | m32 |
+| R9.3 中断时排队内容回输入框 | 忙碌时排两条 → Esc | 两条都回到输入框（空行分隔），队列清空，都没有发出 | m33 |
+| R10.1 斜杠菜单 800×500 与 1440×900（真实窗口尺寸） | 输入 `/`；↓ 走完 13 项再 ↑ 走回；滚轮滚动后真实指针点一行；`/dev` 过滤 + ↓ + Enter；Esc；点输入框下的 `/` 按钮 | 两个尺寸下：菜单在窗口和对话区内、无横向滚动；13 行里命令名全部单行（过长的省略号 + title），描述在名字下方且 ≤2 行，无描述的行更矮；键盘走 26 步选中项始终在可视区内；点击 / Enter 把命令填进输入框（不发送）；过滤正确；Esc 关闭 | m34, m35, m36 |
+| R10.2 终端专用命令 | 输入 `/theme`、`/login` 回车 | 不发送，提示「/theme 只能在终端界面使用」+「新建终端会话接上」按钮 | m37 |
+| R11.1 Shift+Tab | 输入框里连按 Shift+Tab | 编辑前询问 → 自动编辑 → 计划模式 → 编辑前询问 循环，焦点留在输入框 | m38 |
+| R12.1/R12.2/R12.4 断线补发（真实断网：在 daemon 前放了一个我自己的 TCP 代理，经机器管理界面把它加成一台机器） | 流式回复到第 6 个数字时切断代理全部连接；断线期间从另一个 WebSocket 客户端发 `burst 50`；恢复代理，真实指针点「立即重试」 | 横幅「连接已断开，正在重连… 立即重试」，状态栏「正在重连…」，输入框下「未连接：输入会保留，恢复后再发送」；daemon 侧会话保持 running；重连后被切断的那条回复完整显示一次（1–40，无半截重复），分隔线「— 本地连接在此中断，远程会话未受影响 — 已补回断线期间 61 条消息」，50 条 burst 按序无重复 | m40, m41 |
+| R5.4/R5.5 断线期间的权限请求 | 断线期间另一端发 `perm touch offline.txt` | 请求一直挂着（没有自动允许 / 拒绝）；重连后卡片重新出现，点「是」后 claude 继续 | m42 |
+| R16.1/R16.3 侧边栏点（附带观察） | 同一会话在另一台机器条目下处于后台 | 有新消息时灰点，等待权限时黄点 | m40, m41 |
+| R13.1 回合出错与重试 | 发 `fail`；真实指针点「重试」 | 卡片「本轮回复失败 / API Error: 529 Overloaded / 重试」；点重试后同一条用户消息再发一次并再次出错 | m43 |
+| R13.2 进程退出与重新启动 | 发 `crash 3`；点「重新启动」；再发消息 | 横幅「会话已结束：claude 进程退出（代码 3）」+ stderr 三行 + 「重新启动 / 新建终端会话接上」，输入框禁用，没有重连横幅（连接保持）；重启后历史还在、能继续对话；假 claude 的启动参数是 `--resume <建会话时的同一个 id>` | m44, m45 |
+| R14.2 回合进行中交接 | `slow 300 100` 进行中输入 `/theme` → 点提示里的「新建终端会话接上」→ 确认框先点取消、再点确定 | 确认框「Claude 正在回复，交给终端会中断当前回合。继续吗？」；取消 → 回合继续、什么都没变；确定 → 同目录出现终端会话，屏幕显示 `fake-claude interactive resume=<同一 id>`，可输入；`ps` 里该会话的对话进程已不在，只有终端里的 `claude --resume` | m51, m52 |
+| R14.1 原对话会话 | 点回原对话会话 | 横幅「已交给终端会话接着做，这里不能再发消息」+「打开终端会话」，输入框禁用；REST `ended/handed_off`；点「打开终端会话」切到那个终端会话 | m53 |
+| R16.1 新消息灰点 | `second` 在后台，另一个 WebSocket 客户端发 `slow 300 12` | 流式期间灰点（rgb(140,154,166)） | m54 |
+| R16.2 回合结束绿点 | 同上，回合结束 | 绿点（rgb(79,124,77)）；打开会话后点消失 | m55 |
+| R16.3 等你处理（会话不是当前会话） | 后台会话收到 `perm rm -rf build` | 黄点；应用日志 `[notify] fallback: v-chat · second`（未签名构建走 Dock 降级），Dock 角标 `•`；当前会话没有被切走；点开后卡片在，点「否」→ 工具块失败「The user declined this request.」 | m56, m57 |
+| R16.3 等你处理（当前会话、窗口失焦） | 关掉 CDP 焦点模拟并让自己的窗口失焦（`document.hasFocus()=false`），当前会话收到权限请求 | 发出通知 `[notify] fallback: v-chat · second`；侧边栏不显示黄点（见备注 1） | m59 |
+
+（场景表续 2）
+
+| 场景 | 怎么验证 | 结果 | 截图 |
+|------|----------|------|------|
+| R1.5 对话 + `-c` | `hist` 目录预置 400 轮带工具块的 JSONL；选对话、勾 `-c`、打开；真实滚轮上滑到第一条再滚回底部；发一条 | 332ms 出现最新一条；首屏只生成最新 150 轮（300 条消息）的 DOM；滚轮 18 次到第一条，400 轮全部生成（含 400 个 Read 工具块）；回到底部再发，消息接在历史后面；假 claude 的参数是 `--resume <id>`、没有 `-c` | m60, m61, m62 |
+| R2.6 同目录再建一个 `-c` 对话 | 上一个还在运行时，同目录再选对话 + `-c` 打开 | 没有新会话、没有新进程（会话数 4 → 4），切到已有的那个，状态栏「这段对话已在“hist”里打开，已切换过去」 | m63 |
+| R1.6 / R11.2 跳过权限 | 选对话 + 勾 `--dangerously-skip-permissions`；点模式按钮；Shift+Tab；发 `tool Bash`、`tool Edit` | 模式显示「跳过权限」；菜单只有这一项且禁用，说明「会话以 --dangerously-skip-permissions 启动，权限模式固定…不能切换」；Shift+Tab 不变；两个工具都直接执行、没有弹权限卡片 | m64 |
+| R1.7 Worktree + 对话 + flag | 从「创建隔离 Worktree」进，选 git 仓库 `repo`、对话、勾跳过权限 | claude 在新 worktree 目录 `repo-worktrees/<id>` 里启动（`git worktree list` 多了一个分支 `vibe/<id>`），模式为跳过权限（flag 生效），能对话 | m65, m66 |
+| R15.3 重载 | 回合进行中，悬停会话条目点重载按钮，确认 | 确认框「重新启动对话会话“second”？…正在生成的回复会被中断」；完成后提示「对话会话已重新启动」，历史保留，能继续对话；进程换了 pid，参数带 `--resume` | m68 |
+| R15.2 删除 | 回合进行中，点 ×：先取消、再确定 | 取消 → 会话还在、回合继续；确定 → 从侧边栏消失，REST 列表里没有了，对话进程少一个，JSONL 文件数不变（5 → 5） | m69 |
+| R15.1 重命名 | 双击已打开的对话会话名字 | **不通过，见 P2** | m67-BUG-*, m70-BUG-* |
+| R2.5 daemon 重启 | 回合进行中停掉 `v-chat` daemon，再启动 | 断线横幅 + 状态栏「正在重连…（第 1 次）」；daemon 退出时对话进程全部结束；回来后三个对话会话都是 `ended/daemon_restart`，横幅「会话已结束：vibe-remoted 重启过 / 重新启动 / 新建终端会话接上」；点「重新启动」后历史还在、能继续（`--resume`）；同一 daemon 上的终端会话（tmux）还在 | m73, m74 |
+| 重开应用后再打开对话会话 | 刷新渲染进程（相当于重开应用），再点开运行中的和已交接的对话会话 | 侧边栏列出全部会话；运行中的会话历史完整（38 条用户消息，和刷新前一致）、贴底、能继续发；已交接的会话显示交接横幅、输入框禁用；对话进程在刷新期间没有退出 | m71, m72 |
+| R17.3 旧桌面连新 daemon（基准 7d25cbd 构建的桌面端） | 旧桌面连 `v-term` / `v-chat`，打开终端会话，再点一个对话会话 | 终端会话正常；点对话会话 → 终端区显示「[错误：session … is a chat session] [无法恢复，已停止重连…]」，状态「未连接」，没有被当成终端会话打开 | m83 |
+| 中英文切换 | 输入框里留草稿后点 EN；英文下触发权限 / 提问卡片和结束横幅；卡片打开时切回中文；英文下 800×500 打开新建对话框 | 草稿保留；对话界面外壳没有残留中文；卡片、横幅都有英文；卡片打开时切换语言，卡片还在并换了语言；英文对话框在 800×500 下按钮可点、路径栏 33/33 | m75–m78 |
+| 小窗口里的卡片（800×500） | 依次触发提问、计划、长命令权限卡片 | 卡片封顶 310px 并可滚动，对话区剩 96–100px；计划卡片的三个选项和输入框都直接点得到；提问 / 长命令卡片要在卡片里滚动才到按钮（备注 5）；都能用真实点击答完 | m79, m80, m81 |
+| 快速连续操作 | 60ms 内连点两次「是」；一条消息后连按 3 次回车；Shift+Enter 换行后发送 | 回合正常继续、没有报错提示（没有另外核对 daemon 只收到一次回答）；只发出一条；Shift+Enter 换行不发送，多行消息原样显示 | — |
+| 流式输出中缩放窗口 | `slow 100 60` 期间真实窗口 1440×900 → 1325×803 → 800×500 → 1440×900 | 结束后仍贴底，回复完整（到 60） | m82 |
+| 两个视图看同一会话（接近 R2.4） | 同一会话同时经 `v-chat` 和 `v-proxy` 两个条目打开，另有一个 WebSocket 客户端发消息 | 各端都显示全部消息；`ps` 里该会话只有一个对话进程 | m40, m41 |
+
+### 只由脚本覆盖、没有亲手走的
+
+- R5.6 回答送达前断线（gui-chat-smoke；注意该用例里有一条永真断言，见「放松检查」）；R5.7 另一端先答 →「已在别处处理」；R5.8 请求被 claude 取消（GUI 脚本也没有这个用例，我也没走）。
+- R12.2 的 500 条 ≤2 秒（脚本：504 条 72ms；我手工只做了 61 条）；R12.3 超出缓冲上限的「更早的 N 条已省略」（GUI 脚本没有，我也没走）。
+- R13.4 init 报告版本过旧；R16.3 点击通知打开会话（脚本经主进程发 `notification-click` 模拟）和聚焦后清角标；R17.2 在协议 2 的 daemon 上新建并使用终端会话（我只看了它的对话卡片置灰原因）。
+- gui-smoke 的旧 machines.json 加密迁移、导航锁 / `window.open`、hook 事件通知。
+
+## 完成条件（界面部分）
+
+| 完成条件 | 判断 | 依据 |
+|----------|------|------|
+| R1–R19 的全部场景用 verify skill 跑通 | **不成立** | 脚本本身全过（gui-smoke 30/30 ×5，gui-chat-smoke 29/29），但亲手验证有两处与 spec 不符：R3.1（不贴底时发的消息和回复不显示，P1）和 R15.1（已打开的对话会话改不了名，P2）。其余我走过的界面场景（R1、R3.2–R3.4、R4、R5.1–R5.5、R6、R7、R8、R9、R10、R11、R12.1 / .2 / .4、R13.1 / .2、R14、R15.2 / .3、R16、R2.5、R2.6、R17.3）与 spec 一致，R16.3 有一处字面差异（备注 1） |
+| gui-smoke 新增的对话模式端到端用例通过 | 成立 | 5 次运行里 `chat session created via picker`、`chat reply rendered`、`permission allow once resumes` 和 6 条对话框布局检查都通过 |
+| 现有终端会话测试：gui-smoke 原有用例不改断言照样通过 | 成立（界面运行部分） | 5 次运行原有用例全过；手工验证终端的输入、输出、拖选复制、粘贴、断线横幅与恢复都正常。断言有没有被删改由另一名验证者核对 diff |
+| `make check` 全绿、protocol-sync 三处一致、`npm test`、`go test -race` | 尚未验证（不在我的分工） | 由另一名验证者负责 |
+| b88f4ae 的两处布局修复 | 成立 | 新建对话框：真实窗口 800×500 / 1325×803 / 1440×900 × 终端 / 对话 / Worktree，路径栏未被压扁、「取消 / 在此打开」始终在窗口内且点得到、中间可滚；机器管理对话框两种尺寸正常。斜杠菜单：800×500 与 1440×900 下名字单行、描述 ≤2 行、键盘上下 26 步选中项始终可见 |
+
+## 待验证项（仍需人工或缺条件）
+
+- **真实的 claude**：真实的流式节奏、真实 JSONL 历史的显示、R5.2 规则真的写进远程 `.claude/settings.local.json`（假 claude 只记到 `$FAKE_CLAUDE_RULES`）、首字延迟。
+- **远程 Linux**：登录 shell / fnm 环境下对话模式启动 claude；跨机器网络下的断线重连（我只在本机用 TCP 代理切断连接）。
+- **原生通知**：未签名构建一律走 Dock 降级，我核对的是应用发出的通知标题（`机器名 · 会话名`）和角标；签名包里通知的显示与点击、打包后 DMG 的行为没有验证。聚焦后清角标只由脚本覆盖。
+- **真实输入法**：我用的是 `insertText`，没有经过输入法组字；代码里发送和卡片里的回车都判断了 `isComposing`，没有实测。
+- **P1 的修复方式由作者定**，修后至少要有这几条回归：不贴底时发送 → 消息出现；后台会话收到超过一屏内容后切回 → 能看到最新内容 / 发送后出现；滚回底部 → 立即补齐。
+- R5.8、R12.3 的界面表现（见「只由脚本覆盖」）。
+
+## 放松检查
+
+- `gui-chat-smoke.mjs` 第 623 行（R5.6 用例）：`assert(!text0.endsWith('done Bash') || true, '')` 恒为真，没有守住「回答没送达时工具不执行」。这是新写的用例里的空断言，不是改旧断言。
+- `gui-smoke.mjs` 相对基准：我读到的改动是新增对话用例、对话框布局检查和第二个 daemon 的准备；没有看到原有用例的断言被删改（逐行核对由另一名验证者负责）。
+- drag-select 用例没有被改动或放松（5/5 通过，判断见上）。
+- 其余没有发现：没有跳过的用例、没有调大到失去意义的超时、截图目录由我指到自己的 `shots/script/`，没有改动 worktree 里已跟踪的截图。
+
+## 清理
+
+- 我启动的进程全部已停：临时 Electron、4 个临时 daemon、TCP 代理、基准桌面端实例；`ps` 里没有引用我临时目录的进程，没有残留的假 claude；我用过的各个 `TMUX_TMPDIR` 下都确认「no server running」。没有碰用户的 daemon（8765）、默认 tmux socket 目录、`/Applications/vibe-remote.app`、`~/.claude.json`、真实 userData。
+- 已删除我建的 7 个临时目录（`/tmp/vr-dmg-BxPFK6`、`-QHWdJu`、`-6TQRb9`、`-r0kCCt`、`-fM5LaT`、`-THw5oA`、`-64lPsT`）；脚本自己的 `vr-gui-*` / `vr-gc-*` / `vr-gt-*` 由脚本清理。
+- 剪贴板：手工复制测试后都写回了原内容；`gui-smoke.mjs` 自己也会写回。钥匙串里有一个 `vibe-remote Safe Storage` 条目：脚本日志里没有「removed … keychain item」的提示（脚本只在自己新建了才删并提示），我的实例用的是 `--use-mock-keychain`，所以判断它原本就在；没有动。
+- 留下的证据都在 `gate-c-dm/`：`logs/`、`shots/`（手工 106 张 + `script/` 下脚本的 33 张）、`scripts-gui/`（手工验证的驱动脚本）。
