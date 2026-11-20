@@ -1000,6 +1000,14 @@ CSS 变量：保留现有变量名（`styles.css` 里到处在用），换成 M1
   - 6.2 / R5.1 的删除会话确认框：对话会话的正文换成对话模式的说法（`session.delete.chatBody`：进程终止、从列表移除、对话记录仍在远程 claude 的 JSONL 里），不再写「无法撤销」；标题、worktree 的三种附注和按钮不变。对话模式原来的 `chat.delete.confirm`（给 `window.confirm` 用的整句）在本需求里没有调用处，已删（d77）。
   - 其余返工（X3、X4 / X9、X5、X7、`prompts.ts`、`TestOrphanCleanup`）直接合入，没有与本需求交叠的代码。X4 / X9 的查找（`chat.LatestSessionForWorkdir`）也是 worktree 会话用的那一个，传的是会话自己的工作目录：已有 worktree 里是 worktree 目录；新建 worktree 时终端会话传新目录（没有对话，得到新的 `--session-id`），对话会话在 worktree 模式下不查（`chat_manager.go`）。新增 `TestContinueInWorktreesSharingProjectDir` 守着分支名里的 `/` 和 `.` 让两个 worktree 目录撞到同一个 claude 项目目录的情况。
   - 测试脚本：三份 GUI 冒烟里没有自己 claude 配置目录的临时 daemon（跑 `/bin/bash` 的、基准版本的）现在各得到一个本次运行的空 `CLAUDE_CONFIG_DIR`——daemon 给目录选择器算 `chatTrust` 时不管跑什么都会读信任文件，此前这些 daemon 读的是本机真实的 `~/.claude.json`（#164）。
+- c10–c13 裁决之后的返工（T34；decisions #168–#176、d81、d82）。6.4「桌面端每轮轮询」和 7.4「侧边栏」原来的做法是「每个应答到达就整体重建侧边栏」，一轮刷新每台机器两次（会话列表、项目树），不管内容变没变；鼠标按下和松开之间落进一次重建，这次点击就丢了（T33 时在测试里用「重做」绕开，裁决不接受）。改为**要显示的内容没变就不重建**：
+  - `index.ts` 的 `renderSidebar()` 每次照常建模型（`buildSidebarModel()`，同时更新 `machineTrees`），再给模型算一个指纹（`sidebarFingerprint`，`JSON.stringify`）；与上次渲染的指纹相同、且各台机器的配置对象还是同一批时返回，不碰 DOM。不防抖、不加定时器；内容变了的重建和以前一样是同步的整体重建，重建后找回焦点和行菜单的逻辑（`sidebar.ts`）不变。`sidebar.ts` 没有改。
+  - 指纹里有什么：语言；`activeKey`；`overviewMachineKey`；每台机器的名字、key、在线状态、是否折叠、能力；每个项目的全部字段和是否折叠；每个 worktree 的全部字段和是否正在删除；每个会话的显示名、`gone`、会话信息、状态点、是否正在重载。依据是逐行核对 `sidebar.ts`：渲染读的只有模型（含它的函数 `dotOf`、`isReloading`、`isRemoving` 和集合 `collapsedProjects`）和 `t()`；`isOpen` 只在点击时读；窗口是否有焦点（X6 的黄点）经 `index.ts` 的 `nextDot` 进了状态点，`sidebar.ts` 自己不读；悬停和焦点的显隐是 CSS。
+  - 指纹里故意没有的：对话会话的 `activitySeq`、`epoch`、`state`（d81）——界面不显示、行上的处理函数不读，它们的意义已经折成状态点；放进去的话后台有对话会话在运行时列表每轮都重建。以后让行上的处理函数读这三样时要改回来。
+  - 机器配置对象单独比较（#173）：行上的处理函数拿着渲染时的 `MachineConfig`，只改 token 时界面一个字不变，但必须重建。按对象比较，token 不进指纹字符串。
+  - 改名：`renamingActive` 期间暂停重建的规则不变；改名一开始就把记下的指纹清掉（#174），所以改名结束的那次渲染一定重建（Esc 取消时模型没变，改名框也要换回名字）。
+  - 跟在渲染后面的事不受影响：`publish` 里的概览页重画和 `updateStatusBar()`、`setActive` 里的 `scrollIntoView` 和 `updateStatusBar()`、`setRenaming` 里的 `focusAfterRename()` 都在 `renderSidebar()` 返回之后由调用方做，`renderSidebar()` 提前返回不会跳过它们（`test-sidebar-refresh` 的最后一个用例守着概览页）。
+  - 没有解决的：内容确实在变的那一瞬间的重建仍会吞掉正好跨在它两边的点击。实测到的一种是「改名时点另一个会话」（改名框失焦即提交，本机上改名请求和随后的刷新在按键松开之前就回来了，10 次里 8 次没有切换，evidence/t34/probes-after-t34.txt）。另外机器概览页仍是每个应答重画一次（它所在的机器每 5 秒两次），它上面的按钮有同样的问题，这次没有动（tasks.md「后续」）。
 
 ### 升级步骤
 
