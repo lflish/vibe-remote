@@ -1198,6 +1198,37 @@ test('R16.3', 'R16.3 waiting in a background session: yellow dot, notification /
   return `window focused before: ${focusedBefore}; notify ${outcome}; badge while hidden ${JSON.stringify(badge)}, after focus() ${JSON.stringify(badgeAfter)} (window focused: ${focusedAfter}); click → main opened`;
 });
 
+test('X6', 'R16.3 current session while the window is in the background: yellow dot on it + notification; cleared once the window is focused again', async () => {
+  // "main" is the current session (R16.3 left it open). Real focus this time:
+  // the run's focus emulation is off while the app is hidden.
+  assert(await sidebarItem(CHAT, 'main', `it.classList.contains('active')`), 'main is not the current session');
+  let id = '';
+  let note = '';
+  try {
+    await cdp.send('Emulation.setFocusEmulationEnabled', { enabled: false });
+    await mainProc.evaluate(`require('electron').app.hide(), true`);
+    await waitFor(async () => !(await ev('document.hasFocus()')), 5000, 'the window lost focus');
+    const nLogs = cdp.events.length;
+    id = other.chat('perm touch x6.txt');
+    await waitFor(() => sidebarItem(CHAT, 'main', `it.dataset.dot === 'waiting'`), 10000, 'yellow dot on the current session');
+    note = await waitFor(() => cdp.events.slice(nLogs).filter((e) => e.method === 'Runtime.consoleAPICalled').map((e) => e.params.args.map((a) => a.value ?? '').join(' ')).find((l) => l.startsWith('[notify]')), 8000, 'notify log');
+    assert(note.includes('gui-chat · main'), `notification title ${note}`);
+    await sleep(600); // the notification's outcome (Dock fallback on unsigned builds) is back
+    const st = await sidebarItem(CHAT, 'main', `({ dot: it.dataset.dot, active: it.classList.contains('active') })`);
+    assert(st.dot === 'waiting' && st.active, `after the notification outcome: ${JSON.stringify(st)}`);
+  } finally {
+    await mainProc.evaluate(`(() => { const { app, BrowserWindow } = require('electron'); app.show(); app.focus({ steal: true }); const w = BrowserWindow.getAllWindows()[0]; w.show(); w.focus(); return true; })()`);
+    await cdp.send('Emulation.setFocusEmulationEnabled', { enabled: true });
+    await waitFor(() => ev('new Promise((r) => { requestAnimationFrame(() => r(true)); setTimeout(() => r(false), 500); })'), 10000, 'window rendering again');
+  }
+  await waitFor(async () => (await ev('document.hasFocus()')) && (await sidebarItem(CHAT, 'main', `it.dataset.dot === 'none'`)), 10000, 'dot cleared once the window is focused again');
+  await waitFor(() => ev(`!!${inChat('[data-testid="chat-perm-allow"]')}`), 5000, 'the prompt is on screen');
+  await ev(`${inChat('[data-testid="chat-perm-allow"]')}.click(), true`);
+  await other.turn(id);
+  await idle();
+  return `${note}; dot waiting while in the background, none after focus`;
+});
+
 test('R13.2', 'R13.2 claude exits → ended banner, restart works', async () => {
   await sendChat('crash 1');
   await waitFor(() => ev(`(() => { const e = ${inChat('[data-testid="chat-ended"]')}; return e && !e.hidden && e.dataset.reason === 'exited'; })()`), 10000, 'ended banner').catch(async (e) => {

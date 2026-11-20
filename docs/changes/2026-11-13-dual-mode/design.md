@@ -684,6 +684,7 @@ CI 与 verify 不依赖真 claude，全部对话测试跑这个程序（`go buil
   2. X8（4.12 侧边栏改名）：点击侧边栏里当前会话的名字不再经 `setActive` 重建侧边栏（`selectOpenSession`）；把键盘交给会话视图统一经 `focusView`，改名进行中不抢焦点，`ChatView.show()` 不再自己聚焦；`startInlineRename` 在输入框没进文档时不置 `renamingActive`。
   3. X3（5.2 `tail`）：流式尾巴超出上限时丢最旧的增量，但这条回复的 `message_start` 单独保存、始终随尾巴补发（`tailStart`），所以中途接入的客户端总能拿到 `message.id`，完整消息到达后按 id 取代预览。5.2 表里写的 `tailTruncated` 落为会话内的一个标志，只用来在每条回复第一次截断时打一行日志；不进协议（没有需要客户端读它的地方，协议版本不变）。客户端另加一层：没有 `message_start` 的增量形成的无 id 预览，在同一条回复的完整 `assistant` 消息到达时并入该消息（`ChatSession.claimOrphanPreview`），不会留下第二条。
   4. X4（5.3「目录最近一次对话」）：claude 的项目目录名把 `/` 和 `.` 都换成 `-`，`…/a-b`、`…/a.b`、`…/a/b` 共用一个目录，所以不能只凭目录名取 mtime 最新的文件。`LatestSessionForWorkdir` 改为：在该目录里按 mtime 从新到旧逐个读 JSONL 开头（最多 100 行，不读整个文件）记录的第一个 `cwd`，与请求的规范化目录相同才认领；读不到 `cwd` 的记录不认领；目录里没有属于该 workdir 的对话时，再按原来的回退（最近 10 个 JSONL 比 `cwd`）。对话 `-c` 和终端的 continue 改写共用这个函数。`FindTranscript` 按 UUID 找文件、只用来决定 `--resume` 还是 `--session-id`，claude 自己只在当前目录的项目目录里找这个 id，不会因此接上别的目录的对话。
+  5. X6（4.12 侧边栏状态点，R16.3）：当前会话在窗口失焦时收到待答请求，也显示黄点（此前只发通知）；通知结果回来（含未签名包的 Dock 降级，d12）黄点不变；窗口重新聚焦且该会话在前台时清掉（`index.ts` 的 window `focus` 监听），请求在别处被处理或回合结束时也清掉。灰点、绿点仍只标非当前会话（R16.1、R16.2）；终端会话的点不变。
 
 ## 11. 方案验证（机器关口 B）
 

@@ -482,10 +482,11 @@
 - 完成定义：`cd vibe-remoted && go test -race -count=1 -timeout 5m ./internal/chat ./internal/session ./internal/server`（带独立 `TMUX_TMPDIR`）
 
 ### T18 X6：R16.3 当前会话在窗口失焦时的黄点
-- 状态：待办
+- 状态：完成
 - 来源：两名验证者都提到（低）；R16.3
 - 做法：先查 spec R16.3 原文、design、decisions 有没有记录在案的决定。没有 → 按 spec 修（窗口失焦时当前会话也显示黄点，窗口重新聚焦且该会话在前台时清掉），改 `test-chat-activity` 里对应断言并列出原来 / 现在 / 依据；有 → 不改，报告里给出依据
-- 文件：（要修时）`desktop/src/renderer/chat/activity.ts`、`desktop/src/renderer/index.ts`；测试 `desktop/scripts/test-chat-activity.mjs`
+- 查到的依据：spec R16.3 原文是「窗口没有聚焦，或该会话不是当前打开的会话 → 侧边栏显示黄点，并发桌面通知」；design（4.12、第 8 节对 R16 的覆盖）和 decisions 里没有「当前会话不显示黄点」的决定，d12 反而写的是降级为「Dock 弹跳 + 角标 + 侧边栏黄点」。结论：实现与 spec 不符且没有记录在案的决定 → 按 spec 修
+- 文件：`desktop/src/renderer/chat/activity.ts`、`desktop/src/renderer/index.ts`；测试 `desktop/scripts/test-chat-activity.mjs`、`desktop/scripts/chat-test-util.mjs`（可控的窗口焦点）、`.claude/skills/verify/scripts/gui-chat-smoke.mjs`（X6 用例）
 - 完成定义：`cd desktop && npm run typecheck && npm test`
 
 ### T19 X5：`docs/protocol.md` 的 `chat_ack` 漏了 `message`
@@ -529,6 +530,7 @@
 | T15（X8） | 2026-11-20 12:09 | 本提交 | 修复前失败：`test-sidebar-rename`（新建，8 个用例；第 1 个即失败「the rename input is in the sidebar」）、`gui-chat-smoke` 的 X8-chat（双击后 600 ms 焦点在对话输入框 `c-in`）和 X8-terminal（焦点在 `xterm-helper-textarea`）；修复后全部通过，`npm run typecheck && npm test` 全绿（24 个脚本）。变异核对：当前会话的点击仍走 setActive / focusView 不看改名状态 / 输入框没进文档仍置标志，三处各有用例失败 |
 | T16（X3） | 2026-11-20 12:15 | 本提交 | 修复前失败：Go `TestTailOverflowKeepsMessageStart`（条数上限、字节上限两个子用例：「replayed tail starts with content_block_delta, want the message_start of long-reply」）、`test-chat-session`「X3 reset sync mid-reply…」（assistant 消息 2 条 ≠ 1，与验证者的 `assistantCount: 2` 相同）；修复后通过，`go test -race ./internal/chat` ok、`npm test` 全绿（test-chat-session 20）。变异核对：完整消息不认领无 id 预览 / 已有该 id 的消息时不并入，两处各有用例失败；daemon 侧的变异即修复前的代码。协议字段没有变化（protocol.md 补一句尾巴上限的行为说明） |
 | T17（X4） | 2026-11-20 12:18 | 本提交 | 修复前失败：`TestLatestSessionChecksTranscriptCwd`（「workdir a-b with no conversation got bbbbbbbb-… — the conversation of a/b」）、`TestContinueIgnoresOtherDirectorySharingProjectDir`（经 WebSocket 带 continue 新建，「-c in …/a-b (no conversation of its own) resumed …, the conversation of …/a/b」）、`TestTerminalContinueIgnoresOtherDirectorySharingProjectDir`（终端 `-c` 被改写成 `--resume <a/b 的 id>`）；修复后 `go test -race ./internal/chat ./internal/server ./internal/session` 全部 ok。变异核对：没有 cwd 的记录也认领 → 用例失败 |
+| T18（X6） | 2026-11-20 12:21 | 本提交 | 查证：spec R16.3 字面要求黄点，design / decisions 无相反决定（d12 写的是「Dock 弹跳 + 角标 + 侧边栏黄点」）→ 按 spec 修。修复前失败：`test-chat-activity`「pending prompt turns it yellow and notifies」（dot none ≠ waiting）、`gui-chat-smoke` 的 X6（10 s 内当前会话没有黄点）；修复后通过，`npm test` 全绿（test-chat-activity 8）。变异核对：聚焦不清点 / 侧边栏照旧隐藏当前会话的点 / 通知结果回来把点去掉，三处各有用例失败。改动的已有断言 1 条（见 test-report） |
 
 ## 后续
 

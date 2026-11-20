@@ -455,6 +455,17 @@ function applyViewActivity(view: ChatView, ev: ActivityEvent, prompt?: Prompt) {
   }
 }
 
+// The window has the user's attention again: a "needs you" dot lit on the
+// current chat session while the window was in the background (R16.3) has
+// been seen. Dots of other sessions stay until those sessions are opened.
+window.addEventListener('focus', () => {
+  const view = activeKey ? views.get(activeKey) : undefined;
+  if (view?.ui === 'chat' && view.activity === 'waiting') {
+    view.activity = 'none';
+    renderSidebar();
+  }
+});
+
 function classifyMachineIssue(error: unknown): MachineIssue {
   const message = error instanceof Error ? error.message.toLowerCase() : String(error).toLowerCase();
   if (/\b(401|403)\b/.test(message)) return 'auth';
@@ -1225,7 +1236,9 @@ function renderSidebar() {
       dot.setAttribute('aria-hidden', 'true');
       const openView = views.get(key);
       const act = openView?.activity ?? sessionDots.get(key) ?? 'none';
-      if (act === 'none' || key === activeKey) {
+      // The current session shows no dot — except a chat session that needs
+      // the user while the window is in the background (R16.3).
+      if (act === 'none' || (key === activeKey && !(s.ui === 'chat' && act === 'waiting'))) {
         dot.classList.add('hidden');
         item.dataset.dot = 'none';
       } else {
