@@ -523,7 +523,7 @@
 - 完成定义：`cd vibe-remoted && go test -race -count=1 -timeout 5m ./internal/chat ./internal/session ./internal/server`（带独立 `TMUX_TMPDIR`）；变异核对（加回行数上限、去掉记录侧规范化各有用例失败）；`.devflow.yml` 改后的 check 原样运行通过
 
 ### T22 X10：改名之后、点开「等你处理」的会话之后的键盘焦点
-- 状态：待办
+- 状态：完成
 - 来源：界面验证者备注 3、4（不拦，顺手修）；R16.3、R15.1
 - 行为：改名结束（回车 / Esc / 失焦提交）后把键盘焦点交回当前会话；切到一个会话时，它有待答的卡片（权限 / 计划 / 提问）就把焦点给卡片，卡片上写的键盘快捷键（1 / 2 / 3、Esc）可用，否则给对话输入框或终端。改名进行中输入框保持焦点；有对话框打开时不抢焦点
 - 文件：修改 `desktop/src/renderer/index.ts`（`focusView`、`startInlineRename`）、`desktop/src/renderer/chat/view.ts`（必要时）；测试 `desktop/scripts/test-sidebar-rename.mjs`、`desktop/scripts/test-chat-view.mjs`、`.claude/skills/verify/scripts/gui-chat-smoke.mjs`
@@ -557,6 +557,7 @@
 | T19（X5） | 2026-11-20 12:22 | af47ac8 | 按 /protocol-sync 的步骤把 `chat_ack` 逐字段再核对一遍（Go `ChatAckFrame` 的 json tag、TS `ChatAckFrame`、文档）：`type`/`op`（4 个值）/`ref?`/`ok`/`code?`（9 个码，与 `Ack*` 常量一致）/`message?`/`duplicate?`/`completed?` 三处一致；文档补上 `message`（由 `nackMsg` 在 `too_large`、`invalid_response`、回答非计划请求带 setMode 的 `invalid_mode` 时给出）和此前只出现在示例里的 `ok`。Go / TS 代码未改 |
 | T20（测试修正） | 2026-11-20 12:28 | 9135f77（删除确认文案、NUL 字节）、793eb80（其余）、5ce6f55（X6 用例的失焦方式，全量运行时发现） | ① R5.6 的永真断言改为三条真的断言（工具块还没有结果、claude 没有继续、daemon 没有记下回答或工具结果）；变异核对：让假 claude 在收到回答前就产出工具结果 → 用例失败「the tool block already has a result although the answer was never delivered」，恢复后通过。② `TestOrphanCleanup` 的两处 `<-gone` 改为最多等 15 s（正常约 1–3 s，本用例自己断言 ≤ 4 s）并报出原因；用一个总是失败的假 `ps` 放在 PATH 最前面核对：16 s 后失败并写明原因、不再挂住，假 claude 由清理函数杀掉。③ gui-smoke 拖选用例：等到「正好是输出的那一行 + 下一行回到提示符 + 相隔 150 ms 两次看到的屏幕和位置相同」再量坐标；拖完再量一次，屏幕动过就打印 NOTE 并重新量、重新拖（最多 3 次）；最后的断言（复制内容必须等于 `SELECT_ME_PLEASE`）不变。④ `prompts.ts` 的 3 个原始 NUL 字节改为 `'\\0other'`，新增 `test-source-bytes`（修复前失败并指出 3 行）。⑤ 删除对话会话的确认文案（中英文）+ `test-sidebar-rename` 的断言。两份冒烟里 bash daemon 的 `allowed_roots` 由 `/tmp` 改为本次运行自己的目录。`npm test` 全绿（25 个脚本），gui-smoke 30 项通过 |
 | T21（X9） | 2026-11-20 13:30 | 81024f1 | 修复前失败：`TestLatestSessionReadsUntilFirstCwd`（第 101 行、第 1001 行 / 2 MiB、超长行之后 3 个子用例：「LatestSessionForWorkdir = "", false; want found=true」）、`TestLatestSessionComparesCanonicalCwd`（记录的是符号链接别名的 3 个子用例）、`TestContinueFindsLateOrAliasedCwd`（经 WebSocket 带 continue 新建，5 个子用例里 4 个失败：「-c in … started <新 id> instead of continuing <原 id>」）、`TestTerminalContinueFindsLateOrAliasedCwd`（终端 `-c` 的 argv 是 `--session-id <新 id>` 而不是 `--resume <原 id>`）；修复后 `go test -race ./internal/chat ./internal/session ./internal/server` 全部 ok，X4 的 3 个回归用例原样通过。变异核对：加回 100 行上限 → 三个包里第 101 / 1001 行的用例都失败（终端的新建和重载各一条）；记录侧不解析符号链接 → 三个包里别名用例都失败；筛行时不认 `\u` 转义 → 「cwd key written with escapes」失败。`.devflow.yml` 改后的不变规则 check 原样运行通过（`GOFLAGS=-count=1`，独立 `TMUX_TMPDIR`）。耗时实测见 evidence/x9-cwd-scan-timing.txt；decisions #51、#52 |
+| T22（X10） | 2026-11-20 13:53 | f03e9d9 | 修复前失败：`test-sidebar-rename` 新增 6 个用例里 5 个（改名回车后焦点在 `BODY` 而不是对话输入框 / 终端；改名时点另一个会话后焦点在 `BODY`；切到有待答卡片的会话后焦点不在卡片上；改名时来了卡片，改名输入框丢了焦点），`test-chat-view` 新增 2 个（`view.focus is not a function`），`gui-chat-smoke` 的 `X10-prompt`、`X10-rename-chat`、`X10-rename-terminal`（三条都报「the keyboard was on: BODY (nowhere)」）；修复后全部通过，`npm run typecheck && npm test` 全绿（test-sidebar-rename 15、test-chat-view 22），X8 的回归用例（`X8-chat`、`X8-terminal`、`test-sidebar-rename` 原有 9 个）原样通过。变异核对 8 处各有用例失败：`focusView` 只给输入框 / 回车提交后不交回 / Esc 后不交回 / 新卡片自己聚焦 / 卡片消失后不交给输入框（单元 3 个用例 + 真实应用 `X10-prompt`）/ 交回时不看焦点已在别处 / 交回时不看对话框 / 去掉 `focusView` 里 X8 的改名保护。decisions #53 |
 
 ## 后续
 
@@ -586,3 +587,5 @@
 - 断线分隔线把流式增量也数成「消息」（一条长回复途中重连写成「已补回断线期间 20000 条消息」）（界面备注 5）。
 - 长回复超过尾巴上限后中途加入 / 重连，回复结束前的预览不完整（结束后是完整的一条）（界面备注 6）。
 - 指针停在当前会话那一行时看不到它的黄点（悬停时隐藏该行的点、让位给 ×）（界面备注 7）。
+- 对话框（新建会话、机器管理）开着时当前会话来了新的待答卡片，卡片会把键盘从对话框里拿走（既有行为，X10 只挡住了改名输入框这一种）。要改得连 `modal.ts` 关闭时的焦点还原一起处理（X10，decisions #53）。
+- 改名时点击另一个会话：daemon 在本机时改名请求在松开鼠标前就返回、侧边栏随即重建，这次点击被吞掉（同上面「按下和松开之间刚好重建」那条），名字保存了但没有切换会话；键盘此时回到原来的当前会话（X10 的 `gui-chat-smoke` 用例为此把改名请求延迟 500 ms，模拟远程 daemon）。
