@@ -1,0 +1,1 @@
+{"type":"sessions","list":[{"id":"<ID1>","title":"plain","workdir":"<TMP>/plain","created":"<TS>","mode":"normal"},{"id":"<ID2>","title":"<ID2>","workdir":"<TMP>/repo-worktrees/<ID2>","created":"<TS>","mode":"worktree","sourceWorkdir":"<TMP>/repo","sourceRepo":"<TMP>/repo","worktreeRoot":"<TMP>/repo-worktrees/<ID2>","branch":"vibe/<ID2>"}]}

@@ -1,0 +1,983 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>vibe-remote · 双模式会话 效果示意</title>
+<link rel="icon" href="data:,">
+<style>
+:root{--bg-app:#E6E1D8;--bg-primary:#F5F2EC;--bg-secondary:#EEEAE2;--bg-sidebar:#EAE5DC;--bg-canvas:#FBFAF7;--bg-elevated:#FFFEFB;--bg-hover:#E1DBD0;--text-primary:#2B2A28;--text-secondary:#6B6862;--text-muted:#736F67;--accent:#AD5048;--accent-hover:#93443D;--border:#DDD6CA;--border-strong:#CEC5B7;--success:#4F7C4D;--warning:#966426;--error:#A44840;--radius:8px;--shadow-card:0 1px 2px rgba(60,50,38,.05),0 5px 16px rgba(60,50,38,.055);--shadow-lift:0 2px 4px rgba(60,50,38,.07),0 10px 28px rgba(60,50,38,.12);--shadow-inset:inset 0 1px 0 rgba(255,255,255,.72);--mono:'SF Mono','JetBrains Mono',ui-monospace,Menlo,monospace}
+*{margin:0;padding:0;box-sizing:border-box}
+[hidden]{display:none!important}
+html,body{font-family:-apple-system,BlinkMacSystemFont,'SF Pro Text','PingFang SC','Segoe UI',sans-serif;font-size:14px;line-height:1.5;color:var(--text-primary);background:#F4F2EE;-webkit-font-smoothing:antialiased}
+body{padding:14px 24px 40px;overflow-x:hidden}
+button{font:inherit;color:inherit}
+svg.i{width:15px;height:15px;fill:none;stroke:currentColor;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round;flex-shrink:0}
+code{font-family:var(--mono);font-size:.88em;background:color-mix(in srgb,var(--bg-hover) 55%,transparent);padding:1px 5px;border-radius:4px}
+.topnote{color:#8A867E;font-size:12px;margin-bottom:12px}
+.page-head{display:flex;flex-wrap:wrap;align-items:flex-end;justify-content:space-between;gap:10px 24px;max-width:1240px;margin:0 auto 12px}
+.page-head h1{font-size:20px;letter-spacing:-.3px}
+.page-head p{color:var(--text-secondary);font-size:12.5px}
+.legend{display:flex;flex-wrap:wrap;gap:6px 14px;font-size:12px;color:var(--text-secondary);align-items:center}
+.ft{display:inline-block;font-size:9.5px;line-height:1.35;font-weight:700;padding:1px 5px;border-radius:4px;white-space:nowrap;vertical-align:middle;letter-spacing:.02em}
+.ft.v1{background:#E3EFDF;color:#3D6A3A;border:1px solid #B9D3B1}
+.ft.later{background:#ECEAE5;color:#7A766E;border:1px solid #D6D1C7}
+.tg{position:relative}
+.ft.c{position:absolute;top:-8px;right:-4px;z-index:4;box-shadow:0 1px 2px rgba(0,0,0,.06)}
+.tabs{display:flex;flex-wrap:wrap;gap:6px;max-width:1240px;margin:0 auto 12px}
+.tab{display:inline-flex;align-items:center;gap:6px;padding:6px 11px;border:1px solid var(--border);border-radius:8px;background:var(--bg-elevated);font-size:12.5px;cursor:pointer;color:var(--text-secondary)}
+.tab kbd{font-family:var(--mono);font-size:10px;min-width:16px;padding:0 4px;border:1px solid var(--border);border-radius:4px;color:var(--text-muted);background:var(--bg-canvas);text-align:center}
+.tab:hover{background:var(--bg-hover);color:var(--text-primary)}
+.tab[aria-selected=true]{border-color:var(--accent);color:var(--text-primary);font-weight:600;box-shadow:0 0 0 1px var(--accent)}
+.tab[aria-selected=true] kbd{border-color:var(--accent);color:var(--accent)}
+/* window */
+.win{position:relative;display:flex;max-width:1240px;height:800px;margin:0 auto;border:1px solid var(--border-strong);border-radius:12px;overflow:hidden;background:var(--bg-app);box-shadow:0 20px 60px rgba(60,50,40,.18),0 2px 6px rgba(60,50,40,.08)}
+.lights{position:absolute;top:17px;left:18px;display:flex;gap:8px;z-index:5}
+.lights i{width:12px;height:12px;border-radius:50%;background:#EC6A5E;border:1px solid rgba(0,0,0,.08)}
+.lights i:nth-child(2){background:#F4BF4F}.lights i:nth-child(3){background:#61C554}
+/* sidebar */
+.sidebar{width:252px;min-width:252px;background:var(--bg-sidebar);border-right:1px solid var(--border-strong);box-shadow:inset -1px 0 0 rgba(255,255,255,.38);display:flex;flex-direction:column}
+.sb-head{display:flex;align-items:center;justify-content:space-between;padding:50px 16px 14px}
+.brand{display:flex;align-items:center;gap:9px}
+.brand-mark{display:inline-flex;width:27px;height:27px;align-items:center;justify-content:center;border:1px solid #8E463E;border-radius:8px;background:var(--accent);color:#FFF9F4;box-shadow:0 3px 9px rgba(113,57,49,.18),var(--shadow-inset)}
+.brand-mark svg{width:16px;height:16px;fill:none;stroke:currentColor;stroke-width:1.55;stroke-linecap:round;stroke-linejoin:round}
+.brand h2{font-size:16px;font-weight:650;letter-spacing:-.3px}
+.icon-btn{display:inline-flex;min-width:26px;min-height:26px;align-items:center;justify-content:center;background:transparent;border:0;color:var(--text-muted);border-radius:6px;padding:2px 6px;cursor:pointer;font-size:11px;font-weight:700}
+.icon-btn:hover{background:var(--bg-hover);color:var(--text-primary)}
+.sb-content{flex:1;overflow-y:auto;padding:8px 12px}
+.mg{margin-bottom:14px}
+.mg-h{display:flex;align-items:center;gap:2px}
+.mtoggle{display:inline-flex;width:22px;height:28px;align-items:center;justify-content:center;border:0;background:transparent;color:var(--text-muted)}
+.mtoggle svg{width:12px;height:12px;fill:none;stroke:currentColor;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round}
+.mtoggle.open svg{transform:rotate(90deg)}
+.mname{display:flex;flex:1;min-width:0;align-items:center;min-height:36px;gap:7px;padding:5px 7px;border-radius:7px;font-size:12.5px;font-weight:650}
+.mname.selected{background:color-mix(in srgb,var(--accent) 9%,var(--bg-elevated));box-shadow:inset 2px 0 0 var(--accent),0 1px 3px rgba(60,50,38,.07)}
+.mname-l{min-width:0;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.mname-l small{display:block;font-family:var(--mono);font-size:9.5px;font-weight:500;color:var(--text-muted);line-height:1.2}
+.mk{display:inline-flex;width:24px;height:24px;align-items:center;justify-content:center;flex-shrink:0;border:1px solid color-mix(in srgb,var(--success) 36%,var(--border));border-radius:6px;background:color-mix(in srgb,var(--success) 10%,var(--bg-elevated));color:var(--success)}
+.mk svg{width:15px;height:15px;fill:none;stroke:currentColor;stroke-width:1.45;stroke-linecap:round;stroke-linejoin:round}
+.mcount{min-width:17px;color:var(--text-muted);font-family:var(--mono);font-size:10px;text-align:right}
+.slist{display:flex;flex-direction:column;gap:2px;margin:4px 0 0 30px;padding-left:10px;border-left:1px solid #CFC8BC}
+.si{display:flex;align-items:center;min-height:32px;gap:6px;padding:5px 6px;border-radius:6px;font-size:12.5px;color:var(--text-secondary);white-space:nowrap;cursor:pointer}
+.si:hover{background:var(--bg-hover);color:var(--text-primary)}
+.si.active{background:color-mix(in srgb,var(--accent) 8%,var(--bg-elevated));color:var(--text-primary);font-weight:550;box-shadow:inset 2px 0 0 var(--accent),0 1px 2px rgba(60,50,38,.05)}
+.si .sk{display:inline-flex;width:14px;height:14px;color:var(--text-muted)}
+.si .sk svg{width:14px;height:14px;fill:none;stroke:currentColor;stroke-width:1.55;stroke-linecap:round;stroke-linejoin:round}
+.si.active .sk{color:var(--accent)}
+.si .sl{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis}
+.mb{flex-shrink:0;font-size:9.5px;font-weight:650;padding:0 5px;border-radius:999px;border:1px solid var(--border);color:var(--text-muted);background:color-mix(in srgb,var(--bg-elevated) 60%,transparent);line-height:15px}
+.mb.rich{border-color:color-mix(in srgb,var(--accent) 35%,var(--border));color:var(--accent-hover);background:color-mix(in srgb,var(--accent) 8%,var(--bg-elevated))}
+.dot{width:7px;height:7px;border-radius:50%;flex-shrink:0;background:#8C9AA6}
+.dot.idle{background:var(--success)}
+.dot.waiting{background:var(--warning);box-shadow:0 0 0 3px rgba(201,138,60,.14)}
+.sb-foot{padding:10px 14px 12px;border-top:1px solid var(--border);font-size:10.5px;color:var(--text-muted);line-height:1.5}
+/* main */
+.main{position:relative;flex:1;display:flex;flex-direction:column;min-width:0;background:var(--bg-app)}
+.toolbar{display:flex;align-items:center;justify-content:space-between;gap:12px;height:48px;padding:4px 18px 0;background:color-mix(in srgb,var(--bg-primary) 94%,white);border-bottom:1px solid var(--border-strong);box-shadow:0 1px 0 rgba(255,255,255,.64),0 3px 12px rgba(60,50,38,.045)}
+.tb-title{display:flex;align-items:center;gap:9px;min-width:0;font-size:14px;font-weight:600;white-space:nowrap;overflow:hidden}
+.tb-title::before{content:'';width:8px;height:8px;flex-shrink:0;border:2px solid #8A4A42;border-radius:3px;background:color-mix(in srgb,var(--accent) 12%,var(--bg-elevated));box-shadow:0 0 0 3px color-mix(in srgb,var(--accent) 7%,transparent)}
+.tb-title .tt{overflow:hidden;text-overflow:ellipsis}
+.tb-title .wd{font-family:var(--mono);font-size:11px;font-weight:500;color:var(--text-muted);overflow:hidden;text-overflow:ellipsis}
+.tb-right{display:flex;align-items:center;gap:8px;flex-shrink:0}
+.tb-status{display:flex;align-items:center;gap:6px;font-size:12px;color:var(--text-secondary);min-height:26px;padding:3px 9px;border:1px solid var(--border);border-radius:7px;background:color-mix(in srgb,var(--bg-elevated) 72%,transparent);box-shadow:var(--shadow-inset)}
+.tb-status::before{content:'';width:7px;height:7px;border-radius:50%;background:var(--text-muted)}
+.tb-status.connected{border-color:color-mix(in srgb,var(--success) 26%,var(--border))}
+.tb-status.connected::before{background:var(--success)}
+.tb-status.reconnecting::before{background:var(--warning);animation:pulse 1.5s ease-in-out infinite}
+.tb-status.error{border-color:color-mix(in srgb,var(--error) 28%,var(--border));background:color-mix(in srgb,var(--error) 5%,var(--bg-elevated))}
+.tb-status.error::before{background:var(--error)}
+.tb-btn{display:inline-flex;align-items:center;gap:5px;font-size:11.5px;padding:3px 8px;border:1px solid var(--border);border-radius:7px;background:transparent;color:var(--text-muted);cursor:not-allowed}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.4}}
+.stage{flex:1;position:relative;padding:12px 14px 14px;min-height:0}
+.scene{height:100%}
+.scene[hidden]{display:none}
+.card{position:relative;height:100%;border:1px solid var(--border);border-radius:12px;background:var(--bg-canvas);box-shadow:var(--shadow-card),var(--shadow-inset);overflow:hidden}
+.segbar{display:flex;justify-content:flex-end;padding:8px 12px 0;flex-shrink:0}
+.seg{display:flex;flex-wrap:wrap;gap:2px;padding:2px;border:1px dashed #BDB5A7;border-radius:8px;background:rgba(255,254,251,.92);font-size:11px}
+.ovl .segbar{padding:0;width:500px;max-width:100%}
+.rb{padding:8px 12px 0;flex-shrink:0}
+.reconnect-banner{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:8px 12px;border-radius:8px;background:#FBEFD9;border:1px solid rgba(201,138,60,.45);color:#8A5A1E;font-size:12px}
+.reconnect-banner button{background:transparent;border:1px solid rgba(201,138,60,.5);color:#8A5A1E;border-radius:6px;font-size:11px;padding:3px 10px;cursor:pointer;flex-shrink:0}
+.rb-note{display:inline-block;position:relative;margin:5px 2px 0;font-size:11.5px;color:var(--text-secondary)}
+.notif{position:absolute;top:44px;right:12px;z-index:15;display:flex;gap:10px;width:320px;max-width:calc(100% - 24px);padding:10px 12px;border:1px solid var(--border-strong);border-radius:12px;background:rgba(252,251,248,.97);box-shadow:var(--shadow-lift);font-size:12px}
+.notif .ni{display:inline-flex;width:30px;height:30px;flex-shrink:0;align-items:center;justify-content:center;border-radius:8px;background:var(--accent);color:#FFF9F4}
+.notif .ni svg{width:17px;height:17px;fill:none;stroke:currentColor;stroke-width:1.55;stroke-linecap:round;stroke-linejoin:round}
+.notif .nb{flex:1;min-width:0}
+.notif .nt{display:flex;justify-content:space-between;gap:8px;color:var(--text-muted);font-size:11px}
+.notif .nt b{color:var(--text-primary);font-size:12px}
+.notif .nm{font-weight:600;margin-top:1px}
+.notif .ns{color:var(--text-secondary);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.notif .nx{align-self:flex-start;border:0;background:transparent;color:var(--text-muted);cursor:pointer;font-size:14px;line-height:1}
+.seg span{padding:2px 6px;color:#8A867E}
+.seg button{border:0;background:transparent;padding:2px 8px;border-radius:6px;cursor:pointer;color:var(--text-secondary)}
+.seg button[aria-pressed=true]{background:var(--text-primary);color:#fff}
+/* 对话界面 (mirrors Claude Code VS Code webview) */
+.chat{position:relative;display:flex;flex-direction:column;height:100%}
+.pie{display:inline-flex;align-items:center;gap:4px;font-size:10.5px;color:#9A958C;white-space:nowrap}
+.pie i{width:11px;height:11px;border-radius:50%;background:conic-gradient(#A8A297 0 38%,var(--border) 38% 100%)}
+.tl{flex:1;overflow-y:auto;padding:18px 0 10px}
+.tl-in{max-width:780px;margin:0 auto;padding:0 22px}
+.u-msg{position:relative;margin:4px 0 16px;padding:9px 120px 9px 13px;border:1px solid var(--border-strong);border-radius:9px;background:var(--bg-elevated);box-shadow:var(--shadow-inset);font-size:13.5px}
+.u-msg .rw{position:absolute;right:8px;top:7px;display:flex;gap:4px;align-items:center;color:var(--text-muted);font-size:11px}
+.ti{position:relative;padding-left:22px;margin:7px 0}
+.ti::before{content:'';position:absolute;left:5px;top:9px;width:7px;height:7px;border-radius:50%;background:#B9B2A6}
+.ti.ok::before{background:var(--success)}
+.ti.err::before{background:var(--error)}
+.ti.pend::before{background:var(--warning);animation:pulse 1.4s infinite}
+.ti.txt::before{background:var(--text-primary)}
+.ti.thk::before{background:transparent;border:1.5px solid #B9B2A6;width:5px;height:5px}
+.md{font-size:13.5px;line-height:1.62}
+.md p{margin:2px 0 8px}
+.md h3{font-size:14.5px;margin:10px 0 6px}
+.md h2{font-size:16px;margin:4px 0 8px}
+.md ol,.md ul{margin:4px 0 10px 20px}
+.md li{margin:2px 0}
+.cb{margin:8px 0 10px;border:1px solid var(--border);border-radius:8px;background:#F6F3EE;overflow:hidden}
+.cb-h{display:flex;justify-content:space-between;padding:4px 10px;font-size:11px;color:var(--text-muted);border-bottom:1px solid var(--border)}
+.cb pre{tab-size:4;padding:9px 12px;font-family:var(--mono);font-size:12px;line-height:1.55;overflow-x:auto;color:#3B3A37}
+.kw{color:#9A5BA0}.fn{color:#4A72B0}.st{color:#5E8C58}.cm{color:#9B978E}
+.thk-s{font-size:12.5px;color:var(--text-muted);cursor:pointer;list-style:none}
+.thk-s::-webkit-details-marker{display:none}
+.thk-b{margin-top:4px;padding-left:10px;border-left:2px solid var(--border);font-size:12.5px;font-style:italic;color:var(--text-muted)}
+.tool{border:1px solid var(--border);border-radius:8px;background:var(--bg-elevated);overflow:hidden;font-size:12.5px}
+.tool>summary{display:flex;align-items:center;gap:6px;padding:6px 10px;cursor:pointer;list-style:none;min-width:0}
+.tool>summary::-webkit-details-marker{display:none}
+.tool>summary .chev{width:11px;height:11px;fill:none;stroke:var(--text-muted);stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round;transition:transform .15s;flex-shrink:0}
+.tool[open]>summary .chev{transform:rotate(90deg)}
+.tn{font-weight:700}
+.t2{font-family:var(--mono);font-size:11.5px;color:var(--text-secondary);min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.t2p{color:var(--text-secondary);min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.tm{margin-left:auto;flex-shrink:0;font-size:11px;color:var(--text-muted)}
+.tm.bad{color:var(--error)}.tm.good{color:var(--success)}
+.trow{display:grid;grid-template-columns:38px minmax(0,1fr);border-top:1px solid var(--border)}
+.trow .lb{padding:6px 0 6px 10px;font-size:10px;font-weight:700;color:var(--text-muted);letter-spacing:.04em}
+.trow pre{tab-size:4;padding:6px 10px 7px 0;font-family:var(--mono);font-size:11.5px;line-height:1.5;overflow-x:auto;white-space:pre;color:#3B3A37;max-height:220px}
+.diff{border-top:1px solid var(--border);font-family:var(--mono);font-size:11.5px;line-height:1.55;overflow-x:auto;background:var(--bg-canvas)}
+.dl{display:flex;min-width:max-content;white-space:pre;tab-size:4}
+.dl .n{width:38px;padding-right:8px;text-align:right;color:#A9A398;flex-shrink:0;user-select:none}
+.dl .s{width:14px;flex-shrink:0;color:#A9A398}
+.dl .x{padding-right:14px}
+.dl.del{background:#F7E3DF;color:#8E3B33}.dl.del .s,.dl.del .n{color:#B5655B}
+.dl.add{background:#E3EFDC;color:#35612F}.dl.add .s,.dl.add .n{color:#5E8C58}
+.dl.hunk{color:#8A867E;background:#F1EEE8}
+.todo{border:1px solid var(--border);border-radius:8px;background:var(--bg-elevated);padding:7px 10px 8px;font-size:12.5px}
+.todo-h{font-weight:700;margin-bottom:4px}
+.todo li{list-style:none;display:flex;gap:8px;align-items:flex-start;padding:2px 0;color:var(--text-secondary)}
+.todo li i{font-style:normal;width:14px;flex-shrink:0;text-align:center;color:var(--text-muted)}
+.todo li.done{color:var(--text-muted);text-decoration:line-through}
+.todo li.done i{color:var(--success);text-decoration:none}
+.todo li.doing{color:var(--text-primary);font-weight:600}
+.todo li.doing i{color:var(--accent)}
+.spin{display:flex;align-items:center;gap:8px;margin:12px 0 4px 2px;font-size:12.5px;color:var(--accent-hover)}
+.spin .star{display:inline-block;font-size:15px;color:var(--accent);animation:rot 2.4s linear infinite}
+.spin small{color:var(--text-muted);font-size:11.5px}
+@keyframes rot{to{transform:rotate(360deg)}}
+.divider{display:flex;align-items:center;gap:10px;margin:16px 0 12px;font-size:11.5px;color:var(--success);font-weight:600}
+.divider::before,.divider::after{content:'';flex:1;height:1px;background:color-mix(in srgb,var(--success) 35%,var(--border))}
+.ghost{margin:12px 0 4px 22px;font-size:12px;color:var(--text-muted);font-style:italic}
+/* composer */
+.cwrap{position:relative;max-width:780px;width:100%;margin:0 auto;padding:4px 22px 14px}
+.composer{border:1px solid var(--border-strong);border-radius:11px;background:var(--bg-elevated);box-shadow:var(--shadow-card),var(--shadow-inset)}
+.composer.focus{border-color:color-mix(in srgb,var(--accent) 60%,var(--border-strong));box-shadow:0 0 0 3px color-mix(in srgb,var(--accent) 12%,transparent),var(--shadow-card)}
+.composer.dis{opacity:.72}
+.c-in{min-height:46px;padding:10px 13px 4px;font-size:13.5px;color:var(--text-primary);outline:none}
+.c-in:empty::before{content:attr(data-ph);color:#A39E95}
+.c-in .caret{display:inline-block;width:1.5px;height:16px;background:var(--accent);vertical-align:-3px;animation:pulse 1s steps(1) infinite}
+.c-bar{display:flex;align-items:center;gap:4px;padding:4px 7px 7px;flex-wrap:wrap}
+.chip{display:inline-flex;align-items:center;gap:5px;height:26px;padding:0 8px;border:1px solid var(--border);border-radius:7px;background:transparent;font-size:11.5px;color:var(--text-secondary);cursor:pointer;white-space:nowrap}
+.chip:hover{background:var(--bg-hover)}
+.chip.plan{border-color:color-mix(in srgb,#4A72B0 40%,var(--border));color:#3D5F94;background:color-mix(in srgb,#4A72B0 7%,var(--bg-elevated))}
+.chip.auto{border-color:color-mix(in srgb,var(--success) 40%,var(--border));color:var(--success)}
+.chip .cv{width:9px;height:9px;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
+.ib{display:inline-flex;align-items:center;justify-content:center;width:26px;height:26px;border:0;border-radius:6px;background:transparent;color:var(--text-muted);cursor:pointer;font-size:13px;font-weight:600}
+.ib:hover{background:var(--bg-hover);color:var(--text-primary)}
+.ib.off{opacity:.5;cursor:not-allowed}
+.sp{flex:1}
+.send{display:inline-flex;align-items:center;justify-content:center;width:28px;height:28px;border:0;border-radius:8px;background:var(--accent);color:#fff;cursor:pointer}
+.send.idle{background:#D8D1C5}
+.send.stop{background:var(--text-primary);width:auto;padding:0 9px;gap:6px;font-size:11px}
+.send.stop i{width:9px;height:9px;background:#fff;border-radius:2px}
+.send.stop kbd{font-family:var(--mono);font-size:9.5px;opacity:.75}
+.c-hint{display:flex;justify-content:space-between;gap:8px;margin-top:5px;font-size:10.5px;color:#9A958C}
+.menu{position:absolute;left:22px;bottom:100%;width:330px;max-width:calc(100% - 44px);margin-bottom:-4px;border:1px solid var(--border-strong);border-radius:10px;background:var(--bg-elevated);box-shadow:var(--shadow-lift);padding:5px;z-index:8}
+.menu .mi{display:flex;gap:9px;padding:7px 8px;border-radius:7px;font-size:12.5px}
+.menu .mi.on{background:color-mix(in srgb,var(--accent) 8%,var(--bg-elevated))}
+.menu .mi b{display:block;font-weight:600}
+.menu .mi small{display:block;color:var(--text-muted);font-size:11px;line-height:1.4}
+.menu .mi .ck{width:14px;flex-shrink:0;color:var(--accent);font-weight:700}
+.menu .mf{padding:5px 8px 3px;border-top:1px solid var(--border);margin-top:3px;font-size:10.5px;color:var(--text-muted)}
+/* permission prompt (replaces composer, like the extension) */
+.perm{border:1px solid var(--border-strong);border-radius:11px;background:var(--bg-elevated);box-shadow:var(--shadow-card),var(--shadow-inset);padding:10px;max-height:62vh;overflow-y:auto}
+.perm-h{font-size:13px;font-weight:600;margin:1px 2px 7px}
+.perm-h .pp{font-family:var(--mono);font-size:12px;font-weight:600}
+.perm-cmd{font-family:var(--mono);font-size:12px;padding:7px 10px;border:1px solid var(--border);border-radius:7px;background:var(--bg-canvas);overflow-x:auto;white-space:pre}
+.perm-d{font-size:11.5px;color:var(--text-muted);margin:5px 2px 8px}
+.perm .diff{border:1px solid var(--border);border-radius:7px;margin-bottom:8px;max-height:210px;overflow:auto}
+.opts{display:flex;flex-direction:column;gap:4px}
+.opt{display:flex;align-items:center;gap:8px;width:100%;padding:7px 9px;border:1px solid var(--border);border-radius:7px;background:transparent;text-align:left;font-size:12.5px;cursor:pointer}
+.opt:hover{background:var(--bg-hover)}
+.opt.pri{border-color:var(--accent);background:color-mix(in srgb,var(--accent) 6%,var(--bg-elevated));box-shadow:0 0 0 1px color-mix(in srgb,var(--accent) 40%,transparent)}
+.opt .k{display:inline-flex;align-items:center;justify-content:center;min-width:17px;height:17px;border:1px solid var(--border);border-radius:4px;font-family:var(--mono);font-size:10px;color:var(--text-muted);background:var(--bg-canvas);flex-shrink:0}
+.opt code{font-size:11px}
+.rej{display:flex;gap:6px;align-items:stretch}
+.rej .opt{width:auto;flex-shrink:0}
+.rej input{flex:1;min-width:0;padding:6px 9px;border:1px solid var(--border);border-radius:7px;background:var(--bg-canvas);font:inherit;font-size:12.5px;color:var(--text-primary)}
+.rej input:focus{outline:2px solid color-mix(in srgb,var(--accent) 50%,transparent);border-color:var(--accent)}
+.perm-f{margin-top:7px;font-size:10.5px;color:#9A958C;display:flex;justify-content:space-between;gap:8px}
+.perm-h{display:flex;align-items:center;justify-content:space-between;gap:8px}
+.pcol{display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;flex-shrink:0;border:0;border-radius:6px;background:transparent;color:var(--text-muted);cursor:pointer}
+.pcol:hover{background:var(--bg-hover);color:var(--text-primary)}
+.pcol svg{width:13px;height:13px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round;transition:transform .15s}
+.perm.collapsed .perm-body{display:none}
+.perm.collapsed .perm-h{margin-bottom:1px}
+.perm.collapsed .pcol svg{transform:rotate(-90deg)}
+.perm-cmdw{position:relative}
+.perm-cmd{padding-right:72px;cursor:text;outline:none}
+.perm-cmd:hover{border-color:var(--border-strong)}
+.perm-cmd:focus{border-color:var(--accent);box-shadow:0 0 0 2px color-mix(in srgb,var(--accent) 18%,transparent)}
+.pedit{position:absolute;right:1px;top:1px;bottom:1px;display:inline-flex;align-items:center;gap:3px;padding:0 8px 0 6px;border-radius:0 6px 6px 0;background:var(--bg-canvas);font-size:10.5px;color:var(--text-muted);pointer-events:none}
+.pedit svg{width:11px;height:11px}
+.opt2{flex-wrap:wrap;row-gap:4px}
+.opt2 .o2t{flex:1;min-width:0}
+.dests{display:flex;flex-wrap:wrap;align-items:center;gap:1px;width:100%;padding-left:25px;font-size:11px;color:var(--text-muted)}
+.dests i{font-style:normal;color:#C3BCB0;padding:0 1px}
+.dests button{border:0;background:transparent;padding:1px 5px;border-radius:5px;font-size:11px;color:var(--text-muted);cursor:pointer}
+.dests button:hover{background:var(--bg-hover);color:var(--text-primary)}
+.dests button[aria-pressed=true]{color:var(--accent-hover);background:color-mix(in srgb,var(--accent) 10%,var(--bg-elevated));font-weight:600}
+/* AskUserQuestion */
+.ask{border:1px solid var(--border-strong);border-radius:10px;background:var(--bg-elevated);padding:10px 12px;box-shadow:var(--shadow-inset);font-size:12.5px}
+.ask .perm-h{margin:0 0 4px}
+.q{margin:6px 0 10px}
+.qt{font-weight:600;margin-bottom:2px}
+.qo{display:flex;gap:8px;align-items:flex-start;margin-top:4px;padding:6px 9px;border:1px solid var(--border);border-radius:7px;cursor:pointer}
+.qo:hover{background:var(--bg-hover)}
+.qo:has(input:checked){border-color:var(--accent);background:color-mix(in srgb,var(--accent) 5%,var(--bg-elevated))}
+.qo input{margin-top:3px;accent-color:var(--accent)}
+.qo small{display:block;color:var(--text-muted);font-size:11px}
+.ask.done .qo{cursor:default}
+/* slash menu */
+.menu .mh{padding:3px 8px 4px;font-size:10.5px;color:var(--text-muted)}
+.menu .mi .cmd{min-width:76px;font-family:var(--mono);font-weight:600;font-size:12px}
+.menu .mi small{align-self:center}
+/* scene note */
+.snote{max-width:1240px;margin:12px auto 0;padding:10px 14px;border:1px dashed var(--border-strong);border-radius:10px;background:var(--bg-elevated);font-size:12.5px;color:var(--text-secondary)}
+.snote b{color:var(--text-primary);margin-right:6px}
+/* plan doc */
+.plan-doc{border-top:1px solid var(--border);padding:12px 16px 6px;background:var(--bg-canvas);max-height:none}
+/* empty state */
+.welcome{display:flex;flex-direction:column;align-items:center;justify-content:flex-start;text-align:center;min-height:100%;padding:36px 20px 20px}
+.spark{width:46px;height:46px;color:var(--accent);margin-bottom:14px}
+.welcome h3{font-size:19px;letter-spacing:-.3px}
+.welcome p{color:var(--text-secondary);font-size:13px;margin-top:3px}
+.tips{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;margin-top:20px;width:min(520px,100%);text-align:left}
+.tips div{padding:9px 11px;border:1px solid var(--border);border-radius:9px;background:var(--bg-elevated);font-size:12px;color:var(--text-secondary)}
+.tips b{display:block;color:var(--text-primary);font-size:12.5px;margin-bottom:1px}
+/* error card */
+.errc{margin:12px 0 4px;padding:14px 16px;border:1px solid color-mix(in srgb,var(--error) 30%,var(--border));border-radius:10px;background:color-mix(in srgb,var(--error) 5%,var(--bg-elevated))}
+.errc h4{display:flex;align-items:center;gap:7px;font-size:13.5px;color:#7F302C}
+.errc p{font-size:12.5px;color:var(--text-secondary);margin:5px 0 8px}
+.errc pre{font-family:var(--mono);font-size:11.5px;padding:8px 10px;border-radius:7px;background:#F6EEEA;color:#6E3A33;overflow-x:auto;white-space:pre;margin-bottom:10px}
+.btns{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+.btn-p{padding:7px 14px;border:0;border-radius:8px;background:var(--accent);color:#fff;font-size:12.5px;font-weight:600;cursor:pointer}
+.btn-p:hover{background:var(--accent-hover)}
+.btn-s{padding:7px 14px;border:1px solid var(--border-strong);border-radius:8px;background:var(--bg-elevated);color:var(--text-primary);font-size:12.5px;cursor:pointer}
+.btn-s:hover{background:var(--bg-hover)}
+.btns small{font-size:11px;color:var(--text-muted)}
+/* terminal */
+.term{height:100%;padding:12px 14px;overflow:auto;font-family:'JetBrains Mono','SF Mono',Menlo,monospace;font-size:13px;line-height:1.45;color:#2B2A28;white-space:pre}
+.tR{color:#C0564B}.tG{color:#5E8C58}.tY{color:#B07D2E}.tB{color:#4A72B0}.tM{color:#9A5BA0}.tD{color:#9B978E}.tA{color:#AD5048}
+.cur{background:#AD5048;color:#FBFAF7}
+/* modal (new session) */
+.ovl{position:absolute;inset:0;z-index:30;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:8px;padding:16px;background:rgba(43,40,35,.32);backdrop-filter:blur(3px)}
+.ovl[hidden]{display:none}
+.modal{width:500px;max-width:100%;max-height:100%;min-height:0;background:var(--bg-elevated);border:1px solid var(--border-strong);border-radius:12px;display:flex;flex-direction:column;overflow:hidden;box-shadow:0 18px 60px rgba(60,50,40,.22),var(--shadow-inset)}
+.modal-h{padding:14px 16px;font-size:14px;font-weight:600;border-bottom:1px solid var(--border)}
+.modal-body{overflow-y:auto;flex:1;min-height:0}
+.modal-path{padding:7px 16px;font-size:11px;font-family:var(--mono);color:var(--text-muted);border-bottom:1px solid var(--border);white-space:nowrap;overflow-x:auto}
+.mbox{padding:10px 16px 4px;border-bottom:1px solid var(--border)}
+.mbox.new{background:color-mix(in srgb,var(--success) 4%,var(--bg-elevated))}
+.mtitle{display:flex;align-items:center;gap:6px;font-size:11px;color:var(--text-muted);margin-bottom:6px}
+.mcards{display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-bottom:6px}
+.mcard{display:flex;flex-direction:column;align-items:flex-start;gap:2px;width:100%;padding:9px 10px;border:1px solid var(--border);border-radius:7px;background:transparent;text-align:left;cursor:pointer}
+.mcard:hover{background:var(--bg-hover)}
+.mcard[aria-pressed=true]{border-color:var(--accent);box-shadow:0 0 0 1px var(--accent)}
+.mcard.na{opacity:.6;cursor:not-allowed;background:var(--bg-secondary)}
+.mcard.na:hover{background:var(--bg-secondary)}
+.mcard .why{font-size:10.5px;color:var(--error);line-height:1.4}
+.fnote{font-size:11px;color:var(--text-muted);line-height:1.5;padding:4px 0 2px}
+.mcard .t{display:flex;align-items:center;gap:6px;font-size:12px;font-weight:600}
+.mcard .d{font-size:11px;color:var(--text-muted);line-height:1.45}
+.only{font-size:9.5px;font-weight:700;padding:0 5px;border-radius:999px;background:color-mix(in srgb,var(--accent) 14%,var(--bg-elevated));color:var(--accent-hover)}
+.mnote{font-size:11px;color:var(--text-secondary);padding:0 0 7px}
+.dirs{padding:6px 8px}
+.dir{display:flex;align-items:center;gap:8px;padding:6px 10px;border-radius:8px;font-size:13px;color:var(--text-secondary)}
+.dir:hover{background:var(--bg-hover)}
+.dir.up{font-style:italic;color:var(--text-muted)}
+.flags{padding:8px 16px;border-top:1px solid var(--border)}
+.flag{display:flex;align-items:center;gap:8px;padding:2px 0;font-size:13px}
+.modal-f{display:flex;justify-content:flex-end;gap:8px;padding:11px 16px;border-top:1px solid var(--border)}
+/* workspace (behind modal) */
+.ws{padding:30px 34px;height:100%;overflow:hidden}
+.ws .eb{color:var(--accent);font-size:11px;font-weight:650}
+.ws h1{font-size:28px;letter-spacing:-.8px;line-height:1.15}
+.ws .sum{color:var(--text-muted);font-size:12px;margin-top:2px}
+.ws-list{margin-top:22px;border:1px solid var(--border);border-radius:9px;background:var(--bg-elevated);overflow:hidden}
+.ws-row{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:11px 13px;border-bottom:1px solid var(--border);font-size:13px}
+.ws-row:last-child{border-bottom:0}
+.ws-row span{display:flex;gap:6px}
+.bdg{padding:2px 7px;border:1px solid var(--border);border-radius:999px;color:var(--text-secondary);font-size:10px;font-weight:600}
+/* notes + footer */
+.notes{max-width:1240px;margin:18px auto 0;display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px}
+.note{padding:12px 14px;border:1px solid var(--border);border-radius:10px;background:var(--bg-elevated);font-size:12.5px;color:var(--text-secondary)}
+.note b{display:block;color:var(--text-primary);margin-bottom:3px;font-size:13px}
+.foot{max-width:1240px;margin:22px auto 0;padding-top:14px;border-top:1px solid var(--border);font-size:13px;color:var(--text-secondary)}
+@media (max-width:900px){
+  body{padding:12px 16px 32px}
+  .win{flex-direction:column;height:auto}
+  .sidebar{width:100%;min-width:0;border-right:0;border-bottom:1px solid var(--border-strong)}
+  .sb-head{padding:42px 14px 8px}
+  .sb-content{max-height:none}
+  .sb-foot{display:none}
+  .stage{flex:none;height:680px;padding:10px}
+  .tl-in,.cwrap{padding-left:14px;padding-right:14px}
+  .notes{grid-template-columns:1fr}
+  .ws{padding:20px}
+  .u-msg{padding-right:38px}
+  .u-msg .rw .rwt{display:none}
+}
+@media (max-width:560px){
+  .mcards,.tips{grid-template-columns:1fr}
+  .term{font-size:10.5px}
+  .pie-tg{display:none}
+  .c-bar{row-gap:14px;padding-top:10px}
+  .rej{flex-direction:column}
+  .c-hint span:last-child{display:none}
+  .welcome{padding:14px 10px 10px}
+  .welcome .spark,.welcome p{display:none}
+  .welcome h3{font-size:16px}
+  .tips{grid-template-columns:1fr 1fr;margin-top:10px;gap:6px}
+  .tips div{padding:6px 8px;font-size:11px}
+  .tips b{font-size:11.5px}
+  .menu .mi{padding:4px 8px;gap:6px}
+  .menu .mi .cmd{min-width:66px}
+  .menu .mh,.menu .mf{padding-top:2px;padding-bottom:2px}
+}
+</style>
+</head>
+<body>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+<symbol id="i-term" viewBox="0 0 20 20"><path d="M4.5 5.5 8 9l-3.5 3.5M10 13h5.5"/></symbol>
+<symbol id="i-chat" viewBox="0 0 20 20"><path d="M4 4.5h12a1.5 1.5 0 0 1 1.5 1.5v6.5a1.5 1.5 0 0 1-1.5 1.5H9l-3.5 3v-3H4a1.5 1.5 0 0 1-1.5-1.5V6A1.5 1.5 0 0 1 4 4.5Zm2.5 4h7m-7 2.5h4.5"/></symbol>
+<symbol id="i-branch" viewBox="0 0 20 20"><path d="M6 3.5v9.25A3.75 3.75 0 0 0 9.75 16.5H14M6 6.5h5A3 3 0 0 0 14 3.5M4 3.5h4m4 0h4m-4 13h4"/></symbol>
+<symbol id="i-machine" viewBox="0 0 20 20"><path d="M4 3.5h12a1.5 1.5 0 0 1 1.5 1.5v10a1.5 1.5 0 0 1-1.5 1.5H4A1.5 1.5 0 0 1 2.5 15V5A1.5 1.5 0 0 1 4 3.5Zm-1.5 6h15M5.5 6.5h.01m2.49 0h.01m-2.51 6h.01m2.49 0h.01"/></symbol>
+<symbol id="i-chev" viewBox="0 0 20 20"><path d="m7 5 5 5-5 5"/></symbol>
+<symbol id="i-down" viewBox="0 0 20 20"><path d="m5 8 5 5 5-5"/></symbol>
+<symbol id="i-up" viewBox="0 0 20 20"><path d="M10 16V4m-5 5 5-5 5 5"/></symbol>
+<symbol id="i-hand" viewBox="0 0 20 20"><path d="M10 2.8 4 5.2v4.3c0 3.6 2.6 6.4 6 7.7 3.4-1.3 6-4.1 6-7.7V5.2Z"/></symbol>
+<symbol id="i-pen" viewBox="0 0 20 20"><path d="M13.5 3.5 16.5 6.5 7.5 15.5H4.5v-3Z"/></symbol>
+<symbol id="i-plan" viewBox="0 0 20 20"><path d="M5 4.5h10M5 8.5h10M5 12.5h6M5 16.5h4"/></symbol>
+<symbol id="i-clip" viewBox="0 0 20 20"><path d="M15.5 9.5 10 15a3.5 3.5 0 0 1-5-5l6-6a2.3 2.3 0 0 1 3.3 3.3L8.6 13a1.1 1.1 0 0 1-1.6-1.6L12 6.5"/></symbol>
+<symbol id="i-rewind" viewBox="0 0 20 20"><path d="M4 10a6 6 0 1 0 1.8-4.3M4 3.5v3h3"/></symbol>
+<symbol id="i-alert" viewBox="0 0 20 20"><path d="M10 3 2.5 16.5h15Zm0 5v4m0 2.2h.01"/></symbol>
+<symbol id="i-swap" viewBox="0 0 20 20"><path d="M4 7h11l-3-3M16 13H5l3 3"/></symbol>
+<symbol id="i-gear" viewBox="0 0 20 20"><path d="M10 6.75A3.25 3.25 0 1 0 10 13.25 3.25 3.25 0 0 0 10 6.75Z"/><path d="M16.1 11.25v-2.5l-1.72-.44a5 5 0 0 0-.54-1.3l.9-1.53-1.77-1.77-1.53.9a5 5 0 0 0-1.3-.54L9.7 2.35H7.2l-.44 1.72a5 5 0 0 0-1.3.54l-1.53-.9-1.77 1.77.9 1.53a5 5 0 0 0-.54 1.3L.8 8.75v2.5l1.72.44c.13.46.31.9.54 1.3l-.9 1.53 1.77 1.77 1.53-.9c.4.23.84.41 1.3.54l.44 1.72h2.5l.44-1.72c.46-.13.9-.31 1.3-.54l1.53.9 1.77-1.77-.9-1.53c.23-.4.41-.84.54-1.3Z"/></symbol>
+</svg>
+
+<div class="topnote">效果示意，非最终实现 · 需求：双模式会话（终端 + 对话），对话界面参考 VS Code Claude 插件</div>
+
+<header class="page-head">
+  <div>
+    <h1>双模式会话：终端 + 对话</h1>
+    <p>新建会话时选择界面：终端保持现状，对话按 Claude Code VS Code 插件的交互与布局实现。按数字键 1–8 或点标签切换场景。</p>
+  </div>
+  <div class="legend">
+    <span><span class="ft v1">首版</span> 最小可用范围内，首版必须做</span>
+    <span><span class="ft later">以后</span> 插件有但首版不做（隐藏或置灰）</span>
+  </div>
+</header>
+
+<nav class="tabs" role="tablist" aria-label="场景">
+  <button class="tab" role="tab" data-go="1"><kbd>1</kbd>正常对话（回复中）</button>
+  <button class="tab" role="tab" data-go="2"><kbd>2</kbd>权限确认</button>
+  <button class="tab" role="tab" data-go="3"><kbd>3</kbd>提问与计划审阅</button>
+  <button class="tab" role="tab" data-go="4"><kbd>4</kbd>新建会话</button>
+  <button class="tab" role="tab" data-go="5"><kbd>5</kbd>终端会话</button>
+  <button class="tab" role="tab" data-go="6"><kbd>6</kbd>断线重连</button>
+  <button class="tab" role="tab" data-go="7"><kbd>7</kbd>空会话</button>
+  <button class="tab" role="tab" data-go="8"><kbd>8</kbd>出错</button>
+</nav>
+
+<div class="win">
+  <div class="lights" aria-hidden="true"><i></i><i></i><i></i></div>
+  <aside class="sidebar">
+    <div class="sb-head">
+      <div class="brand">
+        <span class="brand-mark"><svg viewBox="0 0 20 20"><path d="m5 6.25 3.5 3.75L5 13.75M10.5 13.75H15"/></svg></span>
+        <h2>vibe-remote</h2>
+      </div>
+      <div><button class="icon-btn" title="切换到英文">EN</button><button class="icon-btn" title="管理机器"><svg class="i"><use href="#i-gear"/></svg></button></div>
+    </div>
+    <div class="sb-content">
+      <div class="mg">
+        <div class="mg-h">
+          <span class="mtoggle open"><svg viewBox="0 0 20 20"><use href="#i-chev"/></svg></span>
+          <div class="mname" id="m-dev" data-go="4"><span class="mk"><svg><use href="#i-machine"/></svg></span><span class="mname-l">dev-linux<small>100.64.1.20:8765</small></span><span class="mcount" id="m-count">4</span></div>
+        </div>
+        <div class="slist">
+          <div class="si" data-sid="rich1" data-go="1"><span class="sk"><svg><use href="#i-chat"/></svg></span><span class="sl">reconcile 单测</span><span class="tg"><span class="mb rich">对话</span><span class="ft v1 c" style="top:-11px;right:-12px">首版</span></span><span class="dot waiting" id="dot-rich1" hidden></span></div>
+          <div class="si" data-sid="term1" data-go="5"><span class="sk"><svg><use href="#i-term"/></svg></span><span class="sl">vibe-remote</span></div>
+          <div class="si" data-sid="rich2" title="对话会话：等待确认由权限事件直接得出，无需配置 hook"><span class="sk"><svg><use href="#i-chat"/></svg></span><span class="sl">docs 校对</span><span class="mb rich">对话</span><span class="dot waiting"></span></div>
+          <div class="si" data-sid="term2"><span class="sk"><svg><use href="#i-term"/></svg></span><span class="sl">fix-ws-ping</span><span class="dot idle"></span></div>
+          <div class="si" data-sid="rich3" data-go="7" id="si-new" hidden><span class="sk"><svg><use href="#i-chat"/></svg></span><span class="sl">vibe-remote</span><span class="mb rich">对话</span></div>
+        </div>
+      </div>
+      <div class="mg">
+        <div class="mg-h">
+          <span class="mtoggle"><svg viewBox="0 0 20 20"><use href="#i-chev"/></svg></span>
+          <div class="mname"><span class="mk"><svg><use href="#i-machine"/></svg></span><span class="mname-l">mac-mini<small>100.64.1.31:8765</small></span><span class="mcount">2</span></div>
+        </div>
+      </div>
+    </div>
+  </aside>
+
+  <main class="main">
+    <div class="toolbar">
+      <div class="tb-title"><span class="tt" id="tb-title">dev-linux · a3f9c2</span><span class="mb rich" id="tb-mode">对话</span></div>
+      <div class="tb-right">
+        <div class="tb-status connected" id="tb-status">已连接</div>
+      </div>
+    </div>
+    <div class="stage">
+      <section class="scene" data-s="1">
+        <div class="card"><div class="chat">
+          <div class="tl"><div class="tl-in">
+            <div class="u-msg">给 manager.go 的 reconcile 加单测并修复 race
+              <span class="rw tg" title="从这里分叉对话 / 把代码回退到这里"><svg class="i"><use href="#i-rewind"/></svg><span class="rwt">回退到这里</span><span class="ft later c" style="top:-17px;right:-10px">以后</span></span></div>
+            <div class="ti thk"><details><summary class="thk-s">思考了 4 秒</summary><div class="thk-b">用户要给 reconcile 补测试并修 race。先读 manager.go 里 reconcileTmuxSessions 和 List 的实现，再用 -race 复现。</div></details></div>
+            <div class="ti txt md"><p>先看一下 reconcile 的实现和现有测试。</p></div>
+            <div class="tg">
+            <div class="ti ok"><details class="tool"><summary><svg class="chev"><use href="#i-chev"/></svg><span class="tn">Read</span><span class="t2">manager.go</span><span class="t2p">（第 441–516 行）</span></summary>
+              <div class="trow"><span class="lb">输入</span><pre>vibe-remoted/internal/session/manager.go  offset=441 limit=76</pre></div></details></div>
+            <span class="ft v1 c" style="right:6px;top:-4px">首版 · 工具块</span></div>
+            <div class="ti ok"><details class="tool"><summary><svg class="chev"><use href="#i-chev"/></svg><span class="tn">Grep</span><span class="t2">"metaMu"</span><span class="t2p">（在 internal/session）</span></summary>
+              <div class="trow"><span class="lb">输出</span><pre>找到 3 个文件
+internal/session/runner.go
+internal/session/manager.go
+internal/session/hardening_test.go</pre></div></details></div>
+            <div class="ti err"><details class="tool" open><summary><svg class="chev"><use href="#i-chev"/></svg><span class="tn">Bash</span><span class="t2p">运行 session 包的竞态测试</span><span class="tm bad">退出码 1</span></summary>
+              <div class="trow"><span class="lb">输入</span><pre>go test -race ./internal/session/...</pre></div>
+              <div class="trow"><span class="lb">输出</span><pre>==================
+WARNING: DATA RACE
+Write at 0x00c0001b4a58 by goroutine 31:
+  github.com/lflish/vibe-remote/vibe-remoted/internal/session.applyTmuxSessionMetadata()
+      internal/session/manager.go:415 +0x1a4
+  github.com/lflish/vibe-remote/vibe-remoted/internal/session.reconcileTmuxSessions()
+      internal/session/manager.go:466 +0x2d0
+
+Previous read at 0x00c0001b4a58 by goroutine 27:
+  github.com/lflish/vibe-remote/vibe-remoted/internal/session.(*Runner).CurrentWorkdir()
+      internal/session/runner.go:188 +0x5c
+  github.com/lflish/vibe-remote/vibe-remoted/internal/session.(*Manager).List()
+      internal/session/manager.go:499 +0x3f0
+==================
+--- FAIL: TestListRecoversHiddenSessions (0.42s)
+    testing.go:1490: race detected during execution of test
+FAIL
+FAIL	github.com/lflish/vibe-remote/vibe-remoted/internal/session	2.137s
+FAIL</pre></div></details></div>
+            <div class="tg"><div class="ti txt md">
+              <h3>问题定位</h3>
+              <p><code>reconcileTmuxSessions</code> 在持有 <code>Manager.mu</code> 时调用 <code>applyTmuxSessionMetadata</code> 改写 Runner 的 workdir / name，而 <code>Runner.CurrentWorkdir()</code> 只持 <code>metaMu</code> 读——两边不是同一把锁，<code>List()</code> 与 <code>Attach()</code> 并发时就会报 DATA RACE。</p>
+              <p>修复思路：</p>
+              <ol>
+                <li>写元数据时同样持 <code>r.metaMu</code>（保持锁顺序 Manager.mu → Runner.mu → Runner.metaMu）</li>
+                <li>新增 <code>TestReconcileConcurrentList</code>：16 个 goroutine 并发 <code>List</code> + <code>Attach</code></li>
+                <li>补一条断言：tmux 里已不存在的幽灵会话会被删除</li>
+              </ol>
+              <div class="cb"><div class="cb-h"><span>go</span><span>复制</span></div><pre><span class="kw">func</span> <span class="fn">TestReconcileConcurrentList</span>(t *testing.T) {
+	m := newTestManager(t)
+	seedTmuxSessions(t, m, <span class="st">"a"</span>, <span class="st">"b"</span>, <span class="st">"c"</span>)
+	<span class="kw">var</span> wg sync.WaitGroup
+	<span class="kw">for</span> i := <span class="st">0</span>; i &lt; <span class="st">16</span>; i++ {
+		wg.Add(<span class="st">1</span>)
+		<span class="kw">go func</span>() {
+			<span class="kw">defer</span> wg.Done()
+			_ = m.List()
+			_, _ = m.Attach(<span class="st">"a"</span>, <span class="st">80</span>, <span class="st">24</span>) <span class="cm">// 与 reconcile 争用 Runner 元数据</span>
+		}()
+	}
+	wg.Wait()
+}</pre></div>
+            </div><span class="ft v1 c" style="right:0;top:6px">首版 · 流式 Markdown</span></div>
+            <div class="ti ok"><div class="todo"><div class="todo-h">更新待办</div><ul>
+              <li class="done"><i>✓</i>定位 race 来源</li>
+              <li class="done"><i>✓</i>用 go test -race 复现</li>
+              <li class="doing"><i>◐</i>reconcile 写元数据时加 metaMu</li>
+              <li><i>○</i>新增 TestReconcileConcurrentList</li>
+              <li><i>○</i>再跑 -race -count=3 确认通过</li></ul></div></div>
+            <div class="tg"><div class="ti ok"><details class="tool" open><summary><svg class="chev"><use href="#i-chev"/></svg><span class="tn">Edit</span><span class="t2">manager.go</span><span class="tm good">新增 2 行</span></summary>
+              <div class="diff">
+                <div class="dl hunk"><span class="n"></span><span class="s"></span><span class="x">@@ -458,9 +458,11 @@ func reconcileTmuxSessions(...)</span></div>
+                <div class="dl"><span class="n">464</span><span class="s"> </span><span class="x">	for id, info := range live {</span></div>
+                <div class="dl"><span class="n">465</span><span class="s"> </span><span class="x">		if r, exists := sessions[id]; exists {</span></div>
+                <div class="dl del"><span class="n">466</span><span class="s">-</span><span class="x">			applyTmuxSessionMetadata(r, info)</span></div>
+                <div class="dl add"><span class="n">466</span><span class="s">+</span><span class="x">			r.metaMu.Lock()</span></div>
+                <div class="dl add"><span class="n">467</span><span class="s">+</span><span class="x">			applyTmuxSessionMetadata(r, info)</span></div>
+                <div class="dl add"><span class="n">468</span><span class="s">+</span><span class="x">			r.metaMu.Unlock()</span></div>
+                <div class="dl"><span class="n">469</span><span class="s"> </span><span class="x">			continue</span></div>
+                <div class="dl"><span class="n">470</span><span class="s"> </span><span class="x">		}</span></div>
+              </div></details></div><span class="ft v1 c" style="right:6px;top:-4px">首版 · 行内 diff</span></div>
+            <div class="spin"><span class="star">✻</span>思考中…</div>
+          </div></div>
+          <div class="cslot" data-busy="1" data-mode="ask"></div>
+        </div></div>
+      </section>
+      <section class="scene" data-s="2" hidden>
+        <div class="card"><div class="chat">
+          <div class="segbar"><div class="seg"><span>示例</span><button data-show="bash" aria-pressed="true">Bash 命令</button><button data-show="edit" aria-pressed="false">文件编辑</button></div></div>
+          <div class="tl"><div class="tl-in">
+            <div class="u-msg">给 manager.go 的 reconcile 加单测并修复 race</div>
+            <div class="ti ok"><details class="tool"><summary><svg class="chev"><use href="#i-chev"/></svg><span class="tn">Read</span><span class="t2">manager.go</span><span class="t2p">（第 441–516 行）</span></summary></details></div>
+            <div class="ti err"><details class="tool"><summary><svg class="chev"><use href="#i-chev"/></svg><span class="tn">Bash</span><span class="t2p">运行 session 包的竞态测试</span><span class="tm bad">退出码 1</span></summary></details></div>
+            <div class="ti ok"><details class="tool"><summary><svg class="chev"><use href="#i-chev"/></svg><span class="tn">Edit</span><span class="t2">manager.go</span><span class="tm good">新增 2 行</span></summary></details></div>
+            <div data-v="bash">
+              <div class="ti ok"><details class="tool"><summary><svg class="chev"><use href="#i-chev"/></svg><span class="tn">Edit</span><span class="t2">manager_test.go</span><span class="tm good">新增 16 行</span></summary></details></div>
+              <div class="ti txt md"><p>修复和测试都写好了，连续跑三遍 reconcile 相关测试，确认 race 不再出现。</p></div>
+              <div class="ti pend"><details class="tool"><summary><svg class="chev"><use href="#i-chev"/></svg><span class="tn">Bash</span><span class="t2p">重复 3 次运行 reconcile 相关测试</span><span class="tm">等待确认</span></summary></details></div>
+            </div>
+            <div data-v="edit" hidden>
+              <div class="ti txt md"><p>接下来在 <code>manager_test.go</code> 里加并发测试，覆盖 <code>List</code> 与 <code>Attach</code> 同时跑 reconcile 的情况。</p></div>
+              <div class="ti pend"><details class="tool"><summary><svg class="chev"><use href="#i-chev"/></svg><span class="tn">Edit</span><span class="t2">manager_test.go</span><span class="tm">等待确认</span></summary></details></div>
+            </div>
+          </div></div>
+          <div class="cwrap tg">
+            <span class="ft v1 c" style="right:52px;top:-4px">首版 · 权限确认</span>
+            <div class="pslot" data-v="bash"></div>
+            <div class="perm" data-v="edit" hidden>
+              <div class="perm-h"><span>要对 <span class="pp">manager_test.go</span> 做这项修改吗？</span><button class="pcol" aria-expanded="true" title="收起"><svg viewBox="0 0 20 20"><use href="#i-down"/></svg></button></div>
+              <div class="perm-body">
+              <div class="diff">
+                <div class="dl hunk"><span class="n"></span><span class="s"></span><span class="x">@@ -212,6 +212,22 @@ func TestListRecoversHiddenSessions(t *testing.T) {</span></div>
+                <div class="dl"><span class="n">215</span><span class="s"> </span><span class="x">}</span></div>
+                <div class="dl"><span class="n">216</span><span class="s"> </span><span class="x"></span></div>
+                <div class="dl add"><span class="n">217</span><span class="s">+</span><span class="x">func TestReconcileConcurrentList(t *testing.T) {</span></div>
+                <div class="dl add"><span class="n">218</span><span class="s">+</span><span class="x">	m := newTestManager(t)</span></div>
+                <div class="dl add"><span class="n">219</span><span class="s">+</span><span class="x">	seedTmuxSessions(t, m, "a", "b", "c")</span></div>
+                <div class="dl add"><span class="n">220</span><span class="s">+</span><span class="x">	var wg sync.WaitGroup</span></div>
+                <div class="dl add"><span class="n">221</span><span class="s">+</span><span class="x">	for i := 0; i &lt; 16; i++ {</span></div>
+                <div class="dl add"><span class="n">222</span><span class="s">+</span><span class="x">		wg.Add(1)</span></div>
+                <div class="dl add"><span class="n">223</span><span class="s">+</span><span class="x">		go func() {</span></div>
+                <div class="dl add"><span class="n">224</span><span class="s">+</span><span class="x">			defer wg.Done()</span></div>
+                <div class="dl add"><span class="n">225</span><span class="s">+</span><span class="x">			_ = m.List()</span></div>
+                <div class="dl add"><span class="n">226</span><span class="s">+</span><span class="x">			_, _ = m.Attach("a", 80, 24)</span></div>
+                <div class="dl add"><span class="n">227</span><span class="s">+</span><span class="x">		}()</span></div>
+                <div class="dl add"><span class="n">228</span><span class="s">+</span><span class="x">	}</span></div>
+                <div class="dl add"><span class="n">229</span><span class="s">+</span><span class="x">	wg.Wait()</span></div>
+                <div class="dl add"><span class="n">230</span><span class="s">+</span><span class="x">	if got := len(m.List()); got != 3 {</span></div>
+                <div class="dl add"><span class="n">231</span><span class="s">+</span><span class="x">		t.Fatalf("sessions = %d, want 3", got)</span></div>
+                <div class="dl add"><span class="n">232</span><span class="s">+</span><span class="x">	}</span></div>
+                <div class="dl add"><span class="n">233</span><span class="s">+</span><span class="x">}</span></div>
+              </div>
+              <div class="opts">
+                <button class="opt pri"><span class="k">1</span>是</button>
+                <button class="opt"><span class="k">2</span>是，本会话内允许所有编辑</button>
+                <div class="rej"><button class="opt"><span class="k">3</span>否</button><input type="text" placeholder="告诉 Claude 换个做法" aria-label="告诉 Claude 换个做法"></div>
+              </div>
+              <div class="perm-f"><span>选 2 会把权限模式切到「自动编辑」</span><span>Esc 取消</span></div>
+              </div>
+            </div>
+          </div>
+        </div></div>
+      </section>
+      <section class="scene" data-s="3" hidden>
+        <div class="card"><div class="chat">
+          <div class="tl"><div class="tl-in">
+            <div class="u-msg">先出个计划：给 reconcile 加单测并修 race，先别改代码</div>
+            <div class="ti ok"><details class="tool"><summary><svg class="chev"><use href="#i-chev"/></svg><span class="tn">Read</span><span class="t2">manager.go</span><span class="t2p">（第 441–516 行）</span></summary></details></div>
+            <div class="ti ok"><details class="tool"><summary><svg class="chev"><use href="#i-chev"/></svg><span class="tn">Read</span><span class="t2">manager_test.go</span></summary></details></div>
+            <div class="ti ok"><details class="tool"><summary><svg class="chev"><use href="#i-chev"/></svg><span class="tn">Grep</span><span class="t2">"metaMu"</span><span class="t2p">（在 internal/session）</span></summary>
+              <div class="trow"><span class="lb">输出</span><pre>找到 3 个文件
+internal/session/runner.go
+internal/session/manager.go
+internal/session/hardening_test.go</pre></div></details></div>
+            <div class="tg"><div class="ti pend" id="ask-ti"><div class="ask perm" id="ask">
+              <div class="perm-h"><span>Claude 有几个问题</span><button class="pcol" aria-expanded="true" title="收起"><svg viewBox="0 0 20 20"><use href="#i-down"/></svg></button></div>
+              <div class="perm-body">
+              <div class="q"><div class="qt">1. tmux 里已不存在的幽灵会话，要单独写测试吗？</div>
+                <label class="qo"><input type="radio" name="q1" checked><span><b>单独写一个测试</b><small>新增 TestReconcileDropsGhostSessions</small></span></label>
+                <label class="qo"><input type="radio" name="q1"><span><b>合并进并发测试</b><small>在 TestReconcileConcurrentList 末尾补一条断言</small></span></label>
+              </div>
+              <div class="q"><div class="qt">2. 修复范围？</div>
+                <label class="qo"><input type="radio" name="q2" checked><span><b>只在 reconcile 里加锁</b><small>不改 applyTmuxSessionMetadata 的签名</small></span></label>
+                <label class="qo"><input type="radio" name="q2"><span><b>把元数据写入收进 Runner 的方法</b><small>改动更大，锁由 Runner 自己管理</small></span></label>
+              </div>
+              <div class="btns"><button class="btn-p" id="ask-submit">提交回答</button></div>
+              </div>
+            </div></div><span class="ft v1 c" style="right:6px;top:-4px">首版 · 提问</span></div>
+            <div class="tg"><div class="ti ok"><details class="tool" open><summary><svg class="chev"><use href="#i-chev"/></svg><span class="tn">Claude 的计划</span><span class="t2">reconcile-race-fix.md</span></summary>
+              <div class="plan-doc md">
+                <h2>修复 reconcile 数据竞争并补单测</h2>
+                <h3>背景</h3>
+                <p><code>List()</code> 与 <code>Attach()</code> 并发时，<code>reconcileTmuxSessions</code> 在 <code>Manager.mu</code> 下改写 Runner 元数据，读方只持 <code>metaMu</code>，<code>go test -race</code> 报 DATA RACE（manager.go:415 ↔ runner.go:188）。</p>
+                <h3>步骤</h3>
+                <ol>
+                  <li><code>internal/session/manager.go</code>：写元数据时加 <code>r.metaMu</code>，保持锁顺序 Manager.mu → Runner.mu → Runner.metaMu</li>
+                  <li><code>internal/session/manager_test.go</code>：新增 <code>TestReconcileConcurrentList</code>（16 个 goroutine 并发 List + Attach）</li>
+                  <li>新增 <code>TestReconcileDropsGhostSessions</code>：map 有、tmux 无的会话被删除</li>
+                  <li>运行 <code>go test -race -count=3 ./internal/session/...</code> 全部通过</li>
+                </ol>
+                <h3>不改动</h3>
+                <ul><li>协议与桌面端</li><li><code>syncFromTmux</code> 的 gen 校验</li></ul>
+                <h3>风险</h3>
+                <ul><li>需确认 <code>applyTmuxSessionMetadata</code> 内部不会再次获取 <code>metaMu</code>，否则会死锁</li></ul>
+              </div></details></div><span class="ft v1 c" style="right:6px;top:-4px">首版 · 计划审阅</span></div>
+          </div></div>
+          <div class="cwrap">
+            <div class="perm">
+              <div class="perm-h"><span>接受这个计划？</span><button class="pcol" aria-expanded="true" title="收起"><svg viewBox="0 0 20 20"><use href="#i-down"/></svg></button></div>
+              <div class="perm-body">
+              <div class="opts">
+                <button class="opt pri"><span class="k">1</span>批准并开始，自动接受编辑</button>
+                <button class="opt"><span class="k">2</span>批准并开始，每次编辑前询问</button>
+                <div class="rej"><button class="opt" id="plan-no"><span class="k">3</span>继续完善计划</button><input type="text" id="plan-fb" placeholder="告诉 Claude 计划要怎么改" aria-label="告诉 Claude 计划要怎么改"></div>
+              </div>
+              <div class="perm-f"><span>选 1 / 2 会把权限模式从「计划模式」切到对应模式</span><span>Esc 取消</span></div>
+              </div>
+            </div>
+          </div>
+        </div></div>
+      </section>
+      <section class="scene" data-s="4" hidden>
+        <div class="card"><div class="ws">
+          <div class="eb">机器工作台</div>
+          <h1>dev-linux</h1>
+          <div class="sum">远程机器 · 100.64.1.20:8765 · 4 个会话</div>
+          <div class="ws-list">
+            <div class="ws-row"><b>reconcile 单测</b><span><span class="mb rich">对话</span><span class="bdg">普通</span><span class="bdg">运行中</span></span></div>
+            <div class="ws-row"><b>vibe-remote</b><span><span class="bdg">普通</span><span class="bdg">运行中</span></span></div>
+            <div class="ws-row"><b>docs 校对</b><span><span class="mb rich">对话</span><span class="bdg">普通</span><span class="bdg">运行中</span></span></div>
+            <div class="ws-row"><b>fix-ws-ping</b><span><span class="bdg">Worktree</span><span class="bdg">运行中</span></span></div>
+          </div>
+        </div></div>
+      </section>
+      <section class="scene" data-s="5" hidden>
+        <div class="card"><div class="term"><span class="tA">╭───────────────────────────────────────────────────╮</span>
+<span class="tA">│</span> <span class="tA">✻</span> Welcome to <b>Claude Code</b>!                         <span class="tA">│</span>
+<span class="tA">│</span>                                                   <span class="tA">│</span>
+<span class="tA">│</span>   <span class="tD">/help for help, /status for your current setup</span>  <span class="tA">│</span>
+<span class="tA">│</span>                                                   <span class="tA">│</span>
+<span class="tA">│</span>   <span class="tD">cwd: /home/dev/github/vibe-remote</span>               <span class="tA">│</span>
+<span class="tA">╰───────────────────────────────────────────────────╯</span>
+
+<span class="tD">&gt;</span> why is the ws ping timeout 20s?
+
+<span class="tG">●</span> <b>Read</b>(vibe-remoted/internal/server/ws.go)
+  <span class="tD">⎿  Read 412 lines (ctrl+r to expand)</span>
+
+<span class="tG">●</span> The relay sends a WebSocket protocol-level ping every 30s
+  and gives the peer 20s to answer with a pong. A half-open
+  TCP link never fires onclose, so without this deadline the
+  relay would hold the PTY forever.
+
+<span class="tD">╭───────────────────────────────────────────────────╮</span>
+<span class="tD">│</span> &gt; <span class="cur"> </span>                                               <span class="tD">│</span>
+<span class="tD">╰───────────────────────────────────────────────────╯</span>
+  <span class="tD">? for shortcuts</span>                  <span class="tY">⏵⏵ accept edits on</span></div></div>
+      </section>
+      <section class="scene" data-s="6" hidden>
+        <div class="card"><div class="chat">
+          <div class="segbar"><div class="seg"><span>状态</span><button data-show="down" aria-pressed="true">断线中</button><button data-show="back" aria-pressed="false">已重连</button></div></div>
+          <div class="rb" data-v="down">
+            <div class="reconnect-banner"><span>连接已断开，正在重连…</span><button>立即重试</button></div>
+            <div class="rb-note tg">Claude 在 dev-linux 上继续运行；需要你确认时会停下等待，重连后可继续<span class="ft v1 c" style="top:-9px;right:-46px">首版 · 远程保活</span></div>
+          </div>
+          <div class="notif" data-v="back" hidden role="status">
+            <span class="ni"><svg viewBox="0 0 20 20"><path d="m5 6.25 3.5 3.75L5 13.75M10.5 13.75H15"/></svg></span>
+            <div class="nb"><div class="nt"><b>vibe-remote</b><span>刚刚</span></div><div class="nm">reconcile 单测 正在等待你确认</div><div class="ns">允许运行 go test -race -count=3 …？</div></div>
+            <button class="nx" title="关闭" onclick="this.parentNode.hidden=true">×</button>
+          </div>
+          <div class="tl"><div class="tl-in">
+            <div class="u-msg">给 manager.go 的 reconcile 加单测并修复 race</div>
+            <div class="ti ok"><details class="tool"><summary><svg class="chev"><use href="#i-chev"/></svg><span class="tn">Read</span><span class="t2">manager.go</span><span class="t2p">（第 441–516 行）</span></summary></details></div>
+            <div class="ti err"><details class="tool"><summary><svg class="chev"><use href="#i-chev"/></svg><span class="tn">Bash</span><span class="t2p">运行 session 包的竞态测试</span><span class="tm bad">退出码 1</span></summary></details></div>
+            <div class="ti ok"><details class="tool"><summary><svg class="chev"><use href="#i-chev"/></svg><span class="tn">Edit</span><span class="t2">manager.go</span><span class="tm good">新增 2 行</span></summary></details></div>
+            <div class="ti ok"><details class="tool"><summary><svg class="chev"><use href="#i-chev"/></svg><span class="tn">Edit</span><span class="t2">manager_test.go</span><span class="tm good">新增 16 行</span></summary></details></div>
+            <div class="ti txt md"><p>并发测试写好了，再确认一下测试辅助函数。</p></div>
+            <div data-v="down"><div class="ghost">— 本地连接在此中断，远程会话未受影响 —</div></div>
+            <div data-v="back" hidden>
+              <div class="tg"><div class="divider">已补回断线期间 4 条消息</div><span class="ft v1 c" style="right:0;top:-6px">首版 · 补回</span></div>
+              <div class="ti ok"><details class="tool"><summary><svg class="chev"><use href="#i-chev"/></svg><span class="tn">Grep</span><span class="t2">"func seedTmuxSessions"</span><span class="t2p">（在 internal/session）</span></summary>
+                <div class="trow"><span class="lb">输出</span><pre>找到 1 个文件
+internal/session/hardening_test.go</pre></div></details></div>
+              <div class="ti ok"><div class="todo"><div class="todo-h">更新待办</div><ul>
+                <li class="done"><i>✓</i>reconcile 写元数据时加 metaMu</li>
+                <li class="done"><i>✓</i>新增 TestReconcileConcurrentList</li>
+                <li class="doing"><i>◐</i>再跑 -race -count=3 确认通过</li></ul></div></div>
+              <div class="ti txt md"><p>辅助函数已存在。连续跑三遍 reconcile 相关测试，确认 race 不再出现。</p></div>
+              <div class="ti pend"><details class="tool"><summary><svg class="chev"><use href="#i-chev"/></svg><span class="tn">Bash</span><span class="t2p">重复 3 次运行 reconcile 相关测试</span><span class="tm">等待确认</span></summary></details></div>
+            </div>
+          </div></div>
+          <div class="cslot" data-v="down" data-mode="ask" data-dis="1" data-text="测试跑完后顺便把 CHANGELOG 补一下"></div>
+          <div class="cwrap" data-v="back" hidden><div class="pslot" data-draft="1"></div></div>
+        </div></div>
+      </section>
+      <section class="scene" data-s="7" hidden>
+        <div class="card"><div class="chat">
+          <div class="tl"><div class="welcome">
+            <svg class="spark" viewBox="0 0 48 48" aria-hidden="true"><g fill="currentColor"><path d="M24 4l2.6 15.2L24 22l-2.6-2.8Z"/><path d="M24 44l-2.6-15.2L24 26l2.6 2.8Z"/><path d="M4 24l15.2-2.6L22 24l-2.8 2.6Z"/><path d="M44 24l-15.2 2.6L26 24l2.8-2.6Z"/><path d="M9.9 9.9l12.4 9.1.4 3.7-3.7-.4Z"/><path d="M38.1 38.1l-12.4-9.1-.4-3.7 3.7.4Z"/><path d="M38.1 9.9l-9.1 12.4-3.7.4.4-3.7Z"/><path d="M9.9 38.1l9.1-12.4 3.7-.4-.4 3.7Z"/></g></svg>
+            <h3>准备好写代码了吗？</h3>
+            <p>写点值得上线的东西。也可以先问问这个代码库。</p>
+            <div class="tips">
+              <div><b>/ 命令</b>输入 / 查看可用的斜杠命令，如 /compact、/review</div>
+              <div class="tg"><b>@ 引用文件</b>把远程文件加入上下文<span class="ft later c">以后</span></div>
+              <div><b>Shift+Tab 切换权限模式</b>编辑前询问 → 自动编辑 → 计划模式</div>
+              <div><b>CLAUDE.md</b>写下 Claude 每次都会读取的项目指令</div>
+            </div>
+          </div></div>
+          <div class="cslot" data-mode="ask" data-focus="1" data-menu="slash" data-text="/"></div>
+        </div></div>
+      </section>
+      <section class="scene" data-s="8" hidden>
+        <div class="card"><div class="chat">
+          <div class="segbar"><div class="seg"><span>原因</span><button data-show="turn" aria-pressed="true">本轮出错</button><button data-show="exit" aria-pressed="false">进程退出</button><button data-show="old" aria-pressed="false">版本过旧</button></div></div>
+          <div class="tl"><div class="tl-in">
+            <div data-v="turn exit">
+              <div class="u-msg">给 manager.go 的 reconcile 加单测并修复 race</div>
+              <div class="ti ok"><details class="tool"><summary><svg class="chev"><use href="#i-chev"/></svg><span class="tn">Read</span><span class="t2">manager.go</span><span class="t2p">（第 441–516 行）</span></summary></details></div>
+              <div class="ti err"><details class="tool"><summary><svg class="chev"><use href="#i-chev"/></svg><span class="tn">Bash</span><span class="t2p">运行 session 包的竞态测试</span><span class="tm bad">退出码 1</span></summary></details></div>
+              <div class="ti ok"><details class="tool"><summary><svg class="chev"><use href="#i-chev"/></svg><span class="tn">Edit</span><span class="t2">manager.go</span><span class="tm good">新增 2 行</span></summary></details></div>
+            </div>
+            <div data-v="turn">
+              <div class="errc">
+                <h4><svg class="i"><use href="#i-alert"/></svg>本轮回复失败，可重试</h4>
+                <p>Anthropic API 暂时过载。Claude 进程仍在运行，对话记录没有丢失；重试会重新发送上一条消息。</p>
+                <pre>API Error: 529 {"type":"error","error":{"type":"overloaded_error","message":"Overloaded"}}</pre>
+                <div class="btns"><button class="btn-p">重试</button><small>也可以直接在下方发送新消息</small></div>
+              </div>
+            </div>
+            <div data-v="exit" hidden>
+              <div class="errc">
+                <h4><svg class="i"><use href="#i-alert"/></svg>Claude 进程已退出（退出码 1）</h4>
+                <p>远程 claude 意外退出，当前回复未完成。已有的对话记录保留在 dev-linux 上。stderr 最后几行：</p>
+                <pre>node:internal/process/promises:394
+    triggerUncaughtException(err, true /* fromPromise */);
+Error: EPIPE: broken pipe, write
+    at afterWriteDispatched (node:internal/stream_base_commons:161:15)
+claude 已退出，退出码 1</pre>
+                <div class="btns"><button class="btn-p">重新启动</button><span class="tg"><button class="btn-s">新建终端会话接上</button><span class="ft v1 c" style="top:-9px;right:-8px">首版</span></span></div>
+                <p style="margin:8px 0 0;font-size:11.5px;color:var(--text-muted)">「重新启动」在同一会话里重启 claude 并接上这段对话。「新建终端会话接上」：新建一个终端会话，在同一目录运行 <code>claude --resume &lt;会话 id&gt;</code>；当前对话会话标为已结束。</p>
+              </div>
+            </div>
+            <div data-v="old" hidden>
+              <div class="errc" style="margin-top:28px">
+                <h4><svg class="i"><use href="#i-alert"/></svg>dev-linux 上的 claude 版本过旧，无法以对话界面运行</h4>
+                <p>检测到 claude <b>1.0.51</b>，低于对话界面要求的版本。升级远程 claude 后点「已升级，重新检测」；也可以新建一个终端会话接上——终端会话支持任意版本。</p>
+                <pre>$ npm install -g @anthropic-ai/claude-code@latest</pre>
+                <div class="btns"><button class="btn-p">已升级，重新检测</button><span class="tg"><button class="btn-s">新建终端会话接上</button><span class="ft v1 c" style="top:-9px;right:-8px">首版</span></span></div>
+                <p style="margin:8px 0 0;font-size:11.5px;color:var(--text-muted)">新建会话时也会提前检查版本，并在「对话」卡片上提示（场景 4 →「不可用」）。</p>
+              </div>
+            </div>
+          </div></div>
+          <div class="cslot" data-v="turn" data-mode="ask" data-hint="本轮出错：点「重试」重发上一条，或直接发新消息"></div>
+          <div class="cslot" data-v="exit" hidden data-mode="ask" data-dis="1" data-hint="Claude 进程已退出：重新启动后才能发送"></div>
+          <div class="cslot" data-v="old" hidden data-mode="ask" data-dis="1" data-hint="claude 版本过旧：升级并重新检测后才能发送"></div>
+        </div></div>
+      </section>
+    </div>
+  </main>
+  <div class="ovl" id="modal" data-scope="4" hidden>
+    <div class="segbar"><div class="seg"><span>对话界面</span><button data-show="ok" aria-pressed="true">可用</button><button data-show="na" aria-pressed="false">不可用</button></div></div>
+    <div class="modal" role="dialog" aria-label="在 dev-linux 上选择目录">
+      <div class="modal-h">在 dev-linux 上选择目录</div>
+      <div class="modal-body">
+        <div class="modal-path">/home/dev/github/vibe-remote</div>
+        <div class="mbox new tg">
+          <span class="ft v1 c" style="top:4px;right:12px">首版 · 新增</span>
+          <div class="mtitle">界面</div>
+          <div class="mcards" id="kind-cards">
+            <button class="mcard" data-kind="term" aria-pressed="true"><span class="t"><svg class="i"><use href="#i-term"/></svg>终端</span><span class="d">原样运行任意命令行工具（claude、codex…），和现在完全一样</span></button>
+            <button class="mcard" data-kind="rich" data-v="ok" aria-pressed="false"><span class="t"><svg class="i"><use href="#i-chat"/></svg>对话<span class="only">仅 claude</span></span><span class="d">消息、工具块、diff、权限确认，交互参考 VS Code 插件</span></button>
+            <button class="mcard na" data-v="na" hidden disabled aria-disabled="true"><span class="t"><svg class="i"><use href="#i-chat"/></svg>对话<span class="only">仅 claude</span></span><span class="why">此机器的 claude_cmd 不是 claude，或版本低于对话界面要求</span></button>
+          </div>
+          <div class="mnote"><span id="kind-note">终端会话与现在完全一致：PTY → tmux → claude 字节透传。</span><br>界面创建后不能在原会话上更换；对话会话出错时可以新建一个终端会话接上同一段对话。</div>
+        </div>
+        <div class="mbox">
+          <div class="mtitle">会话模式</div>
+          <div class="mcards" id="smode-cards">
+            <button class="mcard" aria-pressed="true"><span class="t">打开现有目录</span><span class="d">在所选目录中运行 Claude，不改动 Git。</span></button>
+            <button class="mcard" aria-pressed="false"><span class="t">创建隔离 Worktree</span><span class="d">先创建独立分支和 worktree，再启动会话。</span></button>
+          </div>
+          <div class="mnote">Worktree 模式会从所选仓库创建一个隔离分支。</div>
+        </div>
+        <div class="dirs">
+          <div class="dir up">.. (上一级)</div>
+          <div class="dir"><svg class="i"><path d="M2.5 5.5A1.5 1.5 0 0 1 4 4h3.5l1.5 2H16a1.5 1.5 0 0 1 1.5 1.5v7A1.5 1.5 0 0 1 16 16H4a1.5 1.5 0 0 1-1.5-1.5Z"/></svg>desktop</div>
+          <div class="dir"><svg class="i"><path d="M2.5 5.5A1.5 1.5 0 0 1 4 4h3.5l1.5 2H16a1.5 1.5 0 0 1 1.5 1.5v7A1.5 1.5 0 0 1 16 16H4a1.5 1.5 0 0 1-1.5-1.5Z"/></svg>docs</div>
+          <div class="dir"><svg class="i"><path d="M2.5 5.5A1.5 1.5 0 0 1 4 4h3.5l1.5 2H16a1.5 1.5 0 0 1 1.5 1.5v7A1.5 1.5 0 0 1 16 16H4a1.5 1.5 0 0 1-1.5-1.5Z"/></svg>scripts</div>
+          <div class="dir"><svg class="i"><path d="M2.5 5.5A1.5 1.5 0 0 1 4 4h3.5l1.5 2H16a1.5 1.5 0 0 1 1.5 1.5v7A1.5 1.5 0 0 1 16 16H4a1.5 1.5 0 0 1-1.5-1.5Z"/></svg>vibe-remoted</div>
+        </div>
+        <div class="flags">
+          <div class="mtitle">启动选项</div>
+          <label class="flag"><input type="checkbox">跳过权限确认（--dangerously-skip-permissions）</label>
+          <label class="flag"><input type="checkbox">继续上次对话（-c）</label>
+          <label class="flag"><input type="checkbox">使用 Opus（--model opus）</label>
+          <div class="fnote">对话界面下：-c 会显示该目录最近一次对话的历史；--dangerously-skip-permissions 会让权限模式固定为「跳过权限」，不再弹确认。</div>
+        </div>
+      </div>
+      <div class="modal-f"><button class="btn-s">取消</button><button class="btn-p">在此打开</button></div>
+    </div>
+  </div>
+</div>
+<div class="snote" id="snote"></div>
+<section class="notes">
+  <div class="note"><b>两种界面并存</b>同一台机器、同一个侧边栏里混排。对话会话带「对话」标签和对话图标；终端会话的外观和行为完全不变（场景 5）。</div>
+  <div class="note"><b>对话模式照搬插件的交互</b>工具块可折叠（输入 / 输出），Edit 显示行内 diff；权限确认替换输入框，给出选项和「告诉 Claude 换个做法」；提问和计划以卡片展示。</div>
+  <div class="note"><b>断开不停工</b>对话会话和终端会话一样在远程持续运行；需要你确认时停下等待。重连后补回期间的消息，并用分隔线标出补回位置（场景 6）。</div>
+  <div class="note"><b>侧边栏圆点</b>灰 = 有新输出 · 绿 = 空闲 · 黄 = 等待确认。对话会话直接由事件流得出状态，终端会话仍靠 hook。</div>
+</section>
+
+<footer class="foot">在终端回复意见，或 <code>all</code> 认可此布局</footer>
+
+<script>
+(function(){
+  var MODES={ask:{cls:'',icon:'i-hand',label:'编辑前询问'},auto:{cls:'auto',icon:'i-pen',label:'自动编辑'},plan:{cls:'plan',icon:'i-plan',label:'计划模式'}};
+  var PH_IDLE='给 Claude 发消息，/ 查看命令',PH_BUSY='排队下一条消息…';
+  var SLASH='<div class="menu" role="menu"><div class="mh">命令</div>'+
+    '<div class="mi on"><span class="cmd">/compact</span><small>压缩对话历史，只保留摘要</small></div>'+
+    '<div class="mi"><span class="cmd">/review</span><small>审查当前分支的改动</small></div>'+
+    '<div class="mi"><span class="cmd">/clear</span><small>清空对话，从头开始</small></div>'+
+    '<div class="mi"><span class="cmd">/context</span><small>查看上下文用量</small></div>'+
+    '<div class="mf">仅列出 claude 在对话界面下支持的命令</div></div>';
+  function esc(s){return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/"/g,'&quot;');}
+  function composer(o){
+    var m=MODES[o.mode||'ask'];
+    var text=o.text?esc(o.text):'';
+    var ph=o.busy?PH_BUSY:PH_IDLE;
+    var caret=o.focus?'<span class="caret"></span>':'';
+    var body=text?text+caret:(o.focus?caret+'<span style="color:#A39E95">'+ph+'</span>':'');
+    var send=o.busy
+      ?'<span class="tg"><button class="send stop" title="中断（Esc）"><i></i>停止<kbd>Esc</kbd></button><span class="ft v1 c" style="top:-12px;right:-6px">首版 · 中断</span></span>'
+      :'<button class="send'+(o.dis||!text?' idle':'')+'"'+(o.dis?' disabled':'')+' title="'+(o.dis?'暂时无法发送':'发送（Enter）')+'"><svg class="i"><use href="#i-up"/></svg></button>';
+    var hint=o.hint||(o.dis?'未连接：输入会保留，恢复后再发送':(o.busy?'Claude 回复中，新消息会排队':'Enter 发送 · Shift+Enter 换行'));
+    return '<div class="cwrap">'+(o.menu==='slash'?SLASH:'')+'<div class="composer'+(o.focus?' focus':'')+(o.dis?' dis':'')+'">'+
+      '<div class="c-in" data-ph="'+ph+'">'+body+'</div>'+
+      '<div class="c-bar">'+
+        '<span class="tg"><button class="chip '+m.cls+'" title="权限模式：'+m.label+'（Shift+Tab 切换）" aria-label="权限模式：'+m.label+'"><svg class="i" style="width:13px;height:13px"><use href="#'+m.icon+'"/></svg>'+m.label+'<svg class="cv"><use href="#i-down"/></svg></button><span class="ft v1 c" style="top:-13px;right:-2px">首版</span></span>'+
+        '<span class="tg" style="margin-left:14px"><button class="ib off" title="引用文件">@</button><span class="ft later c" style="top:-12px;right:-12px">以后</span></span>'+
+        '<span class="tg" style="margin-left:16px"><button class="ib off" title="附加图片"><svg class="i"><use href="#i-clip"/></svg></button><span class="ft later c" style="top:-12px;right:-12px">以后</span></span>'+
+        '<span class="tg" style="margin-left:16px"><button class="ib" title="斜杠命令">/</button><span class="ft v1 c" style="top:-12px;right:-12px">首版</span></span>'+
+        '<span class="sp"></span>'+
+        '<span class="tg pie-tg" style="margin-right:12px" title="上下文用量"><span class="pie"><i></i>上下文 38%</span><span class="ft later c" style="top:-12px;right:-14px">以后</span></span>'+
+        '<span class="tg" style="margin-right:6px"><button class="chip" disabled title="切换模型">Opus<svg class="cv"><use href="#i-down"/></svg></button><span class="ft later c" style="top:-12px;right:-10px">以后</span></span>'+
+        send+
+      '</div></div>'+
+      '<div class="c-hint"><span>'+esc(hint)+'</span><span>dev-linux · ~/github/vibe-remote</span></div></div>';
+  }
+  var PCOL='<button class="pcol" aria-expanded="true" title="收起"><svg viewBox="0 0 20 20"><use href="#i-down"/></svg></button>';
+  var DESTS=['本项目（仅自己）','所有项目','本项目（共享）','本会话'];
+  var DEST_HINT='← → 切换保存位置（写入远程机器的 .claude 设置）';
+  function bashPerm(o){
+    return '<div class="perm"><div class="perm-h"><span>允许运行这条 bash 命令？</span>'+PCOL+'</div><div class="perm-body">'+
+      '<div class="perm-cmdw"><div class="perm-cmd" contenteditable="true" spellcheck="false" role="textbox" aria-label="要运行的命令（可修改）">go test -race -count=3 -run TestReconcile ./internal/session/...</div><span class="pedit"><svg class="i"><use href="#i-pen"/></svg>可修改</span></div>'+
+      '<div class="perm-d">重复 3 次运行 reconcile 相关测试 · 工作目录 ~/github/vibe-remote/vibe-remoted</div>'+
+      '<div class="opts"><button class="opt pri"><span class="k">1</span>是</button>'+
+      '<div class="opt opt2" role="button" tabindex="0"><span class="k">2</span><span class="o2t">是，在<span class="dest-l">'+DESTS[0]+'</span>允许 <code>go test</code></span>'+
+      '<span class="dests" role="group" aria-label="保存位置">'+DESTS.map(function(d,i){return '<button aria-pressed="'+(i===0)+'">'+d+'</button>';}).join('<i>·</i>')+'</span></div>'+
+      '<div class="rej"><button class="opt"><span class="k">3</span>否</button><input type="text" placeholder="告诉 Claude 换个做法" aria-label="告诉 Claude 换个做法"></div></div>'+
+      '<div class="perm-f"><span class="dest-h">'+DEST_HINT+'</span><span>'+(o.draft?'输入框草稿已保留 · ':'')+'Esc 取消</span></div></div></div>';
+  }
+  function wrapAttrs(s){var d=s.dataset;return (d.v?' data-v="'+d.v+'"':'')+(s.hidden?' hidden':'');}
+  document.querySelectorAll('.cslot').forEach(function(s){
+    var d=s.dataset;
+    s.outerHTML='<div'+wrapAttrs(s)+'>'+composer({busy:d.busy,mode:d.mode,focus:d.focus,menu:d.menu,dis:d.dis,text:d.text,hint:d.hint})+'</div>';
+  });
+  document.querySelectorAll('.pslot').forEach(function(s){
+    s.outerHTML='<div'+wrapAttrs(s)+'>'+bashPerm({draft:s.dataset.draft})+'</div>';
+  });
+
+  var N4='新建会话：「界面」默认选终端；对话界面要求 claude_cmd 是 claude 且版本满足要求，否则卡片置灰并说明原因（切到「不可用」查看）。对话会话的「重新加载」= 重启 claude 进程并用 --resume 接上同一段对话。';
+  var SC={
+    1:{sid:'rich1',id:'a3f9c2',rich:1,st:['connected','已连接'],note:'对话界面按插件的布局渲染：思考、工具块（输入 / 输出可折叠）、行内 diff、待办；回复中输入框提示「排队下一条消息…」，Esc 中断。'},
+    2:{sid:'rich1',id:'a3f9c2',rich:1,st:['connected','已连接'],note:'权限确认替换输入框。命令框可直接修改后再允许；选项 2 的保存位置可点击或用 ← → 切换；标题右侧可收起卡片。'},
+    3:{sid:'rich1',id:'a3f9c2',rich:1,st:['connected','已连接'],note:'Claude 的提问（AskUserQuestion）与计划审阅都以卡片形式出现；批准计划会把权限模式从「计划模式」切到所选模式。'},
+    4:{sid:null,title:'dev-linux',st:['connected','已连接'],note:N4},
+    5:{sid:'term1',id:'9c41e0',st:['connected','已连接'],note:'终端会话保持现状：PTY → tmux → claude 字节透传，侧边栏和工具栏都不加标签。'},
+    6:{sid:'rich1',id:'a3f9c2',rich:1,st:['reconnecting','正在重连…（第 3 次）'],note:'断线期间 Claude 在远程继续运行，遇到需要确认的操作会停下等待。重连后补回期间的消息，用分隔线标出位置，侧边栏亮黄点并发桌面通知。',alt:{back:{st:['connected','已连接'],dot:1}}},
+    7:{sid:'rich3',id:'7e21d4',rich:1,st:['connected','已连接'],note:'空的对话会话。输入 / 弹出命令菜单，只列出对话界面支持的命令。'},
+    8:{sid:'rich1',id:'a3f9c2',rich:1,st:['connected','已连接'],note:'三类错误：本轮出错（进程仍在，可重试、可继续发消息）、进程退出（重新启动或新建终端会话接上）、版本过旧。对话会话的「重新加载」= 重启 claude 进程并用 --resume 接上同一段对话。',alt:{exit:{st:['error','会话已结束（退出码 1）']},old:{st:['error','无法启动']}}}
+  };
+  var $=function(id){return document.getElementById(id);};
+  var cur=1;
+  function scopeAll(n,sel){return document.querySelectorAll('.scene[data-s="'+n+'"] '+sel+', [data-scope="'+n+'"] '+sel);}
+  function show(n){
+    if(!SC[n])return;
+    cur=n;var c=SC[n];
+    document.querySelectorAll('.scene').forEach(function(s){s.hidden=s.dataset.s!=n;});
+    document.querySelectorAll('.tab').forEach(function(t){t.setAttribute('aria-selected',t.dataset.go==n);});
+    document.querySelectorAll('.si').forEach(function(s){s.classList.toggle('active',s.dataset.sid===c.sid);});
+    $('si-new').hidden=n!==7;$('m-count').textContent=n===7?'5':'4';
+    $('m-dev').classList.toggle('selected',n===4);
+    $('tb-title').textContent=c.title||('dev-linux · '+c.id);
+    $('tb-mode').hidden=!c.rich;
+    $('modal').hidden=n!==4;
+    $('snote').innerHTML='<b>场景 '+n+'</b>'+c.note;
+    var seg=scopeAll(n,'.seg button[aria-pressed=true]')[0];
+    applyVariant(n,seg?seg.dataset.show:null);
+  }
+  function applyVariant(n,v){
+    var c=SC[n],a=(v&&c.alt&&c.alt[v])||c;
+    if(v)scopeAll(n,'[data-v]').forEach(function(e){e.hidden=e.dataset.v.split(' ').indexOf(v)<0;});
+    var e=$('tb-status');e.className='tb-status '+(a.st||c.st)[0];e.textContent=(a.st||c.st)[1];
+    $('dot-rich1').hidden=!a.dot;
+    if(n===4&&v==='na')selectKind('term');
+  }
+  document.querySelectorAll('.seg button').forEach(function(b){
+    b.addEventListener('click',function(){
+      b.parentNode.querySelectorAll('button').forEach(function(x){x.setAttribute('aria-pressed',x===b);});
+      applyVariant(cur,b.dataset.show);
+    });
+  });
+  function go(n){if(location.hash!=='#'+n)location.hash='#'+n;show(n);}
+  document.querySelectorAll('[data-go]').forEach(function(b){b.addEventListener('click',function(){go(+b.dataset.go);});});
+  window.addEventListener('hashchange',function(){var m=location.hash.match(/^#([1-8])$/);if(m&&+m[1]!==cur)show(+m[1]);});
+  document.addEventListener('keydown',function(e){
+    if(e.target.closest&&e.target.closest('input,textarea,[contenteditable]')||e.metaKey||e.ctrlKey||e.altKey)return;
+    if(/^[1-8]$/.test(e.key)){go(+e.key);return;}
+    if(e.key==='ArrowLeft'||e.key==='ArrowRight'){
+      var g=Array.prototype.filter.call(document.querySelectorAll('.dests'),function(x){return x.offsetParent;})[0];
+      if(!g)return;var bs=g.querySelectorAll('button'),i=0;
+      bs.forEach(function(x,k){if(x.getAttribute('aria-pressed')==='true')i=k;});
+      setDest(bs[(i+(e.key==='ArrowRight'?1:bs.length-1))%bs.length]);e.preventDefault();
+    }
+  });
+  function setDest(b){
+    var g=b.closest('.dests'),p=b.closest('.perm');
+    g.querySelectorAll('button').forEach(function(x){x.setAttribute('aria-pressed',x===b);});
+    p.querySelector('.dest-l').textContent=b.textContent;
+    p.querySelector('.dest-h').textContent=b.textContent==='本会话'?'← → 切换保存位置（本会话：仅本次有效，不写入设置）':DEST_HINT;
+  }
+  document.addEventListener('click',function(e){
+    var d=e.target.closest('.dests button');if(d){e.stopPropagation();setDest(d);return;}
+    var pc=e.target.closest('.pcol');
+    if(pc){var p=pc.closest('.perm'),col=p.classList.toggle('collapsed');pc.setAttribute('aria-expanded',!col);pc.title=col?'展开':'收起';}
+  });
+  function selectKind(k){
+    document.querySelectorAll('#kind-cards .mcard[data-kind]').forEach(function(x){x.setAttribute('aria-pressed',x.dataset.kind===k);});
+    $('kind-note').textContent=k==='rich'
+      ?'对话会话同样在远程持续运行，断开后重连会补回期间的消息。'
+      :'终端会话与现在完全一致：PTY → tmux → claude 字节透传。';
+  }
+  document.querySelectorAll('#kind-cards .mcard[data-kind]').forEach(function(b){b.addEventListener('click',function(){selectKind(b.dataset.kind);});});
+  var sm=document.querySelectorAll('#smode-cards .mcard');
+  sm.forEach(function(b){b.addEventListener('click',function(){sm.forEach(function(x){x.setAttribute('aria-pressed',x===b);});});});
+  var fb=$('plan-fb'),pn=$('plan-no');
+  fb.addEventListener('input',function(){pn.lastChild.textContent=fb.value.trim()?'发送意见并继续完善计划':'继续完善计划';});
+  $('ask-submit').addEventListener('click',function(){
+    var a=$('ask');a.classList.add('done');a.querySelectorAll('input').forEach(function(i){i.disabled=true;});
+    this.textContent='已提交';this.disabled=true;$('ask-ti').className='ti ok';
+  });
+  show(+((location.hash.match(/[1-8]/)||[1])[0]));
+})();
+</script>
+</body>
+</html>

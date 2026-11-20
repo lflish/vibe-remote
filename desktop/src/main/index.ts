@@ -1,4 +1,4 @@
-import { app, BrowserWindow, clipboard, ipcMain, Notification, safeStorage, screen } from 'electron';
+import { app, BrowserWindow, clipboard, ipcMain, Notification, safeStorage, screen, shell } from 'electron';
 import * as path from 'path';
 import * as fs from 'fs';
 import { MachineStore } from './machine-store';
@@ -215,7 +215,10 @@ function attentionFallback(): NotifyResult {
   return 'fallback';
 }
 
-function notify(title: string, body: string): Promise<NotifyResult> {
+// `tag` names what the notification is about (the renderer passes the session
+// key); a click hands it back as `notification-click` so the renderer can open
+// that session (R16.3). The Dock fallback has nothing to click (d12).
+function notify(title: string, body: string, tag?: string): Promise<NotifyResult> {
   if (nativeNotificationsBroken || !Notification.isSupported()) return Promise.resolve(attentionFallback());
   return new Promise((resolve) => {
     const n = new Notification({ title, body });
@@ -234,14 +237,35 @@ function notify(title: string, body: string): Promise<NotifyResult> {
     n.on('click', () => {
       mainWindow?.show();
       mainWindow?.focus();
+      if (tag && mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('notification-click', tag);
     });
     n.show();
   });
 }
 
-ipcMain.handle('notify', (_event, title: unknown, body: unknown) => {
+ipcMain.handle('notify', (_event, title: unknown, body: unknown, tag: unknown) => {
   if (typeof title !== 'string' || typeof body !== 'string') throw new Error('notify: title and body must be strings');
-  return notify(title.slice(0, 200), body.slice(0, 1000));
+  if (tag !== undefined && typeof tag !== 'string') throw new Error('notify: tag must be a string');
+  return notify(title.slice(0, 200), body.slice(0, 1000), tag?.slice(0, 300));
+});
+
+// Links in chat replies open in the system browser, never inside the app
+// window (R3.3). Only http(s) and mailto: anything else (file:, javascript:,
+// custom app schemes) is refused here, whatever the renderer sends.
+const EXTERNAL_PROTOCOLS = new Set(['http:', 'https:', 'mailto:']);
+function isAllowedExternalUrl(raw: unknown): raw is string {
+  if (typeof raw !== 'string' || raw.length > 4096) return false;
+  try {
+    return EXTERNAL_PROTOCOLS.has(new URL(raw).protocol);
+  } catch {
+    return false;
+  }
+}
+
+ipcMain.handle('open-external', async (_event, url: unknown) => {
+  if (!isAllowedExternalUrl(url)) return false;
+  await shell.openExternal(url);
+  return true;
 });
 
 // Electron 44 made the clipboard API asynchronous. Await it so a failed native

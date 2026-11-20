@@ -316,3 +316,40 @@ func TestResolveClaudeReloadCmd(t *testing.T) {
 		})
 	}
 }
+
+// state_dir defaults to vibe-remoted-state next to the config file, so a
+// throwaway config (tests, verify) never touches a real daemon's chat table;
+// a relative state_dir is relative to the config file too.
+func TestLoadDefaultsStateDir(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "d.json")
+	if err := os.WriteFile(path, []byte(`{"port": 9000}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := filepath.Join(dir, "vibe-remoted-state"); cfg.StateDir != want {
+		t.Fatalf("StateDir = %q, want %q", cfg.StateDir, want)
+	}
+	for _, tc := range []struct{ value, want string }{
+		{"/var/lib/vr", "/var/lib/vr"},
+		{"state", filepath.Join(dir, "state")},
+	} {
+		if err := os.WriteFile(path, []byte(`{"state_dir": "`+tc.value+`"}`), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		cfg, err := Load(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if cfg.StateDir != tc.want {
+			t.Fatalf("state_dir %q → %q, want %q", tc.value, cfg.StateDir, tc.want)
+		}
+	}
+	missing, err := Load(filepath.Join(dir, "absent.json"))
+	if err != nil || missing.StateDir != filepath.Join(dir, "vibe-remoted-state") {
+		t.Fatalf("missing config: %q %v", missing.StateDir, err)
+	}
+}

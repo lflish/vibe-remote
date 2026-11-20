@@ -9,6 +9,12 @@ contextBridge.exposeInMainWorld('vibeRemote', {
   readClipboardText: (): Promise<string> => ipcRenderer.invoke('clipboard-read-text'),
   writeClipboardText: (text: string): Promise<boolean> =>
     ipcRenderer.invoke('clipboard-write-text', text),
-  notify: (title: string, body: string): Promise<'shown' | 'fallback'> =>
-    ipcRenderer.invoke('notify', title, body),
+  notify: (title: string, body: string, tag?: string): Promise<'shown' | 'fallback'> =>
+    ipcRenderer.invoke('notify', title, body, tag),
+  onNotificationClick: (fn: (tag: string) => void): void => {
+    ipcRenderer.on('notification-click', (_event, tag: unknown) => {
+      if (typeof tag === 'string') fn(tag);
+    });
+  },
+  openExternal: (url: string): Promise<boolean> => ipcRenderer.invoke('open-external', url),
 });

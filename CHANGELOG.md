@@ -5,7 +5,39 @@ whose heading matches the pushed tag, so every release needs one here first.
 
 ## [Unreleased]
 
+### Added
+- Chat sessions: when creating a session, choose **Terminal** (unchanged,
+  the default) or **Chat**. A chat session runs claude in stream-json mode on
+  the remote machine and the app shows messages, Markdown, tool blocks with
+  diffs, and answerable permission / plan / question prompts, with a
+  permission-mode switcher, queued messages, slash commands and Esc to
+  interrupt. Chat only supports claude (2.1.210 or newer); the picker greys
+  the card out and says why otherwise (not claude, claude too old, daemon too
+  old, folder not yet trusted by claude).
+- Chat sessions keep running when the app disconnects; reconnecting catches up
+  on what was missed, and prompts that arrived meanwhile are still waiting.
+  Several desktops can watch and use one chat session; the first answer to a
+  prompt wins.
+- "Continue in a new terminal session" hands a chat session over to a terminal
+  session running `claude --resume` on the same conversation. Ended chat
+  sessions can be restarted on the same conversation (Reload).
+- Sidebar dots for chat sessions (new messages / turn finished / waiting for
+  you) without any hook setup, and a desktop notification when one needs you;
+  clicking it opens the session.
+- Daemon: `state_dir` config (default `vibe-remoted-state/` next to the config
+  file) for the chat session table. Protocol version 3; terminal sessions are
+  byte-for-byte unchanged and older desktops keep working with them.
+
+### Changed
+- Terminal sessions whose command continues the last conversation (`-c` /
+  `--continue`) now start with `--resume <that conversation>` (or a fixed
+  `--session-id` when the folder has none), so the same conversation is never
+  open in a terminal and a chat session at once.
+
 ### Security
+- Chat sessions only start in folders claude already trusts
+  (`hasTrustDialogAccepted` in `~/.claude.json`): `claude -p` would otherwise
+  run a repository's hooks without asking.
 - The daemon no longer exposes its main token to the agent process.
   `VIBE_REMOTE_TOKEN` inside a session is now a per-session hook token that can
   only post events for that session.

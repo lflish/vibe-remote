@@ -26,8 +26,10 @@ export class VibeRemoteRest {
     return { Authorization: `Bearer ${this.machine.token}` };
   }
 
-  async info(): Promise<MachineInfo> {
-    const res = await timedFetch(`${this.base()}/api/v1/info`, { headers: this.headers() });
+  /** `recheck` makes the daemon probe claude's version again ("upgraded, check again"). */
+  async info(opts?: { recheck?: boolean }): Promise<MachineInfo> {
+    const query = opts?.recheck ? '?recheck=1' : '';
+    const res = await timedFetch(`${this.base()}/api/v1/info${query}`, { headers: this.headers() });
     if (!res.ok) throw new Error(`info failed: ${res.status}`);
     return res.json();
   }
@@ -65,13 +67,17 @@ export class VibeRemoteRest {
       method: 'POST',
       headers: this.headers(),
     });
+    // 204 = terminal reloaded; 202 = chat reload accepted, its outcome comes
+    // as chat_state (d10).
     if (!res.ok && res.status !== 204) {
       let message = `reload failed: ${res.status}`;
+      let owner: string | undefined;
       try {
-        const details = await res.json() as { error?: string };
+        const details = await res.json() as { error?: string; owner?: string };
         if (details.error) message = details.error;
+        owner = details.owner;
       } catch { /* non-JSON response */ }
-      throw new Error(message);
+      throw new ReloadSessionError(res.status, message, owner);
     }
   }
 
@@ -91,6 +97,14 @@ export class VibeRemoteRest {
       throw new Error(message);
     }
     return res.json();
+  }
+}
+
+/** `message` is the daemon's error code (e.g. claude_session_busy); `owner` names the session holding the conversation. */
+export class ReloadSessionError extends Error {
+  constructor(public status: number, message: string, public owner?: string) {
+    super(message);
+    this.name = 'ReloadSessionError';
   }
 }
 
@@ -116,7 +130,28 @@ export interface MachineInfo {
   version?: string;
   /** Daemon protocol version (protocol.Version). Absent on daemons older than 2. */
   proto?: number;
+  /** Chat UI availability (v3). Absent on older daemons: treat as "upgrade vibe-remoted". */
+  chat?: ChatInfo;
 }
+
+export type ChatUnsupportedReason =
+  | 'not_claude'
+  | 'shell_syntax'
+  | 'conflicting_args'
+  | 'claude_not_found'
+  | 'claude_too_old'
+  | 'state_dir_unwritable'
+  | 'workdir_untrusted';
+
+export interface ChatInfo {
+  supported: boolean;
+  reason?: ChatUnsupportedReason | string;
+  /** Empty while the daemon has not determined the version yet. */
+  claudeVersion?: string;
+  minClaudeVersion: string;
+}
+
+export type ChatTrust = 'trusted' | 'untrusted' | 'unknown';
 
 export interface DirEntry {
   name: string;
@@ -133,4 +168,6 @@ export interface DirListing {
    * compare them reliably. Absent on older daemons — treat as "unknown".
    */
   parent?: string;
+  /** Whether claude trusts `path` (v3). Only 'trusted' allows a chat session. */
+  chatTrust?: ChatTrust;
 }

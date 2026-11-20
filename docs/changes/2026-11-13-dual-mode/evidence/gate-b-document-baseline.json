@@ -1,0 +1,22 @@
+{
+  "spec.md": {
+    "bytes": 31824,
+    "sha256": "7647cb2943dd561940414d7077de377f1b2c0c8a5863f427625910ae3d9033c0"
+  },
+  "design.md": {
+    "bytes": 80206,
+    "sha256": "2e4029202b027d30eab775669b59f5144e445dcb511a0c9ec83c4475574608b6"
+  },
+  "tasks.md": {
+    "bytes": 56801,
+    "sha256": "9bb6eac89c4f07c1e19cad4b202c134ab3ff7f47e1112488668a7fc7e7d20623"
+  },
+  "decisions.md": {
+    "bytes": 8792,
+    "sha256": "adde32eeb02866f7b48484f5f1c700b03a4c97dcd194fa22e1abcd876e069763"
+  },
+  "evidence/probe-stream-json.md": {
+    "bytes": 21099,
+    "sha256": "4076cd4b293682884da8d27b1c4207aff08d8065287b737200aa7a465354b895"
+  }
+}

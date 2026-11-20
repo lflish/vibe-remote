@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/lflish/vibe-remote/vibe-remoted/internal/chat"
 	"github.com/lflish/vibe-remote/vibe-remoted/internal/config"
 	"github.com/lflish/vibe-remote/vibe-remoted/internal/protocol"
 	"github.com/lflish/vibe-remote/vibe-remoted/internal/session"
@@ -42,6 +43,10 @@ type Server struct {
 	idleReadTimeout time.Duration
 	pingInterval    time.Duration
 	pongTimeout     time.Duration
+
+	// Chat UI: the claude version probe and whether state_dir is usable.
+	prober       *chat.Prober
+	chatStateErr error
 }
 
 // Option configures optional Server settings.
@@ -50,6 +55,26 @@ type Option func(*Server)
 // WithVersion sets the daemon version reported by /api/v1/info.
 func WithVersion(v string) Option {
 	return func(s *Server) { s.version = v }
+}
+
+// WithProber sets the claude version prober (started by main at boot).
+func WithProber(p *chat.Prober) Option {
+	return func(s *Server) { s.prober = p }
+}
+
+// WithChatStateError reports that state_dir could not be used: chat sessions
+// are unavailable (info.chat.reason state_dir_unwritable).
+func WithChatStateError(err error) Option {
+	return func(s *Server) { s.chatStateErr = err }
+}
+
+// NewProber returns the claude version prober for cfg's claude_cmd.
+func NewProber(cfg *config.Config) *chat.Prober {
+	exe := ""
+	if p, reason := chat.ParseClaudeCmd(cfg.ClaudeCmd); reason == "" {
+		exe = p.Exe
+	}
+	return chat.NewProber(chat.ProbeConfig{Exe: exe, LoginShell: cfg.UseLoginShell(), Shell: cfg.LoginShellPath()})
 }
 
 // New creates a new Server.
@@ -66,8 +91,44 @@ func New(cfg *config.Config, mgr *session.Manager, opts ...Option) *Server {
 	for _, opt := range opts {
 		opt(s)
 	}
+	if s.prober == nil {
+		s.prober = NewProber(cfg)
+	}
 	s.routes()
 	return s
+}
+
+// chatProbeWait bounds how long /api/v1/info waits for a running version
+// probe; an unknown version counts as supported and system/init decides.
+const chatProbeWait = 5 * time.Second
+
+// chatAvailability is info.chat (design 4.9): whether new chat sessions can
+// start here, and why not.
+func (s *Server) chatAvailability(ctx context.Context, recheck bool) protocol.ChatInfo {
+	info := protocol.ChatInfo{MinClaudeVersion: chat.MinClaudeVersion}
+	if _, reason := chat.ParseClaudeCmd(s.cfg.ClaudeCmd); reason != "" {
+		info.Reason = reason
+		return info
+	}
+	if s.chatStateErr != nil {
+		info.Reason = protocol.ChatReasonStateDirUnwritable
+		return info
+	}
+	if recheck {
+		s.prober.Recheck()
+	}
+	res, known := s.prober.Get(ctx, chatProbeWait)
+	if !known {
+		info.Supported = true
+		return info
+	}
+	info.ClaudeVersion = res.Version
+	if res.Reason != "" {
+		info.Reason = res.Reason
+		return info
+	}
+	info.Supported = true
+	return info
 }
 
 // routes registers all HTTP endpoints.
@@ -94,7 +155,22 @@ func (s *Server) handleReloadSession(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "missing session id"})
 		return
 	}
+	if _, isChat := s.mgr.ChatGet(id); isChat {
+		// Chat sessions restart in the background (stopping takes up to ~4 s);
+		// progress and the outcome arrive as chat_state (d10).
+		if err := s.mgr.ReloadChat(id); err != nil {
+			s.writeReloadError(w, err)
+			return
+		}
+		w.WriteHeader(http.StatusAccepted)
+		return
+	}
 	if err := s.mgr.Reload(id, s.cfg.ResolveClaudeReloadCmd()); err != nil {
+		var busy *session.ClaudeSessionBusyError
+		if errors.As(err, &busy) {
+			s.writeReloadError(w, err)
+			return
+		}
 		if strings.Contains(err.Error(), "not found") {
 			writeJSON(w, http.StatusNotFound, map[string]string{"error": err.Error()})
 			return
@@ -107,6 +183,22 @@ func (s *Server) handleReloadSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// writeReloadError answers a refused reload: 409 claude_session_busy when the
+// conversation runs in another session, 404 when the session is gone.
+func (s *Server) writeReloadError(w http.ResponseWriter, err error) {
+	var busy *session.ClaudeSessionBusyError
+	switch {
+	case errors.As(err, &busy):
+		writeJSON(w, http.StatusConflict, map[string]string{
+			"error": protocol.ErrCodeClaudeSessionBusy, "owner": busy.Owner, "message": busy.Error(),
+		})
+	case errors.Is(err, session.ErrSessionNotFound):
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": err.Error()})
+	default:
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+	}
 }
 
 // shutdownTimeout bounds how long a SIGINT/SIGTERM waits for in-flight REST
@@ -199,6 +291,7 @@ func (s *Server) handleInfo(w http.ResponseWriter, r *http.Request) {
 		"default_workdir": s.cfg.DefaultWorkdir,
 		"allowed_roots":   s.cfg.AllowedRoots,
 		"claude_flags":    flags,
+		"chat":            s.chatAvailability(r.Context(), r.URL.Query().Get("recheck") == "1"),
 	}
 	writeJSON(w, http.StatusOK, info)
 }
@@ -370,6 +463,9 @@ func (s *Server) handleFS(w http.ResponseWriter, r *http.Request) {
 		"path":    absPath,
 		"parent":  parent,
 		"entries": dirs,
+		// Whether a chat session may start here (c3): claude's own trust
+		// answer for this directory.
+		"chatTrust": string(chat.WorkdirTrusted(absPath)),
 	})
 }
 

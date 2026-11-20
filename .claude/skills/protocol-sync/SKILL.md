@@ -25,10 +25,25 @@ breaks old/new client–daemon pairs silently.
 3. For REST, also compare `routes()` in `vibe-remoted/internal/server/server.go`
    with the endpoint table in `docs/protocol.md` and the calls in `rest.ts`:
    method, path, auth requirement, request body and response shape.
-4. Report mismatches as a list, each with the file:line on both sides and which
+4. Chat UI (v3) — include these rows as well:
+   - S→C frames `chat`, `chat_sync`, `chat_state` (and nested `PendingRequest`,
+     `ChatEnded`, `SlashCommand`), `chat_ack`; C→S frames `chat_send`,
+     `chat_respond` (`ChatResponse`), `chat_interrupt`, `chat_set_mode`.
+   - New fields on `attach` (`ui`, `epoch`, `since`, `handoffFrom`), `ready`
+     (`ui`, `claudeSessionId`, `existing`, `handoffFrom`) and `sessions[]`
+     (`ui`, `state`, `activitySeq`, `epoch`, `endReason`).
+   - Open sets, listed in all three places: error codes (`ui_mismatch`,
+     `chat_unsupported`, `claude_session_busy` are fatal), `chat_ack` codes
+     (compare with the `Ack*` constants and what `internal/chat/session.go`
+     actually returns), `vr_*` message types, `vr_resolved` outcomes,
+     `vr_notice` codes, `ended.reason`, `chat.reason`, `chatTrust` values.
+   - REST: `/api/v1/info.chat` and `?recheck=1`, `/api/v1/fs` `chatTrust`,
+     reload 202 / 409 `claude_session_busy` body for chat sessions.
+   - The version table row for 3 and `Version` / `PROTOCOL_VERSION` = 3.
+5. Report mismatches as a list, each with the file:line on both sides and which
    side is wrong (the doc wins unless the change being reviewed intentionally
    updates it).
-5. Only edit files if the user asked for fixes. When fixing, update all three
+6. Only edit files if the user asked for fixes. When fixing, update all three
    in the same change.
 
 ## Compatibility rules to check

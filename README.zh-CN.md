@@ -20,13 +20,14 @@ vibe-remote 是独立开源项目，与 Anthropic 无隶属或背书关系。Cla
     「哑终端」，纯字节透传                          每台机器一个        字节流双向透传
 ```
 
-- **纯字节透传**：不解析 claude 输出，PTY 字节流原样双向透传，流式/颜色/光标 0 失真还原。
+- **纯字节透传（终端模式）**：终端会话里客户端绝不解析 claude 输出，PTY 字节流原样双向透传，流式/颜色/光标 0 失真还原。
 - **tmux 持久化**：客户端断开后 claude 会话存活，重连恢复现场。
 - **无中心 Hub**：每台机器各跑一个 vibe-remoted，客户端直连。服务端绑私有网段地址（LAN / tailscale），静态 token 为准入核心；跨网/加密可交给 Tailscale。
 
 版本历史见 [CHANGELOG.md](./CHANGELOG.md)。
 
 ## 主要特性
+- **对话模式（仅 claude ≥2.1.210，daemon 持有 stream-json 进程）**：新建会话时可选「对话」代替默认的「终端」，daemon 直接持有 `claude -p` stream-json 进程，app 渲染结构化消息、工具块、diff 和权限/计划/提问卡片；终端会话不受影响。
 - **会话命名 / 后台提示**：双击重命名，后台会话有输出/待输入时侧边栏亮圆点。
 - **断线重连**：状态栏显示重连进度，活动会话顶部断线横幅 + Retry。
 - **claude 参数预设**：服务端配 `claude_flags` 白名单，新建会话时页面多选（如 `-c` 续会话、跳过权限），per-session 生效。
@@ -94,6 +95,8 @@ make dist-daemon     # 交叉编译 linux/darwin × amd64/arm64 到 dist/
   "login_shell": true,              // 通过登录 shell 启动，加载用户环境
                                     //   （PATH、fnm/nvm 等），默认 true；需 POSIX shell（bash/zsh）
   "shell": "",                      // 登录 shell 路径，空=用 $SHELL 或 /bin/bash
+  "state_dir": "",                  // 对话会话表目录，空=<配置文件目录>/vibe-remoted-state/
+                                    //   （不可写时只停用对话模式，终端模式照常）
   "allow_insecure_bind": false      // true 才允许绑公网地址(不建议)；wildcard 恒拒
 }
 ```

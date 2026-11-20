@@ -3,13 +3,16 @@ import { FitAddon } from '@xterm/addon-fit';
 import '@xterm/xterm/css/xterm.css';
 import type { MachineConfig, SessionInfo, SessionMode } from '../shared/protocol';
 import { PROTOCOL_VERSION } from '../shared/protocol';
-import { VibeRemoteClient, ConnectionState } from './client';
-import { VibeRemoteRest, DeleteSessionError } from './rest';
+import { VibeRemoteClient, ConnectionState, type AttachOptions } from './client';
+import { VibeRemoteRest, DeleteSessionError, ReloadSessionError } from './rest';
 import { openDirPicker } from './dirpicker';
 import { openMachineManager } from './machines';
 import { t, toggleLocale, getLocale, onLocaleChange } from './i18n';
 import { fitWhenVisible, dimensionsWhenVisible } from './terminal-layout';
 import { attachMacClipboardShortcuts } from './terminal-clipboard';
+import { ChatView } from './chat/view';
+import { nextDot, type ActivityEvent, type Dot, type RestSnapshot } from './chat/activity';
+import type { Prompt } from './chat/types';
 
 // Declared by preload
 
@@ -18,6 +21,7 @@ import { attachMacClipboardShortcuts } from './terminal-clipboard';
 // just shows/hides their terminal containers. tmux keeps unfocused sessions
 // alive server-side regardless.
 interface SessionView {
+  ui: 'terminal';
   key: string; // `${machineAddr}::${sessionId}`
   machine: MachineConfig;
   sessionId: string; // '' until the server assigns one for a new session
@@ -26,9 +30,24 @@ interface SessionView {
   fitAddon: FitAddon;
   container: HTMLElement;
   banner: HTMLElement; // reconnect banner overlay, hidden by default
-  activity: 'none' | 'output' | 'idle' | 'waiting'; // sidebar dot state
+  activity: Dot; // sidebar dot state
   suppressUntil: number; // ms timestamp: ignore onData activity until then (attach repaint)
   warnedProto: boolean; // already told the user this daemon is older than the client
+}
+
+// An open view is a terminal session (xterm) or a chat session (ChatView,
+// design 1.6). Both have key/machine/sessionId/client/container/activity.
+type AnyView = SessionView | ChatView;
+
+// disposeView closes a view locally (the remote session keeps running).
+function disposeView(v: AnyView) {
+  if (v.ui === 'chat') {
+    v.dispose();
+    return;
+  }
+  v.client.disconnect();
+  v.terminal.dispose();
+  v.container.remove();
 }
 
 // --- App state ---
@@ -36,7 +55,7 @@ interface SessionView {
 // two vibe-remoted instances on the same host but different ports don't collide.
 let machines: MachineConfig[] = [];
 const rests = new Map<string, VibeRemoteRest>(); // machineKey -> REST client
-const views = new Map<string, SessionView>(); // view key -> open session view
+const views = new Map<string, AnyView>(); // view key -> open session view
 const machineSessions = new Map<string, SessionInfo[]>(); // machineKey -> sessions (REST)
 const machineOnline = new Map<string, boolean>(); // machineKey -> reachable
 type MachineIssue = 'auth' | 'version' | 'unreachable';
@@ -58,6 +77,11 @@ let renamingActive = false;
 // refresh) — a fresh button would come back enabled and let the user fire a
 // second respawn-pane at the same pane while the first is still running.
 const reloadingSessions = new Set<string>();
+// Chat sessions not open here get their sidebar dot from the 5s REST poll
+// (activitySeq / epoch / state, R16.4). Keyed by viewKey; open views keep
+// their own `activity` from live frames instead.
+const sessionDots = new Map<string, Dot>();
+const restSnapshots = new Map<string, RestSnapshot>();
 // Every refresh captures a generation. A newer refresh or machine-list edit
 // invalidates older in-flight requests without serializing the 5s poll.
 let machineRefreshGeneration = 0;
@@ -65,8 +89,13 @@ let statusMessageTimer: ReturnType<typeof setTimeout> | null = null;
 
 const machineKey = (m: MachineConfig) => `${m.addr}:${m.port}`;
 const viewKey = (m: MachineConfig, sid: string) => `${machineKey(m)}::${sid}`;
+// A view still being created has no session id. Each one gets a key of its
+// own (never a real id: those have no '#'), so a create that failed cannot be
+// mistaken for the next one; `ready` re-keys it to viewKey(machine, id).
+let creatingSeq = 0;
+const creatingKey = (m: MachineConfig) => `${machineKey(m)}::#new-${++creatingSeq}`;
 
-function rendererIcon(name: 'machine' | 'terminal' | 'branch' | 'chevron' | 'reload' | 'close'): SVGSVGElement {
+function rendererIcon(name: 'machine' | 'terminal' | 'chat' | 'branch' | 'chevron' | 'reload' | 'close'): SVGSVGElement {
   const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
   svg.setAttribute('viewBox', '0 0 20 20');
   svg.setAttribute('aria-hidden', 'true');
@@ -74,6 +103,7 @@ function rendererIcon(name: 'machine' | 'terminal' | 'branch' | 'chevron' | 'rel
   const paths = {
     machine: 'M4 3.5h12a1.5 1.5 0 0 1 1.5 1.5v10A1.5 1.5 0 0 1 16 16.5H4A1.5 1.5 0 0 1 2.5 15V5A1.5 1.5 0 0 1 4 3.5Zm-1.5 6h15M5.5 6.5h.01m2.49 0h.01m-2.51 6h.01m2.49 0h.01',
     terminal: 'M4.5 5.5 8 9l-3.5 3.5M10 13h5.5',
+    chat: 'M4 4.5h12A1.5 1.5 0 0 1 17.5 6v6.5A1.5 1.5 0 0 1 16 14h-6l-3.5 2.5V14H4a1.5 1.5 0 0 1-1.5-1.5V6A1.5 1.5 0 0 1 4 4.5Z',
     branch: 'M6 3.5v9.25A3.75 3.75 0 0 0 9.75 16.5H14M6 6.5h5A3 3 0 0 0 14 3.5v0M4 3.5h4m4 0h4m-4 13h4',
     chevron: 'm7 5 5 5-5 5',
     reload: 'M15.5 6.4A6.5 6.5 0 1 0 16.2 12M15.5 6.4V2.8m0 3.6h-3.6',
@@ -132,6 +162,26 @@ async function init() {
   startPolling();
 }
 
+// A click on a chat notification opens that session (R16.3). The tag is the
+// session's view key. Wired once at load; unsigned builds never deliver
+// clicks (Dock fallback, d12), and nothing ever switches sessions on its own.
+window.vibeRemote?.onNotificationClick?.((tag) => {
+  const open = views.get(tag);
+  const r = nextDot(open?.activity ?? sessionDots.get(tag) ?? 'none', { kind: 'notificationClick' }, { isActive: tag === activeKey, windowFocused: true });
+  if (!r.open) return;
+  if (open) {
+    setActive(tag);
+    return;
+  }
+  for (const machine of machines) {
+    const session = machineSessions.get(machineKey(machine))?.find((s) => viewKey(machine, s.id) === tag);
+    if (session) {
+      openExisting(machine, session);
+      return;
+    }
+  }
+});
+
 // wireLanguageToggle wires the sidebar language button and re-renders all
 // dynamically-built UI when the locale switches. Static HTML labels are read
 // through t() at render time, so re-running the render functions is enough —
@@ -166,6 +216,10 @@ function wireLanguageToggle() {
     // usually hidden, so they'd otherwise keep their creation-time language
     // until the next disconnect.
     for (const view of views.values()) {
+      if (view.ui === 'chat') {
+        view.relabel();
+        continue;
+      }
       const text = view.banner.querySelector('.reconnect-banner-text');
       if (text) text.textContent = t('banner.reconnecting');
       const retry = view.banner.querySelector('.reconnect-banner-retry');
@@ -228,9 +282,7 @@ function wireManageMachinesButton() {
         for (const rk of removedKeys) {
           for (const [k, v] of [...views]) {
             if (machineKey(v.machine) === rk) {
-              v.client.disconnect();
-              v.terminal.dispose();
-              v.container.remove();
+              disposeView(v);
               views.delete(k);
               if (activeKey === k) { activeKey = null; activeRemoved = true; }
             }
@@ -269,7 +321,7 @@ function wireWindowResize() {
     t = setTimeout(() => {
       if (!activeKey) return;
       const view = views.get(activeKey);
-      if (view) view.fitAddon.fit(); // fit() triggers term.onResize → sendResize
+      if (view?.ui === 'terminal') view.fitAddon.fit(); // fit() triggers term.onResize → sendResize
     }, 80);
   });
 }
@@ -287,7 +339,7 @@ function wireTerminalResizeObserver() {
     if (!activeKey) return;
     const view = views.get(activeKey);
     // Only fit the visible terminal; hidden views (display:none) measure as 0.
-    if (view && view.container.style.display !== 'none') {
+    if (view?.ui === 'terminal' && view.container.style.display !== 'none') {
       fitWhenVisible(view.container, () => view.fitAddon.fit());
     }
   });
@@ -331,6 +383,7 @@ async function refreshAllMachines(force = false, targetMachineKey?: string) {
       const sessionsRequest = rest.listSessions()
         .then((sessions) => {
           if (!isCurrent(m)) return;
+          trackChatActivity(m, sessions);
           machineSessions.set(mk, sessions);
           machineOnline.set(mk, true);
           machineIssues.delete(mk);
@@ -350,6 +403,68 @@ async function refreshAllMachines(force = false, targetMachineKey?: string) {
     }),
   );
 }
+
+// trackChatActivity updates the dots of chat sessions that are not open here
+// from what the poll says about them, and notifies when one starts waiting.
+function trackChatActivity(machine: MachineConfig, sessions: SessionInfo[]) {
+  const mk = machineKey(machine);
+  const live = new Set<string>();
+  for (const s of sessions) {
+    if (s.ui !== 'chat') continue;
+    const key = viewKey(machine, s.id);
+    live.add(key);
+    const next: RestSnapshot = { state: s.state, activitySeq: s.activitySeq, epoch: s.epoch };
+    const prev = restSnapshots.get(key);
+    restSnapshots.set(key, next);
+    if (views.has(key)) continue; // an open view follows its live frames
+    const r = nextDot(sessionDots.get(key) ?? 'none', { kind: 'rest', prev, next }, { isActive: false, windowFocused: document.hasFocus() });
+    sessionDots.set(key, r.dot);
+    if (r.notify && notificationsEnabled()) {
+      const title = `${machine.name} · ${s.title || s.id}`;
+      notifyDesktop(title, t('session.waitingFallback'), key, (result) => {
+        const after = nextDot(sessionDots.get(key) ?? 'none', { kind: 'notifyResult', result }, { isActive: key === activeKey, windowFocused: document.hasFocus() });
+        sessionDots.set(key, after.dot);
+      });
+    }
+  }
+  for (const key of [...restSnapshots.keys()]) {
+    if (key.startsWith(`${mk}::`) && !live.has(key)) {
+      restSnapshots.delete(key);
+      sessionDots.delete(key);
+    }
+  }
+}
+
+// applyViewActivity moves an open chat view's dot on a live event and raises
+// the "needs you" notification (R16.1–R16.3).
+function applyViewActivity(view: ChatView, ev: ActivityEvent, prompt?: Prompt) {
+  const r = nextDot(view.activity, ev, { isActive: view.key === activeKey, windowFocused: document.hasFocus() });
+  if (r.dot !== view.activity) {
+    view.activity = r.dot;
+    renderSidebar();
+  }
+  if (r.notify && notificationsEnabled()) {
+    const body = prompt?.kind === 'plan'
+      ? t('chat.notify.plan')
+      : prompt?.kind === 'question'
+        ? t('chat.notify.question')
+        : prompt?.toolName ? t('chat.notify.tool', { tool: prompt.toolName }) : t('session.waitingFallback');
+    notifyDesktop(`${view.machine.name} · ${sessionDisplayTitle(view.machine, view.sessionId)}`, body, view.key, (result) => {
+      applyViewActivity(view, { kind: 'notifyResult', result });
+    });
+  }
+}
+
+// The window has the user's attention again: a "needs you" dot lit on the
+// current chat session while the window was in the background (R16.3) has
+// been seen. Dots of other sessions stay until those sessions are opened.
+window.addEventListener('focus', () => {
+  const view = activeKey ? views.get(activeKey) : undefined;
+  if (view?.ui === 'chat' && view.activity === 'waiting') {
+    view.activity = 'none';
+    renderSidebar();
+  }
+});
 
 function classifyMachineIssue(error: unknown): MachineIssue {
   const message = error instanceof Error ? error.message.toLowerCase() : String(error).toLowerCase();
@@ -467,7 +582,7 @@ function renderMachineOverview(machine: MachineConfig) {
       identity.className = 'workspace-session-identity';
       const sessionIcon = document.createElement('span');
       sessionIcon.className = 'workspace-session-icon';
-      sessionIcon.appendChild(rendererIcon('terminal'));
+      sessionIcon.appendChild(rendererIcon(session.ui === 'chat' ? 'chat' : 'terminal'));
       const sessionCopy = document.createElement('span');
       sessionCopy.className = 'workspace-session-copy';
       sessionCopy.appendChild(sessionTitle);
@@ -482,7 +597,8 @@ function renderMachineOverview(machine: MachineConfig) {
       status.textContent = views.has(key) ? t('workspace.badge.running') : t('workspace.badge.remote');
       badges.append(mode, status);
       row.append(identity, badges);
-      row.addEventListener('click', () => openSession(machine, session.id));
+      row.dataset.ui = session.ui ?? 'terminal';
+      row.addEventListener('click', () => openExisting(machine, session));
       recentList.appendChild(row);
     }
   }
@@ -565,11 +681,15 @@ function isLoopbackAddress(address: string): boolean {
 async function startNewSession(machine: MachineConfig, initialMode?: SessionMode) {
   const picked = await openDirPicker(machine, initialMode);
   if (!picked) return;
-  openSession(machine, '', picked.workdir, picked.flags, picked.mode);
+  if (picked.ui === 'chat') openChatSession(machine, '', picked.workdir, picked.flags, picked.mode);
+  else openSession(machine, '', picked.workdir, picked.flags, picked.mode);
 }
 
 function showMachineOverview(machine: MachineConfig) {
   overviewMachineKey = machineKey(machine);
+  // Every view is hidden now, so none is the current session: their sidebar
+  // dots and "needs you" notifications work as for any background session.
+  activeKey = null;
   for (const view of views.values()) view.container.style.display = 'none';
   const mount = document.getElementById('machine-overview');
   if (mount) {
@@ -609,10 +729,96 @@ function makeTerminal(): { term: Terminal; fit: FitAddon } {
   return { term, fit };
 }
 
+// openExisting opens a listed session in the view its kind needs.
+function openExisting(machine: MachineConfig, session: SessionInfo): AnyView {
+  return session.ui === 'chat' ? openChatSession(machine, session.id, session.workdir) : openSession(machine, session.id);
+}
+
+// openChatSession creates a ChatView (its own WS + transcript) and attaches
+// with ui:'chat'. sessionId '' means create a brand-new chat session.
+function openChatSession(machine: MachineConfig, sessionId: string, workdir?: string, flags?: string[], mode: SessionMode = 'normal'): AnyView {
+  const key = sessionId ? viewKey(machine, sessionId) : creatingKey(machine);
+  const existing = views.get(key);
+  if (existing) {
+    setActive(key);
+    return existing;
+  }
+  const wrap = document.getElementById('terminal-container')!;
+  const client = new VibeRemoteClient(machine);
+  const view = new ChatView(machine, client, key, sessionId, workdir ?? '');
+  wrap.appendChild(view.container);
+  views.set(key, view);
+
+  view.onMessage = (text) => {
+    if (view.key === activeKey) updateStatusBar(text);
+  };
+  view.onActivity = () => renderSidebar();
+  view.onActivityEvent = (ev, prompt) => applyViewActivity(view, ev, prompt);
+  view.onHandoff = () => handoffChat(view);
+  view.onRestart = () => void reloadChat(machine, view.sessionId, sessionDisplayTitle(machine, view.sessionId));
+  view.onRecheck = () => void recheckChat(view);
+  view.onOpenTerminal = (id) => openTerminalById(machine, id);
+  view.onFocusRequest = () => {
+    if (view.key === activeKey) focusView(view);
+  };
+  // Chat state comes from the structured stream (R16.4); hook notify frames
+  // (idle / waiting) are for terminal sessions and are ignored here.
+  client.onNotify = () => {};
+
+  client.onReady = (sid, readyWorkdir, proto, ready) => {
+    view.banner.style.display = 'none';
+    // R2.6: the -c conversation is already running in session `sid`.
+    if (ready.existing) updateStatusBar(t('chat.existing', { name: sessionDisplayTitle(machine, sid) }));
+    if (view.sessionId !== sid && adoptExisting(view, sid)) return;
+    if (view.sessionId !== sid) {
+      views.delete(view.key);
+      view.sessionId = sid;
+      view.key = viewKey(machine, sid);
+      views.set(view.key, view);
+      if (activeKey === key) activeKey = view.key;
+    }
+    view.setWorkdir(readyWorkdir);
+    refreshAllMachines();
+    updateStatusBar();
+    if (proto < PROTOCOL_VERSION && !view.warnedProto && view.key === activeKey) {
+      view.warnedProto = true;
+      updateStatusBar(t('terminal.oldDaemon', { proto, want: PROTOCOL_VERSION }));
+    }
+  };
+  client.onStateChange = (state, attempt) => {
+    if (state === ConnectionState.Reconnecting) view.banner.style.display = 'flex';
+    else if (state === ConnectionState.Connected) view.banner.style.display = 'none';
+    view.setConnected(state === ConnectionState.Connected);
+    if (view.key === activeKey) updateStatusBar(undefined, attempt);
+  };
+  client.onExit = (code) => {
+    // The chat session's own state (chat_state.ended) drives the transcript;
+    // the connection stays and reload can bring the process back.
+    updateStatusBar(t('status.sessionExited', { code }));
+    refreshAllMachines();
+  };
+  client.onError = (msg, fatal) => {
+    console.error(`[${machine.name}]`, msg);
+    if (fatal && dropFailedCreate(view, msg)) return;
+    if (fatal) {
+      view.banner.style.display = 'none';
+      view.setConnected(false);
+      refreshAllMachines();
+    }
+    if (view.key === activeKey) updateStatusBar(t('status.error', { msg }));
+  };
+
+  client.connect();
+  client.attach(sessionId, 80, 24, workdir, flags, sessionId ? undefined : mode, { ui: 'chat' });
+  setActive(view.key);
+  return view;
+}
+
 // openSession creates a new SessionView (its own WS + xterm) and attaches.
 // sessionId '' means create a brand-new session with the given workdir.
-function openSession(machine: MachineConfig, sessionId: string, workdir?: string, flags?: string[], mode: SessionMode = 'normal'): SessionView {
-  const key = viewKey(machine, sessionId);
+// `opts.handoffFrom` creates the terminal session that takes over a chat session (R14).
+function openSession(machine: MachineConfig, sessionId: string, workdir?: string, flags?: string[], mode: SessionMode = 'normal', opts?: AttachOptions): AnyView {
+  const key = sessionId ? viewKey(machine, sessionId) : creatingKey(machine);
   const existing = views.get(key);
   if (existing) {
     setActive(key);
@@ -642,7 +848,7 @@ function openSession(machine: MachineConfig, sessionId: string, workdir?: string
   const banner = document.createElement('div');
   banner.className = 'reconnect-banner';
   banner.style.display = 'none';
-  const view: SessionView = { key, machine, sessionId, client, terminal: term, fitAddon: fit, container, banner, activity: 'none', suppressUntil: 0, warnedProto: false };
+  const view: SessionView = { ui: 'terminal', key, machine, sessionId, client, terminal: term, fitAddon: fit, container, banner, activity: 'none', suppressUntil: 0, warnedProto: false };
   views.set(key, view);
 
   // Classed so a locale switch can retranslate banners that already exist:
@@ -680,6 +886,9 @@ function openSession(machine: MachineConfig, sessionId: string, workdir?: string
 
   client.onReady = (sid: string, _workdir: string, proto: number) => {
     view.banner.style.display = 'none';
+    // A handoff can resolve to the terminal session that already took over
+    // (6.5 step 2); if that one is open here, keep it and drop this view.
+    if (view.sessionId !== sid && adoptExisting(view, sid)) return;
     // A new session gets its real id here; re-key the view and refresh sidebar.
     if (view.sessionId !== sid) {
       views.delete(view.key);
@@ -723,6 +932,7 @@ function openSession(machine: MachineConfig, sessionId: string, workdir?: string
   };
   client.onError = (msg, fatal) => {
     console.error(`[${machine.name}]`, msg);
+    if (fatal && dropFailedCreate(view, msg)) return;
     // Show the error to the user instead of leaving a blank terminal.
     if (view.terminal) view.terminal.write(`\r\n\x1b[31m[${t('terminal.error', { msg })}]\x1b[0m\r\n`);
     if (fatal) {
@@ -750,10 +960,111 @@ function openSession(machine: MachineConfig, sessionId: string, workdir?: string
 
   client.connect();
   const dims = dimensionsWhenVisible(container, () => fit.proposeDimensions());
-  client.attach(sessionId, dims?.cols || 80, dims?.rows || 24, workdir, flags, sessionId ? undefined : mode);
+  client.attach(sessionId, dims?.cols || 80, dims?.rows || 24, workdir, flags, sessionId ? undefined : mode, opts);
 
   setActive(view.key);
   return view;
+}
+
+// dropFailedCreate closes a view whose create failed for good before `ready`
+// (no session id yet, the client has stopped): there is no session to show,
+// so the view goes away, the machine overview takes its place if it was on
+// screen, and the error stays in the status bar. Returns false for a view
+// that already has a session.
+function dropFailedCreate(view: AnyView, msg: string): boolean {
+  if (view.sessionId) return false;
+  const wasActive = activeKey === view.key;
+  disposeView(view);
+  if (views.get(view.key) === view) views.delete(view.key);
+  if (wasActive) showMachineOverview(view.machine);
+  updateStatusBar(t('status.error', { msg }));
+  return true;
+}
+
+// adoptExisting handles a create whose `ready` names a session that is
+// already open here (R2.6 existing, a handoff that joined its terminal
+// session): the open view wins, the new one is closed. Returns true if so.
+function adoptExisting(view: AnyView, sid: string): boolean {
+  const target = viewKey(view.machine, sid);
+  const other = views.get(target);
+  if (!other || other === view) return false;
+  const wasActive = activeKey === view.key;
+  disposeView(view);
+  views.delete(view.key);
+  if (wasActive) setActive(target);
+  return true;
+}
+
+// openTerminalById opens (or switches to) a terminal session by id.
+function openTerminalById(machine: MachineConfig, sessionId: string) {
+  const key = viewKey(machine, sessionId);
+  if (views.has(key)) setActive(key);
+  else openSession(machine, sessionId);
+}
+
+// handoffChat continues a chat session in a new terminal session running
+// `claude --resume` on the same conversation (R14). A turn in progress is
+// interrupted by the daemon, so ask first (R14.2).
+function handoffChat(view: ChatView) {
+  if (!view.sessionId) return;
+  const st = view.state();
+  if (st.ended?.reason === 'handed_off' && st.ended.handedOffTo) {
+    openTerminalById(view.machine, st.ended.handedOffTo);
+    return;
+  }
+  const busy = !st.ended && (st.status === 'running' || st.status === 'waiting');
+  if (busy && !window.confirm(t('chat.handoff.confirm'))) return;
+  openSession(view.machine, '', undefined, undefined, 'normal', { handoffFrom: view.sessionId });
+}
+
+// reloadChat restarts a chat session's claude process on the same
+// conversation (R15.3). The REST call returns 202 at once; the open view
+// learns the outcome from chat_state (d10), so rest.ts keeps its timeout.
+async function reloadChat(machine: MachineConfig, sessionId: string, name: string) {
+  const key = viewKey(machine, sessionId);
+  if (!sessionId || reloadingSessions.has(key)) return;
+  const open = views.get(key);
+  const chatView = open?.ui === 'chat' ? open : null;
+  reloadingSessions.add(key);
+  chatView?.beginRestart();
+  renderSidebar();
+  try {
+    await rests.get(machineKey(machine))!.reloadSession(sessionId);
+    updateStatusBar(t('chat.reload.started', { name }));
+  } catch (error) {
+    chatView?.cancelRestart();
+    updateStatusBar(reloadErrorText(machine, error));
+  } finally {
+    reloadingSessions.delete(key);
+    renderSidebar();
+    void refreshAllMachines();
+  }
+}
+
+function reloadErrorText(machine: MachineConfig, error: unknown): string {
+  if (error instanceof ReloadSessionError && error.message === 'claude_session_busy') {
+    const owner = error.owner ?? '';
+    const holder = machineSessions.get(machineKey(machine))?.find((s) => s.id === owner);
+    return t('chat.reload.busy', { owner: holder?.title || owner || '?' });
+  }
+  return t('chat.reload.failed', { msg: error instanceof Error ? error.message : String(error) });
+}
+
+// recheckChat: "upgraded, check again" after version_unsupported (R13.4). The
+// daemon probes claude again; if it is new enough now, restart the session.
+async function recheckChat(view: ChatView) {
+  const rest = rests.get(machineKey(view.machine));
+  if (!rest) return;
+  try {
+    const info = await rest.info({ recheck: true });
+    if (info.chat?.supported) {
+      await reloadChat(view.machine, view.sessionId, sessionDisplayTitle(view.machine, view.sessionId));
+    } else {
+      updateStatusBar(t('chat.recheck.stillOld', { version: info.chat?.claudeVersion || '?', min: info.chat?.minClaudeVersion || '?' }));
+    }
+  } catch (error) {
+    updateStatusBar(t('chat.recheck.failed', { msg: error instanceof Error ? error.message : String(error) }));
+  }
 }
 
 // sessionDisplayTitle is the name the sidebar shows for a session (custom
@@ -762,6 +1073,43 @@ function openSession(machine: MachineConfig, sessionId: string, workdir?: string
 function sessionDisplayTitle(machine: MachineConfig, sessionId: string): string {
   const session = machineSessions.get(machineKey(machine))?.find((s) => s.id === sessionId);
   return session?.title || sessionId || 'vibe-remote';
+}
+
+// focusView puts the keyboard in a session view: the terminal, or a chat
+// session's open prompt card (so the keys written on it work), else its input
+// (ChatView.focus, X10).
+// Not while a session is being renamed in the sidebar: the rename input keeps
+// the keyboard until Enter / Esc / the user clicks elsewhere. A focus scheduled
+// by the click that opened the session would otherwise land after the rename
+// started, close it (blur commits), and the new name would be typed into the
+// session instead (X8).
+function focusView(view: AnyView) {
+  if (renamingActive) return;
+  if (view.ui === 'chat') view.focus();
+  else view.terminal.focus();
+}
+
+// focusAfterRename: the rename input is gone (Enter, Esc, or a click elsewhere
+// committed it) and the keyboard it had goes back to the current session —
+// unless the user already put it somewhere (the click landed in a field), or
+// a dialog is open (X10).
+function focusAfterRename() {
+  const el = document.activeElement;
+  if (el && el !== document.body) return;
+  if (document.querySelector('.modal-overlay')) return;
+  const view = activeKey ? views.get(activeKey) : undefined;
+  if (view) focusView(view);
+}
+
+// selectOpenSession handles a click on the sidebar name of a session that is
+// already open. The current session is already on screen: there is nothing to
+// switch or redraw, the keyboard just goes back to it. (Going through
+// setActive here rebuilt the sidebar on every click, so the second click of a
+// double click replaced the label the rename was about to start on.)
+function selectOpenSession(machine: MachineConfig, session: SessionInfo) {
+  const view = views.get(viewKey(machine, session.id));
+  if (view && view.key === activeKey) focusView(view);
+  else openExisting(machine, session);
 }
 
 // setActive shows one session view and hides the rest, then fits + focuses it.
@@ -774,6 +1122,7 @@ function setActive(key: string) {
   if (activeView && activeView.activity !== 'none') {
     activeView.activity = 'none';
   }
+  sessionDots.delete(key);
   if (activeView) {
     const activeMachineKey = machineKey(activeView.machine);
     if (collapsedMachines.delete(activeMachineKey)) persistCollapsedMachines();
@@ -782,13 +1131,17 @@ function setActive(key: string) {
     v.container.style.display = k === key ? 'block' : 'none';
   }
   const view = views.get(key);
-  if (view) {
+  if (view?.ui === 'chat') {
+    view.show();
+    // Next frame: the transcript is laid out and scrolled first.
+    requestAnimationFrame(() => focusView(view));
+  } else if (view) {
     // Fit only after the host has a real box. The first startup can still be in
     // Electron's maximize/layout transition; fitWhenVisible retries once on
     // the next frame instead of locking xterm to the initial small dimensions.
     fitWhenVisible(view.container, () => {
       view.fitAddon.fit();
-      view.terminal.focus();
+      focusView(view);
     });
   }
   renderSidebar();
@@ -855,17 +1208,24 @@ function renderSidebar() {
       const key = viewKey(machine, s.id);
       const item = document.createElement('div');
       item.className = 'session-item' + (key === activeKey ? ' active' : '');
+      item.dataset.ui = s.ui ?? 'terminal';
 
       const label = document.createElement('button');
       label.type = 'button';
       label.className = 'session-label';
       const sessionIcon = document.createElement('span');
       sessionIcon.className = 'session-kind-icon';
-      sessionIcon.appendChild(rendererIcon('terminal'));
+      sessionIcon.appendChild(rendererIcon(s.ui === 'chat' ? 'chat' : 'terminal'));
       const sessionText = document.createElement('span');
       sessionText.className = 'session-label-text';
       sessionText.textContent = s.title || (s.workdir ? s.workdir.split('/').pop() : '') || s.id;
       label.append(sessionIcon, sessionText);
+      if (s.ui === 'chat') {
+        const badge = document.createElement('span');
+        badge.className = 'session-ui-badge';
+        badge.textContent = t('chat.badge');
+        label.appendChild(badge);
+      }
       label.title = s.workdir || s.id;
       // Click vs dblclick: dblclick=rename. A dblclick fires as click→click→
       // dblclick, so a naive click handler would open (and WS-connect) an
@@ -876,10 +1236,10 @@ function renderSidebar() {
       let openTimer: number | undefined;
       label.addEventListener('click', () => {
         if (views.has(key)) {
-          openSession(machine, s.id); // already open: instant, no delay
+          selectOpenSession(machine, s); // already open: instant, no delay
         } else {
           window.clearTimeout(openTimer);
-          openTimer = window.setTimeout(() => openSession(machine, s.id), 220);
+          openTimer = window.setTimeout(() => openExisting(machine, s), 220);
         }
       });
       label.addEventListener('dblclick', (e) => {
@@ -892,11 +1252,15 @@ function renderSidebar() {
       dot.className = 'session-unread';
       dot.setAttribute('aria-hidden', 'true');
       const openView = views.get(key);
-      const act = openView?.activity ?? 'none';
-      if (act === 'none' || key === activeKey) {
+      const act = openView?.activity ?? sessionDots.get(key) ?? 'none';
+      // The current session shows no dot — except a chat session that needs
+      // the user while the window is in the background (R16.3).
+      if (act === 'none' || (key === activeKey && !(s.ui === 'chat' && act === 'waiting'))) {
         dot.classList.add('hidden');
+        item.dataset.dot = 'none';
       } else {
         dot.classList.add(act); // 'output' | 'idle' | 'waiting'
+        item.dataset.dot = act;
       }
 
       const reload = document.createElement('button');
@@ -916,6 +1280,12 @@ function renderSidebar() {
         e.stopPropagation();
         if (reloadingSessions.has(reloadKey)) return;
         const name = s.title || (s.workdir ? s.workdir.split('/').pop() : '') || s.id;
+        if (s.ui === 'chat') {
+          // Chat: 202 now, the outcome later through chat_state (d10).
+          if (!window.confirm(t('chat.reload.confirm', { name }))) return;
+          void reloadChat(machine, s.id, name);
+          return;
+        }
         if (!window.confirm(t('session.reloadConfirm', { name }))) return;
         reloadingSessions.add(reloadKey);
         reload.disabled = true;
@@ -950,7 +1320,7 @@ function renderSidebar() {
       close.addEventListener('click', (e) => {
         e.stopPropagation();
         const name = s.title || (s.workdir ? s.workdir.split('/').pop() : '') || s.id;
-        if (!window.confirm(t('session.deleteConfirm', { name }))) {
+        if (!window.confirm(deleteConfirmText(s, name))) {
           return;
         }
         closeSession(machine, s.id);
@@ -966,6 +1336,13 @@ function renderSidebar() {
   }
 }
 
+// deleteConfirmText is what the delete button asks first. Deleting a terminal
+// session loses its screen; a chat session's conversation stays in claude's
+// own history files on the remote machine (R15.2), so it says that instead.
+function deleteConfirmText(session: SessionInfo, name: string): string {
+  return t(session.ui === 'chat' ? 'chat.delete.confirm' : 'session.deleteConfirm', { name });
+}
+
 // startInlineRename replaces a session label with an input for in-place rename.
 // Enter/blur commits, Esc cancels. Empty input clears the custom name (server
 // falls back to the default title). After commit we refresh from the server so
@@ -975,6 +1352,9 @@ function startInlineRename(machine: MachineConfig, s: SessionInfo, label: HTMLEl
   input.className = 'session-rename-input';
   input.value = s.title || '';
   label.replaceWith(input);
+  // The label was rebuilt away before the double click got here: there is no
+  // input to edit, and nothing would ever clear the flag again (X8).
+  if (!input.isConnected) return;
   renamingActive = true; // pause sidebar rebuilds while editing (see flag docs)
   input.focus();
   input.select();
@@ -1002,6 +1382,7 @@ function startInlineRename(machine: MachineConfig, s: SessionInfo, label: HTMLEl
       await refreshAllMachines(false, mk);
       renamingActive = false;
       renderSidebar();
+      focusAfterRename();
     }
   };
   const cancel = () => {
@@ -1009,6 +1390,7 @@ function startInlineRename(machine: MachineConfig, s: SessionInfo, label: HTMLEl
     done = true;
     renamingActive = false; // clear before renderSidebar so it rebuilds
     renderSidebar();
+    focusAfterRename();
   };
 
   input.addEventListener('keydown', (e) => {
@@ -1103,9 +1485,7 @@ async function closeSession(machine: MachineConfig, sessionId: string) {
   reloadingSessions.delete(key);
   const view = views.get(key);
   if (view) {
-    view.client.disconnect();
-    view.terminal.dispose();
-    view.container.remove();
+    disposeView(view);
     views.delete(key);
     if (activeKey === key) {
       activeKey = null;
@@ -1157,9 +1537,14 @@ function notificationsEnabled(): boolean {
 // notifyDesktop goes through the main process rather than the web Notification
 // API, which fails silently in unsigned builds (see notify() in main/index.ts).
 // The outcome is logged so GUI tests can observe it without stubbing anything.
-function notifyDesktop(title: string, body: string) {
-  void window.vibeRemote.notify(title, body)
-    .then((result) => console.debug(`[notify] ${result}: ${title}`))
+// `tag` (chat sessions only) comes back on a click so the session can be
+// opened; `onResult` sees whether it was shown or fell back to the Dock (d12).
+function notifyDesktop(title: string, body: string, tag?: string, onResult?: (result: 'shown' | 'fallback') => void) {
+  void window.vibeRemote.notify(title, body, tag)
+    .then((result) => {
+      console.debug(`[notify] ${result}: ${title}`);
+      onResult?.(result);
+    })
     .catch((e) => console.warn('[notify] failed', e));
 }
 

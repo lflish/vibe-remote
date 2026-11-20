@@ -46,6 +46,24 @@ cannot use it to control other sessions or the daemon.
 - Run the daemon as a dedicated, minimally privileged user when possible.
 - Enabling permission-skipping CLI flags materially increases risk.
 
+### Chat sessions
+
+Chat sessions run `claude -p` (stream-json) directly, without the TUI. In that
+mode claude shows no workspace-trust prompt and runs the project's hooks from
+`.claude/settings.json` straight away. The daemon therefore creates a chat
+session only in a directory claude has already trusted
+(`projects[<dir>].hasTrustDialogAccepted` is `true` in `~/.claude.json`, or in
+`$CLAUDE_CONFIG_DIR/.claude.json`); anything else is refused with
+`workdir_untrusted`. Open claude once in that directory from a terminal session
+to trust it first.
+
+"Allow and don't ask again" on a permission card sends back only the rule
+suggestion claude itself offered. claude writes that rule on the remote
+machine, usually into the project's `.claude/settings.local.json` (the card
+names the destination), and later sessions in that project stop asking for it.
+Review or remove such rules there. The daemon never writes `.claude` settings
+files and never reads claude credentials.
+
 The daemon rejects wildcard bind addresses and rejects public addresses unless
 `allow_insecure_bind` is explicitly enabled. That escape hatch is intended for
 controlled development only and is not a secure production configuration.
