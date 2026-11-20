@@ -977,7 +977,7 @@
 用户对关口 C 的汇总回复 `all`（decisions #153）：关口 C 放行，进入发布之前先改四处。每个任务：先写回归测试并确认失败，再修；修完做一次变异核对（临时改动不提交）；单独提交。所有命令带独立的 `TMUX_TMPDIR`，`go test` 带 `-timeout`。做的先后：T29 → T30 → T31 → T32。
 
 ### T29 返工（d71）：旧版 git 的退回模式下，带换行的路径不再被读成另一项
-- 状态：待办
+- 状态：完成
 - 来源：关口 C 已放行，先改 d71（verdict.md N-1）。git 不认 `worktree list -z`（低于 2.36）时按行解析，路径带换行的 worktree 会被读成另一个路径上的一项（`…/a\nfoo` → `…/a`；`…/a\nworktree /别处/evil` → `/别处/evil`），那个目录随后通过对话界面的信任规则
 - 文件：修改 `vibe-remoted/internal/session/worktree.go`（`parseWorktreeList` 的按行读法）；测试 `vibe-remoted/internal/session/gate_c_test.go`；`CLAUDE.md`（「项目与 worktree」里讲列表读取的几句）、`.devflow.yml`（「对话界面的信任…」那条的 check 加新用例）、本文件「后续」的 X14 已知限制
 - 场景：R2.1、R4.2（列出的每一项都是真的 worktree）；`.devflow.yml`「对话界面的信任只认目录本身，或仓库自己列出的 worktree 根」
@@ -986,6 +986,7 @@
   - `TestParseWorktreeListByLineDropsSplitPaths`：表驱动，路径里的换行后面接 `worktree `、`HEAD `、`branch `、空行、任意文字、连续多个换行、以换行结尾；每一种拆出来的各段都不在结果里，主目录被拆时整次读取失败
 - 完成定义：`cd vibe-remoted && TMUX_TMPDIR=$(mktemp -d) go test -race -count=1 -timeout 10m ./internal/session ./internal/server -run 'TestFallbackList|TestParseWorktreeList|TestListWorktrees|TestChatTrust|TestProjects'` 两行 `ok`；`.devflow.yml` 那条规则的 check 原样执行退出 0；在自己临时目录里从源码构建的低于 2.36 的 git 上跑这个回归测试和列表、信任相关的用例，结果写进报告
 - 依赖：无
+- 实现时的调整（decisions #154、#155、d72；evidence/gate-c-3-rework.md 第 1 节）：汇总里写的改法（按形状丢掉相邻条目）单独挡不住——换行后面可以正好是 git 会写的行，连空行也可以，`a\nHEAD <40 位>\nbranch refs/heads/main\n\nworktree <别处>` 读出来是两个形状完全正确的条目。所以多了第二道：按行读出来的每一项，路径必须正好是仓库登记的反向指针之一（`<git 公共目录>/worktrees/*/gitdir`），同一路径出现两次的都不留，第一项必须就是这个仓库（否则整次读取失败）。形状规则照做，但「不认识的行」只去掉它所在的那一项，不连前一项（前一项是真的条目，去掉它没有用处，它是主目录时整个仓库就读不了）。实际的用例：`TestFallbackListNeverInventsAWorktree`（15 种拆法，真 git 加包装脚本）、`TestFallbackListFailsWhenTheMainDirectoryCannotBeRead`（3 种）、`TestParseWorktreeListByLine`（25 种形状，每种再放到第一项的位置一次）
 
 ### T30 返工（c8）：创建后的钩子失败时不再留下 worktree
 - 状态：待办
@@ -1059,6 +1060,7 @@
 | T26 | 2026-11-20 05:44 | 本行所在的提交 | 修复前 `TestListWorktreesPathWithNewline` 的 `newline`、`newline_at_end`、`nul_like` FAIL（路径被拆成两个条目）、`TestListWorktreesFallsBackWithoutZ` FAIL（`-z was tried 0 times`）；修复后连同 `TestParseWorktreeList`、`TestSessionCreatedInAnOddlyNamedDirectoryIsStillRead`（5 种目录名）`ok`；`go test -race -count=1 -timeout 15m ./internal/session ./internal/server` 两行 `ok`（323 s、66 s）；`.devflow.yml` 第 13、15、18 条原样执行 exit 0；旧版 git 实测见 evidence/gate-c-1-rework.md 第 3 节（2.34.1 和 2.30.2 上失败的用例与基准 `91e0fab` 相同，新增跳过只有路径带换行的 5 个子用例）；变异核对 4 种各有用例 FAIL |
 | T27 | 2026-11-20 05:46 | 本行所在的提交 | 修复前 `TestPlanMissingWorkdirIs400` FAIL（`missing directory in the allowed root: status 403 body {"error":"path not in allowed roots"}`）；修复后 `-run TestPlan` `ok`、`go test -race -count=1 -timeout 10m ./internal/server` `ok`（63 s）；`docs/protocol.md` 该端点的三种 400 的 `message` 与实现逐字相同；变异核对：去掉「落在白名单之内」的判断 → `missing directory outside the allowed roots: status 400 …; want 403` |
 | T28 | 2026-11-20 05:47 | 本行所在的提交 | 改之前 `go test -count=8 -v -run TestGitTimeoutKillsProcess`：8 次 SKIP；改之后完成定义的 `go test -race -count=3 -timeout 10m -v ./internal/session -run 'TestGitTimeoutKillsProcess\|TestGitEnvKeepsInheritedConfig'` 12 行 PASS、没有 SKIP（本机 git 2.50.1）；git 2.30.2 上 `GIT_CONFIG_COUNT` 子用例 SKIP（探测输出 `not-read`）、其余 PASS，2.34.1 上全部 PASS；`.devflow.yml` 第 19 条原样执行 exit 0；变异核对：超时后的 SIGKILL 换成信号 0 → `gitAtTimeout took 1.06s, want < 1s` |
+| T29 | 2026-11-20 11:05 | 本行所在的提交 | 修复前 `TestFallbackListNeverInventsAWorktree` 15 个子用例 FAIL 13 个（例：`a\nfoo` 读到 `{Path:…/devflow-worktrees/a Branch:odd}`）、`TestFallbackListFailsWhenTheMainDirectoryCannotBeRead` 3 个全 FAIL、`TestParseWorktreeListByLine` 25 个全 FAIL；修复后完成定义的命令两行 `ok`；`go test -race -count=1 -timeout 20m ./internal/session ./internal/server` 两行 `ok`（360 s、70 s）；`.devflow.yml`「对话界面的信任…」和「只删 daemon 自己读到的…」两条的 check 原样执行 exit 0；真的 git 2.34.1（临时目录里从源码构建）：列表和信任相关的用例 127 行 PASS、0 FAIL，整包 658 行 PASS、2 个 FAIL 都是基准上就有的（evidence/gate-c-3-rework.md 1.4）；变异核对 6 种各有用例 FAIL（同文件 1.3） |
 
 关口 C 第 1 轮返工各行写「本行所在的提交」的，提交分别是：T22 `6282332`，T23 `44c049d`，T21 `f86be13`，T25 `f94ea31`，T24 `465945a`，T26 `771dcc6`，T27 `694e3f5`，T28 `3c9cff8`。全部修完后的一轮检查（`make check`、三份 ws 冒烟、18 条命令型规则）在 `3c9cff8` 上，结果见 evidence/gate-c-1-rework.md 第 5 节；三份 GUI 冒烟没有跑，等主会话安排。（之后回到测试阶段，在同一份代码上做了全量运行：`make check`、三份 GUI 冒烟、三份接口冒烟、18 条命令型规则都通过，见 test-report.md。）
 
@@ -1159,7 +1161,7 @@ spec「推迟到以后」的条目：
 - （T26 已处理：`ResolveHome` 只去掉输出末尾的一个换行，decisions #147；`trailing_tab`、`newline_at_end` 两个用例守着）路径以空白结尾（末尾是空格、制表符或换行）的目录里的会话算不出归属、这样的 worktree 查不了状态。还剩一处同样的写法没有动：`HasSubmoduleCheckouts` 对 `rev-parse --absolute-git-dir` 的输出用 `strings.TrimSpace`——git 目录的路径以 `.git` 或 `.git/worktrees/<名字>` 结尾，名字是 git 自己清理过的，末尾不会是空白。
 - `gitWithin` 用 `CombinedOutput`，git 写到 stderr 的行和 stdout 混在一起：`git status --porcelain` 有警告时（读不了的目录；2.36 之前的 git 在 `PATH` 里没有 `false` 程序时每次读索引都报 `cannot run false`），`DirtyFiles` 把这些行也数成未提交文件。起因是 2.36 之前的 git 把 `-c core.fsmonitor=false` 的 `false` 当成一个要运行的程序名：`PATH` 里有 `false`（通常是 `/usr/bin/false`）时没有这两行报错、无害，找不到时报错才混进输出。方向是安全的（多报不少报，多要一次同意），但数字不准；`TestRemoveWorktreeWhenTmuxIsNotInstalled` 在旧 git 上因此失败（基准上就是，evidence/gate-c-1-rework.md 第 3 节）。可以让按行计数的那几个调用只读 stdout。
 - 2.31 之前的 git（Debian 11 的 2.30）上，`git worktree list --porcelain` 不输出 `locked` 和 `prunable`：被 `git worktree lock` 锁定的 worktree 不会在结束会话之前被拦下（会话先被结束，git 再拒绝删除，响应如实带 `endedSessions`）；目录不见了的 worktree 不会被认成 `prunable`。基准上就是这样（evidence/gate-c-1-rework.md 第 3 节），本需求没有写明支持的最低 git 版本（上面「第二轮复评」一段已有这一条）。
-- **已知限制（X14）**：git 低于 2.36（没有 `git worktree list -z`；Ubuntu 22.04 自带 2.34、Debian 11 是 2.30）的机器上，路径里有换行的 worktree 列不出来，也就不能在界面里打开和删除。别的字符（制表符、引号、反斜线）不受影响。升级 git 即可。
+- **已知限制（X14；T29 之后的实际行为，decisions #154、#155）**：git 低于 2.36（没有 `git worktree list -z`；Ubuntu 22.04 自带 2.34、Debian 11 是 2.30）的机器上，路径里有换行的 worktree 不列出，也就不能在界面里打开和删除；它的路径被拆出来的任何一段都不会被当成 worktree（不出现在侧边栏、不通过对话界面的信任规则、查不到状态）。相邻的条目也可能不列出：被拆出来的一段恰好是同一仓库另一个真 worktree 的路径时，那个 worktree 也不列出（两个同路径的条目分不出哪个是真的）。主目录自己的路径带换行的仓库在这样的 git 上读不了（项目行显示读取失败，原因里写明要 git 2.36）。别的字符（制表符、引号、反斜线）不受影响。升级 git 即可。
 
 
 - **X1，交给用户决定（c7）**：新建或重命名任何一个终端会话时，本窗口里所有打开着的后台终端会话都会亮起「有新消息」。原因：daemon 用 `tmux set-option` 写会话的名字和归属，tmux 每执行一次 `set-option` 就重绘这台 server 上的全部客户端，重绘的字节到达后台会话，而点亮规则是「后台会话有任何字节到达即亮」。基准 `6d88e45` 上同样（每次新建 7 次 `set-option`，现在 11 次；`index.ts` 里判定的那几行逐字相同），但本需求让同时开多个会话成了常态。要去掉它得改点亮规则（例如屏幕内容没变就不亮），或换一种不触发重绘的存法（tmux 会话环境变量 `set-environment -t` 不重绘，但 `list-sessions` 的格式串读不到它）；两种都改动已确认的取舍，没有自己定。
@@ -1182,7 +1184,7 @@ spec「推迟到以后」的条目：
 
 关口 C 第 2 轮独立验证（被测 `482ab63`，结论「通过，有备注」）之后留下的（来源都是 verdict.md 的「问题」一节）：
 
-- N-1、N-2：见 decisions d71、c8，等用户。（N-1：git 低于 2.36 的退回模式下，路径带换行的 worktree 被读成另一个路径上的一项，那个目录会通过对话界面的信任规则，上面「已知限制（X14）」写的「列不出来」不准；N-2：post-checkout 钩子失败时「创建失败」留下一个 worktree，项目不在侧边栏时在界面里看不见，是上面 d70 那一条的代价。）
+- N-1（T29 已处理，decisions #153、#154）、N-2：见 decisions d71、c8。（N-1：git 低于 2.36 的退回模式下，路径带换行的 worktree 被读成另一个路径上的一项，那个目录会通过对话界面的信任规则，上面「已知限制（X14）」写的「列不出来」不准；N-2：post-checkout 钩子失败时「创建失败」留下一个 worktree，项目不在侧边栏时在界面里看不见，是上面 d70 那一条的代价。）
 - N-3（来源：verdict.md N-3）：`TMUX_TMPDIR` 的目录名里有换行、其中一行正好是 `no sessions` 时，X12 的问题原样重现（`isNoTmuxServer` 改成逐行比较后，socket 路径里的换行能造出这样的一行）：对账被当成「没有会话」，worktree 在会话还活着时被删。启动 daemon 的人自己设的目录，实际不会有人这样起名。可以只看 stderr 的开头（`error connecting to …` 永远以这几个词开头），或 socket 文件不存在时不认「没有 server」这一种。
 - N-4（来源：verdict.md N-4）：daemon 继承了非 UTF-8 的 locale（例如 `LC_ALL=C`）时，tmux 把 `list-sessions` 输出里的非 ASCII 字节、制表符、换行改写成 `_`，非 ASCII 路径下的会话在 daemon 重启后不算在它的 worktree 里，删除 worktree 不会先结束它。`.devflow.yml`「目录名里的制表符和换行不改变读到的归属」只在 UTF-8 环境下成立，没有写这个前提。不是返工引入的（`91e0fab` 上连 ASCII 路径也坏）。可以在读 tmux 时加 `-u`（验证者实测 `LC_ALL=C tmux -u … list-sessions` 原样给出中文路径）。
 - N-5（来源：verdict.md N-5）：预检 `GET /api/v1/worktrees/plan` 的 `workdir` 路径中间是一个普通文件时（`<白名单内>/afile/x`）回答 403「不在白名单内」：`EvalSymlinks` 给的是 ENOTDIR，没走 X15 新加的 400；`docs/protocol.md` 两种都没写到这一种。目录选择器选不出这样的路径。

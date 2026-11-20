@@ -988,6 +988,8 @@ CSS 变量：保留现有变量名（`styles.css` 里到处在用），换成 M1
   - X12（decisions #145）：4.9 四条规则的第 ② 条，「tmux 说没有 server」的判断从「stderr 里含 `no server running` 或 `no sessions`」收窄为「有一行以 `no server running on ` 开头，或整行是 `no sessions`」。
   - X14（decisions #146、#147）：4.9 的 `ListWorktrees` 用 `git worktree list --porcelain -z`；git 2.36 之前没有 `-z`（退出码 129），退回按行解析并记住这个 git。退回模式下路径里有换行的 worktree 列不出来（已知限制，见 tasks.md「后续」）。`ResolveHome` 对 `rev-parse --show-toplevel` 的输出只去掉末尾的一个换行。
   - X15（decisions #148）：4.4 预检端点的 HTTP 错误多一种：`workdir` 在 `allowed_roots` 之内但不存在 → 400 `invalid_request`（`workdir does not exist`），不再是 403。
+- 关口 C 放行后的返工（用户回复 `all`，decisions #153 起；T29–T32）：
+  - T29（d71；decisions #154、#155、d72）：4.9 的 `ListWorktrees` 在退回模式（git 不认 `-z`）下不再单独采信按行读的结果。`parseWorktreeList` 按行读时要求每一项是 git 写的固定形状和顺序，不符合的去掉，前面不是空行的 `worktree` 行连前一项一起去掉，第一项不完整就什么都不返回；`worktreesFromLines` 再对照仓库登记的反向指针（`<git 公共目录>/worktrees/*/gitdir`，公共目录由 `gitCommonDirOf` 在文件系统上找，不起 git 进程）：其余各项的路径必须正好是其中之一，同一路径出现两次的都不留，第一项必须就是这个仓库，否则整次读取失败。上面 X14 那条的「退回模式下路径里有换行的 worktree 列不出来」改为：不列出，被拆出来的任何一段也不列出；被拆出来的一段是另一个真 worktree 的路径时那个也不列出；主目录路径带换行的仓库读不了。7.3 的信任规则不变（它只认列表），所以在旧 git 上也不再有反例。
 
 ### 升级步骤
 

@@ -155,9 +155,11 @@ var gitListZByPath sync.Map // git executable → *gitListZ
 //
 // The list is read NUL-separated (-z), which is the only form that can carry
 // every path: a directory name may contain a newline, and in the
-// line-separated list such a path is cut in two. A git that does not know -z
-// is asked for the lines instead; there, a worktree whose path has a newline
-// in it is not listed (a known limit of that form, not of the others).
+// line-separated list such a path is cut into lines that read like other
+// entries. A git that does not know -z is asked for the lines instead, and
+// what it answers is not believed on its own (worktreesFromLines): there, a
+// worktree whose path has a newline in it is not listed, and nothing it was
+// cut into is.
 func ListWorktrees(dir string) ([]Worktree, error) {
 	gitPath, _ := exec.LookPath("git")
 	known, _ := gitListZByPath.LoadOrStore(gitPath, &gitListZ{})
@@ -191,62 +193,270 @@ func ListWorktrees(dir string) ([]Worktree, error) {
 	if err != nil {
 		return nil, err
 	}
-	return parseWorktreeList(string(out), "\n"), nil
+	return worktreesFromLines(dir, string(out))
 }
+
+// errWorktreeLines is why a line-separated worktree list was not used.
+func errWorktreeLines(dir, why string) error {
+	return fmt.Errorf("git worktree list in %s cannot be read line by line: %s; this git does not know `worktree list -z` (git 2.36 and later do), which is the form that can carry a path with a newline in it", dir, why)
+}
+
+// worktreesFromLines turns the line-separated list git gave for dir into
+// worktrees. A path with a newline in it is cut into lines there, and the
+// lines can be anything, a whole entry of another path included, so the shape
+// of the lines (parseWorktreeList) cannot say which entries are real. What can
+// is where git itself has the list from: the back-pointers under the
+// repository's git directory, <common dir>/worktrees/<id>/gitdir, each a file
+// holding one path whole. So:
+//
+//   - the first entry has to be the repository dir is in: the directory its
+//     path names (or the .git in it) is the git directory found from dir on
+//     the file system. If it is not, the main directory's own path was cut,
+//     and the reading fails; the next entry is never taken for it.
+//   - every other entry is kept only if its path is one of the back-pointers,
+//     and only if no other entry of the list has the same path (a path that
+//     was cut can name a real worktree; which of the two entries is the real
+//     one cannot be told, so neither is listed).
+//
+// A worktree whose path has a newline in it is therefore never listed here,
+// and nothing it was cut into is; other worktrees are, unless a cut path names
+// them. Nothing is run for this: it is a few small files per reading.
+func worktreesFromLines(dir, out string) ([]Worktree, error) {
+	parsed := parseWorktreeList(out, "\n")
+	if len(parsed) == 0 {
+		return nil, errWorktreeLines(dir, "the entry of the main directory is not whole")
+	}
+	common, err := gitCommonDirOf(dir)
+	if err != nil {
+		return nil, errWorktreeLines(dir, err.Error())
+	}
+	main := parsed[0]
+	if !sameFile(filepath.Join(main.Path, ".git"), common) && !sameFile(main.Path, common) {
+		return nil, errWorktreeLines(dir, fmt.Sprintf("its first entry, %q, is not the repository at %q", main.Path, common))
+	}
+	registered, err := registeredWorktreePaths(common)
+	if err != nil {
+		return nil, errWorktreeLines(dir, err.Error())
+	}
+	seen := map[string]int{}
+	for _, wt := range parsed[1:] {
+		seen[wt.Path]++
+	}
+	list := []Worktree{main}
+	for _, wt := range parsed[1:] {
+		if registered[wt.Path] && seen[wt.Path] == 1 {
+			list = append(list, wt)
+		}
+	}
+	return list, nil
+}
+
+func sameFile(a, b string) bool {
+	ai, err := os.Stat(a)
+	if err != nil {
+		return false
+	}
+	bi, err := os.Stat(b)
+	return err == nil && os.SameFile(ai, bi)
+}
+
+// gitCommonDirOf finds, on the file system and the way git does, the git
+// directory shared by the worktrees of the repository dir is in: the nearest
+// .git going up from dir (a directory, or a file that names one), or dir's
+// nearest ancestor that is itself a git directory; and from there the
+// directory its commondir file names, if it has one (a linked worktree).
+func gitCommonDirOf(dir string) (string, error) {
+	abs, err := filepath.Abs(dir)
+	if err != nil {
+		return "", err
+	}
+	for d := abs; ; {
+		dotGit := filepath.Join(d, ".git")
+		if fi, err := os.Stat(dotGit); err == nil {
+			if fi.IsDir() {
+				return commonDirOfGitDir(dotGit), nil
+			}
+			data, err := os.ReadFile(dotGit)
+			if err != nil {
+				return "", err
+			}
+			target, ok := strings.CutPrefix(strings.TrimRight(string(data), "\r\n"), "gitdir: ")
+			if !ok {
+				return "", fmt.Errorf("%s is not a gitdir file", dotGit)
+			}
+			if !filepath.IsAbs(target) {
+				target = d + string(filepath.Separator) + target
+			}
+			return commonDirOfGitDir(target), nil
+		}
+		if isGitDir(d) {
+			return commonDirOfGitDir(d), nil
+		}
+		parent := filepath.Dir(d)
+		if parent == d {
+			return "", fmt.Errorf("no git directory found from %s", abs)
+		}
+		d = parent
+	}
+}
+
+// commonDirOfGitDir follows gitDir's commondir file. The path is put together
+// without cleaning it: a ".." in it is resolved by the file system, as git
+// does.
+func commonDirOfGitDir(gitDir string) string {
+	data, err := os.ReadFile(filepath.Join(gitDir, "commondir"))
+	if err != nil {
+		return gitDir
+	}
+	target := strings.TrimRight(string(data), "\r\n")
+	if filepath.IsAbs(target) {
+		return target
+	}
+	return gitDir + string(filepath.Separator) + target
+}
+
+func isGitDir(dir string) bool {
+	if _, err := os.Stat(filepath.Join(dir, "HEAD")); err != nil {
+		return false
+	}
+	for _, sub := range []string{"objects", "refs"} {
+		if fi, err := os.Stat(filepath.Join(dir, sub)); err != nil || !fi.IsDir() {
+			return false
+		}
+	}
+	return true
+}
+
+// registeredWorktreePaths reads the paths of the linked worktrees a repository
+// has on record, the way git reads them for its list: each
+// <common dir>/worktrees/<id>/gitdir holds "<path>/.git". A file that cannot
+// be read or does not have that form is skipped, as git skips it.
+func registeredWorktreePaths(common string) (map[string]bool, error) {
+	base := filepath.Join(common, "worktrees")
+	ids, err := os.ReadDir(base)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	paths := map[string]bool{}
+	for _, id := range ids {
+		data, err := os.ReadFile(filepath.Join(base, id.Name(), "gitdir"))
+		if err != nil {
+			continue
+		}
+		if path, ok := strings.CutSuffix(strings.TrimRight(string(data), " \t\r\n"), "/.git"); ok && filepath.IsAbs(path) {
+			paths[path] = true
+		}
+	}
+	return paths, nil
+}
+
+var gitObjectName = regexp.MustCompile(`^(?:[0-9a-f]{40}|[0-9a-f]{64})$`)
 
 // parseWorktreeList reads `git worktree list --porcelain`: attributes one per
 // line (sep is "\n") or, with -z, NUL-terminated (sep is "\x00"), an empty one
 // between worktrees. An entry that cannot be a worktree — its path is not
-// absolute, or it has no HEAD and is not bare — is left out: that is what the
-// two halves of a path with a newline in it look like in the line-separated
-// form.
+// absolute, or it has no HEAD and is not bare — is left out.
+//
+// NUL-separated, an attribute is whatever git wrote, and one this code does
+// not know is skipped. Line by line that cannot be assumed: a path with a
+// newline in it is cut into lines. There an entry has to have the shape git
+// gives one, in git's order:
+//
+//	worktree <absolute path>
+//	bare                         or   HEAD <object name>
+//	                                  branch refs/…   or   detached   (or neither)
+//	locked[ <reason>]            (optional)
+//	prunable[ <reason>]          (optional)
+//
+// and an entry with any other line in it, or with a line out of place, is
+// left out. A "worktree" line that does not follow an empty line is the
+// middle of something: what it starts is left out, and so is the entry before
+// it. When the first entry is among those left out there is no main
+// directory to speak of, and nothing is returned (nil): the entry after it is
+// not the main directory.
+//
+// This is not what makes the line-separated list safe to use — the lines of a
+// cut path can have exactly this shape; see worktreesFromLines.
 func parseWorktreeList(out, sep string) []Worktree {
-	var list []Worktree
-	var cur *Worktree
-	flush := func() {
-		if cur != nil && filepath.IsAbs(cur.Path) && (cur.Head != "" || cur.Bare) {
-			list = append(list, *cur)
+	strict := sep == "\n"
+	type entry struct {
+		wt    Worktree
+		stage int // strict: how far through the shape the entry is
+		bad   bool
+	}
+	var entries []*entry
+	var cur *entry
+	blank := true // the previous line was empty, or there was none
+	// place checks that an attribute comes where git writes it: when the entry
+	// is at a stage from lo to hi. The entry is then at stage next.
+	place := func(e *entry, lo, hi, next int, ok bool) {
+		if strict && (e.stage < lo || e.stage > hi || !ok) {
+			e.bad = true
 		}
-		cur = nil
+		e.stage = next
 	}
 	for _, line := range strings.Split(out, sep) {
 		if line == "" {
-			flush()
+			cur, blank = nil, true
 			continue
 		}
-		key, val, _ := strings.Cut(line, " ")
+		key, val, hasVal := strings.Cut(line, " ")
+		if key == "worktree" {
+			e := &entry{wt: Worktree{Path: val}, stage: 1}
+			if strict && !blank {
+				e.bad = true
+				if n := len(entries); n > 0 {
+					entries[n-1].bad = true
+				}
+			}
+			entries = append(entries, e)
+			cur, blank = e, false
+			continue
+		}
+		blank = false
+		if cur == nil {
+			// Attributes with no "worktree" line before them: not an entry.
+			continue
+		}
 		switch key {
-		case "worktree":
-			flush()
-			cur = &Worktree{Path: val}
 		case "HEAD":
-			if cur != nil {
-				cur.Head = val
-			}
+			place(cur, 1, 1, 2, gitObjectName.MatchString(val))
+			cur.wt.Head = val
 		case "branch":
-			if cur != nil {
-				cur.Branch = strings.TrimPrefix(val, "refs/heads/")
-			}
+			place(cur, 2, 2, 3, strings.HasPrefix(val, "refs/"))
+			cur.wt.Branch = strings.TrimPrefix(val, "refs/heads/")
 		case "detached":
-			if cur != nil {
-				cur.Detached = true
-			}
+			place(cur, 2, 2, 3, !hasVal)
+			cur.wt.Detached = true
 		case "bare":
-			if cur != nil {
-				cur.Bare = true
-			}
+			place(cur, 1, 1, 3, !hasVal)
+			cur.wt.Bare = true
 		case "locked":
-			if cur != nil {
-				cur.Locked = true
-				cur.LockReason = val
-			}
+			place(cur, 2, 3, 4, true)
+			cur.wt.Locked = true
+			cur.wt.LockReason = val
 		case "prunable":
-			if cur != nil {
-				cur.Prunable = true
+			place(cur, 2, 4, 5, true)
+			cur.wt.Prunable = true
+		default:
+			if strict {
+				cur.bad = true
 			}
 		}
 	}
-	flush()
+	var list []Worktree
+	for i, e := range entries {
+		if e.bad || !filepath.IsAbs(e.wt.Path) || (e.wt.Head == "" && !e.wt.Bare) {
+			if strict && i == 0 {
+				return nil
+			}
+			continue
+		}
+		list = append(list, e.wt)
+	}
 	return list
 }
 

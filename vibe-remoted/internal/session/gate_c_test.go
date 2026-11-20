@@ -11,6 +11,8 @@ import (
 	"syscall"
 	"testing"
 	"time"
+
+	"github.com/lflish/vibe-remote/vibe-remoted/internal/chat"
 )
 
 // Regression tests for the findings of the first round of gate C of the
@@ -998,5 +1000,240 @@ func TestParseWorktreeList(t *testing.T) {
 	}
 	if got := parseWorktreeList("", "\x00"); len(got) != 0 {
 		t.Fatalf("empty: %+v", got)
+	}
+}
+
+// Regression tests for what was changed after the second round of gate C
+// (verified at 482ab63; findings N-1 and N-2 of that verdict).
+
+// gitWithoutListZ puts a git on PATH that answers `worktree list … -z` the way
+// git before 2.36 does: a usage error, status 129. Everything else is the real
+// git, so the line-separated list it then gives is git's own.
+func gitWithoutListZ(t *testing.T) {
+	t.Helper()
+	installGitWrapper(t, `for a in "$@"; do
+  if [ "$a" = "-z" ] && [ "$GIT_SUB $GIT_SUB2" = "worktree list" ]; then
+    echo "error: unknown switch `+"\\`"+`z'" >&2
+    echo "usage: git worktree list [<options>]" >&2
+    exit 129
+  fi
+done`)
+}
+
+// lookalikeOfWorktree makes dir a directory that is not a worktree of any
+// repository but says it is one: its .git file names admin, the management
+// directory of a real worktree (whoever owns a directory can write that).
+func lookalikeOfWorktree(t *testing.T, dir, admin string) {
+	t.Helper()
+	writeFiles(t, dir, ".claude/settings.json", "precious.txt")
+	if err := os.WriteFile(filepath.Join(dir, ".git"), []byte("gitdir: "+admin+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// N-1. Read line by line (git before 2.36), a worktree whose path has a
+// newline in it comes apart into lines that read like other entries. None of
+// what it comes apart into is listed: not the first line of the path, not a
+// path that follows a newline in it, however much the rest looks like an entry
+// of the list. Such a directory is not a worktree of the repository, so it is
+// not trusted for the chat interface and has no status.
+func TestFallbackListNeverInventsAWorktree(t *testing.T) {
+	oid := strings.Repeat("1", 40)
+	const elsewhere, plainPath, mainPath = "<elsewhere>", "<plain>", "<main>"
+	for label, tail := range map[string]string{
+		"text":                        "\nfoo",
+		"worktree_line":               "\nworktree " + elsewhere,
+		"head_line":                   "\nHEAD " + oid,
+		"branch_line":                 "\nbranch refs/heads/main",
+		"detached_line":               "\ndetached",
+		"locked_line":                 "\nlocked",
+		"prunable_line":               "\nprunable gitdir file points to non-existent location",
+		"blank_line":                  "\n\nworktree " + elsewhere,
+		"whole_entry":                 "\nHEAD " + oid + "\nbranch refs/heads/main\n\nworktree " + elsewhere,
+		"whole_entry_then_text":       "\nHEAD " + oid + "\ndetached\n\nfoo",
+		"several_newlines":            "\n\n\nfoo\n\nworktree " + elsewhere + "\n",
+		"newline_at_end":              "\n",
+		"names_the_main_directory":    "\n\nworktree " + mainPath,
+		"names_a_real_worktree":       "\n\nworktree " + plainPath,
+		"names_a_real_worktree_whole": "\nHEAD " + oid + "\ndetached\n\nworktree " + plainPath,
+	} {
+		t.Run(label, func(t *testing.T) {
+			env := newTrustEnv(t)
+			repo := devflowRepo(t)
+			container := containerOf(repo)
+			plain := filepath.Join(container, "plain")
+			evil := filepath.Join(canonPath(t, t.TempDir()), "evil")
+			tail := strings.NewReplacer(elsewhere, evil, plainPath, plain, mainPath, repo).Replace(tail)
+			odd := filepath.Join(container, "a") + tail
+			if err := os.MkdirAll(filepath.Dir(odd), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			runGit(t, repo, "worktree", "add", "-b", "odd", odd)
+			admins, err := filepath.Glob(filepath.Join(repo, ".git", "worktrees", "*"))
+			if err != nil || len(admins) != 1 {
+				t.Fatalf("management directories = %v, %v", admins, err)
+			}
+			runGit(t, repo, "worktree", "add", "-b", "plain", plain)
+			head := runGit(t, repo, "rev-parse", "HEAD")
+			// Directories at every path the odd one can be mistaken for.
+			lookalikes := []string{filepath.Join(container, "a"), evil}
+			for _, dir := range lookalikes {
+				lookalikeOfWorktree(t, dir, admins[0])
+			}
+			env.set(map[string]bool{repo: true})
+
+			gitWithoutListZ(t)
+			want := []Worktree{{Path: repo, Branch: "main", Head: head}, {Path: plain, Branch: "plain", Head: head}}
+			if strings.Contains(label, "names_a_real_worktree") {
+				// The path names a real worktree: two entries of the list then
+				// have its path, and which one is true cannot be told.
+				want = want[:1]
+			}
+			got, err := ListWorktrees(repo)
+			if err != nil {
+				t.Fatalf("ListWorktrees: %v", err)
+			}
+			if !reflect.DeepEqual(got, want) {
+				t.Fatalf("read line by line:\n got %+v\nwant %+v", got, want)
+			}
+			m := NewManager(false, "/bin/cat", false, "")
+			m.SetProjectStore(NewMemoryProjectStore())
+			for _, dir := range lookalikes {
+				if trust := ChatTrust(dir); trust != chat.TrustUntrusted {
+					t.Errorf("ChatTrust(%q) = %v; the directory is not a worktree of %s", dir, trust, repo)
+				}
+				if st, err := m.WorktreeStatus(dir, allowAny); !errors.Is(err, ErrWorktreeNotFound) {
+					t.Errorf("WorktreeStatus(%q) = %+v, %v; want ErrWorktreeNotFound", dir, st, err)
+				}
+				if !pathExists(filepath.Join(dir, "precious.txt")) {
+					t.Errorf("%s lost its file", dir)
+				}
+			}
+			// A worktree that is listed is still one the trust rule knows.
+			if len(want) == 2 {
+				if trust := ChatTrust(plain); trust != chat.TrustTrusted {
+					t.Errorf("ChatTrust(%q) = %v, want trusted: it is a listed worktree of a trusted main directory", plain, trust)
+				}
+			}
+			if !pathExists(odd) {
+				t.Errorf("the worktree at %q is gone", odd)
+			}
+		})
+	}
+}
+
+// N-1. The main directory itself has a newline in its path: read line by
+// line, its entry cannot be told from one of another repository, and the
+// second entry is not taken for the main directory. The reading fails.
+func TestFallbackListFailsWhenTheMainDirectoryCannotBeRead(t *testing.T) {
+	oid := strings.Repeat("1", 40)
+	for label, tail := range map[string]string{
+		"text":        "\nfoo",
+		"whole_entry": "\nHEAD " + oid + "\nbranch refs/heads/main\n\nworktree /nowhere",
+		"blank_line":  "\n\nworktree /nowhere",
+	} {
+		t.Run(label, func(t *testing.T) {
+			parent := canonPath(t, t.TempDir())
+			// Another repository sits at the first line of the path.
+			other := repoAt(t, filepath.Join(parent, "devflow"))
+			runGit(t, other, "worktree", "add", "-b", "feat", filepath.Join(parent, "feat"))
+			repo := filepath.Join(parent, "devflow") + tail
+			if err := os.MkdirAll(filepath.Dir(repo), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			repo = repoAt(t, repo)
+			linked := filepath.Join(parent, "linked")
+			runGit(t, repo, "worktree", "add", "-b", "linked", linked)
+
+			gitWithoutListZ(t)
+			for _, from := range []string{repo, linked} {
+				if wts, err := ListWorktrees(from); err == nil {
+					t.Errorf("ListWorktrees(%q) = %+v; want an error: the main directory's path has a newline in it", from, wts)
+				}
+			}
+			// The repository at the first line of the path reads as before.
+			wts, err := ListWorktrees(other)
+			if err != nil || len(wts) != 2 || wts[0].Path != other || wts[1].Branch != "feat" {
+				t.Fatalf("ListWorktrees(%q) = %+v, %v", other, wts, err)
+			}
+		})
+	}
+}
+
+// N-1. The shape of an entry in the line-separated list is fixed; what does
+// not have it is left out together with what it was cut from. NUL-separated,
+// nothing can be cut, and an attribute this code does not know is skipped.
+func TestParseWorktreeListByLine(t *testing.T) {
+	oid := strings.Repeat("1", 40)
+	main := "worktree /r/devflow\nHEAD " + oid + "\nbranch refs/heads/main\n\n"
+	after := "worktree /r/after\nHEAD " + oid + "\ndetached\n\n"
+	whole := []Worktree{{Path: "/r/devflow", Branch: "main", Head: oid}, {Path: "/r/after", Head: oid, Detached: true}}
+	for label, middle := range map[string]string{
+		"unknown_line":                "worktree /r/a\nfoo\nHEAD " + oid + "\nbranch refs/heads/odd\n\n",
+		"worktree_line_inside":        "worktree /r/a\nworktree /evil\nHEAD " + oid + "\nbranch refs/heads/odd\n\n",
+		"worktree_line_after_head":    "worktree /r/a\nHEAD " + oid + "\nworktree /evil\nHEAD " + oid + "\nbranch refs/heads/odd\n\n",
+		"bare_worktree_word":          "worktree /r/a\nworktree\nHEAD " + oid + "\nbranch refs/heads/odd\n\n",
+		"two_heads":                   "worktree /r/a\nHEAD " + oid + "\nHEAD " + oid + "\nbranch refs/heads/odd\n\n",
+		"two_branches":                "worktree /r/a\nHEAD " + oid + "\nbranch refs/heads/main\nbranch refs/heads/odd\n\n",
+		"branch_before_head":          "worktree /r/a\nbranch refs/heads/main\nHEAD " + oid + "\nbranch refs/heads/odd\n\n",
+		"detached_then_branch":        "worktree /r/a\nHEAD " + oid + "\ndetached\nbranch refs/heads/odd\n\n",
+		"locked_before_head":          "worktree /r/a\nlocked\nHEAD " + oid + "\nbranch refs/heads/odd\n\n",
+		"prunable_before_locked":      "worktree /r/a\nHEAD " + oid + "\nbranch refs/heads/odd\nprunable gone\nlocked\n\n",
+		"bare_and_head":               "worktree /r/a\nbare\nHEAD " + oid + "\nbranch refs/heads/odd\n\n",
+		"head_is_not_an_object_name":  "worktree /r/a\nHEAD main\nbranch refs/heads/odd\n\n",
+		"head_is_too_short":           "worktree /r/a\nHEAD " + oid[:39] + "\nbranch refs/heads/odd\n\n",
+		"head_has_text_after_it":      "worktree /r/a\nHEAD " + oid + " x\nbranch refs/heads/odd\n\n",
+		"branch_is_not_a_ref":         "worktree /r/a\nHEAD " + oid + "\nbranch odd\n\n",
+		"detached_with_text":          "worktree /r/a\nHEAD " + oid + "\ndetached x\n\n",
+		"bare_with_text":              "worktree /r/a\nbare x\n\n",
+		"no_head":                     "worktree /r/a\n\n",
+		"path_is_not_absolute":        "worktree r/a\nHEAD " + oid + "\nbranch refs/heads/odd\n\n",
+		"lines_without_a_path":        "worktree /r/a\n\nHEAD " + oid + "\nbranch refs/heads/odd\n\n",
+		"text_without_a_path":         "worktree /r/a\n\nfoo\nHEAD " + oid + "\nbranch refs/heads/odd\n\n",
+		"several_blank_lines":         "worktree /r/a\n\n\n\nHEAD " + oid + "\nbranch refs/heads/odd\n\n",
+		"key_with_no_space_and_more":  "worktree /r/a\nHEADx\nHEAD " + oid + "\nbranch refs/heads/odd\n\n",
+		"upper_case_object_name":      "worktree /r/a\nHEAD " + strings.Repeat("A", 40) + "\nbranch refs/heads/odd\n\n",
+		"carriage_return_at_line_end": "worktree /r/a\nHEAD " + oid + "\r\nbranch refs/heads/odd\n\n",
+	} {
+		t.Run(label, func(t *testing.T) {
+			if got := parseWorktreeList(main+middle+after, "\n"); !reflect.DeepEqual(got, whole) {
+				t.Fatalf("got %+v\nwant the two whole entries %+v", got, whole)
+			}
+			// The same lines where the main directory's entry would be: the
+			// next entry is not the main directory, so nothing is read.
+			if got := parseWorktreeList(middle+after, "\n"); got != nil {
+				t.Fatalf("the first entry is not whole, and this was read: %+v", got)
+			}
+		})
+	}
+	// Whole entries of every kind git writes are read.
+	kinds := "worktree /r/bare.git\nbare\n\n" +
+		"worktree /r/unborn\nHEAD " + strings.Repeat("0", 40) + "\nbranch refs/heads/unborn\n\n" +
+		"worktree /r/sha256\nHEAD " + strings.Repeat("a", 64) + "\ndetached\n\n" +
+		"worktree /r/broken head\nHEAD " + oid + "\n\n" +
+		"worktree /r/locked\nHEAD " + oid + "\nbranch refs/heads/l\nlocked\n\n" +
+		"worktree /r/both\nHEAD " + oid + "\ndetached\nlocked \"two\\nlines\"\nprunable gitdir file points to non-existent location\n\n" +
+		"worktree /r/gone\nHEAD " + oid + "\nbranch refs/heads/g\nprunable gitdir file points to non-existent location\n\n"
+	wantKinds := []Worktree{
+		{Path: "/r/bare.git", Bare: true},
+		{Path: "/r/unborn", Branch: "unborn", Head: strings.Repeat("0", 40)},
+		{Path: "/r/sha256", Head: strings.Repeat("a", 64), Detached: true},
+		{Path: "/r/broken head", Head: oid},
+		{Path: "/r/locked", Branch: "l", Head: oid, Locked: true},
+		{Path: "/r/both", Head: oid, Detached: true, Locked: true, LockReason: `"two\nlines"`, Prunable: true},
+		{Path: "/r/gone", Branch: "g", Head: oid, Prunable: true},
+	}
+	if got := parseWorktreeList(kinds, "\n"); !reflect.DeepEqual(got, wantKinds) {
+		t.Fatalf("whole entries:\n got %+v\nwant %+v", got, wantKinds)
+	}
+	// Without the last empty line (the output was cut short) the last entry
+	// is still an entry: it has every line it needs.
+	if got := parseWorktreeList(strings.TrimSuffix(main+after, "\n"), "\n"); !reflect.DeepEqual(got, whole) {
+		t.Fatalf("no empty line at the end: %+v", got)
+	}
+	// NUL-separated: an attribute a later git may add is skipped, the entry stays.
+	z := strings.ReplaceAll(main+"worktree /r/a\nfoo\nHEAD "+oid+"\nfuture attribute\nbranch refs/heads/odd\n\n", "\n", "\x00")
+	if got := parseWorktreeList(z, "\x00"); len(got) != 2 || got[1] != (Worktree{Path: "/r/a", Branch: "odd", Head: oid}) {
+		t.Fatalf("NUL-separated, unknown attributes: %+v", got)
 	}
 }
