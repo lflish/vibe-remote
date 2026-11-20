@@ -510,6 +510,26 @@
 - `.devflow.yml` 的不变规则「同一 claude 会话 id 任何时刻最多一个 claude 进程…」的 check 建议加上 X4 的 3 个回归测试（具体命令见 decisions c7）。改 `.devflow.yml` 的 invariants 属于只有人能决定的事，本轮不改文件；建议的命令已原样运行通过。
 - `CLAUDE.md`：对照代码逐句看过「对话会话模型」「客户端会话模型」里讲断线补发、流式尾巴、`-c` 选最近一次对话、侧边栏点的句子，没有因为这次修复变得不准确的，不需要改。
 
+## 关口 C 第 2 轮返工（2026-11-20）
+
+来源：两份验证结论（指定小节和全文在 verdict-history.md「关口 C 第 2 轮」）和主会话的裁决（`rulings-2.md`）。按 T21 → T22 的顺序做，每个任务先写能复现问题的测试并确认失败，再修，单独提交。
+
+### T21 X9：`-c` 的 cwd 检查漏掉已有历史
+- 状态：待办
+- 来源：codex P4（中，拦；X4 的修复引入）；R1.5、H6、R17
+- 行为：判断一份 JSONL 属于哪个目录时，从头读到第一个带 `cwd` 的记录为止（没有行数上限；流式逐行读，不把文件读进内存，超长的行不出错）；整份文件都没有 `cwd` 才算读不到，仍不认领。记录里的 `cwd` 和请求的目录都规范化（`EvalSymlinks`）后再比较，记录侧解析失败时退回 `Clean` 后的字面比较
+- 文件：修改 `vibe-remoted/internal/chat/transcript.go`；测试 `vibe-remoted/internal/chat/transcript_test.go`、`vibe-remoted/internal/server/ws_chat_test.go`、`vibe-remoted/internal/session/chat_manager_test.go`；`.devflow.yml`（不变规则的 check 加 X4、X9 的回归测试，decisions #51）、`CLAUDE.md`（continue 改写那一句）
+- 测试：`cwd` 首次出现在第 101 行、第 1001 行（约 2 MiB）；`cwd` 记的是符号链接别名而请求用规范路径，以及反过来；经 WebSocket 带 `continue` 新建对话会话、终端会话的 continue 改写（新建和重载）两个入口；X4 原有回归用例原样通过。实测耗时：50 MiB 且 `cwd` 在最后一行、50 MiB 且没有 `cwd`、一个目录 200 份历史且最新 199 份不属于本目录
+- 完成定义：`cd vibe-remoted && go test -race -count=1 -timeout 5m ./internal/chat ./internal/session ./internal/server`（带独立 `TMUX_TMPDIR`）；变异核对（加回行数上限、去掉记录侧规范化各有用例失败）；`.devflow.yml` 改后的 check 原样运行通过
+
+### T22 X10：改名之后、点开「等你处理」的会话之后的键盘焦点
+- 状态：待办
+- 来源：界面验证者备注 3、4（不拦，顺手修）；R16.3、R15.1
+- 行为：改名结束（回车 / Esc / 失焦提交）后把键盘焦点交回当前会话；切到一个会话时，它有待答的卡片（权限 / 计划 / 提问）就把焦点给卡片，卡片上写的键盘快捷键（1 / 2 / 3、Esc）可用，否则给对话输入框或终端。改名进行中输入框保持焦点；有对话框打开时不抢焦点
+- 文件：修改 `desktop/src/renderer/index.ts`（`focusView`、`startInlineRename`）、`desktop/src/renderer/chat/view.ts`（必要时）；测试 `desktop/scripts/test-sidebar-rename.mjs`、`desktop/scripts/test-chat-view.mjs`、`.claude/skills/verify/scripts/gui-chat-smoke.mjs`
+- 测试：单元（改名回车 / Esc / 失焦后焦点回到当前会话；切到有待答卡片的会话后焦点在卡片上）；`gui-chat-smoke`（真实输入事件：后台对话会话出现权限请求 → 真实点击侧边栏打开 → 不点卡片直接按 `1` → 回合继续，Esc 同理；双击改名、回车后直接打字 → 字进当前会话的输入框 / 终端）
+- 完成定义：`cd desktop && npm run typecheck && npm test`；`gui-chat-smoke.mjs` 新用例在修复前失败、修复后通过；X8 的回归用例原样通过
+
 ## 进度
 
 （dev-build 每完成一个任务追加一行）
@@ -542,7 +562,7 @@
 - 「不再询问」的保存位置可切换（原型里的 ← → 切换 destination）：首版按 claude 建议原样使用（H17），切换留到后续。
 - 代码块语法高亮。
 
-- gui-smoke 既有用例「drag-select + ⌘C」偶发失败（review.md 备注），待 dev-test 定性。
+- gui-smoke 既有用例「drag-select + ⌘C」偶发失败（review.md 备注），待 dev-test 定性。覆盖边界（关口 C 第 2 轮 codex 备注 2）：这条用例加固后，屏幕变化时可以重新量、重拖最多 2 次，第一次手势的结果不受最终断言约束。
 - gui-smoke 的终端 daemon 改用独立 `TMUX_TMPDIR`（现在共用开发者的 `tmux -L vibe-remote`，与并发的 Go 测试会串扰），拖选用例失败时打印复制到的原文（dev-test，decisions #38）。
 
 来自关口 C 第 1 轮界面验证者的备注（不拦，来源 verdict-history.md「关口 C 第 1 轮 · 验证结论全文（二）」的「备注」）：
@@ -556,3 +576,12 @@
 - 从 JSONL 重建的历史里，出错的回合只有用户消息、没有错误卡片（备注 9）。
 - 侧边栏状态点只靠颜色区分（`aria-hidden`，没有 title）（备注 10）。
 - 侧边栏每 5 秒整体重建，按下和松开之间刚好重建时这次点击会丢（备注 11）。
+
+来自关口 C 第 2 轮的备注（不拦，来源 verdict-history.md「关口 C 第 2 轮」）：
+
+- X7 之后对话视图的 DOM 条数随新消息一直增长、不回收（上滑阅读时也是：5000 条历史首屏 300 条 DOM，再来 1000 条变成 1300 条）。长时间对话后实测渲染耗时，评估在保留阅读位置的同时回收看不见的 DOM（codex 备注 1）。
+- 上滑阅读时没有「下面有新内容」的提示（没有提示条 / 回到底部按钮，当前会话也不显示点）（界面备注 1）。
+- 窗口一次变矮 ≥48px 后流式输出不再跟随，要滚到底或发一条消息才恢复（第 1 轮的代码同样如此）（界面备注 2）。
+- 断线分隔线把流式增量也数成「消息」（一条长回复途中重连写成「已补回断线期间 20000 条消息」）（界面备注 5）。
+- 长回复超过尾巴上限后中途加入 / 重连，回复结束前的预览不完整（结束后是完整的一条）（界面备注 6）。
+- 指针停在当前会话那一行时看不到它的黄点（悬停时隐藏该行的点、让位给 ×）（界面备注 7）。
