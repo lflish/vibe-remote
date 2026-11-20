@@ -679,6 +679,18 @@ CI 与 verify 不依赖真 claude，全部对话测试跑这个程序（`go buil
 - 2026-11-14 开发中（T6，decisions #30–#32）：终端 relay 读错时核对 epoch（既有竞态修正）；交接先停为 stopped、成功后才标 handed_off；对话 relay 在同步后推 sessions 帧（4.2–4.10、6.5）。
 - 2026-11-14 开发中（T11/T12，decisions #33）：`chatAvailability` 增加目录信任参数；侧边栏点事件与通知 tag；结束横幅新增 `chat-recheck`、`chat-open-terminal` 两个 data-testid（4.12）。
 - 2026-11-14 开发中（T13，decisions #34–#35）：`chat_ack.ref` 对 set_mode 回显 mode；`vr_notice` 的 `stderr` 码保留不发送（stderr 尾巴在 `vr_exit`）（4.5、4.7）；冒烟脚本用独立 `TMUX_TMPDIR` 隔离 tmux。
+- 2026-11-20 关口 C 第 1 轮返工（decisions #43–#49、c7；任务 T14–T20）：
+  1. X7（4.12 虚拟列表）：`chat/window.ts` 的 `follow(win, total)` 不再看是否贴底，窗口末端总是跟到最新消息、起点不动；贴不贴底只由 `chat/view.ts` 决定。视图记住用户最后一次滚动是否停在底部：消息成功入队（发送、重试）时回到底部；后台视图（`display:none`，滚不动）切回前台时，离开时贴底的回到底部，不贴底的留在原位；上滑阅读时新回复不拽动视图。
+  2. X8（4.12 侧边栏改名）：点击侧边栏里当前会话的名字不再经 `setActive` 重建侧边栏（`selectOpenSession`）；把键盘交给会话视图统一经 `focusView`，改名进行中不抢焦点，`ChatView.show()` 不再自己聚焦；`startInlineRename` 在输入框没进文档时不置 `renamingActive`。
+  3. X3（5.2 `tail`）：流式尾巴超出上限时丢最旧的增量，但这条回复的 `message_start` 单独保存、始终随尾巴补发（`tailStart`），所以中途接入的客户端总能拿到 `message.id`，完整消息到达后按 id 取代预览。5.2 表里写的 `tailTruncated` 落为会话内的一个标志，只用来在每条回复第一次截断时打一行日志；不进协议（没有需要客户端读它的地方，协议版本不变）。客户端另加一层：没有 `message_start` 的增量形成的无 id 预览，在同一条回复的完整 `assistant` 消息到达时并入该消息（`ChatSession.claimOrphanPreview`），不会留下第二条。
+  4. X4（5.3「目录最近一次对话」）：claude 的项目目录名把 `/` 和 `.` 都换成 `-`，`…/a-b`、`…/a.b`、`…/a/b` 共用一个目录，所以不能只凭目录名取 mtime 最新的文件。`LatestSessionForWorkdir` 改为：在该目录里按 mtime 从新到旧逐个读 JSONL 开头（最多 100 行，不读整个文件）记录的第一个 `cwd`，与请求的规范化目录相同才认领；读不到 `cwd` 的记录不认领；目录里没有属于该 workdir 的对话时，再按原来的回退（最近 10 个 JSONL 比 `cwd`）。对话 `-c` 和终端的 continue 改写共用这个函数。`FindTranscript` 按 UUID 找文件、只用来决定 `--resume` 还是 `--session-id`，claude 自己只在当前目录的项目目录里找这个 id，不会因此接上别的目录的对话。
+  5. X6（4.12 侧边栏状态点，R16.3）：当前会话在窗口失焦时收到待答请求，也显示黄点（此前只发通知）；通知结果回来（含未签名包的 Dock 降级，d12）黄点不变；窗口重新聚焦且该会话在前台时清掉（`index.ts` 的 window `focus` 监听），请求在别处被处理或回合结束时也清掉。灰点、绿点仍只标非当前会话（R16.1、R16.2）；终端会话的点不变。
+  6. X5 与其余：`docs/protocol.md` 的 chat_ack 补上可选字段 `message`（和 `ok`），同步序列第 3 步补一句流式尾巴上限的行为；删除对话会话的确认文案单列为 `chat.delete.confirm`（对话记录保留在 claude 的 JSONL 里）；`chat/prompts.ts` 里「其他」选项的哨兵值由 3 个原始 NUL 字节改为转义写法（运行时的值不变）。
+  7. 升级步骤：没有新增。协议字段和版本没有变，配置和数据格式没有变；照常同时更新 daemon 和桌面端即可。只更新桌面端时，X3 由桌面端那一半（无 id 预览并入完整消息）保证回复只显示一次；X4 在 daemon 一侧，要更新 daemon 才生效。
+- 2026-11-20 关口 C 第 2 轮返工（decisions #50–#53；任务 T21、T22）：
+  1. X9（5.3「目录最近一次对话」，改掉上面第 1 轮返工第 4 条里的「最多 100 行」）：`transcriptCwd` 不再有行数上限——从头逐行读到第一个带 `cwd` 的记录为止（流式读，不把文件读进内存；超过 16 MiB 的单行跳过、不出错），整份文件都没有 `cwd` 才算读不到、仍不认领。不含 `"cwd"` 字样（也没有 `\u` 转义）的行不做 JSON 解析。记录里的 `cwd` 和请求的目录都解析符号链接后再比较（`canonicalDir`；目录已不存在、解析不了时按 `Clean` 后的字面比较）。回退扫描跳过该目录自己的项目目录（里面的文件刚刚都看过）。实测耗时见 test-report「X9 的耗时」和 `evidence/x9-cwd-scan-timing.txt`：50 MiB 的文件约 30–40 ms，没有设任何界限。
+  2. X10（4.12 侧边栏与卡片的键盘焦点）：`focusView` 对对话会话改为调 `ChatView.focus()`——有待答卡片（权限 / 计划 / 提问）时焦点给卡片，卡片上写的 1 / 2 / 3、Esc 不用先点一下就能用；否则给输入框。改名结束（回车 / Esc / 失焦提交）后 `focusAfterRename` 把键盘交回当前会话，前提是焦点此刻不在任何地方、也没有对话框打开（用户点进了别的输入框或对话框就留在那里）。新卡片出现时经 `onFocusRequest` 请求焦点，由 `focusView` 决定（只给当前会话，改名进行中不给）；卡片消失时键盘若在卡片上就交给输入框。
+  3. 升级步骤：没有新增。协议、配置、数据格式都没有变；X9 在 daemon 一侧（要更新 daemon 才生效），X10 在桌面端一侧。
 
 ## 11. 方案验证（机器关口 B）
 

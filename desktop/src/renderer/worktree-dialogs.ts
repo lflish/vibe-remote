@@ -322,6 +322,10 @@ function showConfirm(shell: DialogShell, initial: () => HTMLButtonElement, cance
  * Confirms deleting a session (R5.1). Resolves true only when the delete
  * button is used; the focus starts on Cancel, so Enter right away cancels.
  *
+ * `chat`: a chat session. Its conversation stays in claude's own history
+ * files on the remote machine, so the text says that instead of "this cannot
+ * be undone".
+ *
  * `worktreeLabel` is passed for a session under a worktree other than the main
  * directory: the dialog then says the worktree and its branch stay.
  * `legacyWorktree` is for a worktree-mode session on a daemon older than
@@ -330,12 +334,12 @@ function showConfirm(shell: DialogShell, initial: () => HTMLButtonElement, cance
  * session on a daemon whose version is not known yet: the note then says both
  * things can happen, instead of promising either.
  */
-export function confirmDeleteSession(opts: { name: string; worktreeLabel?: string; legacyWorktree: boolean; unknownWorktree?: boolean }): Promise<boolean> {
+export function confirmDeleteSession(opts: { name: string; chat?: boolean; worktreeLabel?: string; legacyWorktree: boolean; unknownWorktree?: boolean }): Promise<boolean> {
   return new Promise((resolve) => {
     const shell = dialogShell('delete-session-dialog', t('session.delete.title', { name: opts.name }), '', t('session.delete.confirm'));
     shell.confirm.classList.add('btn-danger');
     const text = el('div', 'modal-confirm');
-    text.appendChild(paragraph(t('session.delete.body')));
+    text.appendChild(paragraph(t(opts.chat ? 'session.delete.chatBody' : 'session.delete.body')));
     const note = opts.legacyWorktree
       ? t('session.delete.legacyWorktree')
       : opts.unknownWorktree

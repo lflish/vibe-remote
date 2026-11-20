@@ -15,7 +15,7 @@ import { load, runner } from './chat-test-util.mjs';
 
 const dom = new JSDOM('<!DOCTYPE html><body></body>', { pretendToBeVisual: true });
 const w = dom.window;
-for (const k of ['window', 'document', 'HTMLElement', 'HTMLDetailsElement', 'Node', 'MouseEvent', 'KeyboardEvent', 'Event']) {
+for (const k of ['window', 'document', 'HTMLElement', 'HTMLDetailsElement', 'HTMLInputElement', 'Node', 'MouseEvent', 'KeyboardEvent', 'Event']) {
   Object.defineProperty(globalThis, k, { value: w[k], configurable: true, writable: true });
 }
 let rafQueue = [];
@@ -162,6 +162,67 @@ test('permission prompt: allow, always, deny, handled elsewhere', () => {
   click($('chat-perm-deny'));
   assert.deepEqual(responds(client).at(-1), { type: 'chat_respond', requestId: 'r3', response: { behavior: 'deny', message: '先别改这个文件' }, setMode: undefined });
   assert.equal($$('chat-perm').length, 1);
+});
+
+// X10: the keyboard goes where the user acts next. With a prompt open that is
+// the card (its 1 / 2 / 3 and Esc work without a click), otherwise the input.
+test('X10 focus(): the open prompt card, else the input; a card that goes away hands the keyboard to the input', () => {
+  const { view, client, $ } = makeView();
+  const bashReq = { subtype: 'can_use_tool', tool_name: 'Bash', input: { command: 'touch x' }, tool_use_id: 'tu1' };
+  const press = (key) => document.activeElement.dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true }));
+  view.focus();
+  assert.equal(document.activeElement, $('chat-input'), 'no prompt: the input');
+
+  client.onChatState(state({ status: 'waiting', pending: [{ requestId: 'r1', seq: 1, request: bashReq }] }));
+  flush();
+  flush();
+  document.activeElement.blur(); // e.g. the view was in the background when the card appeared
+  assert.equal(document.activeElement, document.body);
+  view.focus();
+  assert.equal(document.activeElement, $('chat-perm'), 'prompt open: the card');
+  press('1');
+  assert.deepEqual(client.sent.filter((f) => f.type === 'chat_respond').map((f) => [f.requestId, f.response.behavior]), [['r1', 'allow']], '1 answers from there');
+  client.onChatState(state({ status: 'running', pending: [] }));
+  flush();
+  assert.equal($('chat-perm'), null);
+  assert.equal(document.activeElement, $('chat-input'), 'the card is gone: the input has the keyboard');
+
+  // Esc on a card focused the same way; and a card that goes away while the
+  // keyboard is somewhere else leaves it there.
+  client.onChatState(state({ status: 'waiting', pending: [{ requestId: 'r2', seq: 2, request: bashReq }] }));
+  flush();
+  flush();
+  document.activeElement.blur();
+  view.focus();
+  press('Escape');
+  assert.equal(client.sent.filter((f) => f.type === 'chat_interrupt').length, 1, 'Esc interrupts from there');
+  const elsewhere = document.createElement('input');
+  document.body.appendChild(elsewhere);
+  elsewhere.focus();
+  client.onChatState(state({ status: 'idle', pending: [] }));
+  flush();
+  assert.equal(document.activeElement, elsewhere, 'the keyboard was elsewhere: it stays there');
+  elsewhere.remove();
+  view.container.remove();
+});
+
+test('X10 a new prompt card asks for the keyboard through onFocusRequest when the app set it', () => {
+  const { view, client, $ } = makeView();
+  const bashReq = { subtype: 'can_use_tool', tool_name: 'Bash', input: { command: 'touch x' }, tool_use_id: 'tu1' };
+  let asked = 0;
+  view.onFocusRequest = () => { asked++; };
+  $('chat-input').focus();
+  client.onChatState(state({ status: 'waiting', pending: [{ requestId: 'r1', seq: 1, request: bashReq }] }));
+  flush();
+  flush();
+  assert.equal(asked, 1, 'asked once for the new card');
+  assert.notEqual(document.activeElement, $('chat-perm'), 'the card did not take the keyboard by itself');
+  // The card goes while the keyboard is on it: asked again (the input is next).
+  $('chat-perm').focus();
+  client.onChatState(state({ status: 'idle', pending: [] }));
+  flush();
+  assert.equal(asked, 2, 'asked again when the focused card went away');
+  view.container.remove();
 });
 
 test('plan prompt options', () => {
@@ -588,5 +649,148 @@ test('ended banner, restart tracking and retry', () => {
   click($('chat-open-terminal'));
   assert.deepEqual(calls.slice(2), ['recheck', 'open:t-1']);
 });
+
+// --- X7: scroll position vs. new messages -------------------------------------
+// jsdom has no layout, so the transcript gets a fake one: every child of the
+// message list is ROW px high in a VIEWPORT px viewport. `hidden` models the
+// container being display:none (a background session): no box, geometry reads
+// 0, scrollTop cannot be set, and the old offset is back when it shows again.
+const ROW = 100;
+const VIEWPORT = 400;
+function fakeLayout(view) {
+  const tl = view.container.querySelector('[data-testid="chat-transcript"]');
+  const inner = tl.querySelector('.tl-in');
+  const geo = { hidden: false, top: 0, scrolled: false };
+  const height = () => inner.children.length * ROW;
+  const max = () => Math.max(0, height() - VIEWPORT);
+  Object.defineProperty(tl, 'clientHeight', { get: () => (geo.hidden ? 0 : VIEWPORT), configurable: true });
+  Object.defineProperty(tl, 'scrollHeight', { get: () => (geo.hidden ? 0 : height()), configurable: true });
+  Object.defineProperty(tl, 'scrollTop', {
+    get: () => (geo.hidden ? 0 : Math.min(geo.top, max())),
+    set: (v) => {
+      if (geo.hidden) return;
+      const next = Math.max(0, Math.min(v, max()));
+      if (next !== geo.top) geo.scrolled = true;
+      geo.top = next;
+    },
+    configurable: true,
+  });
+  return {
+    tl,
+    max,
+    get top() { return tl.scrollTop; },
+    /** The user scrolls (wheel / scrollbar). */
+    scrollTo(v) { tl.scrollTop = v; geo.scrolled = false; tl.dispatchEvent(new Event('scroll')); },
+    /** One frame: scroll events of programmatic scrolls first, then rAF callbacks. */
+    frame() {
+      for (let i = 0; i < 3; i++) {
+        if (geo.scrolled) { geo.scrolled = false; tl.dispatchEvent(new Event('scroll')); }
+        flush();
+      }
+    },
+    hide() { geo.hidden = true; },
+    unhide() { geo.hidden = false; },
+  };
+}
+const texts = (list) => list.map((m) => (m.querySelector('.u-text') ?? m).textContent.trim());
+let x7seq = 0;
+function burst(client, n, tag) {
+  for (let i = 1; i <= n; i++) {
+    x7seq++;
+    client.onChat(x7seq, { type: 'assistant', message: { id: `msg_${tag}_${i}`, content: [{ type: 'text', text: `${tag} ${i}` }] } }, false);
+  }
+}
+function typeAndSend($, text) {
+  const input = $('chat-input');
+  input.value = text;
+  input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+}
+function reply(client, sentFrame, text) {
+  client.onChat(++x7seq, { type: 'user', message: { role: 'user', content: [{ type: 'text', text: sentFrame.text }] }, vr_client_msg_id: sentFrame.clientMsgId }, false);
+  client.onChat(++x7seq, { type: 'assistant', message: { id: `msg_r_${x7seq}`, content: [{ type: 'text', text }] } }, false);
+  client.onChat(++x7seq, { type: 'result', subtype: 'success', is_error: false }, false);
+  client.onChatState(state());
+}
+
+test('X7 scrolled up: sending a message goes back to the bottom and shows it and the reply', () => {
+  const { view, client, $, $$ } = makeView();
+  const lay = fakeLayout(view);
+  burst(client, 30, 'old');
+  lay.frame();
+  assert.equal(lay.top, lay.max(), 'follows new messages while at the bottom');
+  lay.scrollTo(lay.max() - 300);
+  lay.frame();
+  assert.equal(lay.top, 30 * ROW - VIEWPORT - 300, 'scrolled up 300px');
+
+  typeAndSend($, 'echo can you see this');
+  lay.frame();
+  assert.equal(client.sent.length, 1, 'sent');
+  assert.deepEqual(texts($$('chat-msg-user')), ['echo can you see this'], 'own message is in the transcript');
+  assert.equal(lay.top, lay.max(), 'back at the bottom after sending');
+  reply(client, client.sent[0], 'can you see this');
+  lay.frame();
+  assert.equal(texts($$('chat-msg-assistant')).at(-1), 'can you see this', 'the reply shows');
+  assert.equal(lay.top, lay.max(), 'still at the bottom');
+});
+
+test('X7 scrolled up: new replies do not drag the view, and are there on reaching the bottom', () => {
+  const { view, client, $$ } = makeView();
+  const lay = fakeLayout(view);
+  burst(client, 30, 'old');
+  lay.frame();
+  lay.scrollTo(600);
+  lay.frame();
+  burst(client, 5, 'new');
+  lay.frame();
+  assert.equal(lay.top, 600, 'reading history: the view stays where it is');
+  assert.equal(texts($$('chat-msg-assistant')).at(-1), 'new 5', 'the newest message is rendered below');
+  // Reaching the bottom needs no further session update to show them.
+  lay.scrollTo(lay.max());
+  assert.equal(lay.top, 35 * ROW - VIEWPORT);
+  burst(client, 1, 'later');
+  lay.frame();
+  assert.equal(lay.top, lay.max(), 'at the bottom again: follows');
+});
+
+test('X7 background session: left at the bottom → back at the bottom with the newest; left scrolled up → same place, newest rendered', () => {
+  {
+    const { view, client, $, $$ } = makeView();
+    const lay = fakeLayout(view);
+    burst(client, 30, 'old');
+    lay.frame();
+    const left = lay.top;
+    lay.hide(); // another session is opened
+    burst(client, 20, 'bg');
+    lay.frame();
+    lay.unhide(); // back: the browser restores the old offset
+    assert.equal(lay.top, left);
+    view.show();
+    lay.frame();
+    assert.equal(texts($$('chat-msg-assistant')).at(-1), 'bg 20');
+    assert.equal(lay.top, lay.max(), 'left at the bottom → at the bottom on return');
+    assert.equal(lay.top, 50 * ROW - VIEWPORT);
+    typeAndSend($, 'echo back');
+    lay.frame();
+    assert.deepEqual(texts($$('chat-msg-user')), ['echo back'], 'a message sent right after returning shows');
+    assert.equal(lay.top, lay.max());
+  }
+  {
+    const { view, client, $$ } = makeView();
+    const lay = fakeLayout(view);
+    burst(client, 30, 'old');
+    lay.frame();
+    lay.scrollTo(700);
+    lay.frame();
+    lay.hide();
+    burst(client, 20, 'bg');
+    lay.frame();
+    lay.unhide();
+    view.show();
+    lay.frame();
+    assert.equal(lay.top, 700, 'left scrolled up → same place on return');
+    assert.equal(texts($$('chat-msg-assistant')).at(-1), 'bg 20', 'the newest messages are rendered: scrolling down reaches them');
+  }
+});
+
 
 await run();

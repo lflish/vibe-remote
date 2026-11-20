@@ -25,6 +25,8 @@
 //   DEVFLOW_EVIDENCE_DIR=<dir>  save a PNG per case (<case>.png)
 //   VR_MAIN_DAEMON=<path>       reuse a main-branch vibe-remoted build
 //   VR_CDP_PORT / VR_INSPECT_PORT  fixed debug ports (with --keep, for poking around)
+//   VR_ONLY=<id,id,…>           run only these cases (ids as in test('<id>', …)); only
+//                               for cases that set up their own sessions (X7-*, X8-*, X10-*)
 // Requires Node 22+, Go, tmux, git; macOS with a display.
 
 import { spawn, spawnSync } from 'node:child_process';
@@ -259,7 +261,7 @@ async function connectMain() {
 }
 
 const MOD = { alt: 1, ctrl: 2, meta: 4, shift: 8 };
-const KEYS = { Enter: [13, 'Enter', '\r'], Escape: [27, 'Escape'], Tab: [9, 'Tab'], ArrowDown: [40, 'ArrowDown'], ArrowUp: [38, 'ArrowUp'] };
+const KEYS = { Enter: [13, 'Enter', '\r'], Escape: [27, 'Escape'], Tab: [9, 'Tab'], ArrowDown: [40, 'ArrowDown'], ArrowUp: [38, 'ArrowUp'], 1: [49, 'Digit1', '1'] };
 
 async function pressKey(key, modifiers = 0) {
   const [vk, code, txt] = KEYS[key] ?? [key.toUpperCase().charCodeAt(0), `Key${key.toUpperCase()}`, key];
@@ -267,6 +269,44 @@ async function pressKey(key, modifiers = 0) {
   const base = { key, code, modifiers, windowsVirtualKeyCode: vk };
   await cdp.send('Input.dispatchKeyEvent', { type: textToType ? 'keyDown' : 'rawKeyDown', text: textToType, ...base });
   await cdp.send('Input.dispatchKeyEvent', { type: 'keyUp', ...base });
+}
+
+// --- Real input ------------------------------------------------------------------
+// What a hand does, through the browser's input pipeline (hit testing, focus,
+// click / dblclick synthesis, wheel scrolling) — element.click() and setting
+// scrollTop skip all of that, which is how X7 and X8 went unnoticed.
+
+/** Centre of the element `expr` evaluates to; it must be what a pointer there hits. */
+async function pointOf(expr, what) {
+  const p = await ev(`(() => {
+    const e = ${expr};
+    if (!e) return null;
+    const r = e.getBoundingClientRect();
+    const x = r.left + r.width / 2, y = r.top + r.height / 2;
+    const hit = document.elementFromPoint(x, y);
+    return { x, y, hit: !!hit && (hit === e || e.contains(hit)) };
+  })()`);
+  assert(p, `${what}: not on the page`);
+  assert(p.hit, `${what}: something else is on top of it`);
+  return p;
+}
+
+/** A real click (count 2 = a double click at a human pace: 40 ms down, 90 ms between). */
+async function realClick(expr, what, count = 1) {
+  const p = await pointOf(expr, what);
+  await cdp.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: p.x, y: p.y });
+  for (let n = 1; n <= count; n++) {
+    await cdp.send('Input.dispatchMouseEvent', { type: 'mousePressed', x: p.x, y: p.y, button: 'left', clickCount: n });
+    await sleep(40);
+    await cdp.send('Input.dispatchMouseEvent', { type: 'mouseReleased', x: p.x, y: p.y, button: 'left', clickCount: n });
+    if (n < count) await sleep(90);
+  }
+}
+
+/** A real wheel turn over the element (deltaY > 0 scrolls down). */
+async function realWheel(expr, deltaY, what) {
+  const p = await pointOf(expr, what);
+  await cdp.send('Input.dispatchMouseEvent', { type: 'mouseWheel', x: p.x, y: p.y, deltaX: 0, deltaY });
 }
 
 async function evidence(name) {
@@ -403,6 +443,42 @@ const sidebarItem = (d, label, expr, ui = 'chat') => ev(`(() => {
   const it = [...g.querySelectorAll('.session-item')].find((i) => i.dataset.ui === ${JSON.stringify(ui)} && i.querySelector('.session-label-text')?.textContent === ${JSON.stringify(label)});
   return it ? (${expr}) : null; })()`);
 
+// Real-input variants (X7 / X8 cases).
+const TRANSCRIPT = inChat('[data-testid="chat-transcript"]');
+const INPUT = inChat('[data-testid="chat-input"]');
+const scrollState = () => ev(`(() => { const t = ${TRANSCRIPT}; return { top: t.scrollTop, gap: t.scrollHeight - t.scrollTop - t.clientHeight, client: t.clientHeight, height: t.scrollHeight }; })()`);
+const lastAssistant = () => ev(`[...${VC}.querySelectorAll('[data-testid="chat-msg-assistant"]')].pop()?.textContent.trim() || ''`);
+/** Is the last assistant message inside the transcript's viewport? */
+const lastAssistantOnScreen = () => ev(`(() => { const m = [...${VC}.querySelectorAll('[data-testid="chat-msg-assistant"]')].pop(); if (!m) return false; const r = m.getBoundingClientRect(), t = ${TRANSCRIPT}.getBoundingClientRect(); return r.bottom <= t.bottom + 1 && r.bottom > t.top; })()`);
+async function wheelTo(deltaY, pred, what) {
+  await realWheel(TRANSCRIPT, deltaY, 'chat transcript');
+  return waitFor(async () => { const s = await scrollState(); return pred(s) ? s : null; }, 4000, what);
+}
+/** Click into the input box and type `msg` + Enter, all as real input events. */
+async function typeChat(msg) {
+  await realClick(INPUT, 'chat input');
+  await waitFor(() => ev(`document.activeElement === ${INPUT}`), 3000, 'the click focused the chat input');
+  await cdp.send('Input.insertText', { text: msg });
+  await pressKey('Enter');
+}
+const sidebarLabel = (d, label, ui = 'chat') => `(() => {
+  const g = [...document.querySelectorAll('.machine-name')].find((b) => b.querySelector('.machine-name-label')?.textContent === ${JSON.stringify(d.name)})?.closest('.machine-group');
+  return [...(g?.querySelectorAll('.session-item') ?? [])].find((i) => i.dataset.ui === ${JSON.stringify(ui)} && i.querySelector('.session-label-text')?.textContent === ${JSON.stringify(label)})?.querySelector('.session-label') ?? null; })()`;
+/** Switch sessions with a real click on the sidebar. */
+async function clickSidebar(d, label, ui = 'chat') {
+  for (let attempt = 0; ; attempt++) {
+    await realClick(sidebarLabel(d, label, ui), `sidebar item ${label}`);
+    try {
+      await waitFor(() => sidebarItem(d, label, `it.classList.contains('active')`, ui), 1500, `${label} is the current session`);
+      return;
+    } catch (e) {
+      // The sidebar is rebuilt every 5 s; a rebuild between press and release
+      // swallows that click (tasks.md follow-up list). One more try.
+      if (attempt >= 1) throw e;
+    }
+  }
+}
+
 // --- Cases ------------------------------------------------------------------------
 
 const cases = [];
@@ -413,6 +489,7 @@ let chatRoot = '';
 let histU = '';
 let other = null; // second desktop on the main chat session
 let S1 = ''; // main chat session id (dir "main")
+let X7 = ''; // the X7 cases' own chat session (dir "x7")
 const dialogs = [];
 
 test('R1.3', 'R1.3 bash machine: chat card disabled with the reason', async () => {
@@ -532,6 +609,289 @@ test('R1.6', 'R1.6/R11.2 bypass: mode fixed, no permission prompts', async () =>
   return `menu ${menu.modes.join()} (${menu.why})`;
 });
 
+test('X7-send', 'X7 scrolled up with the wheel: a typed message and its reply show; replies do not drag the view; reaching the bottom shows them', async () => {
+  X7 = await newChat(CHAT, 'x7');
+  await sendChat('burst 80');
+  await waitFor(async () => (await lastAssistant()) === 'burst 80', 15000, 'burst 80 rendered');
+  await idle();
+  const s0 = await scrollState();
+  assert(s0.gap < 48 && s0.height > s0.client + 400, `expected more than a screen of content, at the bottom: ${JSON.stringify(s0)}`);
+  // (1) not at the bottom → send
+  await wheelTo(-300, (s) => s.gap >= 200, 'scrolled up 300px');
+  await typeChat('echo x7 can you see this');
+  await waitFor(async () => (await userCount('echo x7 can you see this')) === 1, 5000, 'own message shown after sending while scrolled up');
+  await waitAssistant('x7 can you see this', 8000);
+  await idle();
+  const s1 = await scrollState();
+  assert(s1.gap < 48 && (await lastAssistantOnScreen()), `after sending the view is not at the bottom: ${JSON.stringify(s1)}`);
+  await evidence('X7-send');
+  // (4) reading history: a reply from elsewhere does not drag the view …
+  const up = await wheelTo(-300, (s) => s.gap >= 200, 'scrolled up again');
+  const c = await Conn.open(CHAT);
+  try {
+    await c.attachChat(X7);
+    await c.turn(c.chat('echo x7 from elsewhere'));
+    await sleep(600);
+    const s2 = await scrollState();
+    assert(Math.abs(s2.top - up.top) < 2, `the view moved while reading history: ${up.top} → ${s2.top}`);
+    // (2) … and is there on reaching the bottom, with no further session update.
+    await wheelTo(100000, (s) => s.gap < 2, 'wheel down to the bottom');
+    await sleep(300);
+    assert((await lastAssistant()).includes('x7 from elsewhere') && (await lastAssistantOnScreen()), `at the bottom the newest reply is missing; last message: ${await lastAssistant()}`);
+  } finally {
+    c.close();
+  }
+  return `gap after sending ${Math.round(s1.gap)}px; history kept at ${Math.round(up.top)}px while a reply arrived`;
+});
+
+test('X7-background', 'X7 background session got more than a screen: back at the bottom with the newest, a typed message shows; left scrolled up → same place', async () => {
+  const c = await Conn.open(CHAT);
+  try {
+    await c.attachChat(X7);
+    await clickSidebar(CHAT, 'x7');
+    await wheelTo(100000, (s) => s.gap < 2, 'x7 at the bottom');
+    await newChat(CHAT, 'x7b'); // x7 is now a background session
+    await c.turn(c.chat('burst 40'), 30000);
+    await clickSidebar(CHAT, 'x7');
+    await waitFor(async () => (await lastAssistant()) === 'burst 40', 5000, 'newest message rendered on return');
+    await sleep(400);
+    const s = await scrollState();
+    assert(s.gap < 48 && (await lastAssistantOnScreen()), `back from the background the view is ${Math.round(s.gap)}px above the newest message`);
+    await typeChat('echo x7 back');
+    await waitFor(async () => (await userCount('echo x7 back')) === 1, 5000, 'message typed right after returning is shown');
+    await waitAssistant('x7 back', 8000);
+    await idle();
+    assert((await scrollState()).gap < 48, 'not at the bottom after sending');
+    await evidence('X7-background');
+    // left scrolled up: same place on return, the newest is rendered below
+    const up = await wheelTo(-400, (st) => st.gap >= 300, 'scrolled up 400px');
+    await clickSidebar(CHAT, 'x7b');
+    await c.turn(c.chat('burst 6'), 15000);
+    await clickSidebar(CHAT, 'x7');
+    await waitFor(async () => (await lastAssistant()) === 'burst 6', 5000, 'newest message rendered on return (scrolled up)');
+    await sleep(400);
+    const s3 = await scrollState();
+    assert(Math.abs(s3.top - up.top) < 2, `left scrolled up at ${up.top}px, came back at ${s3.top}px`);
+    await wheelTo(100000, (st) => st.gap < 2, 'wheel down to the bottom');
+    assert(await lastAssistantOnScreen(), 'the newest message is not reachable by scrolling down');
+    return `back at the bottom (gap ${Math.round(s.gap)}px) after 40 messages in the background; scrolled-up place kept (${Math.round(up.top)}px)`;
+  } finally {
+    c.close();
+  }
+});
+
+// X8: rename by double click, with the real pointer (two presses 90 ms apart).
+const renameFocused = () => ev(`(() => { const i = document.querySelector('.session-rename-input'); return !!i && i.isConnected && document.activeElement === i; })()`);
+async function renameByDoubleClick(d, label, ui, name) {
+  await realClick(sidebarLabel(d, label, ui), `sidebar item ${label}`, 2);
+  // Whatever the two clicks set off (session switch, redraw, focus) has run by now.
+  await sleep(600);
+  assert(await renameFocused(), `double click on "${label}": no focused rename input 600 ms later (focus is on ${await ev(`document.activeElement?.className || document.activeElement?.tagName`)})`);
+  await cdp.send('Input.insertText', { text: name });
+  await pressKey('Enter');
+  await waitFor(async () => (await sessions(d)).some((x) => x.title === name), 5000, `"${name}" saved on the daemon`);
+  await waitFor(() => sidebarItem(d, name, 'true', ui), 5000, `sidebar shows "${name}"`);
+}
+
+test('X8-chat', 'X8 double click on an open chat session (current, then background) renames it; the name is not sent to claude; the sidebar keeps updating', async () => {
+  const id = await newChat(CHAT, 'x8');
+  const c = await Conn.open(CHAT);
+  try {
+    await c.attachChat(id);
+    const from = c.frames.length;
+    // current session
+    await renameByDoubleClick(CHAT, 'x8', 'chat', '登录页重构');
+    const after = await ev(`({ users: ${VC}.querySelectorAll('[data-testid="chat-msg-user"]').length, input: ${INPUT}.value })`);
+    assert(after.users === 0 && after.input === '', `the new name went into the chat: ${JSON.stringify(after)}`);
+    // open, but in the background
+    const idB = await newChat(CHAT, 'x8b');
+    await renameByDoubleClick(CHAT, '登录页重构', 'chat', 'x8 第二个名字');
+    assert(await sidebarItem(CHAT, 'x8 第二个名字', `it.classList.contains('active')`), 'the double-clicked session did not become the current one');
+    await sleep(500);
+    assert(!c.frames.slice(from).some((f) => f.type === 'chat'), 'claude got a message during the renames');
+    assert((await ev(`${VC}.querySelectorAll('[data-testid="chat-msg-user"]').length`)) === 0, 'a user message appeared in the renamed session');
+    // The sidebar is not frozen: a turn in the (now background) x8b lights its dot,
+    // and a click still switches sessions.
+    const cb = await Conn.open(CHAT);
+    try {
+      await cb.attachChat(idB);
+      await cb.turn(cb.chat('echo x8 background turn'));
+      await waitFor(() => sidebarItem(CHAT, 'x8b', `it.dataset.dot !== 'none'`), 8000, 'activity dot on x8b after the rename');
+    } finally {
+      cb.close();
+    }
+    await clickSidebar(CHAT, 'x8b');
+    await evidence('X8-chat');
+    return 'current → "登录页重构", background → "x8 第二个名字"; no chat traffic; sidebar dot and switch still work';
+  } finally {
+    c.close();
+  }
+});
+
+test('X8-terminal', 'X8 double click on an open terminal session (current ×3, background ×2) renames it; nothing is typed into the shell', async () => {
+  const screen = () => ev(`(() => { const r = [...document.querySelectorAll('.term-instance')].find((c) => c.style.display !== 'none')?.querySelector('.xterm-rows'); return r ? r.innerText : ''; })()`);
+  const newTerminal = async (sub) => {
+    await openPicker(TERM.name);
+    await pickerEnter(sub);
+    await pickerOpen();
+    await waitFor(() => sidebarItem(TERM, sub, `it.classList.contains('active')`, 'terminal'), 20000, `terminal session ${sub} open`);
+    await waitFor(async () => /\$ ?$|\$\s/m.test(await screen()), 20000, 'shell prompt');
+  };
+  await newTerminal('x8t');
+  let name = 'x8t';
+  for (const next of ['build box', 'build box 2', 'build box 3']) {
+    await renameByDoubleClick(TERM, name, 'terminal', next);
+    name = next;
+  }
+  assert(!(await screen()).includes('build box'), `the new name was typed into the shell: ${JSON.stringify((await screen()).slice(-200))}`);
+  await newTerminal('x8u'); // the renamed one is now open in the background
+  for (const next of ['bg box', 'bg box 2']) {
+    await renameByDoubleClick(TERM, name, 'terminal', next);
+    assert(await sidebarItem(TERM, next, `it.classList.contains('active')`, 'terminal'), 'the double-clicked session did not become the current one');
+    name = next;
+    await clickSidebar(TERM, 'x8u', 'terminal');
+  }
+  await clickSidebar(TERM, name, 'terminal');
+  assert(!(await screen()).includes('box'), `a new name was typed into the shell: ${JSON.stringify((await screen()).slice(-200))}`);
+  await evidence('X8-terminal');
+  return `5 renames, last "${name}"`;
+});
+
+// X10: where the keyboard is after opening a session that waits for an answer,
+// and after a rename. Between the action and the keys there is no click: the
+// keys go wherever the app left the focus.
+const focusedOn = () => ev(`(() => { const a = document.activeElement; return !a ? 'nothing' : a === document.body ? 'BODY (nowhere)' : (a.dataset?.testid || String(a.className) || a.tagName); })()`);
+const lastBash = () => ev(`(() => { const d = [...${VC}.querySelectorAll('[data-testid="chat-tool"][data-tool="Bash"]')].pop(); return d ? d.dataset.status : ''; })()`);
+
+test('X10-prompt', 'X10 a background chat session asks for permission (yellow dot): a real click opens it, then 1 answers / Esc interrupts without clicking the card, and typing goes on in the input', async () => {
+  const id = await newChat(CHAT, 'x10');
+  await newChat(CHAT, 'x10b'); // x10 is now a background session
+  const c = await Conn.open(CHAT);
+  try {
+    await c.attachChat(id);
+    const openWaiting = async (turnText) => {
+      const turn = c.chat(turnText);
+      await waitFor(() => sidebarItem(CHAT, 'x10', `it.dataset.dot === 'waiting'`), 10000, 'yellow dot on x10');
+      await clickSidebar(CHAT, 'x10');
+      await waitFor(() => ev(`!!${inChat('[data-testid="chat-perm"]')}`), 5000, 'the prompt card is on screen');
+      await sleep(400); // whatever the click set off (switch, redraw, focus) has run
+      return turn;
+    };
+    // (1) the key 1 = "yes"
+    let turn = await openWaiting('tool Bash');
+    let focus = await focusedOn();
+    await evidence('X10-prompt');
+    await pressKey('1');
+    await waitFor(() => ev(`!${inChat('[data-testid="chat-perm"]')}`), 4000, `the card to close after pressing 1 without clicking it (the keyboard was on: ${focus})`);
+    await c.turn(turn);
+    await idle();
+    assert((await lastBash()) === 'ok' && (await assistantText()).includes('done Bash'), `the turn did not go on after 1: Bash is ${await lastBash()}`);
+    // … and the next message is typed without a click, too.
+    await sleep(300);
+    focus = await focusedOn();
+    await cdp.send('Input.insertText', { text: 'echo x10 typed after the answer' });
+    await pressKey('Enter');
+    await waitFor(async () => (await userCount('echo x10 typed after the answer')) === 1, 4000, `the message typed right after answering (the keyboard was on: ${focus})`);
+    await waitAssistant('x10 typed after the answer', 8000);
+    await idle();
+    // (2) Esc = interrupt the request
+    await clickSidebar(CHAT, 'x10b');
+    turn = await openWaiting('perm touch x10-esc.txt');
+    focus = await focusedOn();
+    await pressKey('Escape');
+    await waitFor(() => ev(`!${inChat('[data-testid="chat-perm"]')}`), 4000, `the card to close after pressing Esc without clicking it (the keyboard was on: ${focus})`);
+    await idle();
+    await waitFor(async () => (await transcriptText()).includes('Bash 的请求已中断'), 5000, 'the request shown as interrupted');
+    assert((await lastBash()) !== 'ok', 'the tool ran although the request was interrupted');
+    return `opened from the yellow dot: keyboard on ${focus}; 1 → done Bash, next message typed without a click; Esc → request interrupted`;
+  } finally {
+    c.close();
+  }
+});
+
+test('X10-rename-chat', 'X10 after renaming a chat session (Enter, Esc, a click on another session) the next keys go into the current session, without a click', async () => {
+  const id = await newChat(CHAT, 'x10r');
+  await newChat(CHAT, 'x10s');
+  await clickSidebar(CHAT, 'x10r');
+  const c = await Conn.open(CHAT);
+  try {
+    await c.attachChat(id);
+    const typeNow = async (msg, where) => {
+      await sleep(300); // the rename is over; nothing is clicked from here on
+      const focus = await focusedOn();
+      await cdp.send('Input.insertText', { text: msg });
+      await pressKey('Enter');
+      await waitFor(async () => (await userCount(msg)) === 1, 4000, `"${msg}" to show up in ${where} — typed without a click (the keyboard was on: ${focus})`);
+      await waitAssistant(msg.replace(/^echo /, ''), 8000);
+      await idle();
+    };
+    // Enter
+    await renameByDoubleClick(CHAT, 'x10r', 'chat', 'x10 改名');
+    await typeNow('echo typed after rename', 'the renamed session');
+    // Esc
+    await realClick(sidebarLabel(CHAT, 'x10 改名'), 'sidebar item x10 改名', 2);
+    await waitFor(renameFocused, 3000, 'rename input focused');
+    await cdp.send('Input.insertText', { text: '不保存的名字' });
+    await pressKey('Escape');
+    await waitFor(() => ev(`!document.querySelector('.session-rename-input')`), 3000, 'rename cancelled');
+    assert(await sidebarItem(CHAT, 'x10 改名', 'true'), 'Esc changed the name');
+    await typeNow('echo typed after esc', 'the session');
+    assert((await ev(`${INPUT}.value`)) === '', 'part of the cancelled name stayed in the input');
+    await evidence('X10-rename-chat');
+    // A click on another session commits the rename and switches: keys go there.
+    // The rename request takes 500 ms here, as against a remote daemon: on
+    // 127.0.0.1 it is back — and the sidebar rebuilt — before the button is
+    // released, and a rebuild under the pointer swallows the click (tasks.md
+    // follow-up list).
+    const from = c.frames.length;
+    await realClick(sidebarLabel(CHAT, 'x10 改名'), 'sidebar item x10 改名', 2);
+    await waitFor(renameFocused, 3000, 'rename input focused');
+    await cdp.send('Input.insertText', { text: 'x10 名字二' });
+    await ev(`(() => { const f = window.fetch; window.__x10Fetch = f; window.fetch = (u, o) => String(u).includes('/rename') ? new Promise((r) => setTimeout(r, 500)).then(() => f(u, o)) : f(u, o); return true; })()`);
+    try {
+      await realClick(sidebarLabel(CHAT, 'x10s'), 'sidebar item x10s');
+      await waitFor(async () => (await sessions(CHAT)).some((x) => x.title === 'x10 名字二'), 5000, 'the name was saved by clicking elsewhere');
+    } finally {
+      await ev(`(window.fetch = window.__x10Fetch, true)`);
+    }
+    await waitFor(() => sidebarItem(CHAT, 'x10s', `it.classList.contains('active')`), 5000, 'x10s is the current session');
+    await waitFor(() => sidebarItem(CHAT, 'x10 名字二', 'true'), 5000, 'sidebar shows the saved name');
+    await typeNow('echo typed in the other session', 'the session that was clicked');
+    assert(!c.frames.slice(from).some((f) => f.type === 'chat'), 'the renamed session got a message');
+    return 'Enter, Esc and click-elsewhere: the next message was typed without a click each time';
+  } finally {
+    c.close();
+  }
+});
+
+test('X10-rename-terminal', 'X10 after renaming a terminal session (Enter, Esc) the next keys go into the terminal, without a click', async () => {
+  const screen = () => ev(`(() => { const r = [...document.querySelectorAll('.term-instance')].find((c) => c.style.display !== 'none')?.querySelector('.xterm-rows'); return r ? r.innerText : ''; })()`);
+  await openPicker(TERM.name);
+  await pickerEnter('x10t');
+  await pickerOpen();
+  await waitFor(() => sidebarItem(TERM, 'x10t', `it.classList.contains('active')`, 'terminal'), 20000, 'terminal session x10t open');
+  await waitFor(async () => /\$ ?$|\$\s/m.test(await screen()), 20000, 'shell prompt');
+  const typeNow = async (cmd, out) => {
+    await sleep(300); // the rename is over; nothing is clicked from here on
+    const focus = await focusedOn();
+    await cdp.send('Input.insertText', { text: cmd });
+    await pressKey('Enter');
+    await waitFor(async () => (await screen()).includes(out), 5000, `${out} on the terminal — typed without a click (the keyboard was on: ${focus})`);
+  };
+  await renameByDoubleClick(TERM, 'x10t', 'terminal', 'x10 box');
+  await typeNow('echo X10_$((6*7))_TYPED', 'X10_42_TYPED');
+  await realClick(sidebarLabel(TERM, 'x10 box', 'terminal'), 'sidebar item x10 box', 2);
+  await waitFor(renameFocused, 3000, 'rename input focused');
+  await cdp.send('Input.insertText', { text: 'zzz-not-kept' });
+  await pressKey('Escape');
+  await waitFor(() => ev(`!document.querySelector('.session-rename-input')`), 3000, 'rename cancelled');
+  await typeNow('echo X10_$((7*7))_ESC', 'X10_49_ESC');
+  const out = await screen();
+  assert(!out.includes('x10 box') && !out.includes('zzz-not-kept'), `a name was typed into the shell: ${JSON.stringify(out.slice(-200))}`);
+  await evidence('X10-rename-terminal');
+  return 'Enter and Esc: the next command was typed without a click';
+});
+
 test('S1', 'main chat session created (dir main)', async () => {
   S1 = await newChat(CHAT, 'main');
   other = await Conn.open(CHAT);
@@ -611,6 +971,7 @@ test('R4', 'R4 tool blocks: Read/Grep folded, Bash output, Edit diff, failure', 
 });
 
 test('R5.6', 'R5.6 answer lost before reaching the daemon → prompt open again after reconnect', async () => {
+  const from = other.frames.length;
   await sendChat('perm touch r56.txt');
   await waitFor(() => ev(`!!${inChat('[data-testid="chat-perm-allow"]')}`), 10000, 'permission prompt');
   await ev(`window.__vrSock(${JSON.stringify(S1)}).__dropSend = true`);
@@ -619,8 +980,15 @@ test('R5.6', 'R5.6 answer lost before reaching the daemon → prompt open again 
   await ev(`window.__vrSock(${JSON.stringify(S1)}).close(), true`);
   await waitFor(() => ev(`${inChat('[data-testid="chat-perm"]')}?.dataset.state === 'open' && !!window.__vrSock(${JSON.stringify(S1)})`), 15000, 'prompt open after reconnect');
   await evidence('R5.6');
-  const text0 = await assistantText();
-  assert(!text0.endsWith('done Bash') || true, '');
+  // The answer never arrived, so nothing may have run: the tool block has no
+  // result yet, claude has not gone on, and the daemon has neither a
+  // resolution of the request nor a tool result (seen by the other desktop).
+  const before = await ev(`(() => { const d = [...${VC}.querySelectorAll('[data-testid="chat-tool"][data-tool="Bash"]')].pop(); return { status: d.dataset.status, text: d.textContent }; })()`);
+  assert(before.text.includes('r56.txt') && before.status !== 'ok' && before.status !== 'error', `the tool block already has a result although the answer was never delivered: ${JSON.stringify(before)}`);
+  assert(!(await assistantText()).trimEnd().endsWith('done Bash'), 'claude went on ("done Bash") although the answer was never delivered');
+  const leaked = other.frames.slice(from).filter((f) => f.type === 'chat' && (f.msg?.type === 'vr_resolved'
+    || (f.msg?.type === 'user' && Array.isArray(f.msg.message?.content) && f.msg.message.content.some((b) => b.type === 'tool_result'))));
+  assert(leaked.length === 0, `the daemon saw an answer / a tool result before the answer was delivered: ${JSON.stringify(leaked).slice(0, 300)}`);
   await ev(`${inChat('[data-testid="chat-perm-allow"]')}.click(), true`);
   await waitFor(() => ev(`!${inChat('[data-testid="chat-perm"]')}`), 10000, 'prompt closed');
   await idle();
@@ -973,6 +1341,39 @@ test('R16.3', 'R16.3 waiting in a background session: yellow dot, notification /
   return `window focused before: ${focusedBefore}; notify ${outcome}; badge while hidden ${JSON.stringify(badge)}, after focus() ${JSON.stringify(badgeAfter)} (window focused: ${focusedAfter}); click → main opened`;
 });
 
+test('X6', 'R16.3 current session while the window is in the background: yellow dot on it + notification; cleared once the window is focused again', async () => {
+  // "main" is the current session (R16.3 left it open). Real focus this time:
+  // the run's focus emulation is off while the app is hidden.
+  assert(await sidebarItem(CHAT, 'main', `it.classList.contains('active')`), 'main is not the current session');
+  let id = '';
+  let note = '';
+  try {
+    await cdp.send('Emulation.setFocusEmulationEnabled', { enabled: false });
+    // Hide the app, and take focus off the page explicitly: when macOS never
+    // made this (background-launched) window key, hiding it sends no blur.
+    await mainProc.evaluate(`(() => { const { app, BrowserWindow } = require('electron'); BrowserWindow.getAllWindows()[0].blurWebView(); app.hide(); return true; })()`);
+    await waitFor(async () => !(await ev('document.hasFocus()')), 5000, 'the window lost focus');
+    const nLogs = cdp.events.length;
+    id = other.chat('perm touch x6.txt');
+    await waitFor(() => sidebarItem(CHAT, 'main', `it.dataset.dot === 'waiting'`), 10000, 'yellow dot on the current session');
+    note = await waitFor(() => cdp.events.slice(nLogs).filter((e) => e.method === 'Runtime.consoleAPICalled').map((e) => e.params.args.map((a) => a.value ?? '').join(' ')).find((l) => l.startsWith('[notify]')), 8000, 'notify log');
+    assert(note.includes('gui-chat · main'), `notification title ${note}`);
+    await sleep(600); // the notification's outcome (Dock fallback on unsigned builds) is back
+    const st = await sidebarItem(CHAT, 'main', `({ dot: it.dataset.dot, active: it.classList.contains('active') })`);
+    assert(st.dot === 'waiting' && st.active, `after the notification outcome: ${JSON.stringify(st)}`);
+  } finally {
+    await mainProc.evaluate(`(() => { const { app, BrowserWindow } = require('electron'); app.show(); app.focus({ steal: true }); const w = BrowserWindow.getAllWindows()[0]; w.show(); w.focus(); w.focusOnWebView(); return true; })()`);
+    await cdp.send('Emulation.setFocusEmulationEnabled', { enabled: true });
+    await waitFor(() => ev('new Promise((r) => { requestAnimationFrame(() => r(true)); setTimeout(() => r(false), 500); })'), 10000, 'window rendering again');
+  }
+  await waitFor(async () => (await ev('document.hasFocus()')) && (await sidebarItem(CHAT, 'main', `it.dataset.dot === 'none'`)), 10000, 'dot cleared once the window is focused again');
+  await waitFor(() => ev(`!!${inChat('[data-testid="chat-perm-allow"]')}`), 5000, 'the prompt is on screen');
+  await ev(`${inChat('[data-testid="chat-perm-allow"]')}.click(), true`);
+  await other.turn(id);
+  await idle();
+  return `${note}; dot waiting while in the background, none after focus`;
+});
+
 test('R13.2', 'R13.2 claude exits → ended banner, restart works', async () => {
   await sendChat('crash 1');
   await waitFor(() => ev(`(() => { const e = ${inChat('[data-testid="chat-ended"]')}; return e && !e.hidden && e.dataset.reason === 'exited'; })()`), 10000, 'ended banner').catch(async (e) => {
@@ -1082,12 +1483,15 @@ async function main() {
   }
   const mainBin = buildMainDaemon();
 
-  const bashCfg = { default_workdir: '/tmp', allowed_roots: ['/tmp'], use_tmux: true, claude_cmd: '/bin/bash', claude_reload_cmd: '/bin/bash' };
+  // The bash daemons only get a directory of this run, not all of /tmp.
+  const termRoot = join(work, 'term-root');
+  for (const s of ['x8t', 'x8u', 'x10t']) mkdirSync(join(termRoot, s), { recursive: true });
+  const bashCfg = { default_workdir: termRoot, allowed_roots: [termRoot], use_tmux: true, claude_cmd: '/bin/bash', claude_reload_cmd: '/bin/bash' };
   TERM = defineDaemon('gui-term', { cfg: bashCfg });
   MAIN = defineDaemon('gui-main', { bin: mainBin, cfg: bashCfg });
 
   chatRoot = join(work, 'gui-chat', 'proj');
-  const subs = ['main', 'bypass', 'hist'].map((s) => join(chatRoot, s));
+  const subs = ['main', 'bypass', 'hist', 'x7', 'x7b', 'x8', 'x8b', 'x10', 'x10b', 'x10r', 'x10s'].map((s) => join(chatRoot, s));
   for (const s of subs) mkdirSync(s, { recursive: true });
   const chatConfig = join(work, 'gui-chat', 'cc');
   CHAT = chatDaemon('gui-chat', chatConfig, [chatRoot, ...subs], {
@@ -1149,7 +1553,9 @@ async function main() {
   await cdp.evaluate(NET_HOOK);
   ok('app started with 5 machines (zh), network hook installed');
 
+  const only = process.env.VR_ONLY ? new Set(process.env.VR_ONLY.split(',')) : null;
   for (const c of cases) {
+    if (only && !only.has(c.id)) continue;
     try {
       const detail = await c.fn();
       ok(`${c.name}${detail ? ` — ${detail}` : ''}`);

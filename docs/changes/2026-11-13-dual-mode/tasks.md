@@ -445,6 +445,94 @@
 - 前置：V13、V20 已实测；V17（远程 Linux）、500 条补发计时、首字延迟实测交给 dev-test
 - 依赖：T12
 
+## 关口 C 第 1 轮返工（2026-11-20）
+
+来源：两份验证结论（全文在 verdict-history.md「关口 C 第 1 轮」）和主会话的裁决。按 T14 → T20 的顺序做，每个任务先写能复现问题的测试并确认失败，再修，单独提交。界面问题除单元测试外，在 `gui-chat-smoke.mjs` 里加真实应用的用例，用 CDP 的真实指针 / 滚轮 / 按键事件（`Input.dispatchMouseEvent`、`dispatchKeyEvent`、`insertText`）。
+
+### T14 X7：对话不在底部时发消息，消息和回复都不显示
+- 状态：完成
+- 来源：界面验证者 P1（中高，拦）；R3.1、R16.1 / R16.2
+- 行为：(1) 用户自己发出消息时视图回到底部，显示这条消息和之后的回复；(2) 滚动到底部（距底小于现有 48px 阈值）时立即把窗口补齐到最新，不等下一次会话更新；(3) 后台会话切回前台：离开时贴底的回来仍贴底并显示最新内容，离开时不贴底的保持原位置、但窗口包含最新消息，滚到底能看到；(4) 用户上滑阅读历史时，新来的回复不把视图拽到底（保留）
+- 文件：修改 `desktop/src/renderer/chat/window.ts`、`desktop/src/renderer/chat/view.ts`；测试 `desktop/scripts/test-chat-window.mjs`、`desktop/scripts/test-chat-view.mjs`、`.claude/skills/verify/scripts/gui-chat-smoke.mjs`
+- 测试：`test-chat-window`（不贴底时窗口末端仍跟到最新、起点不动）；`test-chat-view`（不贴底时发送 → 消息和回复出现并贴底；滚到底立即补齐；隐藏期间收到内容后 show → 贴底可见；上滑时新回复不拽到底）；`gui-chat-smoke`（「X7 不贴底时发送」「X7 后台收到超过一屏后切回」，真实滚轮和按键）
+- 完成定义：`cd desktop && npm run typecheck && npm test`；`gui-chat-smoke.mjs` 两个新用例在修复前失败、修复后通过
+
+### T15 X8：已打开的会话双击改不了名
+- 状态：完成
+- 来源：界面验证者 P2（中，拦）；R15.1、R15
+- 行为：双击的两次点击不互相打架（第一次点击触发的切换会话 / 重绘 / 输入框抢焦点不能毁掉第二次点击要进入的改名）；进入改名后输入框保持焦点直到回车 / Esc / 失焦；改名输入框没有真正进入文档时不把 `renamingActive` 留在真（侧边栏不冻结）。对话会话和终端会话一起修
+- 文件：修改 `desktop/src/renderer/index.ts`（尽量放在与侧边栏渲染分离的小函数里）、`desktop/src/renderer/chat/view.ts`（必要时）；测试新建 `desktop/scripts/test-sidebar-rename.mjs`（加入 `npm test`）、`.claude/skills/verify/scripts/gui-chat-smoke.mjs`
+- 测试：单元（jsdom 上的 index.ts：已打开的对话会话、终端会话各一个——双击 → 输入框在文档里并有焦点 → 回车改名；标签已被换掉时不冻结侧边栏）；`gui-chat-smoke`（真实双击 `Input.dispatchMouseEvent` clickCount 1、2：已打开的对话会话、终端会话各一个用例，断言改名成功、对话里没有多出消息、之后侧边栏仍会更新）
+- 完成定义：`cd desktop && npm run typecheck && npm test`；`gui-chat-smoke.mjs` 两个新用例在修复前失败、修复后通过
+
+### T16 X3：长回复在流式途中重连（reset 同步）后显示两次
+- 状态：完成
+- 来源：codex P1（中，拦）；R12.4、design 5.2
+- 行为：流式尾巴被截断（丢了开头的 `message_start`）时，客户端最终只显示一条完整回复；完整的 assistant 消息到达时，同一回合里没有 id 的预览被它替换
+- 文件：修改 `vibe-remoted/internal/chat/session.go`、`desktop/src/renderer/chat/session.ts`；协议字段有增减时同步 `protocol.go`、`protocol.ts`、`docs/protocol.md`（不升协议版本）；测试 `vibe-remoted/internal/chat/session_test.go`、`desktop/scripts/test-chat-session.mjs`
+- 测试：Go（真实 Session、足够多的增量触发尾巴淘汰、订阅得到的补发帧）；TS（同样的帧序列，断言最终只有一条 assistant 消息且内容完整）
+- 完成定义：`cd vibe-remoted && go test -race -count=1 -timeout 5m ./internal/chat`；`cd desktop && npm test`
+
+### T17 X4：带 `-c` 新建会话时接上另一个目录的对话
+- 状态：完成
+- 来源：codex P2（中，拦）；R1.5、H6
+- 行为：选「该目录最近一次对话」时核对 JSONL 里记录的 `cwd` 与请求的目录（规范化后）相同，不同的跳过；读不到 `cwd` 的记录不认领。读 JSONL 只读需要的行。同时核对 `FindTranscript` 等同类函数
+- 文件：修改 `vibe-remoted/internal/chat/transcript.go`；测试 `vibe-remoted/internal/chat/transcript_test.go`（或已有的同功能测试文件）、`vibe-remoted/internal/server/ws_chat_test.go`
+- 测试：`LatestSessionForWorkdir` 的编码碰撞（`a-b` 与 `a/b`）；经 WebSocket 带 `continue` 新建
+- 完成定义：`cd vibe-remoted && go test -race -count=1 -timeout 5m ./internal/chat ./internal/session ./internal/server`（带独立 `TMUX_TMPDIR`）
+
+### T18 X6：R16.3 当前会话在窗口失焦时的黄点
+- 状态：完成
+- 来源：两名验证者都提到（低）；R16.3
+- 做法：先查 spec R16.3 原文、design、decisions 有没有记录在案的决定。没有 → 按 spec 修（窗口失焦时当前会话也显示黄点，窗口重新聚焦且该会话在前台时清掉），改 `test-chat-activity` 里对应断言并列出原来 / 现在 / 依据；有 → 不改，报告里给出依据
+- 查到的依据：spec R16.3 原文是「窗口没有聚焦，或该会话不是当前打开的会话 → 侧边栏显示黄点，并发桌面通知」；design（4.12、第 8 节对 R16 的覆盖）和 decisions 里没有「当前会话不显示黄点」的决定，d12 反而写的是降级为「Dock 弹跳 + 角标 + 侧边栏黄点」。结论：实现与 spec 不符且没有记录在案的决定 → 按 spec 修
+- 文件：`desktop/src/renderer/chat/activity.ts`、`desktop/src/renderer/index.ts`；测试 `desktop/scripts/test-chat-activity.mjs`、`desktop/scripts/chat-test-util.mjs`（可控的窗口焦点）、`.claude/skills/verify/scripts/gui-chat-smoke.mjs`（X6 用例）
+- 完成定义：`cd desktop && npm run typecheck && npm test`
+
+### T19 X5：`docs/protocol.md` 的 `chat_ack` 漏了 `message`
+- 状态：完成
+- 来源：codex P3（低，拦）；R18.2
+- 文件：`docs/protocol.md`；按 `/protocol-sync` 把 `chat_ack` 一节再核对一遍
+- 完成定义：/protocol-sync 对 `chat_ack` 三处无差异
+
+### T20 测试修正
+- 状态：完成
+- 来源：codex 备注 1、2；界面验证者备注 4、12 和 drag-select 的建议
+- 内容：
+  1. `gui-chat-smoke.mjs` R5.6 的永真断言改成真的断言（回答没送达之前工具块不处于已完成状态），并确认它在「回答没送达也执行了工具」的变异下会失败
+  2. `TestOrphanCleanup/stubborn_needs_SIGKILL` 的 `<-gone` 加有界上限（远大于正常耗时，写明依据），超时报出原因；产品代码不改
+  3. `gui-smoke.mjs` drag-select 加固：量行位置前等屏幕稳定，拖选前后各读一次目标行位置，不一致就重量；不改产品代码
+  4. `desktop/src/renderer/chat/prompts.ts` 的 3 个原始 NUL 字节改成转义写法（运行时的值不变），加静态检查守住 `desktop/src` 下的源文件不含 NUL 字节
+  5. 删除对话会话的确认文案（中英文）：对话会话的历史保留在 claude 的 JSONL 里；加断言
+- 文件：`.claude/skills/verify/scripts/gui-chat-smoke.mjs`、`.claude/skills/verify/scripts/gui-smoke.mjs`、`vibe-remoted/internal/chat/store_test.go`（孤儿用例所在文件）、`desktop/src/renderer/chat/prompts.ts`、`desktop/src/renderer/i18n.ts`、`desktop/src/renderer/index.ts`（删除确认处）、`desktop/scripts/` 下新增或已有的测试
+- 完成定义：`make check`；两份 GUI 冒烟通过
+### c7（等用户，不卡任务）
+- `.devflow.yml` 的不变规则「同一 claude 会话 id 任何时刻最多一个 claude 进程…」的 check 建议加上 X4 的 3 个回归测试（具体命令见 decisions c7）。改 `.devflow.yml` 的 invariants 属于只有人能决定的事，本轮不改文件；建议的命令已原样运行通过。
+- `CLAUDE.md`：对照代码逐句看过「对话会话模型」「客户端会话模型」里讲断线补发、流式尾巴、`-c` 选最近一次对话、侧边栏点的句子，没有因为这次修复变得不准确的，不需要改。
+
+## 关口 C 第 2 轮返工（2026-11-20）
+
+来源：两份验证结论（指定小节和全文在 verdict-history.md「关口 C 第 2 轮」）和主会话的裁决（`rulings-2.md`）。按 T21 → T22 的顺序做，每个任务先写能复现问题的测试并确认失败，再修，单独提交。
+
+### T21 X9：`-c` 的 cwd 检查漏掉已有历史
+- 状态：完成
+- 来源：codex P4（中，拦；X4 的修复引入）；R1.5、H6、R17
+- 行为：判断一份 JSONL 属于哪个目录时，从头读到第一个带 `cwd` 的记录为止（没有行数上限；流式逐行读，不把文件读进内存，超长的行不出错）；整份文件都没有 `cwd` 才算读不到，仍不认领。记录里的 `cwd` 和请求的目录都规范化（`EvalSymlinks`）后再比较，记录侧解析失败时退回 `Clean` 后的字面比较
+- 文件：修改 `vibe-remoted/internal/chat/transcript.go`；测试 `vibe-remoted/internal/chat/transcript_test.go`、`vibe-remoted/internal/server/ws_chat_test.go`、`vibe-remoted/internal/session/chat_manager_test.go`；`.devflow.yml`（不变规则的 check 加 X4、X9 的回归测试，decisions #51）、`CLAUDE.md`（continue 改写那一句）
+- 测试：`cwd` 首次出现在第 101 行、第 1001 行（约 2 MiB）；`cwd` 记的是符号链接别名而请求用规范路径，以及反过来；经 WebSocket 带 `continue` 新建对话会话、终端会话的 continue 改写（新建和重载）两个入口；X4 原有回归用例原样通过。实测耗时：50 MiB 且 `cwd` 在最后一行、50 MiB 且没有 `cwd`、一个目录 200 份历史且最新 199 份不属于本目录
+- 完成定义：`cd vibe-remoted && go test -race -count=1 -timeout 5m ./internal/chat ./internal/session ./internal/server`（带独立 `TMUX_TMPDIR`）；变异核对（加回行数上限、去掉记录侧规范化各有用例失败）；`.devflow.yml` 改后的 check 原样运行通过
+
+### T22 X10：改名之后、点开「等你处理」的会话之后的键盘焦点
+- 状态：完成
+- 来源：界面验证者备注 3、4（不拦，顺手修）；R16.3、R15.1
+- 行为：改名结束（回车 / Esc / 失焦提交）后把键盘焦点交回当前会话；切到一个会话时，它有待答的卡片（权限 / 计划 / 提问）就把焦点给卡片，卡片上写的键盘快捷键（1 / 2 / 3、Esc）可用，否则给对话输入框或终端。改名进行中输入框保持焦点；改名结束时如果有对话框打开，不把焦点交回会话（「有对话框打开时不抢焦点」只对改名结束这一种情况成立：对话框开着时当前会话新出现的待答卡片仍会从对话框里拿走键盘，见「后续」第一条；关口 C 第 3 轮界面备注 5）
+- 文件：修改 `desktop/src/renderer/index.ts`（`focusView`、`startInlineRename`）、`desktop/src/renderer/chat/view.ts`（必要时）；测试 `desktop/scripts/test-sidebar-rename.mjs`、`desktop/scripts/test-chat-view.mjs`、`.claude/skills/verify/scripts/gui-chat-smoke.mjs`
+- 测试：单元（改名回车 / Esc / 失焦后焦点回到当前会话；切到有待答卡片的会话后焦点在卡片上）；`gui-chat-smoke`（真实输入事件：后台对话会话出现权限请求 → 真实点击侧边栏打开 → 不点卡片直接按 `1` → 回合继续，Esc 同理；双击改名、回车后直接打字 → 字进当前会话的输入框 / 终端）
+- 完成定义：`cd desktop && npm run typecheck && npm test`；`gui-chat-smoke.mjs` 新用例在修复前失败、修复后通过；X8 的回归用例原样通过
+
+### c7 的处理（2026-11-20）
+- 按 decisions #51（依据 #42）直接做了：`.devflow.yml` 那条不变规则的 check 加上了 X4 的 3 个和 X9 的 4 个回归测试（T21 的提交 81024f1），原样运行通过；`CLAUDE.md` 的 continue 改写一条补了一句。上面「c7（等用户，不卡任务）」一节是第 1 轮返工时的记录。
+
 ## 进度
 
 （dev-build 每完成一个任务追加一行）
@@ -464,11 +552,56 @@
 | T11 | 2026-11-14 10:28 | 878f4f1 | 新增 test-chat-availability 9 个用例（not_claude、proto 2 / 无 chat 字段 → 升级 vibe-remoted、claude_too_old → 升级 claude、其它原因、workdir untrusted（untrusted/unknown/缺省都置灰）、加载中/info 失败）、test-chat-activity 5 个用例（灰/绿/黄、REST activitySeq/epoch/state、fallback does not switch）；test-i18n-parity 223 个键通过；`npm run typecheck && npm test && npm run build` 成功（21 个测试脚本）；`make check` 全绿 |
 | T12 | 2026-11-14 10:35 | 7c5bbfb | test-chat-session 新增 reload success keeps history、ended states（共 17）；test-chat-view 新增 ended banner, restart tracking and retry（chat-ended/chat-restart/chat-recheck/chat-handoff/chat-open-terminal/chat-retry，重载 202 → restarting → stopped → 新 epoch 成功、restart_failed 显示 message；共 10）；i18n 244 个键；`npm run typecheck && npm test && npm run build` 成功；`make check` 全绿（第一次运行 TestTerminalFramesUnchangedV3 偶发「tmux session did not become ready」，未改 Go 代码，重跑通过）；decisions #33 |
 | T13 | 2026-11-14 10:46 | 60cce4b（验证脚本）、9b7ad05（文档） | `ws-chat-smoke.mjs` 9 个用例全 PASS（chat: create / replay before ready / two clients / pending survives reconnect / resync 50 / handoff / daemon restart → ended / state without hooks / delete keeps jsonl）；终端 `ws-smoke.mjs` 12 项全 PASS；`gui-smoke.mjs` 原有 20 项 + 对话 3 项（chat session created via picker、chat reply rendered、permission allow once resumes）+ 第二个 daemon 启动共 25 项全 PASS；/protocol-sync 约 100 行核对，修正 9 处文档/注释漂移后三处一致，版本表第 3 行齐全；CLAUDE.md 三处 grep（终端模式、对话模式、只支持 claude）均有结果，「绝不解析」句含「终端模式」；`.devflow.yml` 登记 9 条不变规则（c2）；`make check` 全绿（全量并行运行时 TestTerminalFramesUnchangedV3 偶发「tmux session did not become ready」，单独与 `make check-server` 重跑均通过，见 decisions #35）；decisions #34–#35 |
+| T14（X7） | 2026-11-20 12:03 | 6f9153f | 修复前失败：`test-chat-window`「…the window always reaches the newest…」（end 3000 ≠ 3005）、`test-chat-view` 3 个 X7 用例（自己的消息不在 DOM / 最新回复不在 DOM / 切回后 2600 ≠ 4600）、`gui-chat-smoke` 的 X7-send（5 s 内自己的消息没出现）和 X7-background（切回后离最新消息 1420px）；修复后全部通过，`npm run typecheck && npm test` 全绿（test-chat-view 20、test-chat-window 3）。变异核对：去掉 show() 的回底 / 去掉发送时回底 / 窗口不跟到最新，三处各有用例失败 |
+| T15（X8） | 2026-11-20 12:09 | 3feaf67 | 修复前失败：`test-sidebar-rename`（新建，8 个用例；第 1 个即失败「the rename input is in the sidebar」）、`gui-chat-smoke` 的 X8-chat（双击后 600 ms 焦点在对话输入框 `c-in`）和 X8-terminal（焦点在 `xterm-helper-textarea`）；修复后全部通过，`npm run typecheck && npm test` 全绿（24 个脚本）。变异核对：当前会话的点击仍走 setActive / focusView 不看改名状态 / 输入框没进文档仍置标志，三处各有用例失败 |
+| T16（X3） | 2026-11-20 12:15 | d67ae4e | 修复前失败：Go `TestTailOverflowKeepsMessageStart`（条数上限、字节上限两个子用例：「replayed tail starts with content_block_delta, want the message_start of long-reply」）、`test-chat-session`「X3 reset sync mid-reply…」（assistant 消息 2 条 ≠ 1，与验证者的 `assistantCount: 2` 相同）；修复后通过，`go test -race ./internal/chat` ok、`npm test` 全绿（test-chat-session 20）。变异核对：完整消息不认领无 id 预览 / 已有该 id 的消息时不并入，两处各有用例失败；daemon 侧的变异即修复前的代码。协议字段没有变化（protocol.md 补一句尾巴上限的行为说明） |
+| T17（X4） | 2026-11-20 12:18 | f3e0366 | 修复前失败：`TestLatestSessionChecksTranscriptCwd`（「workdir a-b with no conversation got bbbbbbbb-… — the conversation of a/b」）、`TestContinueIgnoresOtherDirectorySharingProjectDir`（经 WebSocket 带 continue 新建，「-c in …/a-b (no conversation of its own) resumed …, the conversation of …/a/b」）、`TestTerminalContinueIgnoresOtherDirectorySharingProjectDir`（终端 `-c` 被改写成 `--resume <a/b 的 id>`）；修复后 `go test -race ./internal/chat ./internal/server ./internal/session` 全部 ok。变异核对：没有 cwd 的记录也认领 → 用例失败 |
+| T18（X6） | 2026-11-20 12:21 | 6580bcf | 查证：spec R16.3 字面要求黄点，design / decisions 无相反决定（d12 写的是「Dock 弹跳 + 角标 + 侧边栏黄点」）→ 按 spec 修。修复前失败：`test-chat-activity`「pending prompt turns it yellow and notifies」（dot none ≠ waiting）、`gui-chat-smoke` 的 X6（10 s 内当前会话没有黄点）；修复后通过，`npm test` 全绿（test-chat-activity 8）。变异核对：聚焦不清点 / 侧边栏照旧隐藏当前会话的点 / 通知结果回来把点去掉，三处各有用例失败。改动的已有断言 1 条（见 test-report） |
+| T19（X5） | 2026-11-20 12:22 | af47ac8 | 按 /protocol-sync 的步骤把 `chat_ack` 逐字段再核对一遍（Go `ChatAckFrame` 的 json tag、TS `ChatAckFrame`、文档）：`type`/`op`（4 个值）/`ref?`/`ok`/`code?`（9 个码，与 `Ack*` 常量一致）/`message?`/`duplicate?`/`completed?` 三处一致；文档补上 `message`（由 `nackMsg` 在 `too_large`、`invalid_response`、回答非计划请求带 setMode 的 `invalid_mode` 时给出）和此前只出现在示例里的 `ok`。Go / TS 代码未改 |
+| T20（测试修正） | 2026-11-20 12:28 | 9135f77（删除确认文案、NUL 字节）、793eb80（其余）、5ce6f55（X6 用例的失焦方式，全量运行时发现） | ① R5.6 的永真断言改为三条真的断言（工具块还没有结果、claude 没有继续、daemon 没有记下回答或工具结果）；变异核对：让假 claude 在收到回答前就产出工具结果 → 用例失败「the tool block already has a result although the answer was never delivered」，恢复后通过。② `TestOrphanCleanup` 的两处 `<-gone` 改为最多等 15 s（正常约 1–3 s，本用例自己断言 ≤ 4 s）并报出原因；用一个总是失败的假 `ps` 放在 PATH 最前面核对：16 s 后失败并写明原因、不再挂住，假 claude 由清理函数杀掉。③ gui-smoke 拖选用例：等到「正好是输出的那一行 + 下一行回到提示符 + 相隔 150 ms 两次看到的屏幕和位置相同」再量坐标；拖完再量一次，屏幕动过就打印 NOTE 并重新量、重新拖（最多 3 次）；最后的断言（复制内容必须等于 `SELECT_ME_PLEASE`）不变。④ `prompts.ts` 的 3 个原始 NUL 字节改为 `'\\0other'`，新增 `test-source-bytes`（修复前失败并指出 3 行）。⑤ 删除对话会话的确认文案（中英文）+ `test-sidebar-rename` 的断言。两份冒烟里 bash daemon 的 `allowed_roots` 由 `/tmp` 改为本次运行自己的目录。`npm test` 全绿（25 个脚本），gui-smoke 30 项通过 |
+| T21（X9） | 2026-11-20 13:30 | 81024f1 | 修复前失败：`TestLatestSessionReadsUntilFirstCwd`（第 101 行、第 1001 行 / 2 MiB、超长行之后 3 个子用例：「LatestSessionForWorkdir = "", false; want found=true」）、`TestLatestSessionComparesCanonicalCwd`（记录的是符号链接别名的 3 个子用例）、`TestContinueFindsLateOrAliasedCwd`（经 WebSocket 带 continue 新建，5 个子用例里 4 个失败：「-c in … started <新 id> instead of continuing <原 id>」）、`TestTerminalContinueFindsLateOrAliasedCwd`（终端 `-c` 的 argv 是 `--session-id <新 id>` 而不是 `--resume <原 id>`）；修复后 `go test -race ./internal/chat ./internal/session ./internal/server` 全部 ok，X4 的 3 个回归用例原样通过。变异核对：加回 100 行上限 → 三个包里第 101 / 1001 行的用例都失败（终端的新建和重载各一条）；记录侧不解析符号链接 → 三个包里别名用例都失败；筛行时不认 `\u` 转义 → 「cwd key written with escapes」失败。`.devflow.yml` 改后的不变规则 check 原样运行通过（`GOFLAGS=-count=1`，独立 `TMUX_TMPDIR`）。耗时实测见 evidence/x9-cwd-scan-timing.txt；decisions #51、#52 |
+| T22（X10） | 2026-11-20 13:53 | f03e9d9 | 修复前失败：`test-sidebar-rename` 新增 6 个用例里 5 个（改名回车后焦点在 `BODY` 而不是对话输入框 / 终端；改名时点另一个会话后焦点在 `BODY`；切到有待答卡片的会话后焦点不在卡片上；改名时来了卡片，改名输入框丢了焦点），`test-chat-view` 新增 2 个（`view.focus is not a function`），`gui-chat-smoke` 的 `X10-prompt`、`X10-rename-chat`、`X10-rename-terminal`（三条都报「the keyboard was on: BODY (nowhere)」）；修复后全部通过，`npm run typecheck && npm test` 全绿（test-sidebar-rename 15、test-chat-view 22），X8 的回归用例（`X8-chat`、`X8-terminal`、`test-sidebar-rename` 原有 9 个）原样通过。变异核对 8 处各有用例失败：`focusView` 只给输入框 / 回车提交后不交回 / Esc 后不交回 / 新卡片自己聚焦 / 卡片消失后不交给输入框（单元 3 个用例 + 真实应用 `X10-prompt`）/ 交回时不看焦点已在别处 / 交回时不看对话框 / 去掉 `focusView` 里 X8 的改名保护。decisions #53 |
 
 ## 后续
+
+- **【优先级最高，合并后第一个修】待答卡片一出现就拿走键盘，而单个数字键就是回答，所以正在别处打字时来了权限请求，接着敲的数字可能误批准它。** 卡片上 `1` =「是」、`2` =「不再询问」（有建议时）。实测（关口 C 第 3 轮界面验证者，verdict.md 的 B 节第 4 行、H 节、备注 1 / 2；截图 `evidence/verdict-c3/e01-head-manager-open-card-arrives.png`、`b01-head-card-while-typing.png`）：
+  - 机器管理对话框开着、正在「地址」栏打到 `10.0.` 时当前会话来了权限请求，卡片把焦点从对话框的文本框里拿走，接着敲的 `1` **直接允许了这条命令**（3/3），地址栏里没有多出字符；对话框盖着，用户看不清后面发生了什么。要填的正是地址、端口、Token 这类带数字的内容。
+  - 在对话输入框里正打着半句话时来了卡片，同样：本想打「10」，`1` = 允许，`0` 之后才进输入框（草稿不丢）。
+  - 不受影响的：新建会话对话框（只能从概览页打开，那时没有当前会话，3/3）、删除确认框（系统模态框，2/2）、改名输入框（X10 已挡住，名字里的数字不会回答卡片，3/3）。
+  - 来历：第 1 轮起就有的行为（基准 `16fd611` 上相同），与 Claude Code 终端里权限提示接管键盘的行为一致；X10 只挡住了改名输入框这一种。这一版不改（decisions d15：改它要动卡片的键盘模型，需要再验证一轮）。
+  - 验证者给的两个改法：卡片刚出现的短时间内不接受数字键；或焦点在文本框里（对话输入框、对话框里的输入框）时不抢焦点。若选后者，对话框那一种要连 `modal.ts` 关闭时的焦点还原一起处理（对话框关闭后焦点会还原到被卡片隐藏的输入框上、落不下来，decisions #53）。改的时候一并看卡片有没有可见的焦点外框（下面「关口 C 第 3 轮」里那条）。
 
 - 「不再询问」的保存位置可切换（原型里的 ← → 切换 destination）：首版按 claude 建议原样使用（H17），切换留到后续。
 - 代码块语法高亮。
 
-- gui-smoke 既有用例「drag-select + ⌘C」偶发失败（review.md 备注），待 dev-test 定性。
+- gui-smoke 既有用例「drag-select + ⌘C」偶发失败（review.md 备注），待 dev-test 定性。覆盖边界（关口 C 第 2 轮 codex 备注 2）：这条用例加固后，屏幕变化时可以重新量、重拖最多 2 次，第一次手势的结果不受最终断言约束。
 - gui-smoke 的终端 daemon 改用独立 `TMUX_TMPDIR`（现在共用开发者的 `tmux -L vibe-remote`，与并发的 Go 测试会串扰），拖选用例失败时打印复制到的原文（dev-test，decisions #38）。
+
+来自关口 C 第 1 轮界面验证者的备注（不拦，来源 verdict-history.md「关口 C 第 1 轮 · 验证结论全文（二）」的「备注」）：
+
+- 拒绝后的工具块标的是「失败」，没有单独的「已拒绝」标记（备注 2）。
+- 已结束的对话会话（交接 / daemon 重启后）在侧边栏没有标记，打开后才看到横幅（备注 3）。
+- 小窗口（800×500）里长命令把权限按钮挤到卡片折叠线以下，要在卡片里滚动才看得到；提问卡片同理（备注 5）。
+- 断线期间输入区仍显示「停止 Esc」和「思考中…」，状态没有收起（备注 6）。
+- 重新启动 / 重载后权限模式回到「编辑前询问」，用户可能没注意到（备注 7）。
+- `ExitPlanMode` / `AskUserQuestion` 在对话里显示成原始 JSON 摘要（备注 8）。
+- 从 JSONL 重建的历史里，出错的回合只有用户消息、没有错误卡片（备注 9）。
+- 侧边栏状态点只靠颜色区分（`aria-hidden`，没有 title）（备注 10）。
+- 侧边栏每 5 秒整体重建，按下和松开之间刚好重建时这次点击会丢（备注 11）。不只是 5 秒一次的轮询那一下：后台会话的黄点刚出现时侧边栏也正在重建，这时去点它，这一下可能被吞（关口 C 第 3 轮界面备注 8：等 0.7 秒再点 43 次丢 0 次；黄点一出现就点，一轮 30 次切换丢 5 次，另一轮 20 次丢 1 次）。再点一次即可。下面「改名时点击另一个会话」那条是同一个原因，修的时候一起处理。
+
+来自关口 C 第 2 轮的备注（不拦，来源 verdict-history.md「关口 C 第 2 轮」）：
+
+- X7 之后对话视图的 DOM 条数随新消息一直增长、不回收（上滑阅读时也是：5000 条历史首屏 300 条 DOM，再来 1000 条变成 1300 条）。长时间对话后实测渲染耗时，评估在保留阅读位置的同时回收看不见的 DOM（codex 备注 1）。
+- 上滑阅读时没有「下面有新内容」的提示（没有提示条 / 回到底部按钮，当前会话也不显示点）（界面备注 1）。
+- 窗口一次变矮 ≥48px 后流式输出不再跟随，要滚到底或发一条消息才恢复（第 1 轮的代码同样如此）（界面备注 2）。
+- 断线分隔线把流式增量也数成「消息」（一条长回复途中重连写成「已补回断线期间 20000 条消息」）（界面备注 5）。
+- 长回复超过尾巴上限后中途加入 / 重连，回复结束前的预览不完整（结束后是完整的一条）（界面备注 6）。
+- 指针停在当前会话那一行时看不到它的黄点（悬停时隐藏该行的点、让位给 ×）（界面备注 7）。
+- 改名时点击另一个会话，这次点击可能被吞掉：名字保存了，但没有切换会话，高亮和主区域都还是原来的会话，键盘也回到它（字不会打进看不见的会话）；用户看到的是「点了没反应」，再点一次即可。原因同上面「按下和松开之间刚好重建」那条：改名请求 + 列表刷新（两次往返）在松开鼠标之前完成，侧边栏就在按下和松开之间重建了。**适用范围不只是本机 daemon**（关口 C 第 3 轮界面验证者 E 节、备注 3 的实测，每格 5 次）：本机直连、按住 60 ms → 0/5 切换成功（对话、终端都是）；往返约 20 ms（同一局域网、Tailscale 直连这一类）、按住 60 ms 和 100 ms → 都是 0/5；往返约 50 ms、按住 60 ms → 5/5，按住 120 ms → 3/5；往返约 100 ms、按住 60 ms → 5/5。也就是多数「近」的远程机器都会遇到。基准 `16fd611` 上同样被吞（既有问题）。X10 的 `gui-chat-smoke` 用例为此把改名请求延迟 500 ms，所以这条用例测不到本条。修的时候和「侧边栏重建吞点击」一起处理。截图 `evidence/verdict-c3/c02-local60-chat-after-click-other.png`。
+
+来自关口 C 第 3 轮的备注（不拦，来源 verdict.md；协调者的裁决见 verdict.md「备注怎么处理的」）：
+
+- 用鼠标点卡片按钮（权限卡片的「是」/「不再询问」/「否」、计划卡片的选项）、用「否 + 说明」（按键或鼠标）、或用提问卡片的「提交回答」作答后，键盘焦点停在页面上（`BODY`），不到输入框，要先点一下输入框才能接着打字；纯键盘用户用「否 + 说明」拒绝之后要去摸鼠标。按 `1`、`2`（不再询问）、计划的 `1` / `2`、`Esc` 作答没有这个问题。不比上一轮差（基准上所有作答方式之后都是 `BODY`）。原因：回答一发出，卡片进入 `submitting`，卡片上的按钮和文本框都被 `disabled`，Chromium 把焦点从变成 disabled 的元素上移走；等卡片消失时，`renderPrompt` 里「键盘在卡片上才交给输入框」的判断已经不成立（按键作答时焦点在卡片的根元素上，它不会被 disabled）。jsdom 不模拟这条规则，单元测试看不到。验证者建议的改法：在发出回答的那一刻记下「键盘在卡片里」，卡片消失时据此交给输入框。（界面问题 1，verdict.md 的 A / K 节；decisions #54）
+- 三个 X10 GUI 用例（`X10-prompt`、`X10-rename-chat`、`X10-rename-terminal`）里「接着直接打字」用 CDP 的 `Input.insertText` 判断「字进了当前会话」，这个探针在焦点不在输入框时也可能把字送进去（文字落进页面里持有选区的那个文本框，并把焦点带过去）。改成断言 `document.activeElement`，或逐字符发真实按键事件（`Input.dispatchKeyEvent`）。三个用例里现在真正可靠的是 `X10-prompt` 的「真实按键 1 / Esc 关掉卡片」。（界面备注 4，verdict.md 的 K 节）
+- 待答卡片拿到焦点时没有可见的焦点外框（「是」的高亮是主选项的固定样式，卡片没有焦点时看起来一样），用户无法从画面上分辨此刻按数字键会不会生效。（界面备注 6；对比截图 `evidence/verdict-c3/a01-direct-opened-from-yellow-dot.png` 和 `d01-head-renaming-while-card-arrives.png`）
+- `-c` 查找「该目录最近一次对话」的扫描没有总量上限（X9 去掉了行数上限，没有设字节数、文件数的上限，也没有缓存）。正常数据是毫秒到几百毫秒；历史文件极多极大、且每行都要做 JSON 解析又都不属于本目录时会到几十秒：codex 用 80 份各约 50 MiB 的合成 JSONL（字符串值里有 `cwd` 字样、没有顶层 `cwd`，共 4015 MiB，热缓存）实测一次 `-c` 新建 22.8 秒，结果正确；期间同一 daemon 的其它会话毫秒级响应（扫描不持有 `Manager.mu`），只有这一次新建在等。冷盘、机械盘 / 网络盘没有测。可选的做法：给扫描设时间或字节预算、对读不到 `cwd` 的文件缓存结果、新建等待时在界面上给出提示。（codex 备注 1；decisions #55）

@@ -162,9 +162,15 @@ type Session struct {
 	ringBytes   int
 	omitted     int
 	evictedUpTo uint64
-	tail        []entry
-	tailBytes   int
-	cutoff      int64 // transcript bytes that predate this epoch; -1 = whole file
+	// The stream events of the reply being generated. Its message_start is
+	// kept apart: when the tail overflows the oldest deltas go, never the
+	// start — a client joining mid-reply merges the complete message by the
+	// id in it (R12.4).
+	tailStart     *entry
+	tail          []entry
+	tailBytes     int
+	tailTruncated bool
+	cutoff        int64 // transcript bytes that predate this epoch; -1 = whole file
 
 	pending       []pendingEntry
 	ours          map[string]string // daemon's own control requests: id → subtype
@@ -438,7 +444,7 @@ func (s *Session) spawn(restart bool) error {
 	s.epoch = newEpoch()
 	s.seq = 0
 	s.ring, s.ringBytes, s.omitted, s.evictedUpTo = nil, 0, 0, 0
-	s.tail, s.tailBytes = nil, 0
+	s.clearTailLocked()
 	s.cutoff = cutoff
 	s.pending = nil
 	s.ours = map[string]string{}
@@ -787,7 +793,7 @@ func (s *Session) handleLine(p *proc, raw []byte) {
 			p.lastErrors = env.Errors
 		}
 		s.appendRingLocked(msg)
-		s.tail, s.tailBytes = nil, 0
+		s.clearTailLocked()
 		select {
 		case p.resultCh <- struct{}{}:
 		default:
@@ -927,23 +933,37 @@ func (s *Session) appendRingLocked(msg []byte) uint64 {
 }
 
 // appendTailLocked keeps the stream events of the reply being generated, so
-// a client that reconnects mid-reply gets its missing deltas (R12.4).
+// a client that reconnects mid-reply gets its missing deltas (R12.4). Past
+// the limits the oldest deltas are dropped; the complete assistant message
+// still arrives and replaces the preview.
 func (s *Session) appendTailLocked(msg []byte, evType string) {
 	if evType == "message_start" {
-		s.tail, s.tailBytes = nil, 0
+		s.clearTailLocked()
 	}
 	s.seq++
 	f := chatFrame(s.seq, msg)
-	s.tail = append(s.tail, entry{seq: s.seq, frame: f})
-	s.tailBytes += len(f)
+	if evType == "message_start" {
+		s.tailStart = &entry{seq: s.seq, frame: f}
+	} else {
+		s.tail = append(s.tail, entry{seq: s.seq, frame: f})
+		s.tailBytes += len(f)
+	}
 	for len(s.tail) > TailMax || (s.tailBytes > TailBytesMax && len(s.tail) > 1) {
 		s.tailBytes -= len(s.tail[0].frame)
 		s.tail = s.tail[1:]
+		if !s.tailTruncated {
+			s.tailTruncated = true
+			log.Printf("chat [%s]: the stream tail of the current reply is over its limit; a client joining mid-reply gets its newest part until the complete message arrives", s.spec.ID)
+		}
 	}
 	s.broadcastLocked(Event{Frame: f})
 	if evType == "message_stop" {
-		s.tail, s.tailBytes = nil, 0
+		s.clearTailLocked()
 	}
+}
+
+func (s *Session) clearTailLocked() {
+	s.tailStart, s.tail, s.tailBytes, s.tailTruncated = nil, nil, 0, false
 }
 
 func (s *Session) statusLocked() string {
@@ -1385,7 +1405,7 @@ func (s *Session) settleLocked(p *proc, reason, message string) func(wait bool) 
 	}
 	s.unpaired, s.pending, s.ignoreResults, s.interruptID = nil, nil, 0, ""
 	s.ours = map[string]string{}
-	s.tail, s.tailBytes = nil, 0
+	s.clearTailLocked()
 
 	shown := reason
 	if reason == reasonRestart {
@@ -1607,7 +1627,11 @@ func (s *Session) planLocked(epoch string, since *uint64) *SyncPlan {
 		from = *since
 	}
 	var backlog []entry
-	for _, list := range [][]entry{s.ring, s.tail} {
+	lists := [][]entry{s.ring, s.tail}
+	if s.tailStart != nil {
+		lists = append(lists, []entry{*s.tailStart})
+	}
+	for _, list := range lists {
 		for _, e := range list {
 			if e.seq > from {
 				backlog = append(backlog, e)

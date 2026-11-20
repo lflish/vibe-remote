@@ -95,6 +95,8 @@ let savedClipboard = null;
 let cdp = null;
 const createdSessions = new Set();
 let sidebarRoot = null;
+// The only directory the bash daemon may use (its default_workdir and allowed_roots).
+let termWorkdir = null;
 
 function keychainHas(service) {
   return spawnSync('security', ['find-generic-password', '-s', service], { stdio: 'ignore' }).status === 0;
@@ -215,7 +217,10 @@ async function main() {
   // options section, and the note under "continue" can be measured (step 9).
   // No session of this run is started with it.
   const claudeFlags = [{ id: 'continue', label: 'Continue the last conversation (-c)', arg: '-c' }];
-  writeFileSync(daemonCfg, JSON.stringify({ ...base, port, token, claude_flags: claudeFlags }), { mode: 0o600 });
+  // The bash daemon only gets a directory of this run, not all of /tmp.
+  mkdirSync(join(work, 'term-proj'), { recursive: true });
+  termWorkdir = realpathSync(join(work, 'term-proj'));
+  writeFileSync(daemonCfg, JSON.stringify({ ...base, port, token, default_workdir: termWorkdir, allowed_roots: [termWorkdir], claude_flags: claudeFlags }), { mode: 0o600 });
   await startDaemon();
   ok(`daemon up on 127.0.0.1:${port}`);
   const preexisting = new Set((await restSessions()).map((s) => s.id));
@@ -312,7 +317,35 @@ async function main() {
   //    reporting when its `mouse` option is on — exactly how a mouse-aware CLI
   //    inside tmux triggers it in production. Scope it to this session only.
   await typeLine(`tmux set-option mouse on; clear; echo SELECT_ME_PLEASE`);
-  await waitFor(async () => (await screenText()).includes('SELECT_ME_PLEASE'), 10000, 'selection target');
+  // Where the output line is. The typed command contains the same words, so
+  // "the screen mentions them" is true before `clear; echo` has run: wait for
+  // the line that is exactly the output, with the prompt back below it, and
+  // for two looks 150 ms apart to see the same screen in the same place.
+  const locateTarget = () => cdp.evaluate(`(() => {
+    const rows = [...document.querySelectorAll('.term-instance')].find((c) => c.style.display !== 'none').querySelector('.xterm-rows');
+    const list = [...rows.children];
+    const i = list.findIndex((r) => r.textContent.trim() === 'SELECT_ME_PLEASE');
+    if (i < 0) return null;
+    const row = list[i];
+    const walker = document.createTreeWalker(row, NodeFilter.SHOW_TEXT);
+    const range = document.createRange();
+    const first = walker.nextNode();
+    let last = first; for (let n = first; n; n = walker.nextNode()) last = n;
+    const text = row.textContent; const start = text.indexOf('SELECT');
+    range.setStart(first, Math.max(0, start)); range.setEnd(last, last.textContent.length);
+    const r = range.getBoundingClientRect();
+    // Start inside the first cell, end just past the last one so xterm selects
+    // the whole word (ending mid-cell drops the final character).
+    return { x1: r.left + 2, x2: r.right + 2, y: r.top + r.height / 2, below: list[i + 1]?.textContent ?? '', screen: rows.innerText };
+  })()`);
+  const settledTarget = async () => {
+    const a = await locateTarget();
+    if (!a || !/\$\s*$/.test(a.below)) return null;
+    await sleep(150);
+    const b = await locateTarget();
+    return b && b.y === a.y && b.screen === a.screen ? b : null;
+  };
+  await waitFor(settledTarget, 10000, 'selection target on a settled screen').catch(() => null);
   // With mouseEventsRequireAlt, xterm only adds `enable-mouse-events` (= mouse
   // goes to the app, selection off) while ⌥ is held — and only if the app has
   // mouse reporting on. So: ⌥-hover must flip it on, a plain hover must not.
@@ -323,30 +356,28 @@ async function main() {
   check(altOn, 'remote mouse reporting is active and ⌥ routes the mouse to the app');
   await hover(0);
   check(!(await mouseClass()), 'without ⌥ the mouse stays with xterm selection');
-  const rect = await cdp.evaluate(`(() => {
-    const rows = [...document.querySelectorAll('.term-instance')].find((c) => c.style.display !== 'none').querySelector('.xterm-rows');
-    const row = [...rows.children].find((r) => r.textContent.trim() === 'SELECT_ME_PLEASE');
-    if (!row) return null;
-    const walker = document.createTreeWalker(row, NodeFilter.SHOW_TEXT);
-    const range = document.createRange();
-    const first = walker.nextNode();
-    let last = first; for (let n = first; n; n = walker.nextNode()) last = n;
-    const text = row.textContent; const start = text.indexOf('SELECT');
-    range.setStart(first, Math.max(0, start)); range.setEnd(last, last.textContent.length);
-    const r = range.getBoundingClientRect();
-    // Start inside the first cell, end just past the last one so xterm selects
-    // the whole word (ending mid-cell drops the final character).
-    return { x1: r.left + 2, x2: r.right + 2, y: r.top + r.height / 2 };
-  })()`);
+  let rect = await waitFor(settledTarget, 10000, 'selection target on a settled screen').catch(() => null);
   if (!rect) {
     const rows = await cdp.evaluate(`[...[...document.querySelectorAll('.term-instance')].find((c) => c.style.display !== 'none').querySelector('.xterm-rows').children].map((r) => r.textContent).filter((t) => t.trim()).slice(0, 8)`);
     fail(`could not locate the selection target row — rows: ${JSON.stringify(rows)}`);
   } else {
-    await cdp.send('Input.dispatchMouseEvent', { type: 'mousePressed', x: rect.x1, y: rect.y, button: 'left', buttons: 1, clickCount: 1 });
-    for (let i = 1; i <= 8; i++) {
-      await cdp.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: rect.x1 + ((rect.x2 - rect.x1) * i) / 8, y: rect.y, button: 'left', buttons: 1 });
+    // The drag is nine separate CDP calls. If the screen moved under them
+    // (a late repaint), the coordinates measured before are stale and the
+    // selection spans other rows: look again afterwards and redo the gesture
+    // from fresh coordinates. What gets copied is asserted exactly either way.
+    for (let attempt = 1; ; attempt++) {
+      await cdp.send('Input.dispatchMouseEvent', { type: 'mousePressed', x: rect.x1, y: rect.y, button: 'left', buttons: 1, clickCount: 1 });
+      for (let i = 1; i <= 8; i++) {
+        await cdp.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: rect.x1 + ((rect.x2 - rect.x1) * i) / 8, y: rect.y, button: 'left', buttons: 1 });
+      }
+      await cdp.send('Input.dispatchMouseEvent', { type: 'mouseReleased', x: rect.x2, y: rect.y, button: 'left', buttons: 0, clickCount: 1 });
+      const after = await locateTarget();
+      if ((after && after.y === rect.y && after.screen === rect.screen) || attempt >= 3) break;
+      console.log(`NOTE drag-select: the screen changed during the drag (target row y ${rect.y} → ${after ? after.y : 'gone'}); measuring again (attempt ${attempt + 1})`);
+      const again = await waitFor(settledTarget, 10000, 'selection target on a settled screen').catch(() => null);
+      if (!again) break;
+      rect = again;
     }
-    await cdp.send('Input.dispatchMouseEvent', { type: 'mouseReleased', x: rect.x2, y: rect.y, button: 'left', buttons: 0, clickCount: 1 });
     await cdp.evaluate(`window.vibeRemote.writeClipboardText('__before_copy__')`);
     await pressKey('c', MOD.meta);
     const copied = await waitFor(async () => {
@@ -443,7 +474,7 @@ async function main() {
 // plain folder; two of them carry a state dot. Then the real boxes are measured.
 async function sidebarCase(firstSessionId) {
   try {
-    const repos = makeSidebarRepos('/tmp');
+    const repos = makeSidebarRepos(termWorkdir);
     sidebarRoot = repos.root;
     const d = repos.dirs;
     const addr = `127.0.0.1:${port}`;

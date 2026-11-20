@@ -71,6 +71,13 @@ export class ChatView {
   onRecheck?: () => void;
   /** Ended banner (handed off): open the terminal session that took over. */
   onOpenTerminal?: (sessionId: string) => void;
+  /**
+   * The view wants the keyboard: a prompt card appeared, or went away while
+   * it had the keyboard. index.ts decides (only the session on screen, not
+   * during a sidebar rename) and calls focus(); without it the view just
+   * takes the keyboard.
+   */
+  onFocusRequest?: () => void;
 
   private transcript: HTMLElement;
   private inner: HTMLElement;
@@ -93,6 +100,13 @@ export class ChatView {
   // A reset sync is rebuilding the transcript (history comes in batches with
   // frames between): keep the window on the newest messages until it ends.
   private clampTail = false;
+  // Scroll position (X7). `pinned`: the user's last scroll left the transcript
+  // at the bottom. A hidden view (display:none) cannot be scrolled and gets no
+  // scroll events, so this is also where it was left. `toBottom`: the next
+  // render goes to the bottom whatever the geometry says (the user sent a
+  // message, or came back to a view left at the bottom).
+  private pinned = true;
+  private toBottom = false;
   private seenPrompts = new Set<string>();
   private hadPrompts = false;
   // Reload in flight (REST 202): the outcome arrives as chat_state (d10).
@@ -184,10 +198,27 @@ export class ChatView {
     this.updateComposer();
   }
 
-  /** Called when this view becomes visible. */
+  /**
+   * Puts the keyboard where the user acts next: on the open prompt card — the
+   * 1 / 2 / 3 and Esc written on it then work without a click — else in the
+   * input.
+   */
+  focus() {
+    if (this.card) this.card.el.focus();
+    else this.composer.focus();
+  }
+
+  private requestFocus() {
+    if (this.onFocusRequest) this.onFocusRequest();
+    else this.focus();
+  }
+
+  /** Called when this view becomes visible. Focus is the caller's business (index.ts focusView). */
   show() {
+    // Content that arrived while hidden could not be scrolled to: a view left
+    // at the bottom comes back at the bottom; one left scrolled up stays put.
+    if (this.pinned) this.toBottom = true;
     this.schedule();
-    requestAnimationFrame(() => this.composer.focus());
   }
 
   /** Locale switch: re-render texts. */
@@ -398,13 +429,15 @@ export class ChatView {
       return false;
     }
     const taken = this.queue.enqueue(text) !== null;
+    // Sending means wanting to see the message and its reply (R3.1).
+    if (taken) this.jumpToBottom();
     this.schedule();
     return taken;
   }
 
   // Retry after a turn error: the same text as a new message (R13.1).
   private retry(text: string) {
-    this.queue.enqueue(text);
+    if (this.queue.enqueue(text) !== null) this.jumpToBottom();
     this.schedule();
   }
 
@@ -435,12 +468,16 @@ export class ChatView {
   private renderPrompt(st: ChatState) {
     const prompt = st.pending[0];
     if (!prompt) {
+      // The keyboard was on the card (keys, or a click on one of its
+      // buttons): with the card gone it would be nowhere. The input is next.
+      const hadFocus = !!this.cardWrap?.contains(document.activeElement);
       if (this.card) {
         this.cardWrap?.remove();
         this.card = null;
         this.cardWrap = null;
       }
       this.composer.root.hidden = false;
+      if (hadFocus) this.requestFocus();
       return;
     }
     if (!this.card || this.card.requestId !== prompt.requestId) {
@@ -455,8 +492,7 @@ export class ChatView {
       this.cardWrap = el('div', 'cwrap prompt-wrap');
       this.cardWrap.appendChild(this.card.el);
       this.bottom.insertBefore(this.cardWrap, this.composer.root);
-      const card = this.card;
-      requestAnimationFrame(() => card.el.focus());
+      requestAnimationFrame(() => this.requestFocus());
     }
     this.card.update(prompt.state, st.pending.length - 1);
     this.composer.root.hidden = true;
@@ -477,7 +513,13 @@ export class ChatView {
     return tl.scrollHeight - tl.scrollTop - tl.clientHeight < 48;
   }
 
+  private jumpToBottom() {
+    this.pinned = true;
+    this.toBottom = true;
+  }
+
   private onScroll() {
+    this.pinned = this.atBottom();
     if (this.transcript.scrollTop < 80 && this.win.start > 0) {
       const before = this.transcript.scrollHeight;
       this.win = expandUp(this.win);
@@ -490,7 +532,8 @@ export class ChatView {
   private render(stick = true) {
     const st = this.session.getState();
     const msgs = st.messages;
-    const bottom = this.atBottom();
+    const bottom = (stick && this.toBottom) || this.atBottom();
+    if (stick) this.toBottom = false;
     if (msgs !== this.renderedMessages) {
       // A reset sync rebuilt the transcript: start at the newest messages.
       this.renderedMessages = msgs;
@@ -501,7 +544,7 @@ export class ChatView {
       // up extends the window once the sync is over.
       this.win = initialWindow(msgs.length);
     } else {
-      this.win = follow(this.win, msgs.length, bottom);
+      this.win = follow(this.win, msgs.length);
     }
     const pendingTools = new Set(
       st.pending.map((p) => p.request.tool_use_id).filter((id): id is string => typeof id === 'string'),

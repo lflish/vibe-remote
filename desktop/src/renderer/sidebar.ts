@@ -455,7 +455,8 @@ function renderSession(parent: HTMLElement, m: SidebarMachine, s: TreeSession, m
   // once — and switching rebuilds the sidebar, so the second click lands on a
   // new label. That second click must not open again: the rebuild would take
   // this label out from under the pointer, and the dblclick is never sent to
-  // an element that has left the page.
+  // an element that has left the page. (actions.open on the session already
+  // shown rebuilds nothing either: it only gives it the keyboard back.)
   let openTimer: number | undefined;
   label.addEventListener('click', (e) => {
     if (e.detail > 1) return;
@@ -473,6 +474,11 @@ function renderSession(parent: HTMLElement, m: SidebarMachine, s: TreeSession, m
   });
 
   const act = model.dotOf(m.key, s.id);
+  // The session shown has no state to announce — except a chat session that
+  // needs the user while the window is in the background (R16.3 of the chat
+  // sessions: index.ts lights it then and clears it when the window is
+  // focused again).
+  const showState = act !== 'none' && (key !== model.activeKey || (info.ui === 'chat' && act === 'waiting'));
 
   const meta = document.createElement('div');
   meta.className = 'session-meta';
@@ -485,7 +491,7 @@ function renderSession(parent: HTMLElement, m: SidebarMachine, s: TreeSession, m
     const kind = document.createElement('span');
     kind.textContent = info.ui === 'chat' ? t('sidebar.session.kind.chat') : t('sidebar.session.kind.terminal');
     meta.appendChild(kind);
-    if (act !== 'none' && key !== model.activeKey) {
+    if (showState) {
       const state = document.createElement('span');
       state.textContent = ` · ${stateLabel(act)}`;
       meta.appendChild(state);
@@ -495,7 +501,7 @@ function renderSession(parent: HTMLElement, m: SidebarMachine, s: TreeSession, m
   const dot = document.createElement('span');
   dot.className = 'session-unread';
   dot.setAttribute('aria-hidden', 'true');
-  if (act === 'none' || key === model.activeKey) {
+  if (!showState) {
     dot.classList.add('hidden');
     item.dataset.dot = 'none';
   } else {
@@ -609,6 +615,10 @@ export function startInlineRename(machine: MachineConfig, s: SessionInfo, label:
   input.className = 'session-rename-input';
   input.value = s.title || '';
   label.replaceWith(input);
+  // The label was rebuilt away before the double click got here: there is no
+  // input to edit, and nothing would ever end the rename again — the sidebar
+  // would stay frozen.
+  if (!input.isConnected) return;
   actions.setRenaming(true);
   input.focus();
   input.select();

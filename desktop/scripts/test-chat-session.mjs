@@ -128,6 +128,77 @@ test('preview merged by message.id', () => {
   assert.deepEqual(assistants(t.getState())[0].parts, [{ type: 'thinking', text: 'hmm.' }, { type: 'text', text: 'An' }]);
 });
 
+test('X3 reset sync mid-reply: a long reply shows once, complete (R12.4)', () => {
+  // What the daemon replays when a client joins a reply longer than the
+  // stream tail (20000 events): the reply's message_start, then the newest
+  // deltas. The complete message then replaces the preview.
+  const full = 'x'.repeat(20001);
+  const s = new ChatSession();
+  s.applySync(sync({ backlog: 20001 }));
+  feed(s, [start('long-reply'), ...Array.from({ length: 20000 }, () => delta('x'))]);
+  s.applyState(state({ status: 'running' }));
+  assert.equal(assistants(s.getState()).length, 1, 'one preview while it streams');
+  feed(s, [assistant('long-reply', [text(full)]), stop(), result()]);
+  s.applyState(state());
+  let a = assistants(s.getState());
+  assert.equal(a.length, 1, 'the reply shows exactly once');
+  assert.equal(textOf(a[0]), full, 'and it is complete');
+  assert.equal(a[0].streaming, false);
+
+  // A daemon that dropped the start with the oldest deltas (the frames gate
+  // C's counterexample got from e869add): the preview has no id to merge by.
+  // The complete message of the same reply still takes its place.
+  const o = new ChatSession();
+  o.applySync(sync({ backlog: 20000 }));
+  feed(o, Array.from({ length: 20000 }, () => delta('x')));
+  o.applyState(state({ status: 'running' }));
+  assert.equal(assistants(o.getState()).length, 1, 'the tail shows as a preview');
+  feed(o, [delta('x'), assistant('long-reply', [text(full)]), stop(), result()]);
+  o.applyState(state());
+  a = assistants(o.getState());
+  assert.equal(a.length, 1, 'no id-less fragment next to the complete reply');
+  assert.equal(a[0].id, 'long-reply');
+  assert.equal(textOf(a[0]), full);
+  assert.equal(a[0].streaming, false);
+});
+
+test('X3 id-less preview: joins the message its complete blocks belong to; a later reply does not swallow an abandoned one', () => {
+  // Joined while block 1 streams: block 0 is already a complete message (ring),
+  // block 1's deltas come without a message_start.
+  const s = new ChatSession();
+  s.applySync(sync({ backlog: 3 }));
+  feed(s, [echo('m1', 'q'), assistant('msg_m', [text('first block')]), delta('sec', 1)]);
+  s.applyState(state({ status: 'running' }));
+  feed(s, [delta('ond', 1)]);
+  feed(s, [assistant('msg_m', [text('second block')]), stop(), result()]);
+  s.applyState(state());
+  let a = assistants(s.getState());
+  assert.equal(a.length, 1, 'one message for the reply');
+  assert.deepEqual(a[0].parts.map((p) => p.text), ['first block', 'second block']);
+
+  // While it still streams, the preview shows after the complete block.
+  const p = new ChatSession();
+  p.applySync(sync({ backlog: 2 }));
+  feed(p, [assistant('msg_p', [text('first block')]), delta('sec', 1)]);
+  p.applyState(state({ status: 'running' }));
+  feed(p, [assistant('msg_p', [{ type: 'tool_use', id: 't9', name: 'Read', input: {} }])]);
+  a = assistants(p.getState());
+  assert.equal(a.length, 1);
+  assert.deepEqual(a[0].parts.map((x) => x.type), ['text', 'tool_use']);
+
+  // A preview whose reply never completed (turn interrupted) stays what it
+  // was; the next turn's reply is its own message.
+  const t = new ChatSession();
+  t.applySync(sync({ backlog: 2 }));
+  feed(t, [delta('half a rep'), delta('ly')]);
+  t.applyState(state({ status: 'running' }));
+  feed(t, [result({ subtype: 'error_during_execution', terminal_reason: 'aborted_streaming' })]);
+  feed(t, [echo('m2', 'next'), assistant('msg_n', [text('next reply')]), result()]);
+  t.applyState(state());
+  a = assistants(t.getState());
+  assert.deepEqual(a.map((m) => textOf(m)), ['half a reply', 'next reply']);
+});
+
 test('history then backlog', () => {
   const s = new ChatSession();
   s.applySync(sync({ historyCount: 2, backlog: 1 }));

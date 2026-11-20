@@ -304,7 +304,7 @@ v3 对话会话的条目另带（终端条目一律省略）：
    - `historyCount`：随后发送的 JSONL 历史**完整**条数（不截断；`reset` 时才有）
    - `backlog`：随后发送的缓冲消息条数（增量时即「已补回 N 条」）
 2. `historyCount` 条 `chat` 帧，`seq: 0`、`h: true`，从旧到新（每 200 帧一批流式发送）
-3. `backlog` 条 `chat` 帧（`seq > since` 的完整消息与当前回复的流式尾巴，按 `seq` 升序）
+3. `backlog` 条 `chat` 帧（`seq > since` 的完整消息与当前回复的流式尾巴，按 `seq` 升序）。流式尾巴有上限（20000 条 / 8 MiB）：超出时丢最旧的增量，但始终保留这条回复的 `message_start`。这时补发的预览只有最新的一段，完整的 `assistant` 消息到达后按 `message.id` 取代它（一条回复最终只显示一次）
 4. 一条 `chat_state`（同步结束标志）。客户端只有收到当前 epoch 的这条之后，下次 attach 才可报告 `epoch`/`since`
 
 ### chat (S→C)
@@ -372,8 +372,10 @@ v3 对话会话的条目另带（终端条目一律省略）：
 
 - `op`：`send` / `respond` / `interrupt` / `set_mode`
 - `ref`：回显 `clientMsgId`（send）、`requestId`（respond）或所请求的 `mode`（set_mode）；interrupt 不带
+- `ok`：这一帧是否被接受（总是给出）
 - `duplicate` / `completed`（只用于 `op:"send"`）：`duplicate:true` 表示这个 `clientMsgId` 已被接受过、这次没有再写入；此时 `completed` 总是给出，`true` = 这条消息不会再有 `result`（已见到它的 `result`，或已被看门狗放弃、记了 `stale_turn`——之后迟到的 `result` 带 `vr_stale`，不算它的），`false` = 仍在执行、它的 `result` 还会来。新消息的 ack 不带这两个字段
 - `code`（`ok:false` 时，开放集合）：`empty` / `too_large` / `chat_not_running` / `request_not_pending` / `foreign_rule` / `chat_busy` / `invalid_mode` / `invalid_response` / `mode_locked`
+- `message`（可选，只在 `ok:false` 时可能带）：给人看的补充说明（英文）。目前随 `too_large`（消息正文或 `clientMsgId` 超长）、`invalid_response`、以及回答非计划请求时带 `setMode` 的 `invalid_mode` 给出；其余情况不带。客户端把它显示给用户（没有时显示 `code`），判断逻辑只看 `code`
 
 ### 断线与订阅
 

@@ -48,15 +48,21 @@ export interface DotUpdate {
 }
 
 export function nextDot(prev: Dot, ev: ActivityEvent, ctx: DotContext): DotUpdate {
+  // New messages and finished turns only mark sessions that are not the one
+  // on screen (R16.1, R16.2).
   const shown = (dot: Dot): Dot => (ctx.isActive ? 'none' : dot);
+  // "Needs you" also marks the session on screen while the window is in the
+  // background (R16.3); it is seen once the window is focused with that
+  // session in front.
+  const seen = ctx.isActive && ctx.windowFocused;
+  const waiting = (): Dot => (seen ? 'none' : 'waiting');
   switch (ev.kind) {
     case 'chat':
-      return { dot: shown(prev === 'waiting' ? 'waiting' : 'output'), notify: false };
+      return { dot: prev === 'waiting' ? waiting() : shown('output'), notify: false };
     case 'result':
       return { dot: shown('idle'), notify: false };
     case 'prompt':
-      // R16.3: window not focused, or not the session being looked at.
-      return { dot: shown('waiting'), notify: !ctx.isActive || !ctx.windowFocused };
+      return { dot: waiting(), notify: !seen };
     case 'promptsCleared':
       return { dot: shown(prev === 'waiting' ? 'output' : prev), notify: false };
     case 'rest':
@@ -64,7 +70,7 @@ export function nextDot(prev: Dot, ev: ActivityEvent, ctx: DotContext): DotUpdat
     case 'notifyResult':
       // Shown or not (d12: unsigned builds fall back to a Dock bounce), the
       // dot stays and the current session is never switched.
-      return { dot: shown(prev), notify: false };
+      return { dot: prev === 'waiting' ? waiting() : shown(prev), notify: false };
     case 'notificationClick':
       return { dot: 'none', notify: false, open: true };
   }

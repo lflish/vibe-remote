@@ -24,7 +24,8 @@ export async function load(entry, { platform = 'neutral' } = {}) {
 /**
  * A jsdom page with the elements the renderer entry needs, installed as the
  * globals (window, document, …). `notifications` collects notify() calls; the
- * window reports focus. Rendering frames are queued (`flushFrames`).
+ * window reports focus unless `focus.window` is cleared. Rendering frames are
+ * queued (`flushFrames`).
  */
 export async function indexDom() {
   const { JSDOM } = await import('jsdom');
@@ -35,24 +36,29 @@ export async function indexDom() {
     { url: 'https://local.test', pretendToBeVisual: true },
   );
   const w = dom.window;
-  for (const k of ['window', 'document', 'localStorage', 'location', 'HTMLElement', 'HTMLDetailsElement', 'Node', 'MouseEvent', 'KeyboardEvent', 'Event']) {
+  for (const k of ['window', 'document', 'localStorage', 'location', 'HTMLElement', 'HTMLDetailsElement', 'HTMLInputElement', 'Node', 'MouseEvent', 'KeyboardEvent', 'Event']) {
     Object.defineProperty(globalThis, k, { value: w[k], configurable: true, writable: true });
   }
   Object.defineProperty(globalThis, 'navigator', { value: { language: 'en-US' }, configurable: true });
-  Object.defineProperty(w.document, 'hasFocus', { value: () => true });
+  const focus = { window: true };
+  Object.defineProperty(w.document, 'hasFocus', { value: () => focus.window });
   let frames = [];
   globalThis.requestAnimationFrame = (fn) => { frames.push(fn); return frames.length; };
   globalThis.cancelAnimationFrame = () => {};
   const notifications = [];
   w.vibeRemote = {
     onNotificationClick() {},
-    notify(title, body, tag) { notifications.push({ title, body, tag }); return Promise.resolve('shown'); },
+    notify(title, body, tag) { notifications.push({ title, body, tag }); return Promise.resolve(focus.notifyResult ?? 'shown'); },
     openExternal: async () => true,
     writeClipboardText: async () => true,
   };
   return {
     dom,
     notifications,
+    /** Window focus as the page sees it; `focus.notifyResult` = what notify() resolves to (default 'shown'). */
+    focus,
+    /** The window comes to the front. */
+    focusWindow() { focus.window = true; w.dispatchEvent(new w.Event('focus')); },
     flushFrames() { const q = frames; frames = []; q.forEach((f) => f(0)); },
   };
 }
@@ -74,7 +80,7 @@ export async function loadIndex({ realXterm = false } = {}) {
   if (cut < 0) throw new Error('index.ts: boot marker not found');
   source = source.slice(0, cut) + `
 export const __test = {
-  views, machineSessions, machineOnline, machineTrees, machineCaps, machineProjects,
+  views, machineSessions, machineOnline, machineTrees, machineCaps, machineProjects, rests, ChatView,
   get activeKey() { return activeKey; },
   setMachines(list: MachineConfig[]) { machines = list; },
   showMachineOverview, applyViewActivity, renderSidebar, openChatSession, openSession, rebuildRests, setActive, refreshAllMachines, pollMachines,

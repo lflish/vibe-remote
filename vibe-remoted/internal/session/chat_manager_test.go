@@ -884,6 +884,45 @@ func tmuxOption(t *testing.T, id, key string) string {
 	return strings.TrimSpace(string(out))
 }
 
+// X4: the terminal continue rewrite uses the same lookup — a terminal session
+// started with -c in …/a-b must not be rewritten to --resume the conversation
+// of …/a/b (same claude project directory).
+func TestTerminalContinueIgnoresOtherDirectorySharingProjectDir(t *testing.T) {
+	f := newChatFixture(t, true)
+	root := f.workdir()
+	a := filepath.Join(root, "a-b")
+	b := filepath.Join(root, "a", "b")
+	for _, d := range []string{a, b} {
+		if err := os.MkdirAll(d, 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if chat.EncodeProjectDir(a) != chat.EncodeProjectDir(b) {
+		t.Fatal("fixture: the two directories should share a project dir")
+	}
+	ub := chat.NewUUID()
+	f.transcript(b, ub, time.Now().Add(-time.Minute))
+
+	ta := newID("ta")
+	if _, err := f.createTerminal(f.m, ta, a, f.exe+" -c"); err != nil {
+		t.Fatal(err)
+	}
+	argv := f.waitArgv(1)
+	if has(argv, "--resume", "") || !has(argv, "--session-id", "") || has(argv, "-c", "") {
+		t.Fatalf("terminal -c in a-b (no conversation of its own): argv %v, want a new --session-id", argv)
+	}
+	if o := f.owner(f.m, ub); o != "" {
+		t.Fatalf("the conversation of a/b is claimed by %q", o)
+	}
+	tb := newID("tb")
+	if _, err := f.createTerminal(f.m, tb, b, f.exe+" -c"); err != nil {
+		t.Fatal(err)
+	}
+	if argv := f.waitArgv(2); !has(argv, "--resume", ub) {
+		t.Fatalf("terminal -c in a/b: argv %v, want --resume %s", argv, ub)
+	}
+}
+
 func TestTerminalContinueClaimsLatest(t *testing.T) {
 	f := newChatFixture(t, true)
 	cont := f.exe + " -c"
@@ -1193,5 +1232,76 @@ func TestHandoffCopiesHome(t *testing.T) {
 	t.Cleanup(func() { f.m.Delete(termID) })
 	if p, h := r.Home(); p != rec.Project || h != rec.Home {
 		t.Fatalf("handoff home=(%q,%q), want (%q,%q)", p, h, rec.Project, rec.Home)
+	}
+}
+
+// X9: the terminal continue rewrite (new session and reload) finds the
+// directory's conversation when its transcript opens with many records that
+// carry no cwd, or recorded the directory through a symlink — the command
+// becomes --resume <that conversation>, not a new --session-id.
+func TestTerminalContinueFindsLateOrAliasedCwd(t *testing.T) {
+	f := newChatFixture(t, true)
+	cont := f.exe + " -c"
+	write := func(projectOf, cwd, u string, before int) {
+		t.Helper()
+		dir := filepath.Join(f.projects, chat.EncodeProjectDir(projectOf))
+		if err := os.MkdirAll(dir, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		body := strings.Repeat(`{"type":"queue-operation","operation":"enqueue"}`+"\n", before) +
+			fmt.Sprintf(`{"type":"user","cwd":%q,"sessionId":%q,"message":{"role":"user","content":"earlier"}}`+"\n", cwd, u)
+		if err := os.WriteFile(filepath.Join(dir, u+".jsonl"), []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	// New session: the first cwd is on line 101.
+	w1 := f.workdir()
+	u1 := chat.NewUUID()
+	write(w1, w1, u1, 100)
+	t1 := newID("late-new")
+	if _, err := f.createTerminal(f.m, t1, w1, cont); err != nil {
+		t.Fatal(err)
+	}
+	if argv := f.waitArgv(1); !has(argv, "--resume", u1) || has(argv, "-c", "") {
+		t.Errorf("terminal -c with the cwd on line 101: argv %v, want --resume %s", argv, u1)
+	}
+	if o := f.owner(f.m, u1); o != t1 {
+		t.Errorf("owner of %s is %q, want %s", u1, o, t1)
+	}
+
+	// Reload into -c of a session that holds no conversation yet (it ran
+	// something that is not claude, so nothing newer was written here).
+	w2 := f.workdir()
+	u2 := chat.NewUUID()
+	write(w2, w2, u2, 1000)
+	t2 := newID("late-reload")
+	if _, err := f.createTerminal(f.m, t2, w2, "/bin/sleep 600"); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.m.Reload(t2, cont); err != nil {
+		t.Fatal(err)
+	}
+	if argv := f.waitArgv(2); !has(argv, "--resume", u2) || has(argv, "-c", "") {
+		t.Errorf("reload into -c with the cwd on line 1001: argv %v, want --resume %s", argv, u2)
+	}
+	if o := f.owner(f.m, u2); o != t2 {
+		t.Errorf("owner of %s is %q, want %s", u2, o, t2)
+	}
+
+	// New session: the transcript recorded the directory through a symlink.
+	w3 := f.workdir()
+	alias := filepath.Join(f.workdir(), "alias")
+	if err := os.Symlink(w3, alias); err != nil {
+		t.Fatal(err)
+	}
+	u3 := chat.NewUUID()
+	write(alias, alias, u3, 0)
+	t3 := newID("alias-new")
+	if _, err := f.createTerminal(f.m, t3, w3, cont); err != nil {
+		t.Fatal(err)
+	}
+	if argv := f.waitArgv(3); !has(argv, "--resume", u3) || has(argv, "-c", "") {
+		t.Errorf("terminal -c with the cwd recorded as a symlink: argv %v, want --resume %s", argv, u3)
 	}
 }

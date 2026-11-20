@@ -554,6 +554,17 @@ function applyViewActivity(view: ChatView, ev: ActivityEvent, prompt?: Prompt) {
   }
 }
 
+// The window has the user's attention again: a "needs you" dot lit on the
+// current chat session while the window was in the background (R16.3) has
+// been seen. Dots of other sessions stay until those sessions are opened.
+window.addEventListener('focus', () => {
+  const view = activeKey ? views.get(activeKey) : undefined;
+  if (view?.ui === 'chat' && view.activity === 'waiting') {
+    view.activity = 'none';
+    renderSidebar();
+  }
+});
+
 function classifyMachineIssue(error: unknown): MachineIssue {
   const message = error instanceof Error ? error.message.toLowerCase() : String(error).toLowerCase();
   if (/\b(401|403)\b/.test(message)) return 'auth';
@@ -879,6 +890,9 @@ function openChatSession(machine: MachineConfig, sessionId: string, workdir?: st
   view.onRestart = () => void reloadChat(machine, view.sessionId, sessionDisplayTitle(machine, view.sessionId));
   view.onRecheck = () => void recheckChat(view);
   view.onOpenTerminal = (id) => openTerminalById(machine, id);
+  view.onFocusRequest = () => {
+    if (view.key === activeKey) focusView(view);
+  };
   // Chat state comes from the structured stream (R16.4); hook notify frames
   // (idle / waiting) are for terminal sessions and are ignored here.
   client.onNotify = () => {};
@@ -1216,6 +1230,43 @@ function notifyTitleFor(machine: MachineConfig, sessionId: string): string {
   return `${machine.name} · ${sessionDisplayTitle(machine, sessionId)}`;
 }
 
+// focusView puts the keyboard in a session view: the terminal, or a chat
+// session's open prompt card (so the keys written on it work), else its input
+// (ChatView.focus, X10).
+// Not while a session is being renamed in the sidebar: the rename input keeps
+// the keyboard until Enter / Esc / the user clicks elsewhere. A focus scheduled
+// by the click that opened the session would otherwise land after the rename
+// started, close it (blur commits), and the new name would be typed into the
+// session instead (X8).
+function focusView(view: AnyView) {
+  if (renamingActive) return;
+  if (view.ui === 'chat') view.focus();
+  else view.terminal.focus();
+}
+
+// focusAfterRename: the rename input is gone (Enter, Esc, or a click elsewhere
+// committed it) and the keyboard it had goes back to the current session —
+// unless the user already put it somewhere (the click landed in a field), or
+// a dialog is open (X10).
+function focusAfterRename() {
+  const el = document.activeElement;
+  if (el && el !== document.body) return;
+  if (document.querySelector('.modal-overlay')) return;
+  const view = activeKey ? views.get(activeKey) : undefined;
+  if (view) focusView(view);
+}
+
+// selectOpenSession handles a click on a session's name in the sidebar
+// (SidebarActions.open). The current session is already on screen: there is
+// nothing to switch or redraw, the keyboard just goes back to it. (Going
+// through setActive here rebuilt the sidebar on every click, so the second
+// click of a double click replaced the label the rename was about to start on.)
+function selectOpenSession(machine: MachineConfig, session: SessionInfo) {
+  const view = views.get(viewKey(machine, session.id));
+  if (view && view.key === activeKey) focusView(view);
+  else openExisting(machine, session);
+}
+
 // setActive shows one session view and hides the rest, then fits + focuses it.
 function setActive(key: string) {
   activeKey = key;
@@ -1240,13 +1291,15 @@ function setActive(key: string) {
   const view = views.get(key);
   if (view?.ui === 'chat') {
     view.show();
+    // Next frame: the transcript is laid out and scrolled first.
+    requestAnimationFrame(() => focusView(view));
   } else if (view) {
     // Fit only after the host has a real box. The first startup can still be in
     // Electron's maximize/layout transition; fitWhenVisible retries once on
     // the next frame instead of locking xterm to the initial small dimensions.
     fitWhenVisible(view.container, () => {
       view.fitAddon.fit();
-      view.terminal.focus();
+      focusView(view);
     });
   }
   renderSidebar();
@@ -1319,7 +1372,7 @@ function buildSidebarModel(): SidebarModel {
 
 const sidebarActions: SidebarActions = {
   open: (machine, session) => {
-    openExisting(machine, session);
+    selectOpenSession(machine, session);
   },
   openOverview: (machine) => {
     showMachineOverview(machine);
@@ -1342,7 +1395,9 @@ const sidebarActions: SidebarActions = {
   },
   setRenaming: (active) => {
     renamingActive = active;
-    if (!active) renderSidebar();
+    if (active) return;
+    renderSidebar();
+    focusAfterRename();
   },
   reload: (machine, session) => {
     void handleReload(machine, session);
@@ -1407,7 +1462,10 @@ async function handleDeleteWorktree(machine: MachineConfig, worktree: TreeWorktr
   }
 }
 
-// confirmAndDeleteSession asks before deleting a session. The dialog says what
+// confirmAndDeleteSession asks before deleting a session. A terminal session
+// is gone for good; a chat session's conversation stays in claude's own
+// history files on the remote machine (R15.2 of the chat sessions), so its
+// dialog says that instead. The dialog also says what
 // happens to the worktree the session sits in: kept (protocol 4), or removed
 // with the session when clean (an older daemon, R9.1). While the daemon's
 // version is not known (its project list has not been read once) it says that
@@ -1424,7 +1482,7 @@ async function confirmAndDeleteSession(machine: MachineConfig, session: SessionI
   const cap = machineCaps.get(mk) ?? 'unknown';
   const legacyWorktree = cap === 'legacy' && session.mode === 'worktree';
   const unknownWorktree = cap === 'unknown' && session.mode === 'worktree';
-  if (!(await confirmDeleteSession({ name, worktreeLabel, legacyWorktree, unknownWorktree }))) return;
+  if (!(await confirmDeleteSession({ name, chat: session.ui === 'chat', worktreeLabel, legacyWorktree, unknownWorktree }))) return;
   void closeSession(machine, session.id);
 }
 

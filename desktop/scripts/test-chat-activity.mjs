@@ -27,13 +27,30 @@ test('result turns it green (R16.2)', () => {
 
 test('pending prompt turns it yellow and notifies (R16.3)', () => {
   assert.deepEqual(nextDot('output', { kind: 'prompt' }, bg), { dot: 'waiting', notify: true });
-  // Window not focused: notify even for the open session, but no dot on it.
-  assert.deepEqual(nextDot('none', { kind: 'prompt' }, away), { dot: 'none', notify: true });
+  // Window not focused: the open session too gets the dot and the notification.
+  assert.deepEqual(nextDot('none', { kind: 'prompt' }, away), { dot: 'waiting', notify: true });
   // Looking right at it: nothing to tell.
   assert.deepEqual(nextDot('none', { kind: 'prompt' }, fg), { dot: 'none', notify: false });
   // Handled (here or elsewhere): yellow goes back to grey.
   assert.deepEqual(nextDot('waiting', { kind: 'promptsCleared' }, bg), { dot: 'output', notify: false });
   assert.equal(nextDot('idle', { kind: 'promptsCleared' }, bg).dot, 'idle');
+});
+
+test('current session, window in the background: the yellow dot stays until it is seen or handled (R16.3, X6)', () => {
+  // The notification's outcome does not take the dot away (d12: Dock bounce + badge + dot).
+  assert.deepEqual(nextDot('waiting', { kind: 'notifyResult', result: 'fallback' }, away), { dot: 'waiting', notify: false });
+  assert.deepEqual(nextDot('waiting', { kind: 'notifyResult', result: 'shown' }, away), { dot: 'waiting', notify: false });
+  // More messages while it waits: still yellow.
+  assert.deepEqual(nextDot('waiting', { kind: 'chat' }, away), { dot: 'waiting', notify: false });
+  // Handled (elsewhere), or the turn ended: nothing left to point at on the open session.
+  assert.deepEqual(nextDot('waiting', { kind: 'promptsCleared' }, away), { dot: 'none', notify: false });
+  assert.deepEqual(nextDot('waiting', { kind: 'result' }, away), { dot: 'none', notify: false });
+  // Only "needs you" marks the open session; new messages and finished turns do not (R16.1, R16.2).
+  assert.deepEqual(nextDot('none', { kind: 'chat' }, away), { dot: 'none', notify: false });
+  assert.deepEqual(nextDot('none', { kind: 'result' }, away), { dot: 'none', notify: false });
+  // Looking at it again (window focused, session in front): the events that follow clear it.
+  assert.deepEqual(nextDot('waiting', { kind: 'chat' }, fg), { dot: 'none', notify: false });
+  assert.deepEqual(nextDot('waiting', { kind: 'notifyResult', result: 'fallback' }, fg), { dot: 'none', notify: false });
 });
 
 test('REST activitySeq / state (R16.4: no hooks needed)', () => {
@@ -93,6 +110,45 @@ test('machine overview shown: the hidden chat is not current, its prompt shows y
   assert.equal(document.querySelector('.session-item').dataset.dot, 'waiting', 'sidebar dot');
   assert.equal(page.notifications.length, 1, 'notified');
   assert.equal(page.notifications[0].tag, view.key);
+  page.dom.window.close();
+});
+
+test('current chat session, window in the background: its prompt shows yellow in the sidebar and notifies; focusing the window clears it (R16.3, X6)', async () => {
+  const page = await indexDom();
+  const app = await loadIndex();
+  const machine = { name: 'dev', addr: '127.0.0.1', port: 1234, token: 't' };
+  const mk = '127.0.0.1:1234';
+  app.setMachines([machine]);
+  app.machineOnline.set(mk, true);
+  app.machineSessions.set(mk, [
+    { id: 's', title: 'conversation', workdir: '/w', created: '2026-11-20', mode: 'normal', ui: 'chat', state: 'running' },
+    { id: 't', title: 'shell', workdir: '/w', created: '2026-11-20', mode: 'normal' },
+  ]);
+  const view = { key: `${mk}::s`, sessionId: 's', machine, container: document.createElement('div'), activity: 'none', ui: 'chat', client: { state: 'connected' }, composer: { focus() {} }, show() {} };
+  document.getElementById('terminal-container').appendChild(view.container);
+  app.views.set(view.key, view);
+  app.setActive(view.key);
+  const dot = (title) => [...document.querySelectorAll('.session-item')].find((i) => i.querySelector('.session-label-text').textContent === title).dataset.dot;
+
+  // The user is in another app.
+  page.focus.window = false;
+  page.focus.notifyResult = 'fallback';
+  app.applyViewActivity(view, { kind: 'prompt' }, { kind: 'permission', toolName: 'Bash' });
+  assert.equal(page.notifications.length, 1, 'notified');
+  assert.equal(dot('conversation'), 'waiting', 'yellow dot on the current session');
+  for (let i = 0; i < 5; i++) await Promise.resolve(); // the notification's outcome arrives
+  assert.equal(dot('conversation'), 'waiting', 'still yellow after the Dock fallback');
+  assert.equal(app.activeKey, view.key, 'nothing switched');
+
+  // Back in the window with that session in front: seen.
+  page.focusWindow();
+  assert.equal(dot('conversation'), 'none', 'cleared once the window is focused again');
+  assert.equal(view.activity, 'none');
+
+  // In the window and looking at it: a prompt is no news (unchanged).
+  app.applyViewActivity(view, { kind: 'prompt' }, { kind: 'permission', toolName: 'Bash' });
+  assert.equal(dot('conversation'), 'none');
+  assert.equal(page.notifications.length, 1);
   page.dom.window.close();
 });
 

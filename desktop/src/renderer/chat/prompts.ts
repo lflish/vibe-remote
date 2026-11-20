@@ -205,8 +205,8 @@ export function createPromptCard(prompt: Prompt, ctx: PromptContext): PromptCard
       const name = `q-${prompt.requestId}-${qi}`;
       const boxes: HTMLInputElement[] = [];
       const sync = () => {
-        selections[qi].labels = boxes.filter((b) => b.checked && b.value !== ' other').map((b) => b.value);
-        const otherOn = boxes.some((b) => b.checked && b.value === ' other');
+        selections[qi].labels = boxes.filter((b) => b.checked && b.value !== '\0other').map((b) => b.value);
+        const otherOn = boxes.some((b) => b.checked && b.value === '\0other');
         selections[qi].other = otherOn ? otherText.value : undefined;
         refreshSubmit();
       };
@@ -228,7 +228,7 @@ export function createPromptCard(prompt: Prompt, ctx: PromptContext): PromptCard
       };
       for (const o of q.options) addOption(o.label, o.label, o.description);
       // "Other": free text, sent as the answer (R7.2, V10).
-      const otherRow = addOption(' other', t('chat.question.other'));
+      const otherRow = addOption('\0other', t('chat.question.other'));
       const otherText = el('input', 'qo-other');
       otherText.type = 'text';
       otherText.placeholder = t('chat.question.otherPlaceholder');

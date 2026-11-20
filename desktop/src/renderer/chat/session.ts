@@ -535,6 +535,30 @@ export class ChatSession {
     return this.newAssistant(id, history);
   }
 
+  // A preview that began without its message_start (the client joined
+  // mid-reply and the start was no longer replayed) has no id to be merged
+  // by. A complete message arriving while it is still the live preview is
+  // that same reply: the preview becomes the message `id`, or joins the one
+  // that already holds the reply's earlier blocks — never a second copy next
+  // to the complete reply (R12.4).
+  private claimOrphanPreview(id: string) {
+    const orphan = this.live;
+    if (!orphan || orphan.id) return;
+    const owner = this.byId.get(id);
+    if (!owner) {
+      orphan.id = id;
+      this.byId.set(id, orphan);
+      return;
+    }
+    const from = this.blocks.get(orphan)!;
+    const to = this.blocks.get(owner)!;
+    for (const [index, part] of from.preview) if (!to.preview.has(index)) to.preview.set(index, part);
+    this.blocks.delete(orphan);
+    this.messages.splice(this.messages.indexOf(orphan), 1);
+    this.turnAssistants = this.turnAssistants.filter((m) => m !== orphan);
+    this.live = owner;
+  }
+
   private compose(msg: AssistantMessage) {
     const b = this.blocks.get(msg)!;
     const previews = [...b.preview.entries()]
@@ -549,6 +573,7 @@ export class ChatSession {
     // claude sends each content block of a reply as its own complete
     // assistant line, all with the same message.id: they append in order and
     // replace the preview of the same block index.
+    if (id && !history) this.claimOrphanPreview(id);
     const msg = this.assistantFor(id, history);
     const b = this.blocks.get(msg)!;
     for (const p of parts) {
