@@ -1214,7 +1214,9 @@ test('X6', 'R16.3 current session while the window is in the background: yellow 
   let note = '';
   try {
     await cdp.send('Emulation.setFocusEmulationEnabled', { enabled: false });
-    await mainProc.evaluate(`require('electron').app.hide(), true`);
+    // Hide the app, and take focus off the page explicitly: when macOS never
+    // made this (background-launched) window key, hiding it sends no blur.
+    await mainProc.evaluate(`(() => { const { app, BrowserWindow } = require('electron'); BrowserWindow.getAllWindows()[0].blurWebView(); app.hide(); return true; })()`);
     await waitFor(async () => !(await ev('document.hasFocus()')), 5000, 'the window lost focus');
     const nLogs = cdp.events.length;
     id = other.chat('perm touch x6.txt');
@@ -1225,7 +1227,7 @@ test('X6', 'R16.3 current session while the window is in the background: yellow 
     const st = await sidebarItem(CHAT, 'main', `({ dot: it.dataset.dot, active: it.classList.contains('active') })`);
     assert(st.dot === 'waiting' && st.active, `after the notification outcome: ${JSON.stringify(st)}`);
   } finally {
-    await mainProc.evaluate(`(() => { const { app, BrowserWindow } = require('electron'); app.show(); app.focus({ steal: true }); const w = BrowserWindow.getAllWindows()[0]; w.show(); w.focus(); return true; })()`);
+    await mainProc.evaluate(`(() => { const { app, BrowserWindow } = require('electron'); app.show(); app.focus({ steal: true }); const w = BrowserWindow.getAllWindows()[0]; w.show(); w.focus(); w.focusOnWebView(); return true; })()`);
     await cdp.send('Emulation.setFocusEmulationEnabled', { enabled: true });
     await waitFor(() => ev('new Promise((r) => { requestAnimationFrame(() => r(true)); setTimeout(() => r(false), 500); })'), 10000, 'window rendering again');
   }
