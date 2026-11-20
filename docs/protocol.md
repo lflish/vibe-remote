@@ -264,7 +264,7 @@ v3 对话会话的条目另带（终端条目一律省略）：
    - `historyCount`：随后发送的 JSONL 历史**完整**条数（不截断；`reset` 时才有）
    - `backlog`：随后发送的缓冲消息条数（增量时即「已补回 N 条」）
 2. `historyCount` 条 `chat` 帧，`seq: 0`、`h: true`，从旧到新（每 200 帧一批流式发送）
-3. `backlog` 条 `chat` 帧（`seq > since` 的完整消息与当前回复的流式尾巴，按 `seq` 升序）
+3. `backlog` 条 `chat` 帧（`seq > since` 的完整消息与当前回复的流式尾巴，按 `seq` 升序）。流式尾巴有上限（20000 条 / 8 MiB）：超出时丢最旧的增量，但始终保留这条回复的 `message_start`。这时补发的预览只有最新的一段，完整的 `assistant` 消息到达后按 `message.id` 取代它（一条回复最终只显示一次）
 4. 一条 `chat_state`（同步结束标志）。客户端只有收到当前 epoch 的这条之后，下次 attach 才可报告 `epoch`/`since`
 
 ### chat (S→C)

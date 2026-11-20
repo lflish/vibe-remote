@@ -318,6 +318,139 @@ func TestResyncMidStreamTail(t *testing.T) {
 	}
 }
 
+// X3 (R12.4): a reply long enough to overflow the stream tail. A client that
+// joins mid-reply with a reset sync must still get the reply's message_start
+// — its id is what the complete message is merged by. Without it the client
+// shows the tail as a second, id-less message next to the complete reply.
+func TestTailOverflowKeepsMessageStart(t *testing.T) {
+	t.Parallel()
+	type streamEvent struct {
+		Seq uint64
+		Msg struct {
+			Type  string `json:"type"`
+			Event struct {
+				Type    string `json:"type"`
+				Message struct {
+					ID string `json:"id"`
+				} `json:"message"`
+				Delta struct {
+					Text string `json:"text"`
+				} `json:"delta"`
+			} `json:"event"`
+		} `json:"msg"`
+	}
+	decode := func(t *testing.T, backlog [][]byte) []streamEvent {
+		t.Helper()
+		var out []streamEvent
+		for _, f := range backlog {
+			var e streamEvent
+			if err := json.Unmarshal(f, &e); err != nil {
+				t.Fatalf("backlog frame %s: %v", f, err)
+			}
+			if e.Msg.Type == "stream_event" {
+				out = append(out, e)
+			}
+		}
+		return out
+	}
+	// check: the replayed tail starts with the reply's message_start, followed
+	// by the newest deltas in order, ending with the last one generated.
+	check := func(t *testing.T, evs []streamEvent, lastText string, maxDeltas int) {
+		t.Helper()
+		if len(evs) == 0 || evs[0].Msg.Event.Type != "message_start" || evs[0].Msg.Event.Message.ID != "long-reply" {
+			first := "nothing"
+			if len(evs) > 0 {
+				first = evs[0].Msg.Event.Type
+			}
+			t.Fatalf("replayed tail starts with %s, want the message_start of long-reply", first)
+		}
+		starts, deltas := 0, 0
+		for i, e := range evs {
+			if i > 0 && e.Seq <= evs[i-1].Seq {
+				t.Fatalf("seq not ascending at %d: %d after %d", i, e.Seq, evs[i-1].Seq)
+			}
+			switch e.Msg.Event.Type {
+			case "message_start":
+				starts++
+			case "content_block_delta":
+				deltas++
+			}
+		}
+		if starts != 1 {
+			t.Fatalf("%d message_start events in the tail, want 1", starts)
+		}
+		if deltas == 0 || deltas > maxDeltas {
+			t.Fatalf("%d deltas replayed, want 1..%d", deltas, maxDeltas)
+		}
+		if got := evs[len(evs)-1].Msg.Event.Delta.Text; got != lastText {
+			t.Fatalf("last replayed delta %q, want the newest %q", got, lastText)
+		}
+	}
+	const start = `{"type":"stream_event","event":{"type":"message_start","message":{"id":"long-reply"}}}`
+	const blockStart = `{"type":"stream_event","event":{"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}}`
+	delta := func(text string) []byte {
+		return []byte(`{"type":"stream_event","event":{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"` + text + `"}}}`)
+	}
+
+	t.Run("count limit", func(t *testing.T) {
+		t.Parallel()
+		h := newHarness(t).start()
+		h.waitIdle()
+		h.s.injectLine([]byte(start))
+		h.s.injectLine([]byte(blockStart))
+		total := TailMax + 50
+		for i := 1; i <= total; i++ {
+			h.s.injectLine(delta(fmt.Sprintf("d%d ", i)))
+		}
+		plan, sub := h.s.Subscribe("", nil)
+		defer sub.Cancel()
+		if !plan.Sync.Reset {
+			t.Fatalf("want a reset sync, got %+v", plan.Sync)
+		}
+		evs := decode(t, plan.Backlog)
+		check(t, evs, fmt.Sprintf("d%d ", total), TailMax)
+
+		// A client that saw the start and the first deltas and comes back with
+		// its position gets the deltas it can still get, in order.
+		since := evs[0].Seq + 10
+		inc, sub2 := h.s.Subscribe(h.s.Snapshot().Epoch, &since)
+		defer sub2.Cancel()
+		if inc.Sync.Reset {
+			t.Fatalf("want an incremental sync, got %+v", inc.Sync)
+		}
+		ievs := decode(t, inc.Backlog)
+		if len(ievs) == 0 || ievs[0].Seq <= since || ievs[len(ievs)-1].Msg.Event.Delta.Text != fmt.Sprintf("d%d ", total) {
+			t.Fatalf("incremental tail: %d events, first seq %d (since %d)", len(ievs), ievs[0].Seq, since)
+		}
+
+		// The reply ends: the tail (start included) is gone, the complete
+		// message is what a later sync replays.
+		h.s.injectLine([]byte(`{"type":"assistant","message":{"id":"long-reply","content":[{"type":"text","text":"complete"}]}}`))
+		h.s.injectLine([]byte(`{"type":"stream_event","event":{"type":"message_stop"}}`))
+		after, sub3 := h.s.Subscribe("", nil)
+		defer sub3.Cancel()
+		if left := decode(t, after.Backlog); len(left) != 0 {
+			t.Fatalf("%d stream events replayed after message_stop", len(left))
+		}
+	})
+
+	t.Run("byte limit", func(t *testing.T) {
+		t.Parallel()
+		h := newHarness(t).start()
+		h.waitIdle()
+		h.s.injectLine([]byte(start))
+		big := strings.Repeat("x", 1<<20)
+		n := TailBytesMax/(1<<20) + 3
+		for i := 1; i <= n; i++ {
+			h.s.injectLine(delta(big))
+		}
+		h.s.injectLine(delta("the end"))
+		plan, sub := h.s.Subscribe("", nil)
+		defer sub.Cancel()
+		check(t, decode(t, plan.Backlog), "the end", n)
+	})
+}
+
 func TestStaleEpochResets(t *testing.T) {
 	t.Parallel()
 	h := newHarness(t).start()
