@@ -1,0 +1,9 @@
+x6-dot (M.X6): exit 1 — 0 passed, 1 failed
+FAIL under a worktree row: the chat session shown asks for permission while the window is in the background: its row shows the yellow dot until the window is focused again (chat sessions X6) — timeout (10000ms): yellow dot on the row of the session shown
+x8-focus-after-rename (M.X8): exit 1 — 0 passed, 1 failed
+FAIL under a worktree row: double click renames a chat and a terminal session, the name is not typed into the session, and the next keys go into it without a click (chat sessions X8, X10) — where the keyboard is after Enter: got "nowhere", want "chat-input"
+x10-card-focus (M.X10): exit 1 — 0 passed, 1 failed
+FAIL under a worktree row: a background chat session asks for permission (yellow dot on its row), a real click opens it, 1 answers without clicking the card, then the input has the keyboard (chat sessions X10) — where the keyboard is after opening the session from its yellow dot: got "session-label", want "chat-perm"
+x7-back-at-bottom (M.X7): exit 1 — 0 passed, 1 failed
+FAIL under a worktree row: a chat session that got more than a screen in the background is at the bottom with the newest message when opened again, and a message typed then shows (chat sessions X7) — back from the background the view is 785px above the newest message
+done

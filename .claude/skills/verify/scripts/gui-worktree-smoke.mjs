@@ -540,7 +540,7 @@ async function quitApp() {
 }
 
 const MOD = { alt: 1, ctrl: 2, meta: 4, shift: 8 };
-const KEYS = { Enter: [13, 'Enter', '\r'], Escape: [27, 'Escape'], Tab: [9, 'Tab'], Backspace: [8, 'Backspace'], ArrowDown: [40, 'ArrowDown'], ArrowUp: [38, 'ArrowUp'] };
+const KEYS = { Enter: [13, 'Enter', '\r'], Escape: [27, 'Escape'], Tab: [9, 'Tab'], Backspace: [8, 'Backspace'], ArrowDown: [40, 'ArrowDown'], ArrowUp: [38, 'ArrowUp'], 1: [49, 'Digit1', '1'] };
 
 async function pressKey(key, modifiers = 0) {
   const [vk, code, txt] = KEYS[key] ?? [key.toUpperCase().charCodeAt(0), `Key${key.toUpperCase()}`, key];
@@ -2935,6 +2935,183 @@ test('X6.scroll', 'switching with the keys scrolls the session\'s row into view 
   });
   assert(r && !r.problems, `the 800×500 window: ${J(r?.problems)}`);
   return `${r.n} sessions in a sidebar that scrolls ${r.overflow}px: ⌘⇧[ to the last and ⌘1 to the first both bring the row into view`;
+});
+
+// --- What the chat sessions' gate C rework fixed (X6, X7, X8, X10 of
+// docs/changes/2026-11-13-dual-mode), on session rows that sit under a
+// worktree row. gui-chat-smoke.mjs runs the same things on sessions in plain
+// folders, whose rows hang directly under a project row. Real pointer and key
+// events throughout; where the keyboard is, is read from document.activeElement.
+
+/** A chat session of its own under devflow / fix-login, opened once so that it has a view here. */
+async function chatUnderWorktree() {
+  const id = await chatIn(WT, fx.fix.path);
+  await refresh();
+  await waitFor(async () => (await worktreeRow(WT, 'devflow', 'fix-login'))?.sessions.some((x) => x.id === id), 8000, 'the chat session under the fix-login row');
+  eq(await ev(`${srow(id)}.parentElement.className`), 'worktree-group', 'what the session row hangs under');
+  await openSession(id);
+  await waitFor(() => ev(`(() => { const i = ${inChat(tid('chat-input'))}; return !!i && !i.disabled; })()`), 15000, 'the chat session is ready');
+  return id;
+}
+const mLabel = (id) => `${srow(id)}?.querySelector('.session-label')`;
+const mRenaming = () => ev(`(() => { const i = document.querySelector('#machine-list .session-rename-input'); return !!i && document.activeElement === i; })()`);
+/** What has the keyboard: a test id, 'terminal', or where else it is. */
+const mFocus = () => ev(`(() => { const a = document.activeElement; return !a || a === document.body ? 'nowhere' : a.classList.contains('xterm-helper-textarea') ? 'terminal' : (a.dataset.testid || String(a.className) || a.tagName); })()`);
+const mUsers = (text) => ev(`[...(${VC}?.querySelectorAll('${tid('chat-msg-user')}') ?? [])].filter((m) => m.textContent.includes(${J(text)})).length`);
+const mRow = async (id) => (await worktreeRow(WT, 'devflow', 'fix-login'))?.sessions.find((x) => x.id === id) ?? null;
+
+test('M.X8', 'under a worktree row: double click renames a chat and a terminal session, the name is not typed into the session, and the next keys go into it without a click (chat sessions X8, X10)', async () => {
+  const id = await chatUnderWorktree();
+  const titleOf = async (sid) => (await sessions(WT)).find((x) => x.id === sid)?.title;
+  try {
+    // chat, the session shown: Enter
+    await pointerClick(mLabel(id), 'the name of the chat session under fix-login', { count: 2 });
+    assert(await waitFor(mRenaming, 3000, 'a focused rename input').catch(() => null), `a double click on the name did not start renaming (the keyboard is on: ${await mFocus()})`);
+    await cdp.send('Input.insertText', { text: '登录页 对话' });
+    await pressKey('Enter');
+    await waitFor(async () => (await titleOf(id)) === '登录页 对话', 8000, 'the daemon has the new name');
+    await waitFor(async () => (await mRow(id))?.name === '登录页 对话', 8000, 'the row under fix-login shows the new name');
+    eq(await ev(`({ users: ${VC}.querySelectorAll('${tid('chat-msg-user')}').length, input: ${inChat(tid('chat-input'))}.value })`), { users: 0, input: '' }, 'what the new name left in the chat');
+    await sleep(300); // the rename is over; nothing is clicked from here on
+    eq(await mFocus(), 'chat-input', 'where the keyboard is after Enter');
+    await cdp.send('Input.insertText', { text: 'echo typed after the rename' });
+    await pressKey('Enter');
+    await waitFor(async () => (await mUsers('echo typed after the rename')) === 1, 5000, 'the message typed without a click');
+    await waitAssistant('typed after the rename');
+    await chatIdle();
+    // Esc keeps the name, and the keyboard is back as well
+    await pointerClick(mLabel(id), 'the name of the chat session under fix-login', { count: 2 });
+    assert(await waitFor(mRenaming, 3000, 'a focused rename input').catch(() => null), 'the second double click did not start renaming');
+    await cdp.send('Input.insertText', { text: 'never saved' });
+    await pressKey('Escape');
+    await waitFor(() => ev(`!document.querySelector('#machine-list .session-rename-input')`), 3000, 'Esc closes the input');
+    await sleep(300);
+    eq([await titleOf(id), await mFocus()], ['登录页 对话', 'chat-input'], 'name and keyboard after Esc');
+    // the terminal session of the same worktree row
+    await openSession(fx.fix.id);
+    await waitFor(async () => (await screen()).includes('$'), 20000, 'shell prompt');
+    await pointerClick(mLabel(fx.fix.id), 'the name of the terminal session under fix-login', { count: 2 });
+    assert(await waitFor(mRenaming, 3000, 'a focused rename input').catch(() => null), `a double click on the terminal session's name did not start renaming (the keyboard is on: ${await mFocus()})`);
+    await cdp.send('Input.insertText', { text: 'wt-box' });
+    await pressKey('Enter');
+    await waitFor(async () => (await titleOf(fx.fix.id)) === 'wt-box', 8000, 'the daemon has the terminal session\'s new name');
+    await sleep(300);
+    eq(await mFocus(), 'terminal', 'where the keyboard is after renaming the terminal session');
+    assert(!(await screen()).includes('wt-box'), `the new name was typed into the shell: ${J((await screen()).slice(-200))}`);
+    await cdp.send('Input.insertText', { text: 'echo M_X8_$((6*7))' });
+    await pressKey('Enter');
+    await waitFor(async () => (await screen()).includes('M_X8_42'), 8000, 'the command typed without a click ran in the terminal');
+    await evidence('M.X8', '#sidebar', wg(WT, 'devflow', 'fix-login'));
+    return 'chat: renamed with Enter (nothing sent to claude), next message typed without a click, Esc keeps the name; terminal: renamed, next command typed without a click';
+  } finally {
+    await pressKey('Escape').catch(() => {});
+    await rename(WT, fx.fix.id, '登录修复');
+    await endSession(WT, id);
+    await refresh();
+  }
+});
+
+test('M.X10', 'under a worktree row: a background chat session asks for permission (yellow dot on its row), a real click opens it, 1 answers without clicking the card, then the input has the keyboard (chat sessions X10)', async () => {
+  const id = await chatUnderWorktree();
+  await openSession(fx.mainChat); // the new one is now in the background
+  const other = await Conn.open(WT);
+  try {
+    await other.attachChat(id);
+    const from = other.frames.length;
+    other.chat('perm touch m-x10.txt');
+    await other.wait((fs) => fs.filter((f) => f.type === 'chat_state').at(-1)?.pending?.[0], 15000, 'pending permission request', from);
+    const row = await waitFor(async () => { const r = await mRow(id); return r?.dot === 'waiting' ? r : null; }, 10000, 'yellow dot on the row under fix-login');
+    assert(row.meta.includes('等你处理'), `the row does not say it waits: ${row.meta}`);
+    await sleep(700); // the list was just rebuilt for the dot; a press during a rebuild is lost (known)
+    await pointerClick(mLabel(id), 'the name of the waiting session');
+    await waitFor(async () => (await activeId()) === id, 8000, 'the waiting session is the one shown');
+    await waitFor(() => exists(inChat(tid('chat-perm'))), 5000, 'the prompt card is on screen');
+    await sleep(400); // whatever the click set off (switch, redraw, focus) has run
+    eq(await mFocus(), 'chat-perm', 'where the keyboard is after opening the session from its yellow dot');
+    await evidence('M.X10', '#sidebar', wg(WT, 'devflow', 'fix-login'));
+    await pressKey('1');
+    await waitFor(async () => !(await exists(inChat(tid('chat-perm')))), 5000, 'the card to close after 1, without a click');
+    await other.wait((fs) => fs.some((f) => f.type === 'chat' && f.msg?.type === 'result'), 15000, 'the turn went on after 1', from);
+    await chatIdle();
+    await sleep(300);
+    eq(await mFocus(), 'chat-input', 'where the keyboard is once the card is gone');
+    return 'row under fix-login: waiting dot → real click → keyboard on the card → 1 answered → keyboard in the input';
+  } finally {
+    other.close();
+    await endSession(WT, id);
+    await refresh();
+  }
+});
+
+test('M.X6', 'under a worktree row: the chat session shown asks for permission while the window is in the background: its row shows the yellow dot until the window is focused again (chat sessions X6)', async () => {
+  const id = await chatUnderWorktree();
+  const other = await Conn.open(WT);
+  const from = other.frames.length;
+  let pending = null;
+  try {
+    await other.attachChat(id);
+    eq([await activeId(), (await mRow(id)).dot], [id, 'none'], 'the session shown, and its dot, before anything happens');
+    try {
+      await cdp.send('Emulation.setFocusEmulationEnabled', { enabled: false });
+      await mainProc.evaluate(`(() => { const { app, BrowserWindow } = require('electron'); BrowserWindow.getAllWindows()[0].blurWebView(); app.hide(); return true; })()`);
+      await waitFor(async () => !(await ev('document.hasFocus()')), 5000, 'the window lost focus');
+      other.chat('perm touch m-x6.txt');
+      pending = await other.wait((fs) => fs.filter((f) => f.type === 'chat_state').at(-1)?.pending?.[0], 15000, 'pending permission request', from);
+      const row = await waitFor(async () => { const r = await mRow(id); return r?.dot === 'waiting' ? r : null; }, 10000, 'yellow dot on the row of the session shown');
+      assert(row.meta.includes('等你处理'), `the row does not say it waits: ${row.meta}`);
+      await sleep(600); // the notification's outcome (Dock fallback on unsigned builds) is back
+      eq([await activeId(), (await mRow(id)).dot], [id, 'waiting'], 'still the session shown, still yellow');
+    } finally {
+      await mainProc.evaluate(`(() => { const { app, BrowserWindow } = require('electron'); app.show(); app.focus({ steal: true }); const w = BrowserWindow.getAllWindows()[0]; w.show(); w.focus(); w.focusOnWebView(); return true; })()`);
+      await cdp.send('Emulation.setFocusEmulationEnabled', { enabled: true });
+      await waitFor(() => ev('new Promise((r) => { requestAnimationFrame(() => r(true)); setTimeout(() => r(false), 500); })'), 10000, 'window rendering again');
+    }
+    await waitFor(async () => (await ev('document.hasFocus()')) && (await mRow(id))?.dot === 'none', 10000, 'the dot is gone once the window is focused again');
+    await evidence('M.X6', '#sidebar', wg(WT, 'devflow', 'fix-login'));
+    return 'window in the background: yellow dot and "等你处理" on the row of the session shown; focused again: gone';
+  } finally {
+    if (pending) other.send({ type: 'chat_respond', requestId: pending.requestId, response: { behavior: 'allow' } });
+    await sleep(300);
+    other.close();
+    await endSession(WT, id);
+    await refresh();
+  }
+});
+
+test('M.X7', 'under a worktree row: a chat session that got more than a screen in the background is at the bottom with the newest message when opened again, and a message typed then shows (chat sessions X7)', async () => {
+  const id = await chatUnderWorktree();
+  const scroll = () => ev(`(() => { const t = ${inChat(tid('chat-transcript'))}; return { gap: t.scrollHeight - t.scrollTop - t.clientHeight, client: t.clientHeight, height: t.scrollHeight }; })()`);
+  const lastOnScreen = () => ev(`(() => { const m = [...${VC}.querySelectorAll('${tid('chat-msg-assistant')}')].pop(); if (!m) return null; const r = m.getBoundingClientRect(), t = ${inChat(tid('chat-transcript'))}.getBoundingClientRect(); return { text: m.textContent.trim(), on: r.bottom <= t.bottom + 1 && r.bottom > t.top }; })()`);
+  const other = await Conn.open(WT);
+  try {
+    await other.attachChat(id);
+    await openSession(fx.mainChat); // the new one is now in the background
+    const from = other.frames.length;
+    other.chat('burst 40');
+    await other.wait((fs) => fs.some((f) => f.type === 'chat' && f.msg?.type === 'result'), 30000, 'the burst finished in the background', from);
+    await sleep(700); // the row's dot was just drawn; a press during a rebuild is lost (known)
+    await pointerClick(mLabel(id), 'the name of the session that got the burst');
+    await waitFor(async () => (await activeId()) === id, 8000, 'back in the session');
+    await waitFor(async () => (await lastOnScreen())?.text === 'burst 40', 5000, 'the newest message rendered on return');
+    await sleep(400);
+    const s = await scroll();
+    assert(s.height > s.client + 400, `fixture: the burst is not more than a screen: ${J(s)}`);
+    assert(s.gap < 48 && (await lastOnScreen()).on, `back from the background the view is ${Math.round(s.gap)}px above the newest message`);
+    eq(await mFocus(), 'chat-input', 'where the keyboard is after opening the session');
+    await cdp.send('Input.insertText', { text: 'echo back under the worktree' });
+    await pressKey('Enter');
+    await waitFor(async () => (await mUsers('echo back under the worktree')) === 1, 5000, 'the message typed right after returning is shown');
+    await waitAssistant('back under the worktree');
+    await chatIdle();
+    const after = await scroll();
+    assert(after.gap < 48 && (await lastOnScreen()).on, `not at the bottom after sending: ${J(after)}`);
+    await evidence('M.X7');
+    return `back at the bottom (gap ${Math.round(s.gap)}px of ${Math.round(s.height)}px) after 40 messages in the background; a typed message and its reply show`;
+  } finally {
+    other.close();
+    await endSession(WT, id);
+    await refresh();
+  }
 });
 
 test('NFR.perf', 'performance: 20 projects × 5 worktrees add at most 200 ms to the lists', async () => {

@@ -1,0 +1,25 @@
+ok - test-chat-activity: chat frame lights the grey dot on a background session (R16.1)
+ok - test-chat-activity: result turns it green (R16.2)
+ok - test-chat-activity: pending prompt turns it yellow and notifies (R16.3)
+ok - test-chat-activity: current session, window in the background: the yellow dot stays until it is seen or handled (R16.3, X6)
+ok - test-chat-activity: REST activitySeq / state (R16.4: no hooks needed)
+ok - test-chat-activity: fallback does not switch
+[notify] shown: dev · w · conversation
+ok - test-chat-activity: machine overview shown: the hidden chat is not current, its prompt shows yellow and notifies (R16.3)
+[notify] fallback: dev · w · conversation
+FAIL: test-chat-activity: current chat session, window in the background: its prompt shows yellow in the sidebar and notifies; focusing the window clears it (R16.3, X6)
+AssertionError [ERR_ASSERTION]: yellow dot on the current session
+
+'none' !== 'waiting'
+
+    at file:///Users/mac/github/vibe-remote/.devflow-tmp/worktrees/project-worktrees/desktop/scripts/test-chat-activity.mjs:138:10
+    at process.processTicksAndRejections (node:internal/process/task_queues:103:5)
+    at async run (file:///Users/mac/github/vibe-remote/.devflow-tmp/worktrees/project-worktrees/desktop/scripts/chat-test-util.mjs:129:9)
+    at async file:///Users/mac/github/vibe-remote/.devflow-tmp/worktrees/project-worktrees/desktop/scripts/test-chat-activity.mjs:155:1 {
+  generatedMessage: false,
+  code: 'ERR_ASSERTION',
+  actual: 'none',
+  expected: 'waiting',
+  operator: 'strictEqual',
+  diff: 'simple'
+}

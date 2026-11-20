@@ -155,7 +155,13 @@ Esc interrupts, the next message is typed, all without clicking the card or
 the input), `X10-rename-chat` / `X10-rename-terminal` (after a rename ended by
 Enter, Esc, or a click on another session, the next keys go into the current
 session without a click), `X6` (current session, app
-really hidden → yellow dot + notification, cleared on focus). `VR_ONLY=<ids>`
+really hidden → yellow dot + notification, cleared on focus). A double click
+in these cases is watched: the sidebar list is rebuilt whenever a refresh lands,
+and a rebuild between a press and its release loses that click (a known problem
+of the app, see the follow-up list in docs/changes/2026-11-13-dual-mode/tasks.md).
+When that happened and no rename started, the script prints a `NOTE` line and
+makes the gesture again (at most twice); count the `NOTE` lines of a run when
+reporting it. `VR_ONLY=<ids>`
 runs a subset, e.g. `VR_ONLY=X7-send,X7-background,X8-chat,X8-terminal`,
 `VR_ONLY=X10-prompt,X10-rename-chat,X10-rename-terminal` or
 `VR_ONLY=S1,X6` (cases after `S1` need the main chat session it creates).
@@ -186,9 +192,15 @@ What the feature is, where a user reaches it, and how the scripts operate it
 | Old daemon / old desktop | a machine whose daemon is built from the commit before the change | `machine-legacy-note`, the two entries disabled with a reason, the picker without a name field; `ws-smoke.mjs` of that commit against a new daemon |
 
 `gui-worktree-smoke.mjs` runs all of it against the built app (same launch
-model as the other two GUI scripts, ~2 min, 67 cases: 62 named by scenario, and
-five found by using the app by hand — X1.redraw, X2.rename, X3.keys, X6.scroll,
-X8.menu):
+model as the other two GUI scripts, ~2 min, 71 cases: 62 named by scenario, five
+found by using the app by hand — X1.redraw, X2.rename, X3.keys, X6.scroll,
+X8.menu — and four that repeat what the chat sessions' rework fixed on session
+rows *under a worktree row* (gui-chat-smoke.mjs has them on rows under a
+project row): `M.X8` (double click renames a chat and a terminal session, the
+next keys go into the session), `M.X10` (yellow dot → real click → `1` answers
+the card), `M.X6` (window in the background → yellow dot on the session
+shown), `M.X7` (back at the bottom after a burst in the background);
+`--only=M` runs the four):
 
 ```bash
 node .claude/skills/verify/scripts/gui-worktree-smoke.mjs                 # builds desktop/dist and the daemons first

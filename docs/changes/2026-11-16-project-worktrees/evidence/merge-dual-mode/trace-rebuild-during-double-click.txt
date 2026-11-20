@@ -1,0 +1,57 @@
+work dir /private/tmp/vr-gc-zEaPau
+PASS 5 daemons up (gui-term:20919 gui-main:27501 gui-chat:20766 gui-old-claude:28904 gui-old-init:29609)
+PASS app started with 5 machines (zh), network hook installed
+PASS X7 scrolled up with the wheel: a typed message and its reply show; replies do not drag the view; reaching the bottom shows them — gap after sending 0px; history kept at 1738px while a reply arrived
+PASS X7 background session got more than a screen: back at the bottom with the newest, a typed message shows; left scrolled up → same place — back at the bottom (gap 0px) after 40 messages in the background; scrolled-up place kept (3195px)
+PASS X8 double click on an open chat session (current, then background) renames it; the name is not sent to claude; the sidebar keeps updating — current → "登录页重构", background → "x8 第二个名字"; no chat traffic; sidebar dot and switch still work
+DBG [
+ "13320 mousedown d=1 on session-label connected=true",
+ "13321 focusout d=0 on xterm-helper-textarea connected=true",
+ "13322 focusin d=0 on session-label connected=true",
+ "13366 mouseup d=1 on session-label connected=true",
+ "13366 click d=1 on session-label connected=true",
+ "13368 focusout d=0 on session-label connected=true",
+ "13368 focusin d=0 on xterm-helper-textarea connected=true",
+ "13371 sidebar rebuilt     at MutationObserver.<anonymous> (<anonymous>:3:59)",
+ "13464 mousedown d=2 on session-label connected=true",
+ "13465 focusout d=0 on xterm-helper-textarea connected=true",
+ "13466 focusin d=0 on session-label connected=true",
+ "13507 focusout d=0 on session-label connected=true",
+ "13508 focusin d=0 on session-label connected=true",
+ "13509 sidebar rebuilt     at MutationObserver.<anonymous> (<anonymous>:3:59)",
+ "13509 mouseup d=2 on session-label connected=true",
+ "13516 focusout d=0 on session-label connected=true",
+ "13518 focusin d=0 on session-label connected=true",
+ "13518 sidebar rebuilt     at MutationObserver.<anonymous> (<anonymous>:3:59)",
+ "13519 focusout d=0 on session-label connected=true",
+ "13520 focusin d=0 on session-label connected=true",
+ "13520 sidebar rebuilt     at MutationObserver.<anonymous> (<anonymous>:3:59)",
+ "13520 focusout d=0 on session-label connected=true",
+ "13521 focusin d=0 on session-label connected=true",
+ "13521 sidebar rebuilt     at MutationObserver.<anonymous> (<anonymous>:3:59)",
+ "13522 focusout d=0 on session-label connected=true",
+ "13524 focusin d=0 on session-label connected=true",
+ "13524 sidebar rebuilt     at MutationObserver.<anonymous> (<anonymous>:3:59)",
+ "13524 focusout d=0 on session-label connected=true",
+ "13525 focusin d=0 on session-label connected=true",
+ "13526 sidebar rebuilt     at MutationObserver.<anonymous> (<anonymous>:3:59)",
+ "13526 focusout d=0 on session-label connected=true",
+ "13527 focusin d=0 on session-label connected=true",
+ "13528 sidebar rebuilt     at MutationObserver.<anonymous> (<anonymous>:3:59)",
+ "13528 focusout d=0 on session-label connected=true",
+ "13529 focusin d=0 on session-label connected=true",
+ "13529 sidebar rebuilt     at MutationObserver.<anonymous> (<anonymous>:3:59)",
+ "13551 focusout d=0 on session-label connected=true",
+ "13553 focusin d=0 on session-label connected=true",
+ "13553 sidebar rebuilt     at MutationObserver.<anonymous> (<anonymous>:3:59)",
+ "13554 focusout d=0 on session-label connected=true",
+ "13555 focusin d=0 on session-label connected=true",
+ "13555 sidebar rebuilt     at MutationObserver.<anonymous> (<anonymous>:3:59)"
+]
+FAIL X8 double click on an open terminal session (current ×3, background ×2) renames it; nothing is typed into the shell — double click on "bg box": no focused rename input 600 ms later (focus is on session-label)
+PASS X10 a background chat session asks for permission (yellow dot): a real click opens it, then 1 answers / Esc interrupts without clicking the card, and typing goes on in the input — opened from the yellow dot: keyboard on chat-perm; 1 → done Bash, next message typed without a click; Esc → request interrupted
+PASS X10 after renaming a chat session (Enter, Esc, a click on another session) the next keys go into the current session, without a click — Enter, Esc and click-elsewhere: the next message was typed without a click each time
+PASS X10 after renaming a terminal session (Enter, Esc) the next keys go into the terminal, without a click — Enter and Esc: the next command was typed without a click
+PASS no uncaught renderer exceptions
+
+1 check(s) FAILED
