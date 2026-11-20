@@ -69,6 +69,8 @@ const ONLY = (argv.find((a) => a.startsWith('--only=')) ?? '').slice(7).split(',
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const EVIDENCE_DIR = process.env.DEVFLOW_EVIDENCE_DIR ? resolve(process.env.DEVFLOW_EVIDENCE_DIR) : '';
 const BASE_REF = process.env.VR_BASE_REF || '6d88e45';
+// change/dual-mode as it was merged back into this change (T33). The two older GUI scripts are its scripts.
+const UPSTREAM_REF = process.env.VR_UPSTREAM_REF || '64e8b5e';
 const J = JSON.stringify;
 
 let failures = 0;
@@ -2316,13 +2318,24 @@ test('R8.3', 'R8.3 the two existing GUI scripts keep every case of the version b
     const base = spawnSync(REAL_GIT, ['show', `${BASE_REF}:${rel}`], { cwd: ROOT, encoding: 'utf-8', maxBuffer: 1 << 26 });
     assert(base.status === 0, `git show ${BASE_REF}:${rel} failed`);
     const now = readFileSync(join(ROOT, rel), 'utf-8');
-    const [was, is] = [(base.stdout.match(pattern) ?? []).length, (now.match(pattern) ?? []).length];
-    assert(is >= was, `${file}: ${is} cases, the version before had ${was}`);
-    // no line that asserts or waits for something was taken out or changed
+    // The branch these scripts belong to went on after this change forked from
+    // it, and was merged back in: its own later version counts as well.
+    const upstream = spawnSync(REAL_GIT, ['show', `${UPSTREAM_REF}:${rel}`], { cwd: ROOT, encoding: 'utf-8', maxBuffer: 1 << 26 });
+    assert(upstream.status === 0, `git show ${UPSTREAM_REF}:${rel} failed`);
+    const [was, merged, is] = [base.stdout, upstream.stdout, now].map((text) => (text.match(pattern) ?? []).length);
+    assert(is >= was && is >= merged, `${file}: ${is} cases, the version before had ${was}, the merged one ${merged}`);
+    // No line that asserts or waits for something was taken out or changed:
+    // every such line of the merged version is here, and a line of the version
+    // before that is gone is one that branch itself replaced.
+    const asserting = (text) => text.split('\n').map((l) => l.trim()).filter((l) => /\b(check|assert|test|waitFor|fail)\(/.test(l));
     const current = new Set(now.split('\n').map((l) => l.trim()));
-    const lost = base.stdout.split('\n').map((l) => l.trim()).filter((l) => /\b(check|assert|test|waitFor|fail)\(/.test(l) && !current.has(l));
-    assert(lost.length === 0, `${file}: ${lost.length} asserting line(s) of the version before are gone or changed, e.g. ${lost[0]?.slice(0, 120)}`);
-    out.push(`${file}: ${was} → ${is} cases, no asserting line removed`);
+    const lost = asserting(upstream.stdout).filter((l) => !current.has(l));
+    assert(lost.length === 0, `${file}: ${lost.length} asserting line(s) of the merged version (${UPSTREAM_REF}) are gone or changed, e.g. ${lost[0]?.slice(0, 120)}`);
+    const theirs = new Set(upstream.stdout.split('\n').map((l) => l.trim()));
+    const gone = asserting(base.stdout).filter((l) => !current.has(l));
+    const here = gone.filter((l) => theirs.has(l));
+    assert(here.length === 0, `${file}: ${here.length} asserting line(s) of the version before are gone or changed, e.g. ${here[0]?.slice(0, 120)}`);
+    out.push(`${file}: ${was} → ${is} cases (${merged} in the merged ${UPSTREAM_REF}), no asserting line removed${gone.length ? `; ${gone.length} of the version before replaced by that branch itself` : ''}`);
   }
   if (!args.has('--with-existing')) return `${out.join('; ')} (run them for the other half: gui-smoke.mjs, gui-chat-smoke.mjs)`;
   for (const file of ['gui-smoke.mjs', 'gui-chat-smoke.mjs']) {
@@ -2954,6 +2967,21 @@ async function chatUnderWorktree() {
   return id;
 }
 const mLabel = (id) => `${srow(id)}?.querySelector('.session-label')`;
+/**
+ * Waits until the sidebar list has not been rebuilt for 400 ms. A session that
+ * was just created or renamed is followed by a refresh — ten rebuilds of the
+ * list with five machines — and a rebuild between a press and its release
+ * loses the click (a known problem of the app, not what these cases are about).
+ */
+async function mSidebarQuiet() {
+  await ev(`(() => { if (window.__vrListAt !== undefined) return true; window.__vrListAt = performance.now(); new MutationObserver(() => { window.__vrListAt = performance.now(); }).observe(document.getElementById('machine-list'), { childList: true }); return true; })()`);
+  await waitFor(() => ev(`performance.now() - window.__vrListAt > 400`), 15000, 'the sidebar to stop being rebuilt', 40);
+}
+/** A real double click on a session's name, once the list is quiet. */
+async function mDoubleClick(id, what) {
+  await mSidebarQuiet();
+  await pointerClick(mLabel(id), what, { count: 2 });
+}
 const mRenaming = () => ev(`(() => { const i = document.querySelector('#machine-list .session-rename-input'); return !!i && document.activeElement === i; })()`);
 /** What has the keyboard: a test id, 'terminal', or where else it is. */
 const mFocus = () => ev(`(() => { const a = document.activeElement; return !a || a === document.body ? 'nowhere' : a.classList.contains('xterm-helper-textarea') ? 'terminal' : (a.dataset.testid || String(a.className) || a.tagName); })()`);
@@ -2965,7 +2993,7 @@ test('M.X8', 'under a worktree row: double click renames a chat and a terminal s
   const titleOf = async (sid) => (await sessions(WT)).find((x) => x.id === sid)?.title;
   try {
     // chat, the session shown: Enter
-    await pointerClick(mLabel(id), 'the name of the chat session under fix-login', { count: 2 });
+    await mDoubleClick(id, 'the name of the chat session under fix-login');
     assert(await waitFor(mRenaming, 3000, 'a focused rename input').catch(() => null), `a double click on the name did not start renaming (the keyboard is on: ${await mFocus()})`);
     await cdp.send('Input.insertText', { text: '登录页 对话' });
     await pressKey('Enter');
@@ -2980,7 +3008,7 @@ test('M.X8', 'under a worktree row: double click renames a chat and a terminal s
     await waitAssistant('typed after the rename');
     await chatIdle();
     // Esc keeps the name, and the keyboard is back as well
-    await pointerClick(mLabel(id), 'the name of the chat session under fix-login', { count: 2 });
+    await mDoubleClick(id, 'the name of the chat session under fix-login');
     assert(await waitFor(mRenaming, 3000, 'a focused rename input').catch(() => null), 'the second double click did not start renaming');
     await cdp.send('Input.insertText', { text: 'never saved' });
     await pressKey('Escape');
@@ -2990,7 +3018,7 @@ test('M.X8', 'under a worktree row: double click renames a chat and a terminal s
     // the terminal session of the same worktree row
     await openSession(fx.fix.id);
     await waitFor(async () => (await screen()).includes('$'), 20000, 'shell prompt');
-    await pointerClick(mLabel(fx.fix.id), 'the name of the terminal session under fix-login', { count: 2 });
+    await mDoubleClick(fx.fix.id, 'the name of the terminal session under fix-login');
     assert(await waitFor(mRenaming, 3000, 'a focused rename input').catch(() => null), `a double click on the terminal session's name did not start renaming (the keyboard is on: ${await mFocus()})`);
     await cdp.send('Input.insertText', { text: 'wt-box' });
     await pressKey('Enter');
@@ -3022,7 +3050,7 @@ test('M.X10', 'under a worktree row: a background chat session asks for permissi
     await other.wait((fs) => fs.filter((f) => f.type === 'chat_state').at(-1)?.pending?.[0], 15000, 'pending permission request', from);
     const row = await waitFor(async () => { const r = await mRow(id); return r?.dot === 'waiting' ? r : null; }, 10000, 'yellow dot on the row under fix-login');
     assert(row.meta.includes('等你处理'), `the row does not say it waits: ${row.meta}`);
-    await sleep(700); // the list was just rebuilt for the dot; a press during a rebuild is lost (known)
+    await mSidebarQuiet(); // the list was just rebuilt for the dot; a press during a rebuild is lost (known)
     await pointerClick(mLabel(id), 'the name of the waiting session');
     await waitFor(async () => (await activeId()) === id, 8000, 'the waiting session is the one shown');
     await waitFor(() => exists(inChat(tid('chat-perm'))), 5000, 'the prompt card is on screen');
@@ -3089,7 +3117,7 @@ test('M.X7', 'under a worktree row: a chat session that got more than a screen i
     const from = other.frames.length;
     other.chat('burst 40');
     await other.wait((fs) => fs.some((f) => f.type === 'chat' && f.msg?.type === 'result'), 30000, 'the burst finished in the background', from);
-    await sleep(700); // the row's dot was just drawn; a press during a rebuild is lost (known)
+    await mSidebarQuiet(); // the row's dot was just drawn; a press during a rebuild is lost (known)
     await pointerClick(mLabel(id), 'the name of the session that got the burst');
     await waitFor(async () => (await activeId()) === id, 8000, 'back in the session');
     await waitFor(async () => (await lastOnScreen())?.text === 'burst 40', 5000, 'the newest message rendered on return');

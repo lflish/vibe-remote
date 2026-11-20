@@ -692,9 +692,12 @@ test('X7-send', 'X7 scrolled up with the wheel: a typed message and its reply sh
     // (2) … and is there on reaching the bottom, with no further session update.
     await wheelTo(100000, (s) => s.gap < 2, 'wheel down to the bottom');
     await sleep(300);
-    // On failure, say where things are: this failed once in a run of several cases and never alone.
-    const where = () => ev(`(() => { const t = ${TRANSCRIPT}; const m = [...${VC}.querySelectorAll('[data-testid="chat-msg-assistant"]')].pop(); const r = m?.getBoundingClientRect(), b = t.getBoundingClientRect(); return JSON.stringify({ gap: Math.round(t.scrollHeight - t.scrollTop - t.clientHeight), height: t.scrollHeight, lastBottom: r ? Math.round(r.bottom) : null, viewport: [Math.round(b.top), Math.round(b.bottom)] }); })()`);
-    assert((await lastAssistant()).includes('x7 from elsewhere') && (await lastAssistantOnScreen()), `at the bottom the newest reply is missing; last message: ${await lastAssistant()}; ${await where()}`);
+    // When the assertion below is about to fail, say where things are: it failed
+    // once in a run of several cases and in none of twelve runs alone.
+    if (!((await lastAssistant()).includes('x7 from elsewhere') && (await lastAssistantOnScreen()))) {
+      console.log(`NOTE X7-send, newest reply not on screen at the bottom: ${await ev(`(() => { const t = ${TRANSCRIPT}; const m = [...${VC}.querySelectorAll('[data-testid="chat-msg-assistant"]')].pop(); const r = m?.getBoundingClientRect(), b = t.getBoundingClientRect(); return JSON.stringify({ gap: Math.round(t.scrollHeight - t.scrollTop - t.clientHeight), height: t.scrollHeight, lastBottom: r ? Math.round(r.bottom) : null, viewport: [Math.round(b.top), Math.round(b.bottom)] }); })()`)}`);
+    }
+    assert((await lastAssistant()).includes('x7 from elsewhere') && (await lastAssistantOnScreen()), `at the bottom the newest reply is missing; last message: ${await lastAssistant()}`);
   } finally {
     c.close();
   }
