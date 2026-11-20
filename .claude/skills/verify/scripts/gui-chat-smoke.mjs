@@ -112,7 +112,13 @@ function cleanEnv() {
 
 async function startDaemon(d) {
   writeFileSync(d.cfgPath, JSON.stringify(d.cfg), { mode: 0o600 });
-  d.proc = spawn(d.bin, ['--config', d.cfgPath], { env: { ...cleanEnv(), TMUX_TMPDIR: d.tmux, ...d.env }, stdio: ['ignore', 'pipe', 'pipe'] });
+  // A daemon reads claude's trust file for the directory picker (chatTrust),
+  // whatever it runs. One that was given no CLAUDE_CONFIG_DIR (the /bin/bash
+  // and the main-branch daemon) gets an empty directory of this run, so that
+  // it never reads the real ~/.claude.json.
+  const noClaude = join(dirname(d.cfgPath), 'claude-config-none');
+  mkdirSync(noClaude, { recursive: true, mode: 0o700 });
+  d.proc = spawn(d.bin, ['--config', d.cfgPath], { env: { ...cleanEnv(), TMUX_TMPDIR: d.tmux, CLAUDE_CONFIG_DIR: noClaude, ...d.env }, stdio: ['ignore', 'pipe', 'pipe'] });
   d.log = '';
   d.proc.stdout.on('data', (x) => { d.log += x; });
   d.proc.stderr.on('data', (x) => { d.log += x; });

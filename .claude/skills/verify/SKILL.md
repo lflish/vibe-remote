@@ -25,6 +25,14 @@ Unit tests cover seams; this proves the assembled daemon behaves. The CLI is
   `machines.json`, keychain, `~/.claude.json` or installed app. Random ports,
   temp configs, temp `state_dir`, temp `CLAUDE_CONFIG_DIR`, temp userData,
   `--use-mock-keychain`.
+- **Every daemon and every `go test` / `make check` gets a claude config
+  directory that is not the user's.** vibe-remoted reads claude's trust file
+  (`$CLAUDE_CONFIG_DIR/.claude.json`, else `~/.claude.json`) whenever a
+  directory is listed for the picker, also when it runs `/bin/bash`, and a
+  continue (`-c`) session reads `…/projects`. The GUI and ws scripts give each
+  daemon they start a directory of the run; for a daemon started by hand, and
+  for `go test` and `make check` (some server tests list directories), add
+  `CLAUDE_CONFIG_DIR=$(mktemp -d /tmp/vr-cc-XXXXXX)` next to `TMUX_TMPDIR`.
 - **`allowed_roots` of a throwaway daemon are directories you created under
   `/tmp`.** Since protocol 4 the daemon deletes worktree directories and
   branches inside its allowed roots; a test daemon must not be able to reach a
@@ -41,6 +49,7 @@ PORT=$((20000 + RANDOM % 10000))
 CFG=$(mktemp -t vr-verify).json
 TOKEN=$(openssl rand -hex 32)
 export TMUX_TMPDIR=$(mktemp -d /tmp/vr-XXXXXX)
+export CLAUDE_CONFIG_DIR=$(mktemp -d /tmp/vr-cc-XXXXXX)
 sed -e "s/8765/$PORT/" -e "s/local-development-only/$TOKEN/" vibe-remoted.tmux.json > "$CFG"
 (cd vibe-remoted && go run ./cmd/vibe-remoted --config "$CFG") > /tmp/vr-verify.log 2>&1 &
 ```

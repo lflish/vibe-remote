@@ -103,7 +103,12 @@ function keychainHas(service) {
 }
 
 function startDaemon() {
-  daemon = spawn(daemonBin, ['--config', daemonCfg], { stdio: ['ignore', 'pipe', 'pipe'] });
+  // The daemon reads claude's trust file for the directory picker (chatTrust)
+  // although it runs /bin/bash: give it an empty config directory of this run,
+  // so that it never reads the real ~/.claude.json.
+  const noClaude = join(work, 'term-claude-config');
+  mkdirSync(noClaude, { recursive: true, mode: 0o700 });
+  daemon = spawn(daemonBin, ['--config', daemonCfg], { env: { ...process.env, CLAUDE_CONFIG_DIR: noClaude }, stdio: ['ignore', 'pipe', 'pipe'] });
   daemon.stdout.on('data', () => {});
   daemon.stderr.on('data', () => {});
   return waitFor(async () => (await fetch(`http://127.0.0.1:${port}/healthz`)).ok, 15000, 'daemon /healthz');
