@@ -332,8 +332,10 @@ v3 对话会话的条目另带（终端条目一律省略）：
 
 - `op`：`send` / `respond` / `interrupt` / `set_mode`
 - `ref`：回显 `clientMsgId`（send）、`requestId`（respond）或所请求的 `mode`（set_mode）；interrupt 不带
+- `ok`：这一帧是否被接受（总是给出）
 - `duplicate` / `completed`（只用于 `op:"send"`）：`duplicate:true` 表示这个 `clientMsgId` 已被接受过、这次没有再写入；此时 `completed` 总是给出，`true` = 这条消息不会再有 `result`（已见到它的 `result`，或已被看门狗放弃、记了 `stale_turn`——之后迟到的 `result` 带 `vr_stale`，不算它的），`false` = 仍在执行、它的 `result` 还会来。新消息的 ack 不带这两个字段
 - `code`（`ok:false` 时，开放集合）：`empty` / `too_large` / `chat_not_running` / `request_not_pending` / `foreign_rule` / `chat_busy` / `invalid_mode` / `invalid_response` / `mode_locked`
+- `message`（可选，只在 `ok:false` 时可能带）：给人看的补充说明（英文）。目前随 `too_large`（消息正文或 `clientMsgId` 超长）、`invalid_response`、以及回答非计划请求时带 `setMode` 的 `invalid_mode` 给出；其余情况不带。客户端把它显示给用户（没有时显示 `code`），判断逻辑只看 `code`
 
 ### 断线与订阅
 

@@ -490,7 +490,7 @@
 - 完成定义：`cd desktop && npm run typecheck && npm test`
 
 ### T19 X5：`docs/protocol.md` 的 `chat_ack` 漏了 `message`
-- 状态：待办
+- 状态：完成
 - 来源：codex P3（低，拦）；R18.2
 - 文件：`docs/protocol.md`；按 `/protocol-sync` 把 `chat_ack` 一节再核对一遍
 - 完成定义：/protocol-sync 对 `chat_ack` 三处无差异
@@ -531,6 +531,7 @@
 | T16（X3） | 2026-11-20 12:15 | 本提交 | 修复前失败：Go `TestTailOverflowKeepsMessageStart`（条数上限、字节上限两个子用例：「replayed tail starts with content_block_delta, want the message_start of long-reply」）、`test-chat-session`「X3 reset sync mid-reply…」（assistant 消息 2 条 ≠ 1，与验证者的 `assistantCount: 2` 相同）；修复后通过，`go test -race ./internal/chat` ok、`npm test` 全绿（test-chat-session 20）。变异核对：完整消息不认领无 id 预览 / 已有该 id 的消息时不并入，两处各有用例失败；daemon 侧的变异即修复前的代码。协议字段没有变化（protocol.md 补一句尾巴上限的行为说明） |
 | T17（X4） | 2026-11-20 12:18 | 本提交 | 修复前失败：`TestLatestSessionChecksTranscriptCwd`（「workdir a-b with no conversation got bbbbbbbb-… — the conversation of a/b」）、`TestContinueIgnoresOtherDirectorySharingProjectDir`（经 WebSocket 带 continue 新建，「-c in …/a-b (no conversation of its own) resumed …, the conversation of …/a/b」）、`TestTerminalContinueIgnoresOtherDirectorySharingProjectDir`（终端 `-c` 被改写成 `--resume <a/b 的 id>`）；修复后 `go test -race ./internal/chat ./internal/server ./internal/session` 全部 ok。变异核对：没有 cwd 的记录也认领 → 用例失败 |
 | T18（X6） | 2026-11-20 12:21 | 本提交 | 查证：spec R16.3 字面要求黄点，design / decisions 无相反决定（d12 写的是「Dock 弹跳 + 角标 + 侧边栏黄点」）→ 按 spec 修。修复前失败：`test-chat-activity`「pending prompt turns it yellow and notifies」（dot none ≠ waiting）、`gui-chat-smoke` 的 X6（10 s 内当前会话没有黄点）；修复后通过，`npm test` 全绿（test-chat-activity 8）。变异核对：聚焦不清点 / 侧边栏照旧隐藏当前会话的点 / 通知结果回来把点去掉，三处各有用例失败。改动的已有断言 1 条（见 test-report） |
+| T19（X5） | 2026-11-20 12:22 | 本提交 | 按 /protocol-sync 的步骤把 `chat_ack` 逐字段再核对一遍（Go `ChatAckFrame` 的 json tag、TS `ChatAckFrame`、文档）：`type`/`op`（4 个值）/`ref?`/`ok`/`code?`（9 个码，与 `Ack*` 常量一致）/`message?`/`duplicate?`/`completed?` 三处一致；文档补上 `message`（由 `nackMsg` 在 `too_large`、`invalid_response`、回答非计划请求带 setMode 的 `invalid_mode` 时给出）和此前只出现在示例里的 `ok`。Go / TS 代码未改 |
 
 ## 后续
 
