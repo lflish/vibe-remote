@@ -496,7 +496,7 @@
 - 完成定义：/protocol-sync 对 `chat_ack` 三处无差异
 
 ### T20 测试修正
-- 状态：待办
+- 状态：完成
 - 来源：codex 备注 1、2；界面验证者备注 4、12 和 drag-select 的建议
 - 内容：
   1. `gui-chat-smoke.mjs` R5.6 的永真断言改成真的断言（回答没送达之前工具块不处于已完成状态），并确认它在「回答没送达也执行了工具」的变异下会失败
@@ -532,6 +532,7 @@
 | T17（X4） | 2026-11-20 12:18 | 本提交 | 修复前失败：`TestLatestSessionChecksTranscriptCwd`（「workdir a-b with no conversation got bbbbbbbb-… — the conversation of a/b」）、`TestContinueIgnoresOtherDirectorySharingProjectDir`（经 WebSocket 带 continue 新建，「-c in …/a-b (no conversation of its own) resumed …, the conversation of …/a/b」）、`TestTerminalContinueIgnoresOtherDirectorySharingProjectDir`（终端 `-c` 被改写成 `--resume <a/b 的 id>`）；修复后 `go test -race ./internal/chat ./internal/server ./internal/session` 全部 ok。变异核对：没有 cwd 的记录也认领 → 用例失败 |
 | T18（X6） | 2026-11-20 12:21 | 本提交 | 查证：spec R16.3 字面要求黄点，design / decisions 无相反决定（d12 写的是「Dock 弹跳 + 角标 + 侧边栏黄点」）→ 按 spec 修。修复前失败：`test-chat-activity`「pending prompt turns it yellow and notifies」（dot none ≠ waiting）、`gui-chat-smoke` 的 X6（10 s 内当前会话没有黄点）；修复后通过，`npm test` 全绿（test-chat-activity 8）。变异核对：聚焦不清点 / 侧边栏照旧隐藏当前会话的点 / 通知结果回来把点去掉，三处各有用例失败。改动的已有断言 1 条（见 test-report） |
 | T19（X5） | 2026-11-20 12:22 | 本提交 | 按 /protocol-sync 的步骤把 `chat_ack` 逐字段再核对一遍（Go `ChatAckFrame` 的 json tag、TS `ChatAckFrame`、文档）：`type`/`op`（4 个值）/`ref?`/`ok`/`code?`（9 个码，与 `Ack*` 常量一致）/`message?`/`duplicate?`/`completed?` 三处一致；文档补上 `message`（由 `nackMsg` 在 `too_large`、`invalid_response`、回答非计划请求带 setMode 的 `invalid_mode` 时给出）和此前只出现在示例里的 `ok`。Go / TS 代码未改 |
+| T20（测试修正） | 2026-11-20 12:28 | 9135f77（删除确认文案、NUL 字节）、本提交（其余） | ① R5.6 的永真断言改为三条真的断言（工具块还没有结果、claude 没有继续、daemon 没有记下回答或工具结果）；变异核对：让假 claude 在收到回答前就产出工具结果 → 用例失败「the tool block already has a result although the answer was never delivered」，恢复后通过。② `TestOrphanCleanup` 的两处 `<-gone` 改为最多等 15 s（正常约 1–3 s，本用例自己断言 ≤ 4 s）并报出原因；用一个总是失败的假 `ps` 放在 PATH 最前面核对：16 s 后失败并写明原因、不再挂住，假 claude 由清理函数杀掉。③ gui-smoke 拖选用例：等到「正好是输出的那一行 + 下一行回到提示符 + 相隔 150 ms 两次看到的屏幕和位置相同」再量坐标；拖完再量一次，屏幕动过就打印 NOTE 并重新量、重新拖（最多 3 次）；最后的断言（复制内容必须等于 `SELECT_ME_PLEASE`）不变。④ `prompts.ts` 的 3 个原始 NUL 字节改为 `'\\0other'`，新增 `test-source-bytes`（修复前失败并指出 3 行）。⑤ 删除对话会话的确认文案（中英文）+ `test-sidebar-rename` 的断言。两份冒烟里 bash daemon 的 `allowed_roots` 由 `/tmp` 改为本次运行自己的目录。`npm test` 全绿（25 个脚本），gui-smoke 30 项通过 |
 
 ## 后续
 

@@ -110,6 +110,19 @@ elsewhere first (R5.7), plan review (R6), AskUserQuestion (R7), Esc / stop
 Dock fallback, notification click (R16.3), claude exits → restart (R13.2),
 handoff while running (R14.2), init version too old (R13.4).
 
+Cases driven with real input events (CDP `Input.dispatchMouseEvent` wheel /
+press / release with `clickCount`, `insertText`, key events — not
+`element.click()` or setting `scrollTop`), each on sessions of its own:
+`X7-send` (scrolled up with the wheel → a typed message and its reply show,
+replies do not drag the view, the bottom has them), `X7-background` (more than
+a screen arrives while another session is open → back at the bottom; left
+scrolled up → same place), `X8-chat` / `X8-terminal` (double click on the
+sidebar name of an open session, current and background → renamed, nothing
+typed into the session, sidebar still updates), `X6` (current session, app
+really hidden → yellow dot + notification, cleared on focus). `VR_ONLY=<ids>`
+runs a subset, e.g. `VR_ONLY=X7-send,X7-background,X8-chat,X8-terminal` or
+`VR_ONLY=S1,X6` (cases after `S1` need the main chat session it creates).
+
 How it fakes things (so failures can be read): network faults are a wrapped
 `WebSocket` in the renderer (`window.__vrNet`: hold incoming frames, drop
 outgoing ones, close a socket, refuse new connections); the "other desktop"

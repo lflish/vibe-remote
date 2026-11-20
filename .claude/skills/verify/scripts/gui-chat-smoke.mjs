@@ -836,6 +836,7 @@ test('R4', 'R4 tool blocks: Read/Grep folded, Bash output, Edit diff, failure', 
 });
 
 test('R5.6', 'R5.6 answer lost before reaching the daemon → prompt open again after reconnect', async () => {
+  const from = other.frames.length;
   await sendChat('perm touch r56.txt');
   await waitFor(() => ev(`!!${inChat('[data-testid="chat-perm-allow"]')}`), 10000, 'permission prompt');
   await ev(`window.__vrSock(${JSON.stringify(S1)}).__dropSend = true`);
@@ -844,8 +845,15 @@ test('R5.6', 'R5.6 answer lost before reaching the daemon → prompt open again 
   await ev(`window.__vrSock(${JSON.stringify(S1)}).close(), true`);
   await waitFor(() => ev(`${inChat('[data-testid="chat-perm"]')}?.dataset.state === 'open' && !!window.__vrSock(${JSON.stringify(S1)})`), 15000, 'prompt open after reconnect');
   await evidence('R5.6');
-  const text0 = await assistantText();
-  assert(!text0.endsWith('done Bash') || true, '');
+  // The answer never arrived, so nothing may have run: the tool block has no
+  // result yet, claude has not gone on, and the daemon has neither a
+  // resolution of the request nor a tool result (seen by the other desktop).
+  const before = await ev(`(() => { const d = [...${VC}.querySelectorAll('[data-testid="chat-tool"][data-tool="Bash"]')].pop(); return { status: d.dataset.status, text: d.textContent }; })()`);
+  assert(before.text.includes('r56.txt') && before.status !== 'ok' && before.status !== 'error', `the tool block already has a result although the answer was never delivered: ${JSON.stringify(before)}`);
+  assert(!(await assistantText()).trimEnd().endsWith('done Bash'), 'claude went on ("done Bash") although the answer was never delivered');
+  const leaked = other.frames.slice(from).filter((f) => f.type === 'chat' && (f.msg?.type === 'vr_resolved'
+    || (f.msg?.type === 'user' && Array.isArray(f.msg.message?.content) && f.msg.message.content.some((b) => b.type === 'tool_result'))));
+  assert(leaked.length === 0, `the daemon saw an answer / a tool result before the answer was delivered: ${JSON.stringify(leaked).slice(0, 300)}`);
   await ev(`${inChat('[data-testid="chat-perm-allow"]')}.click(), true`);
   await waitFor(() => ev(`!${inChat('[data-testid="chat-perm"]')}`), 10000, 'prompt closed');
   await idle();

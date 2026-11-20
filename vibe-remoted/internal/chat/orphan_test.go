@@ -51,6 +51,22 @@ func startOrphan(t *testing.T, env *chattest.Env, u string) (int, chan struct{})
 	return cmd.Process.Pid, gone
 }
 
+// goneTimeout bounds the waits for a fake claude this test expects to be
+// dead. Normally that takes about a second (SIGTERM, 1 s grace, SIGKILL; the
+// stubborn case itself asserts ≤ 4 s), so 15 s only passes when the process
+// was never signalled — and then the test fails with the reason instead of
+// hanging until go test's global timeout.
+const goneTimeout = 15 * time.Second
+
+func waitExit(t *testing.T, gone <-chan struct{}, pid int, why string) {
+	t.Helper()
+	select {
+	case <-gone:
+	case <-time.After(goneTimeout):
+		t.Fatalf("fake claude (pid %d) still running %v %s", pid, goneTimeout, why)
+	}
+}
+
 func TestOrphanCleanup(t *testing.T) {
 	t.Parallel()
 	t.Run("ended and confirmed gone", func(t *testing.T) {
@@ -83,7 +99,7 @@ func TestOrphanCleanup(t *testing.T) {
 		if len(orphans) != 0 || out[0].EndReason != protocol.EndReasonDaemonRestart {
 			t.Fatalf("orphans %v record %+v", orphans, out[0])
 		}
-		<-gone
+		waitExit(t, gone, pid, "after CleanupOrphans: it only signals a pid whose command line (read with ps) names the conversation, so where ps is not permitted the process is never signalled")
 		if d := time.Since(start); d > 4*time.Second {
 			t.Fatalf("cleanup took %v", d)
 		}
@@ -109,7 +125,7 @@ func TestOrphanCleanup(t *testing.T) {
 			t.Fatal("survivor reported gone")
 		}
 		_ = syscall.Kill(-pid, syscall.SIGKILL)
-		<-gone
+		waitExit(t, gone, pid, "after this test's own SIGKILL (is signalling permitted here?)")
 		if !orphans[0].Gone() {
 			t.Fatal("dead orphan still reported alive")
 		}
