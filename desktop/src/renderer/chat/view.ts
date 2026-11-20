@@ -71,6 +71,13 @@ export class ChatView {
   onRecheck?: () => void;
   /** Ended banner (handed off): open the terminal session that took over. */
   onOpenTerminal?: (sessionId: string) => void;
+  /**
+   * The view wants the keyboard: a prompt card appeared, or went away while
+   * it had the keyboard. index.ts decides (only the session on screen, not
+   * during a sidebar rename) and calls focus(); without it the view just
+   * takes the keyboard.
+   */
+  onFocusRequest?: () => void;
 
   private transcript: HTMLElement;
   private inner: HTMLElement;
@@ -189,6 +196,21 @@ export class ChatView {
     this.connected = connected;
     if (!connected) this.synced = false;
     this.updateComposer();
+  }
+
+  /**
+   * Puts the keyboard where the user acts next: on the open prompt card — the
+   * 1 / 2 / 3 and Esc written on it then work without a click — else in the
+   * input.
+   */
+  focus() {
+    if (this.card) this.card.el.focus();
+    else this.composer.focus();
+  }
+
+  private requestFocus() {
+    if (this.onFocusRequest) this.onFocusRequest();
+    else this.focus();
   }
 
   /** Called when this view becomes visible. Focus is the caller's business (index.ts focusView). */
@@ -446,12 +468,16 @@ export class ChatView {
   private renderPrompt(st: ChatState) {
     const prompt = st.pending[0];
     if (!prompt) {
+      // The keyboard was on the card (keys, or a click on one of its
+      // buttons): with the card gone it would be nowhere. The input is next.
+      const hadFocus = !!this.cardWrap?.contains(document.activeElement);
       if (this.card) {
         this.cardWrap?.remove();
         this.card = null;
         this.cardWrap = null;
       }
       this.composer.root.hidden = false;
+      if (hadFocus) this.requestFocus();
       return;
     }
     if (!this.card || this.card.requestId !== prompt.requestId) {
@@ -466,8 +492,7 @@ export class ChatView {
       this.cardWrap = el('div', 'cwrap prompt-wrap');
       this.cardWrap.appendChild(this.card.el);
       this.bottom.insertBefore(this.cardWrap, this.composer.root);
-      const card = this.card;
-      requestAnimationFrame(() => card.el.focus());
+      requestAnimationFrame(() => this.requestFocus());
     }
     this.card.update(prompt.state, st.pending.length - 1);
     this.composer.root.hidden = true;

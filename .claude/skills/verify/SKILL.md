@@ -118,9 +118,15 @@ replies do not drag the view, the bottom has them), `X7-background` (more than
 a screen arrives while another session is open → back at the bottom; left
 scrolled up → same place), `X8-chat` / `X8-terminal` (double click on the
 sidebar name of an open session, current and background → renamed, nothing
-typed into the session, sidebar still updates), `X6` (current session, app
+typed into the session, sidebar still updates), `X10-prompt` (a background
+session asks for permission → real click on its sidebar name → `1` answers,
+Esc interrupts, the next message is typed, all without clicking the card or
+the input), `X10-rename-chat` / `X10-rename-terminal` (after a rename ended by
+Enter, Esc, or a click on another session, the next keys go into the current
+session without a click), `X6` (current session, app
 really hidden → yellow dot + notification, cleared on focus). `VR_ONLY=<ids>`
-runs a subset, e.g. `VR_ONLY=X7-send,X7-background,X8-chat,X8-terminal` or
+runs a subset, e.g. `VR_ONLY=X7-send,X7-background,X8-chat,X8-terminal`,
+`VR_ONLY=X10-prompt,X10-rename-chat,X10-rename-terminal` or
 `VR_ONLY=S1,X6` (cases after `S1` need the main chat session it creates).
 
 How it fakes things (so failures can be read): network faults are a wrapped

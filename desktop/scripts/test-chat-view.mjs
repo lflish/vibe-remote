@@ -15,7 +15,7 @@ import { load, runner } from './chat-test-util.mjs';
 
 const dom = new JSDOM('<!DOCTYPE html><body></body>', { pretendToBeVisual: true });
 const w = dom.window;
-for (const k of ['window', 'document', 'HTMLElement', 'HTMLDetailsElement', 'Node', 'MouseEvent', 'KeyboardEvent', 'Event']) {
+for (const k of ['window', 'document', 'HTMLElement', 'HTMLDetailsElement', 'HTMLInputElement', 'Node', 'MouseEvent', 'KeyboardEvent', 'Event']) {
   Object.defineProperty(globalThis, k, { value: w[k], configurable: true, writable: true });
 }
 let rafQueue = [];
@@ -162,6 +162,67 @@ test('permission prompt: allow, always, deny, handled elsewhere', () => {
   click($('chat-perm-deny'));
   assert.deepEqual(responds(client).at(-1), { type: 'chat_respond', requestId: 'r3', response: { behavior: 'deny', message: '先别改这个文件' }, setMode: undefined });
   assert.equal($$('chat-perm').length, 1);
+});
+
+// X10: the keyboard goes where the user acts next. With a prompt open that is
+// the card (its 1 / 2 / 3 and Esc work without a click), otherwise the input.
+test('X10 focus(): the open prompt card, else the input; a card that goes away hands the keyboard to the input', () => {
+  const { view, client, $ } = makeView();
+  const bashReq = { subtype: 'can_use_tool', tool_name: 'Bash', input: { command: 'touch x' }, tool_use_id: 'tu1' };
+  const press = (key) => document.activeElement.dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true }));
+  view.focus();
+  assert.equal(document.activeElement, $('chat-input'), 'no prompt: the input');
+
+  client.onChatState(state({ status: 'waiting', pending: [{ requestId: 'r1', seq: 1, request: bashReq }] }));
+  flush();
+  flush();
+  document.activeElement.blur(); // e.g. the view was in the background when the card appeared
+  assert.equal(document.activeElement, document.body);
+  view.focus();
+  assert.equal(document.activeElement, $('chat-perm'), 'prompt open: the card');
+  press('1');
+  assert.deepEqual(client.sent.filter((f) => f.type === 'chat_respond').map((f) => [f.requestId, f.response.behavior]), [['r1', 'allow']], '1 answers from there');
+  client.onChatState(state({ status: 'running', pending: [] }));
+  flush();
+  assert.equal($('chat-perm'), null);
+  assert.equal(document.activeElement, $('chat-input'), 'the card is gone: the input has the keyboard');
+
+  // Esc on a card focused the same way; and a card that goes away while the
+  // keyboard is somewhere else leaves it there.
+  client.onChatState(state({ status: 'waiting', pending: [{ requestId: 'r2', seq: 2, request: bashReq }] }));
+  flush();
+  flush();
+  document.activeElement.blur();
+  view.focus();
+  press('Escape');
+  assert.equal(client.sent.filter((f) => f.type === 'chat_interrupt').length, 1, 'Esc interrupts from there');
+  const elsewhere = document.createElement('input');
+  document.body.appendChild(elsewhere);
+  elsewhere.focus();
+  client.onChatState(state({ status: 'idle', pending: [] }));
+  flush();
+  assert.equal(document.activeElement, elsewhere, 'the keyboard was elsewhere: it stays there');
+  elsewhere.remove();
+  view.container.remove();
+});
+
+test('X10 a new prompt card asks for the keyboard through onFocusRequest when the app set it', () => {
+  const { view, client, $ } = makeView();
+  const bashReq = { subtype: 'can_use_tool', tool_name: 'Bash', input: { command: 'touch x' }, tool_use_id: 'tu1' };
+  let asked = 0;
+  view.onFocusRequest = () => { asked++; };
+  $('chat-input').focus();
+  client.onChatState(state({ status: 'waiting', pending: [{ requestId: 'r1', seq: 1, request: bashReq }] }));
+  flush();
+  flush();
+  assert.equal(asked, 1, 'asked once for the new card');
+  assert.notEqual(document.activeElement, $('chat-perm'), 'the card did not take the keyboard by itself');
+  // The card goes while the keyboard is on it: asked again (the input is next).
+  $('chat-perm').focus();
+  client.onChatState(state({ status: 'idle', pending: [] }));
+  flush();
+  assert.equal(asked, 2, 'asked again when the focused card went away');
+  view.container.remove();
 });
 
 test('plan prompt options', () => {

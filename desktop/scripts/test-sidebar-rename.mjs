@@ -14,6 +14,18 @@ import { indexDom, load, loadIndex, runner } from './chat-test-util.mjs';
 
 const { test, run } = runner('test-sidebar-rename');
 
+// For the views opened through index.ts (openChat below): a socket that opens
+// when told to and records what the client sends.
+const sockets = [];
+globalThis.WebSocket = class {
+  static OPEN = 1;
+  constructor() { this.readyState = 0; this.sent = []; sockets.push(this); }
+  send(data) { this.sent.push(JSON.parse(data)); }
+  close() { this.readyState = 3; }
+  fireOpen() { this.readyState = 1; this.onopen?.(); }
+};
+const bash = (id) => ({ requestId: id, seq: 1, request: { subtype: 'can_use_tool', tool_name: 'Bash', input: { command: 'touch x' }, tool_use_id: `tu-${id}` } });
+
 const machine = { name: 'dev', addr: '127.0.0.1', port: 1234, token: 't' };
 const mk = '127.0.0.1:1234';
 const chatState = { type: 'chat_state', status: 'idle', permissionMode: 'default', permissionLocked: false, pending: [], slashCommands: [], claudeVersion: '2.1.210', claudeSessionId: 'u', ended: null };
@@ -64,6 +76,30 @@ async function setup() {
     return { view, helper, typed };
   };
 
+  /**
+   * A chat view opened the way the app opens it (index.ts openChatSession: its
+   * callbacks are wired), on a socket that records what is sent.
+   */
+  const openChat = (id, pending = []) => {
+    const view = app.openChatSession(machine, id, `/w/${id}`);
+    const ws = sockets.at(-1);
+    ws.fireOpen();
+    view.setConnected(true);
+    view.client.onChatSync({ type: 'chat_sync', epoch: 'e', reset: true, omitted: 0, historyCount: 0, backlog: 0 });
+    const push = (list) => { view.client.onChatState({ ...chatState, status: list.length ? 'waiting' : 'idle', pending: list }); page.flushFrames(); page.flushFrames(); };
+    push(pending);
+    opened.push(view);
+    return {
+      view, ws, push,
+      input: view.container.querySelector('[data-testid="chat-input"]'),
+      card: () => view.container.querySelector('[data-testid="chat-perm"]'),
+      responses: () => ws.sent.filter((f) => f.type === 'chat_respond'),
+      interrupts: () => ws.sent.filter((f) => f.type === 'chat_interrupt'),
+    };
+  };
+  const opened = [];
+  const close = () => { for (const v of opened) v.client.disconnect(); page.dom.window.close(); };
+
   const label = (title) => [...document.querySelectorAll('.session-item')].find((i) => i.querySelector('.session-label-text')?.textContent === title)?.querySelector('.session-label') ?? null;
   const titles = () => [...document.querySelectorAll('.session-item')].map((i) => i.querySelector('.session-label-text')?.textContent ?? '(renaming)');
   const renameInput = () => document.querySelector('.session-rename-input');
@@ -83,7 +119,9 @@ async function setup() {
     el?.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }));
   };
   const settle = async () => { for (let i = 0; i < 10; i++) await new Promise((r) => setTimeout(r, 0)); };
-  return { page, app, sessions, renames, chat, terminal, label, titles, renameInput, doubleClick, typeAndEnter, settle };
+  /** A real key press on whatever has the keyboard. */
+  const key = (k) => document.activeElement.dispatchEvent(new KeyboardEvent('keydown', { key: k, bubbles: true, cancelable: true }));
+  return { page, app, sessions, renames, chat, openChat, close, terminal, label, titles, renameInput, doubleClick, typeAndEnter, key, settle };
 }
 
 for (const humanPace of [true, false]) {
@@ -189,6 +227,169 @@ test('a rename that cannot start (its label is no longer in the document) does n
   t.app.renderSidebar();
   assert.deepEqual(t.titles(), ['changed elsewhere', 'shell', 'other'], 'sidebar rebuilt');
   t.page.dom.window.close();
+});
+
+// X10: when a rename is over the keyboard is back in the current session, and
+// a session opened from the sidebar with a prompt waiting has the keyboard on
+// the prompt card — the user types, or presses the 1 / Esc written on the
+// card, without clicking first.
+test('X10 rename ends with Enter or Esc: the keyboard is back in the current chat session', async () => {
+  const t = await setup();
+  const c1 = t.openChat('c1');
+  t.page.flushFrames();
+  for (const [how, name] of [['Enter', 'renamed'], ['Escape', 'renamed']]) {
+    t.doubleClick(t.titles()[0], { humanPace: true });
+    assert.equal(document.activeElement, t.renameInput(), 'renaming');
+    if (how === 'Enter') t.typeAndEnter(name);
+    else t.key('Escape');
+    await t.settle();
+    t.page.flushFrames();
+    assert.equal(t.renameInput(), null, `${how}: the rename is over`);
+    assert.equal(document.activeElement, c1.input, `${how}: the keyboard is in the chat input`);
+  }
+  assert.deepEqual(t.renames, [['c1', 'renamed']]);
+  t.close();
+});
+
+test('X10 rename ends with Enter or Esc: the keyboard is back in the current terminal session', async () => {
+  const t = await setup();
+  const term = t.terminal('t1');
+  t.app.setActive(term.view.key);
+  t.page.flushFrames();
+  for (const how of ['Enter', 'Escape']) {
+    t.doubleClick(t.titles()[1], { humanPace: true });
+    assert.equal(document.activeElement, t.renameInput(), 'renaming');
+    if (how === 'Enter') t.typeAndEnter('build box');
+    else t.key('Escape');
+    await t.settle();
+    t.page.flushFrames();
+    assert.equal(document.activeElement, term.helper, `${how}: the keyboard is in the terminal`);
+  }
+  assert.deepEqual(term.typed, [], 'the terminal got none of the rename keys');
+  t.close();
+});
+
+test('X10 rename committed by clicking another session: the keyboard ends in that session', async () => {
+  const t = await setup();
+  const c1 = t.openChat('c1');
+  const c2 = t.openChat('c2'); // current
+  t.page.flushFrames();
+  t.doubleClick('other', { humanPace: true }); // rename the current session c2
+  t.renameInput().value = 'kept';
+  // A click on another session's name: the press takes the focus off the
+  // input (blur commits), the click switches.
+  t.renameInput().blur();
+  t.label('conversation').dispatchEvent(new MouseEvent('click', { bubbles: true, detail: 1 }));
+  t.page.flushFrames();
+  await t.settle();
+  t.page.flushFrames();
+  assert.deepEqual(t.renames, [['c2', 'kept']]);
+  assert.equal(t.app.activeKey, c1.view.key, 'the clicked session is the current one');
+  assert.equal(document.activeElement, c1.input, 'the keyboard is in the session that was clicked');
+  assert.equal(c2.input.value, '', 'nothing went into the renamed session');
+  t.close();
+});
+
+test('X10 rename committed by a click into a field elsewhere, or a dialog: the keyboard stays there', async () => {
+  const t = await setup();
+  const c1 = t.openChat('c1', [bash('r1')]); // a prompt is waiting in the current session
+  t.page.flushFrames();
+  // Any other field of the app (not in a dialog).
+  const elsewhere = document.createElement('input');
+  document.body.appendChild(elsewhere);
+  t.doubleClick(t.titles()[0], { humanPace: true });
+  t.renameInput().value = 'zero';
+  elsewhere.focus(); // the user clicks into it: blur commits
+  await t.settle();
+  t.page.flushFrames();
+  assert.deepEqual(t.renames, [['c1', 'zero']]);
+  assert.equal(document.activeElement, elsewhere, 'the field the user clicked into keeps the keyboard');
+  elsewhere.remove();
+  const overlay = document.createElement('div');
+  overlay.className = 'modal-overlay';
+  const field = document.createElement('input');
+  const button = document.createElement('button');
+  overlay.append(field, button);
+  document.body.appendChild(overlay);
+  for (const target of [field, button]) {
+    t.doubleClick(t.titles()[0], { humanPace: true });
+    t.renameInput().value = target === field ? 'one' : 'two';
+    target.focus(); // the user clicks into the dialog: blur commits
+    await t.settle();
+    t.page.flushFrames();
+    assert.equal(document.activeElement, target, 'the dialog keeps the keyboard after the rename was saved');
+  }
+  // Focus nowhere, but a dialog is open: the session behind it does not take the keyboard.
+  t.doubleClick('two', { humanPace: true });
+  t.key('Escape');
+  await t.settle();
+  t.page.flushFrames();
+  assert.equal(document.activeElement, document.body, 'nothing behind an open dialog takes the keyboard');
+  assert.deepEqual(c1.responses(), []);
+  t.close();
+});
+
+test('X10 opening a session whose prompt is waiting: the keyboard is on the card, 1 answers it and the input has it afterwards', async () => {
+  const t = await setup();
+  const c1 = t.openChat('c1');
+  const c2 = t.openChat('c2'); // current; c1 is in the background
+  t.page.flushFrames();
+  c2.input.focus();
+  c1.push([bash('r1')]); // the background session asks for permission
+  assert.ok(c1.card(), 'the card exists in the background view');
+  assert.equal(document.activeElement, c2.input, 'a card in a background session leaves the keyboard where it is');
+  t.label('conversation').dispatchEvent(new MouseEvent('click', { bubbles: true, detail: 1 }));
+  t.page.flushFrames();
+  assert.equal(t.app.activeKey, c1.view.key);
+  assert.equal(document.activeElement, c1.card(), 'the prompt card has the keyboard');
+  t.key('1');
+  assert.deepEqual(c1.responses().map((f) => [f.requestId, f.response.behavior]), [['r1', 'allow']], '1 = yes, without a click');
+  c1.push([]); // answered: the card goes away
+  assert.equal(c1.card(), null);
+  assert.equal(document.activeElement, c1.input, 'the keyboard is in the input once the card is gone');
+
+  // Same with Esc; and a plain click on the current session's name gives the
+  // keyboard to the card, not to the (hidden) input.
+  t.label('other').dispatchEvent(new MouseEvent('click', { bubbles: true, detail: 1 }));
+  t.page.flushFrames();
+  c1.push([bash('r2')]);
+  t.label('conversation').dispatchEvent(new MouseEvent('click', { bubbles: true, detail: 1 }));
+  t.page.flushFrames();
+  assert.equal(document.activeElement, c1.card(), 'the second prompt card has the keyboard');
+  document.body.focus();
+  document.activeElement.blur?.();
+  t.label('conversation').dispatchEvent(new MouseEvent('click', { bubbles: true, detail: 1 }));
+  t.page.flushFrames();
+  assert.equal(document.activeElement, c1.card(), 'click on the current session: keyboard on its card');
+  t.key('Escape');
+  assert.equal(c1.interrupts().length, 1, 'Esc interrupts, without a click');
+  // A session with nothing waiting: the input.
+  t.label('other').dispatchEvent(new MouseEvent('click', { bubbles: true, detail: 1 }));
+  t.page.flushFrames();
+  assert.equal(document.activeElement, c2.input, 'no prompt: the keyboard is in the input');
+  t.close();
+});
+
+test('X10 a prompt that arrives in the current session while it is being renamed leaves the keyboard in the rename input', async () => {
+  const t = await setup();
+  const c1 = t.openChat('c1');
+  t.page.flushFrames();
+  t.doubleClick('conversation', { humanPace: true });
+  const input = t.renameInput();
+  input.value = 'name with 1 in it';
+  c1.push([bash('r1')]);
+  assert.ok(c1.card(), 'the card is there');
+  assert.equal(document.activeElement, input, 'the rename input still has the keyboard');
+  assert.equal(t.renameInput(), input, 'the rename is still open');
+  assert.deepEqual(t.renames, [], 'nothing was saved half-typed');
+  // Enter saves; now the keyboard goes to the waiting card.
+  t.typeAndEnter('name with 1 in it');
+  await t.settle();
+  t.page.flushFrames();
+  assert.deepEqual(t.renames, [['c1', 'name with 1 in it']]);
+  assert.deepEqual(c1.responses(), [], 'no key of the name answered the prompt');
+  assert.equal(document.activeElement, c1.card(), 'after the rename the card has the keyboard');
+  t.close();
 });
 
 // Same sidebar, the delete button: a chat session's conversation is kept in

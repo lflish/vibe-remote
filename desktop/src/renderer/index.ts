@@ -758,6 +758,9 @@ function openChatSession(machine: MachineConfig, sessionId: string, workdir?: st
   view.onRestart = () => void reloadChat(machine, view.sessionId, sessionDisplayTitle(machine, view.sessionId));
   view.onRecheck = () => void recheckChat(view);
   view.onOpenTerminal = (id) => openTerminalById(machine, id);
+  view.onFocusRequest = () => {
+    if (view.key === activeKey) focusView(view);
+  };
   // Chat state comes from the structured stream (R16.4); hook notify frames
   // (idle / waiting) are for terminal sessions and are ignored here.
   client.onNotify = () => {};
@@ -1072,7 +1075,9 @@ function sessionDisplayTitle(machine: MachineConfig, sessionId: string): string 
   return session?.title || sessionId || 'vibe-remote';
 }
 
-// focusView puts the keyboard in a session view (terminal, or the chat input).
+// focusView puts the keyboard in a session view: the terminal, or a chat
+// session's open prompt card (so the keys written on it work), else its input
+// (ChatView.focus, X10).
 // Not while a session is being renamed in the sidebar: the rename input keeps
 // the keyboard until Enter / Esc / the user clicks elsewhere. A focus scheduled
 // by the click that opened the session would otherwise land after the rename
@@ -1080,8 +1085,20 @@ function sessionDisplayTitle(machine: MachineConfig, sessionId: string): string 
 // session instead (X8).
 function focusView(view: AnyView) {
   if (renamingActive) return;
-  if (view.ui === 'chat') view.composer.focus();
+  if (view.ui === 'chat') view.focus();
   else view.terminal.focus();
+}
+
+// focusAfterRename: the rename input is gone (Enter, Esc, or a click elsewhere
+// committed it) and the keyboard it had goes back to the current session —
+// unless the user already put it somewhere (the click landed in a field), or
+// a dialog is open (X10).
+function focusAfterRename() {
+  const el = document.activeElement;
+  if (el && el !== document.body) return;
+  if (document.querySelector('.modal-overlay')) return;
+  const view = activeKey ? views.get(activeKey) : undefined;
+  if (view) focusView(view);
 }
 
 // selectOpenSession handles a click on the sidebar name of a session that is
@@ -1365,6 +1382,7 @@ function startInlineRename(machine: MachineConfig, s: SessionInfo, label: HTMLEl
       await refreshAllMachines(false, mk);
       renamingActive = false;
       renderSidebar();
+      focusAfterRename();
     }
   };
   const cancel = () => {
@@ -1372,6 +1390,7 @@ function startInlineRename(machine: MachineConfig, s: SessionInfo, label: HTMLEl
     done = true;
     renamingActive = false; // clear before renderSidebar so it rebuilds
     renderSidebar();
+    focusAfterRename();
   };
 
   input.addEventListener('keydown', (e) => {

@@ -36,7 +36,7 @@ export async function indexDom() {
     { url: 'https://local.test', pretendToBeVisual: true },
   );
   const w = dom.window;
-  for (const k of ['window', 'document', 'localStorage', 'location', 'HTMLElement', 'HTMLDetailsElement', 'Node', 'MouseEvent', 'KeyboardEvent', 'Event']) {
+  for (const k of ['window', 'document', 'localStorage', 'location', 'HTMLElement', 'HTMLDetailsElement', 'HTMLInputElement', 'Node', 'MouseEvent', 'KeyboardEvent', 'Event']) {
     Object.defineProperty(globalThis, k, { value: w[k], configurable: true, writable: true });
   }
   Object.defineProperty(globalThis, 'navigator', { value: { language: 'en-US' }, configurable: true });

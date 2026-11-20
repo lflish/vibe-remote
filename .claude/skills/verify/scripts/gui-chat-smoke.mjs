@@ -26,7 +26,7 @@
 //   VR_MAIN_DAEMON=<path>       reuse a main-branch vibe-remoted build
 //   VR_CDP_PORT / VR_INSPECT_PORT  fixed debug ports (with --keep, for poking around)
 //   VR_ONLY=<id,id,…>           run only these cases (ids as in test('<id>', …)); only
-//                               for cases that set up their own sessions (X7-*, X8-*)
+//                               for cases that set up their own sessions (X7-*, X8-*, X10-*)
 // Requires Node 22+, Go, tmux, git; macOS with a display.
 
 import { spawn, spawnSync } from 'node:child_process';
@@ -261,7 +261,7 @@ async function connectMain() {
 }
 
 const MOD = { alt: 1, ctrl: 2, meta: 4, shift: 8 };
-const KEYS = { Enter: [13, 'Enter', '\r'], Escape: [27, 'Escape'], Tab: [9, 'Tab'], ArrowDown: [40, 'ArrowDown'], ArrowUp: [38, 'ArrowUp'] };
+const KEYS = { Enter: [13, 'Enter', '\r'], Escape: [27, 'Escape'], Tab: [9, 'Tab'], ArrowDown: [40, 'ArrowDown'], ArrowUp: [38, 'ArrowUp'], 1: [49, 'Digit1', '1'] };
 
 async function pressKey(key, modifiers = 0) {
   const [vk, code, txt] = KEYS[key] ?? [key.toUpperCase().charCodeAt(0), `Key${key.toUpperCase()}`, key];
@@ -755,6 +755,141 @@ test('X8-terminal', 'X8 double click on an open terminal session (current ×3, b
   assert(!(await screen()).includes('box'), `a new name was typed into the shell: ${JSON.stringify((await screen()).slice(-200))}`);
   await evidence('X8-terminal');
   return `5 renames, last "${name}"`;
+});
+
+// X10: where the keyboard is after opening a session that waits for an answer,
+// and after a rename. Between the action and the keys there is no click: the
+// keys go wherever the app left the focus.
+const focusedOn = () => ev(`(() => { const a = document.activeElement; return !a ? 'nothing' : a === document.body ? 'BODY (nowhere)' : (a.dataset?.testid || String(a.className) || a.tagName); })()`);
+const lastBash = () => ev(`(() => { const d = [...${VC}.querySelectorAll('[data-testid="chat-tool"][data-tool="Bash"]')].pop(); return d ? d.dataset.status : ''; })()`);
+
+test('X10-prompt', 'X10 a background chat session asks for permission (yellow dot): a real click opens it, then 1 answers / Esc interrupts without clicking the card, and typing goes on in the input', async () => {
+  const id = await newChat(CHAT, 'x10');
+  await newChat(CHAT, 'x10b'); // x10 is now a background session
+  const c = await Conn.open(CHAT);
+  try {
+    await c.attachChat(id);
+    const openWaiting = async (turnText) => {
+      const turn = c.chat(turnText);
+      await waitFor(() => sidebarItem(CHAT, 'x10', `it.dataset.dot === 'waiting'`), 10000, 'yellow dot on x10');
+      await clickSidebar(CHAT, 'x10');
+      await waitFor(() => ev(`!!${inChat('[data-testid="chat-perm"]')}`), 5000, 'the prompt card is on screen');
+      await sleep(400); // whatever the click set off (switch, redraw, focus) has run
+      return turn;
+    };
+    // (1) the key 1 = "yes"
+    let turn = await openWaiting('tool Bash');
+    let focus = await focusedOn();
+    await evidence('X10-prompt');
+    await pressKey('1');
+    await waitFor(() => ev(`!${inChat('[data-testid="chat-perm"]')}`), 4000, `the card to close after pressing 1 without clicking it (the keyboard was on: ${focus})`);
+    await c.turn(turn);
+    await idle();
+    assert((await lastBash()) === 'ok' && (await assistantText()).includes('done Bash'), `the turn did not go on after 1: Bash is ${await lastBash()}`);
+    // … and the next message is typed without a click, too.
+    await sleep(300);
+    focus = await focusedOn();
+    await cdp.send('Input.insertText', { text: 'echo x10 typed after the answer' });
+    await pressKey('Enter');
+    await waitFor(async () => (await userCount('echo x10 typed after the answer')) === 1, 4000, `the message typed right after answering (the keyboard was on: ${focus})`);
+    await waitAssistant('x10 typed after the answer', 8000);
+    await idle();
+    // (2) Esc = interrupt the request
+    await clickSidebar(CHAT, 'x10b');
+    turn = await openWaiting('perm touch x10-esc.txt');
+    focus = await focusedOn();
+    await pressKey('Escape');
+    await waitFor(() => ev(`!${inChat('[data-testid="chat-perm"]')}`), 4000, `the card to close after pressing Esc without clicking it (the keyboard was on: ${focus})`);
+    await idle();
+    await waitFor(async () => (await transcriptText()).includes('Bash 的请求已中断'), 5000, 'the request shown as interrupted');
+    assert((await lastBash()) !== 'ok', 'the tool ran although the request was interrupted');
+    return `opened from the yellow dot: keyboard on ${focus}; 1 → done Bash, next message typed without a click; Esc → request interrupted`;
+  } finally {
+    c.close();
+  }
+});
+
+test('X10-rename-chat', 'X10 after renaming a chat session (Enter, Esc, a click on another session) the next keys go into the current session, without a click', async () => {
+  const id = await newChat(CHAT, 'x10r');
+  await newChat(CHAT, 'x10s');
+  await clickSidebar(CHAT, 'x10r');
+  const c = await Conn.open(CHAT);
+  try {
+    await c.attachChat(id);
+    const typeNow = async (msg, where) => {
+      await sleep(300); // the rename is over; nothing is clicked from here on
+      const focus = await focusedOn();
+      await cdp.send('Input.insertText', { text: msg });
+      await pressKey('Enter');
+      await waitFor(async () => (await userCount(msg)) === 1, 4000, `"${msg}" to show up in ${where} — typed without a click (the keyboard was on: ${focus})`);
+      await waitAssistant(msg.replace(/^echo /, ''), 8000);
+      await idle();
+    };
+    // Enter
+    await renameByDoubleClick(CHAT, 'x10r', 'chat', 'x10 改名');
+    await typeNow('echo typed after rename', 'the renamed session');
+    // Esc
+    await realClick(sidebarLabel(CHAT, 'x10 改名'), 'sidebar item x10 改名', 2);
+    await waitFor(renameFocused, 3000, 'rename input focused');
+    await cdp.send('Input.insertText', { text: '不保存的名字' });
+    await pressKey('Escape');
+    await waitFor(() => ev(`!document.querySelector('.session-rename-input')`), 3000, 'rename cancelled');
+    assert(await sidebarItem(CHAT, 'x10 改名', 'true'), 'Esc changed the name');
+    await typeNow('echo typed after esc', 'the session');
+    assert((await ev(`${INPUT}.value`)) === '', 'part of the cancelled name stayed in the input');
+    await evidence('X10-rename-chat');
+    // A click on another session commits the rename and switches: keys go there.
+    // The rename request takes 500 ms here, as against a remote daemon: on
+    // 127.0.0.1 it is back — and the sidebar rebuilt — before the button is
+    // released, and a rebuild under the pointer swallows the click (tasks.md
+    // follow-up list).
+    const from = c.frames.length;
+    await realClick(sidebarLabel(CHAT, 'x10 改名'), 'sidebar item x10 改名', 2);
+    await waitFor(renameFocused, 3000, 'rename input focused');
+    await cdp.send('Input.insertText', { text: 'x10 名字二' });
+    await ev(`(() => { const f = window.fetch; window.__x10Fetch = f; window.fetch = (u, o) => String(u).includes('/rename') ? new Promise((r) => setTimeout(r, 500)).then(() => f(u, o)) : f(u, o); return true; })()`);
+    try {
+      await realClick(sidebarLabel(CHAT, 'x10s'), 'sidebar item x10s');
+      await waitFor(async () => (await sessions(CHAT)).some((x) => x.title === 'x10 名字二'), 5000, 'the name was saved by clicking elsewhere');
+    } finally {
+      await ev(`(window.fetch = window.__x10Fetch, true)`);
+    }
+    await waitFor(() => sidebarItem(CHAT, 'x10s', `it.classList.contains('active')`), 5000, 'x10s is the current session');
+    await waitFor(() => sidebarItem(CHAT, 'x10 名字二', 'true'), 5000, 'sidebar shows the saved name');
+    await typeNow('echo typed in the other session', 'the session that was clicked');
+    assert(!c.frames.slice(from).some((f) => f.type === 'chat'), 'the renamed session got a message');
+    return 'Enter, Esc and click-elsewhere: the next message was typed without a click each time';
+  } finally {
+    c.close();
+  }
+});
+
+test('X10-rename-terminal', 'X10 after renaming a terminal session (Enter, Esc) the next keys go into the terminal, without a click', async () => {
+  const screen = () => ev(`(() => { const r = [...document.querySelectorAll('.term-instance')].find((c) => c.style.display !== 'none')?.querySelector('.xterm-rows'); return r ? r.innerText : ''; })()`);
+  await openPicker(TERM.name);
+  await pickerEnter('x10t');
+  await pickerOpen();
+  await waitFor(() => sidebarItem(TERM, 'x10t', `it.classList.contains('active')`, 'terminal'), 20000, 'terminal session x10t open');
+  await waitFor(async () => /\$ ?$|\$\s/m.test(await screen()), 20000, 'shell prompt');
+  const typeNow = async (cmd, out) => {
+    await sleep(300); // the rename is over; nothing is clicked from here on
+    const focus = await focusedOn();
+    await cdp.send('Input.insertText', { text: cmd });
+    await pressKey('Enter');
+    await waitFor(async () => (await screen()).includes(out), 5000, `${out} on the terminal — typed without a click (the keyboard was on: ${focus})`);
+  };
+  await renameByDoubleClick(TERM, 'x10t', 'terminal', 'x10 box');
+  await typeNow('echo X10_$((6*7))_TYPED', 'X10_42_TYPED');
+  await realClick(sidebarLabel(TERM, 'x10 box', 'terminal'), 'sidebar item x10 box', 2);
+  await waitFor(renameFocused, 3000, 'rename input focused');
+  await cdp.send('Input.insertText', { text: 'zzz-not-kept' });
+  await pressKey('Escape');
+  await waitFor(() => ev(`!document.querySelector('.session-rename-input')`), 3000, 'rename cancelled');
+  await typeNow('echo X10_$((7*7))_ESC', 'X10_49_ESC');
+  const out = await screen();
+  assert(!out.includes('x10 box') && !out.includes('zzz-not-kept'), `a name was typed into the shell: ${JSON.stringify(out.slice(-200))}`);
+  await evidence('X10-rename-terminal');
+  return 'Enter and Esc: the next command was typed without a click';
 });
 
 test('S1', 'main chat session created (dir main)', async () => {
@@ -1350,13 +1485,13 @@ async function main() {
 
   // The bash daemons only get a directory of this run, not all of /tmp.
   const termRoot = join(work, 'term-root');
-  for (const s of ['x8t', 'x8u']) mkdirSync(join(termRoot, s), { recursive: true });
+  for (const s of ['x8t', 'x8u', 'x10t']) mkdirSync(join(termRoot, s), { recursive: true });
   const bashCfg = { default_workdir: termRoot, allowed_roots: [termRoot], use_tmux: true, claude_cmd: '/bin/bash', claude_reload_cmd: '/bin/bash' };
   TERM = defineDaemon('gui-term', { cfg: bashCfg });
   MAIN = defineDaemon('gui-main', { bin: mainBin, cfg: bashCfg });
 
   chatRoot = join(work, 'gui-chat', 'proj');
-  const subs = ['main', 'bypass', 'hist', 'x7', 'x7b', 'x8', 'x8b'].map((s) => join(chatRoot, s));
+  const subs = ['main', 'bypass', 'hist', 'x7', 'x7b', 'x8', 'x8b', 'x10', 'x10b', 'x10r', 'x10s'].map((s) => join(chatRoot, s));
   for (const s of subs) mkdirSync(s, { recursive: true });
   const chatConfig = join(work, 'gui-chat', 'cc');
   CHAT = chatDaemon('gui-chat', chatConfig, [chatRoot, ...subs], {
