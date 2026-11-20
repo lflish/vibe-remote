@@ -1,6 +1,7 @@
 package server
 
 import (
+	"bytes"
 	"context"
 	"encoding/base64"
 	"encoding/json"
@@ -1472,5 +1473,67 @@ func TestContinueIgnoresOtherDirectorySharingProjectDir(t *testing.T) {
 	defer c.mgr.Delete(rb.SessionID)
 	if rb.ClaudeSessionID != u {
 		t.Fatalf("-c in %s got %s, want its own conversation %s", b, rb.ClaudeSessionID, u)
+	}
+}
+
+// X9 (R1.5, H6): a directory that has a conversation continues it with -c
+// wherever in the transcript its "cwd" first appears, and whether the
+// transcript recorded the directory by its real path or through a symlink.
+func TestContinueFindsLateOrAliasedCwd(t *testing.T) {
+	cases := []struct {
+		name            string
+		before, pad     int  // records without a cwd before the first one that has it
+		recordAlias     bool // the transcript recorded (and is filed under) the symlink
+		attachWithAlias bool
+	}{
+		{name: "cwd on line 101", before: 100, pad: 20},
+		{name: "cwd on line 1001 of 2 MiB", before: 1000, pad: 2000},
+		{name: "recorded under a symlink, opened by the real path", recordAlias: true},
+		{name: "recorded under a symlink, opened by the symlink", recordAlias: true, attachWithAlias: true},
+		{name: "recorded under the real path, opened by a symlink", attachWithAlias: true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			c := newChatServer(t, withFlags(config.ClaudeFlag{ID: "continue", Label: "continue", Arg: "-c"}))
+			realDir := filepath.Join(c.root, "real-dir")
+			alias := filepath.Join(c.root, "alias-dir")
+			if err := os.MkdirAll(realDir, 0o700); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Symlink(realDir, alias); err != nil {
+				t.Fatal(err)
+			}
+			chattest.TrustDir(t, c.env.ConfigDir, realDir)
+			cwd, open := realDir, realDir
+			if tc.recordAlias {
+				cwd = alias
+			}
+			if tc.attachWithAlias {
+				open = alias
+			}
+			u := chat.NewUUID()
+			dir := filepath.Join(c.env.ConfigDir, "projects", chat.EncodeProjectDir(cwd))
+			if err := os.MkdirAll(dir, 0o700); err != nil {
+				t.Fatal(err)
+			}
+			var body bytes.Buffer
+			for i := 0; i < tc.before; i++ {
+				fmt.Fprintf(&body, `{"type":"queue-operation","operation":"enqueue","metadata":"%s"}`+"\n", strings.Repeat("x", tc.pad))
+			}
+			line, _ := json.Marshal(map[string]any{"type": "user", "cwd": cwd, "sessionId": u,
+				"message": map[string]any{"role": "user", "content": "the conversation this directory already has"}})
+			body.Write(append(line, '\n'))
+			if err := os.WriteFile(filepath.Join(dir, u+".jsonl"), body.Bytes(), 0o600); err != nil {
+				t.Fatal(err)
+			}
+
+			w := c.connect()
+			r := c.attachChat(w, protocol.AttachFrame{NewSessionID: newSID("late"), Workdir: open, Flags: []string{"continue"}})
+			defer c.mgr.Delete(r.SessionID)
+			if r.ClaudeSessionID != u {
+				t.Fatalf("-c in %s (transcript of %d bytes, cwd %s on line %d) started %s instead of continuing %s",
+					open, body.Len(), cwd, tc.before+1, r.ClaudeSessionID, u)
+			}
+		})
 	}
 }

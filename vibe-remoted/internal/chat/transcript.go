@@ -2,6 +2,7 @@ package chat
 
 import (
 	"bufio"
+	"bytes"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -91,14 +92,12 @@ const cwdFallbackScan = 10
 // …/a/b share one directory — so each candidate's own "cwd" is checked, and a
 // transcript that records none is not taken. When the directory holds no
 // conversation of workdir (or does not exist: characters whose encoding was
-// never measured), the most recent transcripts across all projects are
-// checked the same way.
+// never measured, or a transcript filed under a symlinked path), the most
+// recent transcripts across all projects are checked the same way.
 func LatestSessionForWorkdir(projectsDir, workdir string) (string, bool) {
-	if canon, err := filepath.EvalSymlinks(workdir); err == nil {
-		workdir = canon
-	}
-	workdir = filepath.Clean(workdir)
-	for _, f := range newest(listTranscripts(filepath.Join(projectsDir, EncodeProjectDir(workdir)))) {
+	workdir = canonicalDir(workdir)
+	own := EncodeProjectDir(workdir)
+	for _, f := range newest(listTranscripts(filepath.Join(projectsDir, own))) {
 		if transcriptCwd(f.path) == workdir {
 			return f.id, true
 		}
@@ -109,7 +108,7 @@ func LatestSessionForWorkdir(projectsDir, workdir string) (string, bool) {
 	}
 	var all []transcriptFile
 	for _, d := range dirs {
-		if d.IsDir() {
+		if d.IsDir() && d.Name() != own { // own: every file was just checked
 			all = append(all, listTranscripts(filepath.Join(projectsDir, d.Name()))...)
 		}
 	}
@@ -125,26 +124,51 @@ func LatestSessionForWorkdir(projectsDir, workdir string) (string, bool) {
 	return "", false
 }
 
-// transcriptCwd returns the first "cwd" recorded in a transcript — the
-// directory the conversation was started in. Only the head of the file is
-// read (the first 100 lines at most), never the whole transcript.
+// canonicalDir is the form two spellings of one directory are compared in:
+// symlinks resolved, or — when the path cannot be resolved (the directory is
+// gone) — the cleaned path as written.
+func canonicalDir(dir string) string {
+	if canon, err := filepath.EvalSymlinks(dir); err == nil {
+		return canon
+	}
+	return filepath.Clean(dir)
+}
+
+// transcriptCwd returns the directory a transcript was recorded in — its
+// first "cwd", in canonical form — or "" when no record has one. The file is
+// read line by line up to that record and no further: claude's files can open
+// with any number of records that carry no cwd (queue operations, summaries),
+// so there is no line limit, and the whole transcript is never held in
+// memory. A line over MaxLine is skipped.
 func transcriptCwd(path string) string {
 	f, err := os.Open(path)
 	if err != nil {
 		return ""
 	}
 	defer f.Close()
-	sc := bufio.NewScanner(f)
-	sc.Buffer(make([]byte, 64<<10), MaxLine)
-	for i := 0; i < 100 && sc.Scan(); i++ {
-		var line struct {
-			Cwd string `json:"cwd"`
+	br := bufio.NewReaderSize(f, 64<<10)
+	for {
+		line, tooLong, err := readLine(br)
+		if !tooLong && mayHaveCwdKey(line) {
+			var rec struct {
+				Cwd string `json:"cwd"`
+			}
+			if json.Unmarshal(line, &rec) == nil && rec.Cwd != "" {
+				return canonicalDir(rec.Cwd)
+			}
 		}
-		if json.Unmarshal(sc.Bytes(), &line) == nil && line.Cwd != "" {
-			return filepath.Clean(line.Cwd)
+		if err != nil {
+			return ""
 		}
 	}
-	return ""
+}
+
+// mayHaveCwdKey reports whether a JSON line can have a "cwd" key at all, so
+// the many records without one are not parsed: the key is either spelled
+// out, or written with \u escapes (which claude does not do, but is the same
+// key).
+func mayHaveCwdKey(line []byte) bool {
+	return bytes.Contains(line, []byte(`"cwd"`)) || bytes.Contains(line, []byte(`\u`))
 }
 
 // MaxLine is the longest stream-json or transcript line handled (16 MiB).

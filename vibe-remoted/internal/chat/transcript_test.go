@@ -189,3 +189,151 @@ func TestLatestSessionChecksTranscriptCwd(t *testing.T) {
 		t.Fatalf("workdir a/b: latest %q, want %s", got, ub)
 	}
 }
+
+// lateCwdLines is a transcript whose first "cwd" is on line n: n-1 records
+// without one (claude's files can open with many queue-operation records),
+// each padded to about pad bytes, then a user record of cwd.
+func lateCwdLines(n, pad int, cwd string) []string {
+	lines := make([]string, 0, n)
+	for i := 1; i < n; i++ {
+		lines = append(lines, `{"type":"queue-operation","operation":"enqueue","metadata":"`+strings.Repeat("x", pad)+`"}`)
+	}
+	return append(lines, `{"type":"user","cwd":"`+cwd+`","message":{"role":"user","content":"hi"}}`)
+}
+
+// X9 (R1.5, H6): which directory a transcript belongs to is decided by its
+// first "cwd", wherever in the file that is — a directory that has a
+// conversation to continue must not get a new one because the record sits
+// past some scan limit.
+func TestLatestSessionReadsUntilFirstCwd(t *testing.T) {
+	root, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	projects := filepath.Join(root, "projects")
+	const u = "eeeeeeee-0000-4000-8000-00000000000e"
+	cases := []struct {
+		name  string
+		lines func(cwd string) []string
+		want  bool
+	}{
+		{"cwd on line 101", func(cwd string) []string { return lateCwdLines(101, 20, cwd) }, true},
+		{"cwd on line 1001 of 2 MiB", func(cwd string) []string { return lateCwdLines(1001, 2000, cwd) }, true},
+		{"cwd after a line over MaxLine", func(cwd string) []string {
+			return []string{
+				`{"type":"queue-operation","metadata":"` + strings.Repeat("x", MaxLine+1) + `"}`,
+				`{"type":"user","cwd":"` + cwd + `","message":{"role":"user","content":"hi"}}`,
+			}
+		}, true},
+		{"a cwd nested in an earlier record is not the transcript's", func(cwd string) []string {
+			return []string{
+				`{"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","name":"Bash","input":{"cwd":"/somewhere/else"}}]}}`,
+				`{"type":"user","cwd":"` + cwd + `","message":{"role":"user","content":"hi"}}`,
+			}
+		}, true},
+		{"cwd key written with escapes", func(cwd string) []string {
+			return []string{`{"type":"user","c\u0077d":"` + cwd + `","message":{"role":"user","content":"hi"}}`}
+		}, true},
+		{"no cwd in 3000 lines", func(string) []string {
+			lines := lateCwdLines(3000, 20, "")
+			return lines[:len(lines)-1]
+		}, false},
+	}
+	for i, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			work := filepath.Join(root, "work"+string(rune('a'+i)))
+			if err := os.Mkdir(work, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			writeJSONL(t, filepath.Join(projects, EncodeProjectDir(work), u+".jsonl"), c.lines(work)...)
+			got, ok := LatestSessionForWorkdir(projects, work)
+			if ok != c.want || (ok && got != u) {
+				t.Fatalf("LatestSessionForWorkdir = %q, %v; want found=%v (%s)", got, ok, c.want, u)
+			}
+		})
+	}
+}
+
+// X9: the recorded cwd and the requested directory are compared as the same
+// directory, not as the same spelling — a transcript recorded under a
+// symlinked path belongs to the directory the link points at, and the other
+// way round.
+func TestLatestSessionComparesCanonicalCwd(t *testing.T) {
+	root, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	user := func(cwd string) string {
+		return `{"type":"user","cwd":"` + cwd + `","message":{"role":"user","content":"hi"}}`
+	}
+	const u = "ffffffff-0000-4000-8000-00000000000f"
+	// fixture returns a real directory, a symlink to it and an empty
+	// projects directory, all of their own.
+	fixture := func(t *testing.T) (projects, realDir, alias string) {
+		t.Helper()
+		base := filepath.Join(root, strings.NewReplacer(" ", "_", "/", "_").Replace(t.Name()))
+		realDir, alias = filepath.Join(base, "real-dir"), filepath.Join(base, "alias-dir")
+		if err := os.MkdirAll(realDir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Symlink(realDir, alias); err != nil {
+			t.Fatal(err)
+		}
+		return filepath.Join(base, "projects"), realDir, alias
+	}
+	want := func(t *testing.T, projects, workdir string) {
+		t.Helper()
+		if got, ok := LatestSessionForWorkdir(projects, workdir); !ok || got != u {
+			t.Fatalf("LatestSessionForWorkdir(%s) = %q, %v; want %s", workdir, got, ok, u)
+		}
+	}
+
+	t.Run("recorded under the alias, in the alias's project dir", func(t *testing.T) {
+		projects, realDir, alias := fixture(t)
+		writeJSONL(t, filepath.Join(projects, EncodeProjectDir(alias), u+".jsonl"), user(alias))
+		want(t, projects, realDir)
+		want(t, projects, alias)
+	})
+	t.Run("recorded under the alias, in the directory's own project dir", func(t *testing.T) {
+		projects, realDir, alias := fixture(t)
+		writeJSONL(t, filepath.Join(projects, EncodeProjectDir(realDir), u+".jsonl"), user(alias))
+		want(t, projects, realDir)
+		want(t, projects, alias)
+	})
+	t.Run("recorded under the real path, asked by the alias", func(t *testing.T) {
+		projects, realDir, alias := fixture(t)
+		writeJSONL(t, filepath.Join(projects, EncodeProjectDir(realDir), u+".jsonl"), user(realDir))
+		want(t, projects, alias)
+		want(t, projects, realDir)
+	})
+	t.Run("an unclean spelling of the same path", func(t *testing.T) {
+		projects, realDir, _ := fixture(t)
+		writeJSONL(t, filepath.Join(projects, EncodeProjectDir(realDir), u+".jsonl"), user(realDir+"/./"))
+		want(t, projects, realDir)
+	})
+	t.Run("a link to another directory is not this one", func(t *testing.T) {
+		projects, realDir, _ := fixture(t)
+		other := filepath.Join(filepath.Dir(realDir), "other-dir")
+		link := filepath.Join(filepath.Dir(realDir), "other-link")
+		if err := os.Mkdir(other, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Symlink(other, link); err != nil {
+			t.Fatal(err)
+		}
+		writeJSONL(t, filepath.Join(projects, EncodeProjectDir(realDir), u+".jsonl"), user(link))
+		if got, ok := LatestSessionForWorkdir(projects, realDir); ok {
+			t.Fatalf("took %s, recorded in %s", got, other)
+		}
+		want(t, projects, other)
+	})
+	t.Run("a recorded directory that no longer exists is compared as written", func(t *testing.T) {
+		projects, realDir, _ := fixture(t)
+		gone := filepath.Join(filepath.Dir(realDir), "gone")
+		writeJSONL(t, filepath.Join(projects, EncodeProjectDir(realDir), u+".jsonl"), user(gone+"/"))
+		if got, ok := LatestSessionForWorkdir(projects, realDir); ok {
+			t.Fatalf("took %s, recorded in a directory that is gone", got)
+		}
+		want(t, projects, gone)
+	})
+}
