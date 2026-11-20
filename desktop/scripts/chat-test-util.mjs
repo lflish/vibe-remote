@@ -80,10 +80,11 @@ export async function loadIndex({ realXterm = false } = {}) {
   if (cut < 0) throw new Error('index.ts: boot marker not found');
   source = source.slice(0, cut) + `
 export const __test = {
-  views, machineSessions, machineOnline, machineTrees, machineCaps, machineProjects, rests, ChatView,
+  views, machineSessions, machineOnline, machineTrees, machineCaps, machineProjects, rests, ChatView, removingWorktrees, reloadingSessions,
   get activeKey() { return activeKey; },
   setMachines(list: MachineConfig[]) { machines = list; },
   showMachineOverview, applyViewActivity, renderSidebar, openChatSession, openSession, rebuildRests, setActive, refreshAllMachines, pollMachines,
+  toggleLocale, wireLanguageToggle,
 };
 `;
   const stub = {

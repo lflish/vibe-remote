@@ -1,0 +1,57 @@
+# Mutation checks of T34. Each defect is put into a copy of desktop/ (never into the working tree).
+
+## Unit: desktop/scripts/test-sidebar-refresh.mjs against 15 defects in index.ts (first failing case and its message)
+== M0 no comparison: every render rebuilds
+   test-sidebar-refresh: exit 1; FAIL: test-sidebar-refresh: the same data again — polls, a refresh asked for by an action, a render — leaves every element in place
+      AssertionError [ERR_ASSERTION]: after a poll: elements of the sidebar were replaced
+== M1 the dot is not in the fingerprint
+   test-sidebar-refresh: exit 1; FAIL: test-sidebar-refresh: a chat session that is not open keeps working (activitySeq, state, epoch move, its dot stays): nothing is rebuilt
+      AssertionError [ERR_ASSERTION]: the dot new activity lights
+== M2 the language is not in the fingerprint
+   test-sidebar-refresh: exit 1; FAIL: test-sidebar-refresh: switching the language redraws the sidebar in the other language
+      AssertionError [ERR_ASSERTION]: English
+== M3 "being removed" is not in the fingerprint
+   test-sidebar-refresh: exit 1; FAIL: test-sidebar-refresh: a worktree being deleted says so, and stops saying so
+      AssertionError [ERR_ASSERTION]: the row says it is being deleted
+== M4 the session shown is not in the fingerprint
+   test-sidebar-refresh: exit 1; FAIL: test-sidebar-refresh: the session shown, and the machine overview
+      AssertionError [ERR_ASSERTION]: Expected values to be strictly deep-equal:
+== M5 folded projects are not in the fingerprint
+   test-sidebar-refresh: exit 1; FAIL: test-sidebar-refresh: state dots of chat sessions not open here: what the poll says (activitySeq, state), also on a folded project row
+      AssertionError [ERR_ASSERTION]: fixture: the project is folded
+== M6 the machine entries are not compared
+   test-sidebar-refresh: exit 1; FAIL: test-sidebar-refresh: a machine edited in the manager: its new name shows, and a session opened from the sidebar uses the new settings
+      AssertionError [ERR_ASSERTION]: the connection authenticates with the token saved last
+== M7 starting a rename does not invalidate what is shown
+   test-sidebar-refresh: exit 1; FAIL: test-sidebar-refresh: a rename ended with Esc puts the name back, though nothing the sidebar shows has changed
+      AssertionError [ERR_ASSERTION]: the input is gone
+== M8 activitySeq / epoch / state are in the fingerprint
+   test-sidebar-refresh: exit 1; FAIL: test-sidebar-refresh: a chat session that is not open keeps working (activitySeq, state, epoch move, its dot stays): nothing is rebuilt
+      AssertionError [ERR_ASSERTION]: while the session keeps producing messages: elements of the sidebar were replaced
+== M9 "reload in flight" is not in the fingerprint
+   test-sidebar-refresh: exit 1; FAIL: test-sidebar-refresh: a reload in flight disables the row's reload button until it is over
+      AssertionError [ERR_ASSERTION]: no second reload while the first runs
+== M10 online / offline is not in the fingerprint
+   test-sidebar-refresh: exit 1; FAIL: test-sidebar-refresh: a machine goes offline and comes back; a daemon turns out to be an old one
+      AssertionError [ERR_ASSERTION]: the machine that stopped answering
+== M11 the overview machine is not in the fingerprint
+   test-sidebar-refresh: exit 1; FAIL: test-sidebar-refresh: the session shown, and the machine overview
+      AssertionError [ERR_ASSERTION]: The expression evaluated to a falsy value:
+== M12 the capability is not in the fingerprint
+   test-sidebar-refresh: exit 1; FAIL: test-sidebar-refresh: a machine goes offline and comes back; a daemon turns out to be an old one
+      AssertionError [ERR_ASSERTION]: the old-daemon note
+== M13 folded machines are not in the fingerprint
+   test-sidebar-refresh: exit 1; FAIL: test-sidebar-refresh: folding and unfolding a machine and a project
+      AssertionError [ERR_ASSERTION]: machine folded
+== M14 the machine name is not in the fingerprint
+   test-sidebar-refresh: exit 0; no FAIL (17 ok)
+
+# M14: no case fails, and none can: every edit in the machine manager hands index.ts new machine entries, and the rows are rebuilt whenever an entry is not the object it was (M6). The name is in the fingerprint as well so that the fingerprint alone says what is shown.
+
+## Real app: gui-worktree-smoke.mjs --only=T34 with VR_DESKTOP_DIR=<copy with M0: the comparison removed>
+PASS 5 daemons up (this-mac:27491 proto 4, lab-mac:29267 proto 4, keep-mac:23864 proto 4, narrow-mac:20042 proto 4, old-mac:20884 proto 3)
+PASS app started with 5 machines (zh), hooks installed
+FAIL the sidebar is left alone while what it shows stays the same: no change to it across two polls of every machine; with a poll asked for every 150 ms, 20 real clicks switch the session and 10 real double clicks start a rename, none lost (T34) — the sidebar was changed 120 times while two polls of 5 machines brought nothing new; 19 of 20 clicks did not switch the session (clicks 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 19, 20); 9 of 10 double clicks did not start a rename (double clicks 1, 2, 3, 4, 5, 7, 8, 9, 10)
+PASS no uncaught renderer exceptions
+1 cases: other 0/1
+exit=1

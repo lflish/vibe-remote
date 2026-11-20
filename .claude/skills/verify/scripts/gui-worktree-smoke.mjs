@@ -674,12 +674,16 @@ async function pointerOver(expr, what) {
  * which calls the element's click(): the pointer moves there first, the button
  * takes the focus, something lying over the element gets the click instead, and
  * `count: 2` is a double click as the system sends it (click, click, dblclick).
+ * `hold` keeps the button down that long, `between` waits between the clicks
+ * of a double click — a hand takes some 60 ms and 90 ms.
  */
-async function pointerClick(expr, what, { count = 1 } = {}) {
+async function pointerClick(expr, what, { count = 1, hold = 0, between = 0 } = {}) {
   const p = await pointerOver(expr, what);
   for (let i = 1; i <= count; i++) {
     await cdp.send('Input.dispatchMouseEvent', { type: 'mousePressed', x: p.x, y: p.y, button: 'left', clickCount: i });
+    if (hold) await sleep(hold);
     await cdp.send('Input.dispatchMouseEvent', { type: 'mouseReleased', x: p.x, y: p.y, button: 'left', clickCount: i });
+    if (between && i < count) await sleep(between);
   }
   return p;
 }
@@ -2684,33 +2688,46 @@ test('R9.2', 'R9.2 the previous desktop\'s protocol against this daemon', async 
 
 test('X11.menu', 'an open row menu survives the sidebar being rebuilt and still works (review, pending 11)', async () => {
   await managedWorktree(LAB, fx.del, 'x11m');
-  await rowShown(LAB, 'del', 'x11m');
-  const row = wg(LAB, 'del', 'x11m');
-  await ev(`${row}.scrollIntoView({ block: 'center' }), true`);
-  const scrolled = await ev(`document.getElementById('machine-list').scrollTop`);
-  await click(`${row}.querySelector('.worktree-row ${tid('worktree-menu')}')`, 'menu of x11m');
-  await waitFor(() => exists(`document.querySelector('body > .menu ${tid('worktree-delete')}')`), 5000, 'the menu');
-  // where the menu is, relative to its button
-  const place = () => ev(`(() => { const menu = document.querySelector('body > .menu'); const btn = ${row}?.querySelector('${tid('worktree-menu')}'); if (!menu || !btn) return null; const a = btn.getBoundingClientRect(); const r = menu.getBoundingClientRect();
-    return { gap: Math.round(Math.min(Math.abs(r.top - a.bottom), Math.abs(a.top - r.bottom))), left: Math.round(r.left - a.left), inWindow: a.top >= 0 && a.bottom <= innerHeight }; })()`);
-  const before = await place();
-  assert(before?.inWindow && before.gap <= 12, `the menu did not open next to its button: ${J(before)}`);
-  const rebuilt = async () => {
-    await ev(`${row}.dataset.vrMark = '1', true`);
+  // A session on the same machine: renaming it, as another desktop would, is
+  // what makes a refresh rebuild the list. A refresh that brings nothing the
+  // sidebar shows leaves the list alone (T34), and a rebuild is what this case
+  // is about.
+  const elsewhere = await terminalIn(LAB, fx.del);
+  try {
+    await rowShown(LAB, 'del', 'x11m');
+    await waitFor(() => exists(srow(elsewhere)), 8000, 'the row of the session to rename elsewhere');
+    const row = wg(LAB, 'del', 'x11m');
+    await ev(`${row}.scrollIntoView({ block: 'center' }), true`);
+    const scrolled = await ev(`document.getElementById('machine-list').scrollTop`);
+    await click(`${row}.querySelector('.worktree-row ${tid('worktree-menu')}')`, 'menu of x11m');
+    await waitFor(() => exists(`document.querySelector('body > .menu ${tid('worktree-delete')}')`), 5000, 'the menu');
+    // where the menu is, relative to its button
+    const place = () => ev(`(() => { const menu = document.querySelector('body > .menu'); const btn = ${row}?.querySelector('${tid('worktree-menu')}'); if (!menu || !btn) return null; const a = btn.getBoundingClientRect(); const r = menu.getBoundingClientRect();
+      return { gap: Math.round(Math.min(Math.abs(r.top - a.bottom), Math.abs(a.top - r.bottom))), left: Math.round(r.left - a.left), inWindow: a.top >= 0 && a.bottom <= innerHeight }; })()`);
+    const before = await place();
+    assert(before?.inWindow && before.gap <= 12, `the menu did not open next to its button: ${J(before)}`);
+    let renamed = 0;
+    const rebuilt = async () => {
+      await ev(`${row}.dataset.vrMark = '1', true`);
+      eq((await rename(LAB, elsewhere, `x11 elsewhere ${++renamed}`)).status, 204, 'the rename made elsewhere');
+      await refresh();
+      return ev(`!${row}.dataset.vrMark`);
+    };
+    assert(await rebuilt(), 'the refresh did not rebuild the row');
+    assert(await rebuilt(), 'the second refresh did not rebuild the row');
+    const after = await place();
+    assert(after, 'the menu closed when the sidebar was rebuilt');
+    eq(after, before, 'where the menu is after two rebuilds');
+    eq(await ev(`document.getElementById('machine-list').scrollTop`), scrolled, 'how far the sidebar is scrolled after two rebuilds');
+    await click(`document.querySelector('body > .menu ${tid('worktree-delete')}')`, '"delete worktree" after two rebuilds');
+    await waitDialog('delete-wt-dialog');
+    eq((await deleteDialog()).title, '删除 worktree x11m？', 'the confirmation the menu item opened');
+    await cancelDialog();
+    return `after two rebuilds the menu is still ${after.gap}px from the same button, the sidebar is still scrolled to ${scrolled}px, and the item opens the confirmation`;
+  } finally {
+    await endSession(LAB, elsewhere);
     await refresh();
-    return ev(`!${row}.dataset.vrMark`);
-  };
-  assert(await rebuilt(), 'the refresh did not rebuild the row');
-  assert(await rebuilt(), 'the second refresh did not rebuild the row');
-  const after = await place();
-  assert(after, 'the menu closed when the sidebar was rebuilt');
-  eq(after, before, 'where the menu is after two rebuilds');
-  eq(await ev(`document.getElementById('machine-list').scrollTop`), scrolled, 'how far the sidebar is scrolled after two rebuilds');
-  await click(`document.querySelector('body > .menu ${tid('worktree-delete')}')`, '"delete worktree" after two rebuilds');
-  await waitDialog('delete-wt-dialog');
-  eq((await deleteDialog()).title, '删除 worktree x11m？', 'the confirmation the menu item opened');
-  await cancelDialog();
-  return `after two rebuilds the menu is still ${after.gap}px from the same button, the sidebar is still scrolled to ${scrolled}px, and the item opens the confirmation`;
+  }
 });
 
 test('X11.removing', 'a worktree being deleted says so until its row is gone (review, pending 11)', async () => {
@@ -2850,33 +2867,46 @@ test('X1.redraw', 'a background terminal session shows "new messages" only when 
 
 test('X8.menu', 'a row menu opened with the pointer stays at its button when the sidebar is rebuilt (exploration X8)', async () => {
   await managedWorktree(LAB, fx.del, 'x8m');
-  await rowShown(LAB, 'del', 'x8m');
-  const row = wg(LAB, 'del', 'x8m');
-  const button = `${row}?.querySelector('.worktree-row ${tid('worktree-menu')}')`;
-  await ev(`${row}.scrollIntoView({ block: 'center' }), true`);
-  await pointerClick(button, 'the "more" button of x8m');
-  await waitFor(() => exists(`document.querySelector('body > .menu ${tid('worktree-delete')}')`), 5000, 'the menu');
-  // where the menu is, relative to its button, and whether the button is showing
-  const place = () => ev(`(() => { const menu = document.querySelector('body > .menu'); const btn = ${button}; if (!menu || !btn) return null; const a = btn.getBoundingClientRect(); const r = menu.getBoundingClientRect();
-    return { left: Math.round(r.left - a.left), gap: Math.round(Math.min(Math.abs(r.top - a.bottom), Math.abs(a.top - r.bottom))), buttonShown: getComputedStyle(btn.parentElement).opacity === '1' }; })()`);
-  const before = await place();
-  assert(before && before.gap <= 12 && Math.abs(before.left) <= 2 && before.buttonShown, `the menu did not open at its button: ${J(before)}`);
-  const rebuilt = async () => {
-    await ev(`${row}.dataset.vrMark = '1', true`);
+  // A session on the same machine: renaming it, as another desktop would, is
+  // what makes a refresh rebuild the list. A refresh that brings nothing the
+  // sidebar shows leaves the list alone (T34), and a rebuild is what this case
+  // is about.
+  const elsewhere = await terminalIn(LAB, fx.del);
+  try {
+    await rowShown(LAB, 'del', 'x8m');
+    await waitFor(() => exists(srow(elsewhere)), 8000, 'the row of the session to rename elsewhere');
+    const row = wg(LAB, 'del', 'x8m');
+    const button = `${row}?.querySelector('.worktree-row ${tid('worktree-menu')}')`;
+    await ev(`${row}.scrollIntoView({ block: 'center' }), true`);
+    await pointerClick(button, 'the "more" button of x8m');
+    await waitFor(() => exists(`document.querySelector('body > .menu ${tid('worktree-delete')}')`), 5000, 'the menu');
+    // where the menu is, relative to its button, and whether the button is showing
+    const place = () => ev(`(() => { const menu = document.querySelector('body > .menu'); const btn = ${button}; if (!menu || !btn) return null; const a = btn.getBoundingClientRect(); const r = menu.getBoundingClientRect();
+      return { left: Math.round(r.left - a.left), gap: Math.round(Math.min(Math.abs(r.top - a.bottom), Math.abs(a.top - r.bottom))), buttonShown: getComputedStyle(btn.parentElement).opacity === '1' }; })()`);
+    const before = await place();
+    assert(before && before.gap <= 12 && Math.abs(before.left) <= 2 && before.buttonShown, `the menu did not open at its button: ${J(before)}`);
+    let renamed = 0;
+    const rebuilt = async () => {
+      await ev(`${row}.dataset.vrMark = '1', true`);
+      eq((await rename(LAB, elsewhere, `x8 elsewhere ${++renamed}`)).status, 204, 'the rename made elsewhere');
+      await refresh();
+      return ev(`!${row}.dataset.vrMark`);
+    };
+    assert(await rebuilt(), 'the refresh did not rebuild the row');
+    eq(await place(), before, 'where the menu is after a rebuild, the pointer still on the button');
+    // the pointer goes to the item, as it does on the way to clicking it: the row is no longer hovered
+    await pointerOver(`document.querySelector('body > .menu ${tid('worktree-delete')}')`, 'the menu item');
+    assert(await rebuilt(), 'the second refresh did not rebuild the row');
+    eq(await place(), before, 'where the menu is after a rebuild, the pointer on the item');
+    await pointerClick(`document.querySelector('body > .menu ${tid('worktree-delete')}')`, '"delete worktree"');
+    await waitDialog('delete-wt-dialog');
+    eq((await deleteDialog()).title, '删除 worktree x8m？', 'the confirmation the menu item opened');
+    await cancelDialog();
+    return `opened with the pointer: ${before.gap}px under its button; still there after two rebuilds (pointer on the button, then on the item); the item opens the confirmation`;
+  } finally {
+    await endSession(LAB, elsewhere);
     await refresh();
-    return ev(`!${row}.dataset.vrMark`);
-  };
-  assert(await rebuilt(), 'the refresh did not rebuild the row');
-  eq(await place(), before, 'where the menu is after a rebuild, the pointer still on the button');
-  // the pointer goes to the item, as it does on the way to clicking it: the row is no longer hovered
-  await pointerOver(`document.querySelector('body > .menu ${tid('worktree-delete')}')`, 'the menu item');
-  assert(await rebuilt(), 'the second refresh did not rebuild the row');
-  eq(await place(), before, 'where the menu is after a rebuild, the pointer on the item');
-  await pointerClick(`document.querySelector('body > .menu ${tid('worktree-delete')}')`, '"delete worktree"');
-  await waitDialog('delete-wt-dialog');
-  eq((await deleteDialog()).title, '删除 worktree x8m？', 'the confirmation the menu item opened');
-  await cancelDialog();
-  return `opened with the pointer: ${before.gap}px under its button; still there after two rebuilds (pointer on the button, then on the item); the item opens the confirmation`;
+  }
 });
 
 test('X3.keys', 'the row menus work from the keyboard alone (exploration X3)', async () => {
@@ -2972,21 +3002,8 @@ async function chatUnderWorktree() {
   return id;
 }
 const mLabel = (id) => `${srow(id)}?.querySelector('.session-label')`;
-/**
- * Waits until the sidebar list has not been rebuilt for 400 ms. A session that
- * was just created or renamed is followed by a refresh — ten rebuilds of the
- * list with five machines — and a rebuild between a press and its release
- * loses the click (a known problem of the app, not what these cases are about).
- */
-async function mSidebarQuiet() {
-  await ev(`(() => { if (window.__vrListAt !== undefined) return true; window.__vrListAt = performance.now(); new MutationObserver(() => { window.__vrListAt = performance.now(); }).observe(document.getElementById('machine-list'), { childList: true }); return true; })()`);
-  await waitFor(() => ev(`performance.now() - window.__vrListAt > 400`), 15000, 'the sidebar to stop being rebuilt', 40);
-}
-/** A real double click on a session's name, once the list is quiet. */
-async function mDoubleClick(id, what) {
-  await mSidebarQuiet();
-  await pointerClick(mLabel(id), what, { count: 2 });
-}
+/** A real double click on a session's name. */
+const mDoubleClick = (id, what) => pointerClick(mLabel(id), what, { count: 2 });
 const mRenaming = () => ev(`(() => { const i = document.querySelector('#machine-list .session-rename-input'); return !!i && document.activeElement === i; })()`);
 /** What has the keyboard: a test id, 'terminal', or where else it is. */
 const mFocus = () => ev(`(() => { const a = document.activeElement; return !a || a === document.body ? 'nowhere' : a.classList.contains('xterm-helper-textarea') ? 'terminal' : (a.dataset.testid || String(a.className) || a.tagName); })()`);
@@ -3055,7 +3072,6 @@ test('M.X10', 'under a worktree row: a background chat session asks for permissi
     await other.wait((fs) => fs.filter((f) => f.type === 'chat_state').at(-1)?.pending?.[0], 15000, 'pending permission request', from);
     const row = await waitFor(async () => { const r = await mRow(id); return r?.dot === 'waiting' ? r : null; }, 10000, 'yellow dot on the row under fix-login');
     assert(row.meta.includes('等你处理'), `the row does not say it waits: ${row.meta}`);
-    await mSidebarQuiet(); // the list was just rebuilt for the dot; a press during a rebuild is lost (known)
     await pointerClick(mLabel(id), 'the name of the waiting session');
     await waitFor(async () => (await activeId()) === id, 8000, 'the waiting session is the one shown');
     await waitFor(() => exists(inChat(tid('chat-perm'))), 5000, 'the prompt card is on screen');
@@ -3122,7 +3138,8 @@ test('M.X7', 'under a worktree row: a chat session that got more than a screen i
     const from = other.frames.length;
     other.chat('burst 40');
     await other.wait((fs) => fs.some((f) => f.type === 'chat' && f.msg?.type === 'result'), 30000, 'the burst finished in the background', from);
-    await mSidebarQuiet(); // the row's dot was just drawn; a press during a rebuild is lost (known)
+    // The app has the end of the turn as well: the row says so (and is drawn for the last time).
+    await waitFor(async () => (await mRow(id))?.dot === 'idle', 10000, 'the row shows that the turn finished');
     // Where the focus goes from here on is recorded (listeners only, nothing of
     // the page is replaced) and printed when it does not end in the input: that
     // happened once in a full run ("nowhere") and in none of the 12 runs of the
@@ -3153,6 +3170,77 @@ test('M.X7', 'under a worktree row: a chat session that got more than a screen i
   } finally {
     other.close();
     await endSession(WT, id);
+    await refresh();
+  }
+});
+
+// --- T34: the sidebar is rebuilt only when what it shows has changed. A refresh
+// is two answers per machine (sessions, project tree); when each of them
+// rebuilt the list, a press and its release landed on two different elements
+// and the click — or the second click of a double click — was never delivered.
+
+test('T34.quiet', 'the sidebar is left alone while what it shows stays the same: no change to it across two polls of every machine; with a poll asked for every 150 ms, 20 real clicks switch the session and 10 real double clicks start a rename, none lost (T34)', async () => {
+  const ids = [fx.main2, fx.main3, fx.mainChat];
+  const titles = Object.fromEntries((await sessions(WT)).filter((s) => ids.includes(s.id)).map((s) => [s.id, s.title]));
+  // The three sessions have a view here; the shells have drawn their prompt, the chat is idle.
+  for (const id of ids) {
+    await openSession(id);
+    if (id === fx.mainChat) await waitFor(() => ev(`(() => { const i = ${inChat(tid('chat-input'))}; return !!i && !i.disabled; })()`), 15000, 'the chat session is ready');
+    else await waitFor(async () => (await screen()).includes('$'), 20000, 'shell prompt');
+  }
+  await refresh();
+  await sleep(800);
+  const ports = [...daemons.values()].map((d) => d.port);
+  try {
+    // (1) Nothing happens for two polls: the list is not touched. Every change
+    // to the children of any element under #machine-list is counted.
+    await ev(`(() => { const w = window.__t34 = { changes: 0 }; new MutationObserver((records) => { w.changes += records.length; }).observe(document.getElementById('machine-list'), { childList: true, subtree: true }); return true; })()`);
+    const from = await ev('window.__vrNet.fetched.length');
+    const answered = () => ev(`(() => { const f = window.__vrNet.fetched.slice(${from}).filter((x) => x.done); const n = (port, path) => f.filter((x) => x.url.includes(':' + port + path)).length;
+      return Math.min(...${J(ports)}.flatMap((p) => [n(p, '/api/v1/sessions'), n(p, '/api/v1/projects')])); })()`);
+    await waitFor(async () => (await answered()) >= 2, 25000, 'two polls of every machine answered', 250);
+    await sleep(400);
+    const quiet = await ev('window.__t34.changes');
+
+    // (2) The polls keep coming — far more often than the real 5 s, so that
+    // their answers land between presses and releases — while the pointer
+    // works: the button is held 60 ms, as a hand does.
+    await ev(`(window.__t34.timer = setInterval(() => { window.__vrPoll(); }, 150), true)`);
+    const lostClicks = [];
+    let shown = await activeId();
+    for (let i = 1; i <= 20; i++) {
+      const target = ids[(ids.indexOf(shown) + 1) % ids.length];
+      await pointerClick(mLabel(target), `the name of the next session (click ${i})`, { hold: 60 });
+      const landed = await waitFor(async () => (await activeId()) === target, 1000, 'the click to switch', 25).then(() => true, () => false);
+      if (landed) shown = target; else lostClicks.push(i);
+    }
+    // Double clicks: on a session in the background (the first click switches
+    // to it), then on the same one, now shown; a terminal and a chat session.
+    const lostDoubles = [];
+    for (let i = 1; i <= 10; i++) {
+      const target = [fx.main2, fx.main2, fx.mainChat, fx.mainChat][(i - 1) % 4];
+      const name = `t34 名字 ${i}`;
+      await pointerClick(mLabel(target), `the name to rename (double click ${i})`, { count: 2, hold: 60, between: 90 });
+      const started = await waitFor(mRenaming, 1000, 'the rename to start', 25).then(() => true, () => false);
+      if (!started) { lostDoubles.push(i); continue; }
+      await cdp.send('Input.insertText', { text: name });
+      await pressKey('Enter');
+      await waitFor(async () => (await text(`${srow(target)}?.querySelector('.session-label-text')`)) === name, 8000, `the row shows "${name}"`);
+    }
+    await ev(`(clearInterval(window.__t34.timer), true)`);
+    const during = (await ev('window.__t34.changes')) - quiet;
+
+    await evidence('T34.quiet', '#sidebar');
+    const problems = [];
+    if (quiet !== 0) problems.push(`the sidebar was changed ${quiet} times while two polls of ${ports.length} machines brought nothing new`);
+    if (lostClicks.length) problems.push(`${lostClicks.length} of 20 clicks did not switch the session (clicks ${lostClicks.join(', ')})`);
+    if (lostDoubles.length) problems.push(`${lostDoubles.length} of 10 double clicks did not start a rename (double clicks ${lostDoubles.join(', ')})`);
+    assert(problems.length === 0, problems.join('; '));
+    return `0 changes to the sidebar across two polls of ${ports.length} machines; with a poll every 150 ms: 20 of 20 clicks switched the session, 10 of 10 double clicks started a rename (${during} changes to the sidebar meanwhile, from the switches and renames themselves)`;
+  } finally {
+    await ev(`(clearInterval(window.__t34?.timer), true)`).catch(() => {});
+    await pressKey('Escape').catch(() => {});
+    for (const id of ids) await rename(WT, id, titles[id] ?? '');
     await refresh();
   }
 });

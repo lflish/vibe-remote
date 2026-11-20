@@ -1,0 +1,19 @@
+$ … gui-worktree-smoke.mjs --only=T34,M,X11,X8,X2,X1,X3,X6   # after the fix, first run
+PASS 5 daemons up (this-mac:26790 proto 4, lab-mac:22172 proto 4, keep-mac:26131 proto 4, narrow-mac:21180 proto 4, old-mac:25526 proto 3)
+PASS app started with 5 machines (zh), hooks installed
+PASS an open row menu survives the sidebar being rebuilt and still works (review, pending 11) — after two rebuilds the menu is still 3px from the same button, the sidebar is still scrolled to 495px, and the item opens the confirmation
+PASS a worktree being deleted says so until its row is gone (review, pending 11) — 22 looks over 3403 ms (request and list each delayed 3000 ms): the row always said "正在删除…" with "new session" off, then went away
+PASS double-clicking the name of a session that is open here renames it (exploration X2) — double click → input with "new-api" → typed a name, Enter: daemon and sidebar have it; on the session shown: input, Esc keeps the name
+PASS a background terminal session shows "new messages" only when its screen changed (exploration X1, c7) — 12 data frames repainted the background session when another session was created and renamed: no dot; renamed itself: no dot; it printed a line: "终端 · 有新消息"
+PASS a row menu opened with the pointer stays at its button when the sidebar is rebuilt (exploration X8) — opened with the pointer: 3px under its button; still there after two rebuilds (pointer on the button, then on the item); the item opens the confirmation
+PASS the row menus work from the keyboard alone (exploration X3) — Tab to "more", Enter: focus on "删除 worktree"; arrows stay; Esc and Tab close it and the focus is on a button; Enter on the item opens the confirmation; Esc closes that
+PASS switching with the keys scrolls the session's row into view (exploration X6) — 10 sessions in a sidebar that scrolls 1412px: ⌘⇧[ to the last and ⌘1 to the first both bring the row into view
+PASS under a worktree row: double click renames a chat and a terminal session, the name is not typed into the session, and the next keys go into it without a click (chat sessions X8, X10) — chat: renamed with Enter (nothing sent to claude), next message typed without a click, Esc keeps the name; terminal: renamed, next command typed without a click
+PASS under a worktree row: a background chat session asks for permission (yellow dot on its row), a real click opens it, 1 answers without clicking the card, then the input has the keyboard (chat sessions X10) — row under fix-login: waiting dot → real click → keyboard on the card → 1 answered → keyboard in the input
+PASS under a worktree row: the chat session shown asks for permission while the window is in the background: its row shows the yellow dot until the window is focused again (chat sessions X6) — window in the background: yellow dot and "等你处理" on the row of the session shown; focused again: gone
+PASS under a worktree row: a chat session that got more than a screen in the background is at the bottom with the newest message when opened again, and a message typed then shows (chat sessions X7) — back at the bottom (gap 0px of 1397px) after 40 messages in the background; a typed message and its reply show
+PASS the sidebar is left alone while what it shows stays the same: no change to it across two polls of every machine; with a poll asked for every 150 ms, 20 real clicks switch the session and 10 real double clicks start a rename, none lost (T34) — 0 changes to the sidebar across two polls of 5 machines; with a poll every 150 ms: 20 of 20 clicks switched the session, 10 of 10 double clicks started a rename (220 changes to the sidebar meanwhile, from the switches and renames themselves)
+PASS no uncaught renderer exceptions
+12 cases: other 12/12
+all GUI worktree checks passed
+exit=0

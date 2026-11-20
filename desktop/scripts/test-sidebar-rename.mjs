@@ -248,7 +248,11 @@ test('a rename that cannot start (its label is no longer in the document) does n
   const c1 = t.chat('c1');
   t.app.setActive(c1.view.key);
   const stale = t.label('conversation');
-  t.app.renderSidebar(); // e.g. the 5 s poll rebuilt the list under the pointer
+  // The list is rebuilt under the pointer: the 5 s poll brought something the
+  // sidebar shows (the shell session moved to another directory).
+  t.sessions[1].workdir = '/w/t1/src';
+  t.app.machineSessions.set(mk, t.sessions.map((s) => ({ ...s })));
+  t.app.renderSidebar();
   assert.equal(stale.isConnected, false);
   stale.dispatchEvent(new MouseEvent('dblclick', { bubbles: true, detail: 2 }));
   t.page.flushFrames();

@@ -18,7 +18,7 @@ import { nextDot, type ActivityEvent, type Dot, type RestSnapshot } from './chat
 import { ScreenWatch, writeWatched } from './terminal-activity';
 import type { Prompt } from './chat/types';
 import { renderSidebar as renderSidebarView, renderToolbarTitle, rendererIcon, type SidebarModel, type SidebarActions } from './sidebar';
-import { buildTree, countActiveSessionsAt, nextCapability, projectHue, sessionContext, sessionProject, notificationTitle, visibleSessions, type Capability, type TreeProject, type TreeWorktree } from './tree';
+import { buildTree, countActiveSessionsAt, nextCapability, projectHue, sessionContext, sessionProject, notificationTitle, visibleSessions, type Capability, type TreeProject, type TreeSession, type TreeWorktree } from './tree';
 import { installShortcuts } from './shortcuts';
 import { closeMenu } from './menu';
 
@@ -85,8 +85,9 @@ let activeKey: string | null = null;
 let overviewMachineKey: string | null = null;
 // While an inline rename input is open we suppress full sidebar rebuilds:
 // the 5s poll (and onReady/onExit) call renderSidebar(), which wipes and
-// recreates the whole sidebar DOM — that would delete the focused input and
-// its blur would silently commit half-typed text. Paused during editing.
+// recreates the whole sidebar DOM when something it shows has changed — that
+// would delete the focused input and its blur would silently commit
+// half-typed text. Paused during editing.
 let renamingActive = false;
 // A session was to get the keyboard while a rename had it (focusView): the
 // user pressed another session's name, or a prompt arrived. Carried out when
@@ -1327,11 +1328,73 @@ function setActive(key: string) {
 
 // --- Sidebar ---
 
+// What the sidebar shows right now: the fingerprint of the model it was last
+// built from, and the machine entries its rows hand to their handlers. While
+// the next model has the same ones, renderSidebar leaves the DOM alone. null:
+// nothing was rendered yet, or the DOM is no longer what the last render left
+// (a rename input took the place of a label), so the next render rebuilds.
+let sidebarShown: { print: string; machines: MachineConfig[] } | null = null;
+
+// sidebarFingerprint puts everything the sidebar's rendering reads into one
+// string (sidebar.ts reads its model, the language through t(), and nothing
+// else): two models with the same fingerprint draw the same sidebar.
+//
+// Left out on purpose: activitySeq, epoch and state of a chat session. Nothing
+// in the sidebar shows them and none of its handlers reads them; what they mean
+// for the row is its dot (trackChatActivity), which is in. They move with every
+// poll while claude works — with them in, a busy session in the background
+// would have the list rebuilt on each poll for nothing.
+//
+// Whoever makes the rendering read something new adds it here; a state that is
+// missing means a sidebar that stays as it was (test-sidebar-refresh has one
+// case per kind of change).
+function sidebarFingerprint(model: SidebarModel): string {
+  const session = (mk: string) => (s: TreeSession) => ({
+    name: s.name,
+    gone: s.gone,
+    info: { ...s.info, activitySeq: undefined, epoch: undefined, state: undefined },
+    dot: model.dotOf(mk, s.id),
+    reloading: model.isReloading(`${mk}::${s.id}`),
+  });
+  return JSON.stringify({
+    locale: getLocale(),
+    activeKey: model.activeKey,
+    overviewMachineKey: model.overviewMachineKey,
+    machines: model.machines.map((m) => ({
+      name: m.machine.name,
+      key: m.key,
+      online: m.online,
+      collapsed: m.collapsed,
+      cap: m.cap,
+      tree: m.tree.map((p) => ({
+        ...p,
+        collapsed: model.collapsedProjects.has(`${m.key}|${p.id}`),
+        worktrees: p.worktrees.map((w) => ({ ...w, removing: model.isRemoving?.(m.key, w.path) ?? false, sessions: w.sessions.map(session(m.key)) })),
+        sessions: p.sessions.map(session(m.key)),
+      })),
+    })),
+  });
+}
+
+// renderSidebar brings the sidebar in line with the app's state. It is called
+// after anything that may have changed what the sidebar shows — every answer of
+// a refresh among them, two per machine every 5 s — and rebuilds the list only
+// when something it shows did change. A rebuild replaces every row: a press
+// and its release that have one in between land on two different elements, and
+// the click (or the second click of a double click) is never delivered.
 function renderSidebar() {
   // Skip rebuilds while an inline rename is in progress (see renamingActive).
   if (renamingActive) return;
   const container = document.getElementById('machine-list')!;
-  renderSidebarView(container, buildSidebarModel(), sidebarActions);
+  const model = buildSidebarModel();
+  const print = sidebarFingerprint(model);
+  // The rows hold their machine entry (name, address, token) for their
+  // handlers: an edited machine is a new entry even when it looks the same.
+  const sameMachines = sidebarShown?.machines.length === model.machines.length
+    && model.machines.every((m, i) => m.machine === sidebarShown!.machines[i]);
+  if (sidebarShown?.print === print && sameMachines) return;
+  renderSidebarView(container, model, sidebarActions);
+  sidebarShown = { print, machines: model.machines.map((m) => m.machine) };
 }
 
 // treeFor returns the latest tree for a machine, building it if the sidebar has
@@ -1411,6 +1474,10 @@ const sidebarActions: SidebarActions = {
     renamingActive = active;
     if (active) {
       focusHeldByRename = false;
+      // The input replaced a label: the list is not what was rendered, and the
+      // render that ends the rename has to put the label back whatever the
+      // model says by then.
+      sidebarShown = null;
       return;
     }
     renderSidebar();

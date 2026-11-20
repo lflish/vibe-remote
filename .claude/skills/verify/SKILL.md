@@ -165,11 +165,12 @@ the input), `X10-rename-chat` / `X10-rename-terminal` (after a rename ended by
 Enter, Esc, or a click on another session, the next keys go into the current
 session without a click), `X6` (current session, app
 really hidden → yellow dot + notification, cleared on focus). A double click
-in these cases is watched: the sidebar list is rebuilt whenever a refresh lands,
-and a rebuild between a press and its release loses that click (a known problem
-of the app, see the follow-up list in docs/changes/2026-11-13-dual-mode/tasks.md).
-When that happened and no rename started, the script prints a `NOTE` line and
-makes the gesture again (at most twice); count the `NOTE` lines of a run when
+in these cases is one real double click, made once and never repeated: the
+sidebar list is rebuilt only when what it shows has changed, so a refresh that
+brings nothing new no longer takes a row out from under the pointer. A `NOTE`
+line is what a case prints about the state of the page when something it is
+about to assert looks wrong (`X7-send`: the scroll position; `M.X7` of
+gui-worktree-smoke: where the focus went); list the `NOTE` lines of a run when
 reporting it. `VR_ONLY=<ids>`
 runs a subset, e.g. `VR_ONLY=X7-send,X7-background,X8-chat,X8-terminal`,
 `VR_ONLY=X10-prompt,X10-rename-chat,X10-rename-terminal` or
@@ -201,15 +202,19 @@ What the feature is, where a user reaches it, and how the scripts operate it
 | Old daemon / old desktop | a machine whose daemon is built from the commit before the change | `machine-legacy-note`, the two entries disabled with a reason, the picker without a name field; `ws-smoke.mjs` of that commit against a new daemon |
 
 `gui-worktree-smoke.mjs` runs all of it against the built app (same launch
-model as the other two GUI scripts, ~2 min, 71 cases: 62 named by scenario, five
+model as the other two GUI scripts, ~3 min, 72 cases: 62 named by scenario, five
 found by using the app by hand — X1.redraw, X2.rename, X3.keys, X6.scroll,
-X8.menu — and four that repeat what the chat sessions' rework fixed on session
+X8.menu — four that repeat what the chat sessions' rework fixed on session
 rows *under a worktree row* (gui-chat-smoke.mjs has them on rows under a
 project row): `M.X8` (double click renames a chat and a terminal session, the
 next keys go into the session), `M.X10` (yellow dot → real click → `1` answers
 the card), `M.X6` (window in the background → yellow dot on the session
-shown), `M.X7` (back at the bottom after a burst in the background);
-`--only=M` runs the four):
+shown), `M.X7` (back at the bottom after a burst in the background) —
+`--only=M` runs the four — and `T34.quiet`: nothing under `#machine-list` is
+changed across two polls of all five machines that bring nothing new (counted
+by a `MutationObserver`), and with a poll asked for every 150 ms 20 real clicks
+(button held 60 ms) switch the session and 10 real double clicks start a
+rename, none lost):
 
 ```bash
 node .claude/skills/verify/scripts/gui-worktree-smoke.mjs                 # builds desktop/dist and the daemons first
@@ -237,8 +242,11 @@ over the element, and what a double click really sends. The X cases use
 `pointerClick()` / `pointerOver()` (`Input.dispatchMouseEvent`: the pointer
 moves there first, `count: 2` is click, click, dblclick) and real key events.
 Use those for anything about hover-revealed buttons, menus, double clicks and
-focus — a sidebar row is rebuilt every 5 s, and a rebuilt row is neither
-hovered nor focused.
+focus — a sidebar row is rebuilt whenever something the sidebar shows changes,
+and a rebuilt row is neither hovered nor focused. A refresh that brings
+nothing the sidebar shows leaves the list alone: a case about what a rebuild
+does has to change something first (X11.menu and X8.menu rename a session over
+REST, as another desktop would).
 
 How it fakes things: `window.__vrNet` (installed before the app's code) cuts a
 connection between the daemon's `ready` and the desktop (R3.7), refuses new

@@ -347,8 +347,9 @@ test('row_menu_stays_inside_the_window', () => {
   }
 });
 
-// The sidebar is rebuilt from scratch on every poll answer (twice per machine
-// every 5 s). The row buttons are visible only while their row is hovered or
+// The sidebar is rebuilt from scratch whenever what it shows has changed (a
+// poll answer that brings something new, a dot, a switch of session). The row
+// buttons are visible only while their row is hovered or
 // holds the focus, so a keyboard user must not lose the focus to a rebuild
 // (review D9).
 const DEVFLOW_TWO = [{
@@ -1116,8 +1117,12 @@ test('remove_result_closes_views', async () => {
   click(removingRow().querySelector('[data-testid="worktree-menu"]'));
   assert.equal(menuItem('worktree-delete').disabled, true, 'the delete entry is off while the request is in flight');
   document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
-  // A rebuild in between (the poll) keeps the marker.
+  // A rebuild in between keeps the marker. (The list is rebuilt when what it
+  // shows changed: here the poll brought a session renamed elsewhere.)
+  const rowBeforeRebuild = removingRow();
+  app.machineSessions.set(MK, (app.machineSessions.get(MK) || []).map((s) => (s.id === 'a' ? { ...s, title: 'renamed elsewhere' } : s)));
   app.renderSidebar();
+  assert.notEqual(removingRow(), rowBeforeRebuild, 'the list was rebuilt');
   assert.equal(removingRow().dataset.removing, 'true');
   // The entry of the menu opened earlier is still enabled; using it starts nothing.
   calls = [];

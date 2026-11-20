@@ -303,55 +303,6 @@ async function pointOf(expr, what) {
   return p;
 }
 
-/**
- * Watches the sidebar list from inside the page: when it was last rebuilt, and
- * how often it was rebuilt while a mouse button was down. The list is rebuilt
- * as a whole whenever a refresh lands — every 5 s, and after a session was
- * created or renamed; on the three-level sidebar twice per machine (the
- * sessions, then the project tree, which the daemon answers later).
- */
-const SIDEBAR_WATCH = `(() => {
-  if (window.__vrSidebar) return true;
-  const w = window.__vrSidebar = { at: performance.now(), down: false, hits: 0 };
-  document.addEventListener('mousedown', () => { w.down = true; }, true);
-  document.addEventListener('mouseup', () => { w.down = false; }, true);
-  new MutationObserver(() => { w.at = performance.now(); if (w.down) w.hits++; }).observe(document.getElementById('machine-list'), { childList: true });
-  return true; })()`;
-
-/** Waits until the sidebar list has not been rebuilt for 300 ms: what the previous step set off (a new session, a rename) has landed. */
-async function sidebarQuiet() {
-  await ev(SIDEBAR_WATCH);
-  await waitFor(() => ev(`performance.now() - window.__vrSidebar.at > 300`), 15000, 'the sidebar to stop being rebuilt', 40);
-}
-
-/**
- * A real double click on a session's name in the sidebar (to rename it).
- *
- * A rebuild of the list between a press and its release takes the pressed name
- * out from under the pointer, and the click — here the second one, with the
- * dblclick — is never delivered. That is a known problem of the app that is
- * not fixed (follow-up list in docs/changes/2026-11-13-dual-mode/tasks.md:
- * "按下和松开之间刚好重建"), and it is not what these cases are about; with
- * five machines a refresh is ten rebuilds over some 50 ms
- * (docs/changes/2026-11-16-project-worktrees/evidence/merge-dual-mode/trace-*.txt).
- * So the gesture is watched: when the list was rebuilt while the button was
- * down and no rename started, that is printed (NOTE) and the gesture is made
- * again, at most twice. A double click that was not disturbed is never
- * repeated; what it leads to is asserted by the caller as before.
- */
-async function doubleClickName(expr, what) {
-  for (let attempt = 1; ; attempt++) {
-    await sidebarQuiet();
-    await ev(`(window.__vrSidebar.hits = 0, true)`);
-    await realClick(expr, what, 2);
-    const hits = await ev(`window.__vrSidebar.hits`);
-    if (hits === 0 || attempt >= 3) return;
-    await sleep(300);
-    if (await renameFocused()) return;
-    console.log(`NOTE double click on ${what}: the sidebar was rebuilt ${hits}× while the button was down and the click was lost (known, not fixed); doing it again (attempt ${attempt + 1})`);
-  }
-}
-
 /** A real click (count 2 = a double click at a human pace: 40 ms down, 90 ms between). */
 async function realClick(expr, what, count = 1) {
   const p = await pointOf(expr, what);
@@ -749,7 +700,7 @@ test('X7-background', 'X7 background session got more than a screen: back at the
 // X8: rename by double click, with the real pointer (two presses 90 ms apart).
 const renameFocused = () => ev(`(() => { const i = document.querySelector('.session-rename-input'); return !!i && i.isConnected && document.activeElement === i; })()`);
 async function renameByDoubleClick(d, label, ui, name) {
-  await doubleClickName(sidebarLabel(d, label, ui), `sidebar item ${label}`);
+  await realClick(sidebarLabel(d, label, ui), `sidebar item ${label}`, 2);
   // Whatever the two clicks set off (session switch, redraw, focus) has run by now.
   await sleep(600);
   assert(await renameFocused(), `double click on "${label}": no focused rename input 600 ms later (focus is on ${await ev(`document.activeElement?.className || document.activeElement?.tagName`)})`);
@@ -895,7 +846,7 @@ test('X10-rename-chat', 'X10 after renaming a chat session (Enter, Esc, a click 
     await renameByDoubleClick(CHAT, 'x10r', 'chat', 'x10 改名');
     await typeNow('echo typed after rename', 'the renamed session');
     // Esc
-    await doubleClickName(sidebarLabel(CHAT, 'x10 改名'), 'sidebar item x10 改名');
+    await realClick(sidebarLabel(CHAT, 'x10 改名'), 'sidebar item x10 改名', 2);
     await waitFor(renameFocused, 3000, 'rename input focused');
     await cdp.send('Input.insertText', { text: '不保存的名字' });
     await pressKey('Escape');
@@ -910,7 +861,7 @@ test('X10-rename-chat', 'X10 after renaming a chat session (Enter, Esc, a click 
     // released, and a rebuild under the pointer swallows the click (tasks.md
     // follow-up list).
     const from = c.frames.length;
-    await doubleClickName(sidebarLabel(CHAT, 'x10 改名'), 'sidebar item x10 改名');
+    await realClick(sidebarLabel(CHAT, 'x10 改名'), 'sidebar item x10 改名', 2);
     await waitFor(renameFocused, 3000, 'rename input focused');
     await cdp.send('Input.insertText', { text: 'x10 名字二' });
     await ev(`(() => { const f = window.fetch; window.__x10Fetch = f; window.fetch = (u, o) => String(u).includes('/rename') ? new Promise((r) => setTimeout(r, 500)).then(() => f(u, o)) : f(u, o); return true; })()`);
@@ -946,7 +897,7 @@ test('X10-rename-terminal', 'X10 after renaming a terminal session (Enter, Esc) 
   };
   await renameByDoubleClick(TERM, 'x10t', 'terminal', 'x10 box');
   await typeNow('echo X10_$((6*7))_TYPED', 'X10_42_TYPED');
-  await doubleClickName(sidebarLabel(TERM, 'x10 box', 'terminal'), 'sidebar item x10 box');
+  await realClick(sidebarLabel(TERM, 'x10 box', 'terminal'), 'sidebar item x10 box', 2);
   await waitFor(renameFocused, 3000, 'rename input focused');
   await cdp.send('Input.insertText', { text: 'zzz-not-kept' });
   await pressKey('Escape');
