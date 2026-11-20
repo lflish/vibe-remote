@@ -191,13 +191,12 @@ export class ChatView {
     this.updateComposer();
   }
 
-  /** Called when this view becomes visible. */
+  /** Called when this view becomes visible. Focus is the caller's business (index.ts focusView). */
   show() {
     // Content that arrived while hidden could not be scrolled to: a view left
     // at the bottom comes back at the bottom; one left scrolled up stays put.
     if (this.pinned) this.toBottom = true;
     this.schedule();
-    requestAnimationFrame(() => this.composer.focus());
   }
 
   /** Locale switch: re-render texts. */

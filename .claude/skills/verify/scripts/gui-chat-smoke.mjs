@@ -680,6 +680,83 @@ test('X7-background', 'X7 background session got more than a screen: back at the
   }
 });
 
+// X8: rename by double click, with the real pointer (two presses 90 ms apart).
+const renameFocused = () => ev(`(() => { const i = document.querySelector('.session-rename-input'); return !!i && i.isConnected && document.activeElement === i; })()`);
+async function renameByDoubleClick(d, label, ui, name) {
+  await realClick(sidebarLabel(d, label, ui), `sidebar item ${label}`, 2);
+  // Whatever the two clicks set off (session switch, redraw, focus) has run by now.
+  await sleep(600);
+  assert(await renameFocused(), `double click on "${label}": no focused rename input 600 ms later (focus is on ${await ev(`document.activeElement?.className || document.activeElement?.tagName`)})`);
+  await cdp.send('Input.insertText', { text: name });
+  await pressKey('Enter');
+  await waitFor(async () => (await sessions(d)).some((x) => x.title === name), 5000, `"${name}" saved on the daemon`);
+  await waitFor(() => sidebarItem(d, name, 'true', ui), 5000, `sidebar shows "${name}"`);
+}
+
+test('X8-chat', 'X8 double click on an open chat session (current, then background) renames it; the name is not sent to claude; the sidebar keeps updating', async () => {
+  const id = await newChat(CHAT, 'x8');
+  const c = await Conn.open(CHAT);
+  try {
+    await c.attachChat(id);
+    const from = c.frames.length;
+    // current session
+    await renameByDoubleClick(CHAT, 'x8', 'chat', '登录页重构');
+    const after = await ev(`({ users: ${VC}.querySelectorAll('[data-testid="chat-msg-user"]').length, input: ${INPUT}.value })`);
+    assert(after.users === 0 && after.input === '', `the new name went into the chat: ${JSON.stringify(after)}`);
+    // open, but in the background
+    const idB = await newChat(CHAT, 'x8b');
+    await renameByDoubleClick(CHAT, '登录页重构', 'chat', 'x8 第二个名字');
+    assert(await sidebarItem(CHAT, 'x8 第二个名字', `it.classList.contains('active')`), 'the double-clicked session did not become the current one');
+    await sleep(500);
+    assert(!c.frames.slice(from).some((f) => f.type === 'chat'), 'claude got a message during the renames');
+    assert((await ev(`${VC}.querySelectorAll('[data-testid="chat-msg-user"]').length`)) === 0, 'a user message appeared in the renamed session');
+    // The sidebar is not frozen: a turn in the (now background) x8b lights its dot,
+    // and a click still switches sessions.
+    const cb = await Conn.open(CHAT);
+    try {
+      await cb.attachChat(idB);
+      await cb.turn(cb.chat('echo x8 background turn'));
+      await waitFor(() => sidebarItem(CHAT, 'x8b', `it.dataset.dot !== 'none'`), 8000, 'activity dot on x8b after the rename');
+    } finally {
+      cb.close();
+    }
+    await clickSidebar(CHAT, 'x8b');
+    await evidence('X8-chat');
+    return 'current → "登录页重构", background → "x8 第二个名字"; no chat traffic; sidebar dot and switch still work';
+  } finally {
+    c.close();
+  }
+});
+
+test('X8-terminal', 'X8 double click on an open terminal session (current ×3, background ×2) renames it; nothing is typed into the shell', async () => {
+  const screen = () => ev(`(() => { const r = [...document.querySelectorAll('.term-instance')].find((c) => c.style.display !== 'none')?.querySelector('.xterm-rows'); return r ? r.innerText : ''; })()`);
+  const newTerminal = async (sub) => {
+    await openPicker(TERM.name);
+    await pickerEnter(sub);
+    await pickerOpen();
+    await waitFor(() => sidebarItem(TERM, sub, `it.classList.contains('active')`, 'terminal'), 20000, `terminal session ${sub} open`);
+    await waitFor(async () => /\$ ?$|\$\s/m.test(await screen()), 20000, 'shell prompt');
+  };
+  await newTerminal('x8t');
+  let name = 'x8t';
+  for (const next of ['build box', 'build box 2', 'build box 3']) {
+    await renameByDoubleClick(TERM, name, 'terminal', next);
+    name = next;
+  }
+  assert(!(await screen()).includes('build box'), `the new name was typed into the shell: ${JSON.stringify((await screen()).slice(-200))}`);
+  await newTerminal('x8u'); // the renamed one is now open in the background
+  for (const next of ['bg box', 'bg box 2']) {
+    await renameByDoubleClick(TERM, name, 'terminal', next);
+    assert(await sidebarItem(TERM, next, `it.classList.contains('active')`, 'terminal'), 'the double-clicked session did not become the current one');
+    name = next;
+    await clickSidebar(TERM, 'x8u', 'terminal');
+  }
+  await clickSidebar(TERM, name, 'terminal');
+  assert(!(await screen()).includes('box'), `a new name was typed into the shell: ${JSON.stringify((await screen()).slice(-200))}`);
+  await evidence('X8-terminal');
+  return `5 renames, last "${name}"`;
+});
+
 test('S1', 'main chat session created (dir main)', async () => {
   S1 = await newChat(CHAT, 'main');
   other = await Conn.open(CHAT);
@@ -1230,12 +1307,15 @@ async function main() {
   }
   const mainBin = buildMainDaemon();
 
-  const bashCfg = { default_workdir: '/tmp', allowed_roots: ['/tmp'], use_tmux: true, claude_cmd: '/bin/bash', claude_reload_cmd: '/bin/bash' };
+  // The bash daemons only get a directory of this run, not all of /tmp.
+  const termRoot = join(work, 'term-root');
+  for (const s of ['x8t', 'x8u']) mkdirSync(join(termRoot, s), { recursive: true });
+  const bashCfg = { default_workdir: termRoot, allowed_roots: [termRoot], use_tmux: true, claude_cmd: '/bin/bash', claude_reload_cmd: '/bin/bash' };
   TERM = defineDaemon('gui-term', { cfg: bashCfg });
   MAIN = defineDaemon('gui-main', { bin: mainBin, cfg: bashCfg });
 
   chatRoot = join(work, 'gui-chat', 'proj');
-  const subs = ['main', 'bypass', 'hist', 'x7', 'x7b'].map((s) => join(chatRoot, s));
+  const subs = ['main', 'bypass', 'hist', 'x7', 'x7b', 'x8', 'x8b'].map((s) => join(chatRoot, s));
   for (const s of subs) mkdirSync(s, { recursive: true });
   const chatConfig = join(work, 'gui-chat', 'cc');
   CHAT = chatDaemon('gui-chat', chatConfig, [chatRoot, ...subs], {

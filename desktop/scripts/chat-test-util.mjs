@@ -71,7 +71,7 @@ export async function loadIndex() {
   if (cut < 0) throw new Error('index.ts: boot marker not found');
   source = source.slice(0, cut) + `
 export const __test = {
-  views, machineSessions, machineOnline,
+  views, machineSessions, machineOnline, rests, ChatView,
   get activeKey() { return activeKey; },
   setMachines(list: MachineConfig[]) { machines = list; },
   showMachineOverview, applyViewActivity, renderSidebar, openChatSession, openSession, rebuildRests, setActive,

@@ -1061,6 +1061,29 @@ function sessionDisplayTitle(machine: MachineConfig, sessionId: string): string 
   return session?.title || sessionId || 'vibe-remote';
 }
 
+// focusView puts the keyboard in a session view (terminal, or the chat input).
+// Not while a session is being renamed in the sidebar: the rename input keeps
+// the keyboard until Enter / Esc / the user clicks elsewhere. A focus scheduled
+// by the click that opened the session would otherwise land after the rename
+// started, close it (blur commits), and the new name would be typed into the
+// session instead (X8).
+function focusView(view: AnyView) {
+  if (renamingActive) return;
+  if (view.ui === 'chat') view.composer.focus();
+  else view.terminal.focus();
+}
+
+// selectOpenSession handles a click on the sidebar name of a session that is
+// already open. The current session is already on screen: there is nothing to
+// switch or redraw, the keyboard just goes back to it. (Going through
+// setActive here rebuilt the sidebar on every click, so the second click of a
+// double click replaced the label the rename was about to start on.)
+function selectOpenSession(machine: MachineConfig, session: SessionInfo) {
+  const view = views.get(viewKey(machine, session.id));
+  if (view && view.key === activeKey) focusView(view);
+  else openExisting(machine, session);
+}
+
 // setActive shows one session view and hides the rest, then fits + focuses it.
 function setActive(key: string) {
   activeKey = key;
@@ -1082,13 +1105,15 @@ function setActive(key: string) {
   const view = views.get(key);
   if (view?.ui === 'chat') {
     view.show();
+    // Next frame: the transcript is laid out and scrolled first.
+    requestAnimationFrame(() => focusView(view));
   } else if (view) {
     // Fit only after the host has a real box. The first startup can still be in
     // Electron's maximize/layout transition; fitWhenVisible retries once on
     // the next frame instead of locking xterm to the initial small dimensions.
     fitWhenVisible(view.container, () => {
       view.fitAddon.fit();
-      view.terminal.focus();
+      focusView(view);
     });
   }
   renderSidebar();
@@ -1183,7 +1208,7 @@ function renderSidebar() {
       let openTimer: number | undefined;
       label.addEventListener('click', () => {
         if (views.has(key)) {
-          openExisting(machine, s); // already open: instant, no delay
+          selectOpenSession(machine, s); // already open: instant, no delay
         } else {
           window.clearTimeout(openTimer);
           openTimer = window.setTimeout(() => openExisting(machine, s), 220);
@@ -1290,6 +1315,9 @@ function startInlineRename(machine: MachineConfig, s: SessionInfo, label: HTMLEl
   input.className = 'session-rename-input';
   input.value = s.title || '';
   label.replaceWith(input);
+  // The label was rebuilt away before the double click got here: there is no
+  // input to edit, and nothing would ever clear the flag again (X8).
+  if (!input.isConnected) return;
   renamingActive = true; // pause sidebar rebuilds while editing (see flag docs)
   input.focus();
   input.select();

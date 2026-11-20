@@ -458,7 +458,7 @@
 - 完成定义：`cd desktop && npm run typecheck && npm test`；`gui-chat-smoke.mjs` 两个新用例在修复前失败、修复后通过
 
 ### T15 X8：已打开的会话双击改不了名
-- 状态：待办
+- 状态：完成
 - 来源：界面验证者 P2（中，拦）；R15.1、R15
 - 行为：双击的两次点击不互相打架（第一次点击触发的切换会话 / 重绘 / 输入框抢焦点不能毁掉第二次点击要进入的改名）；进入改名后输入框保持焦点直到回车 / Esc / 失焦；改名输入框没有真正进入文档时不把 `renamingActive` 留在真（侧边栏不冻结）。对话会话和终端会话一起修
 - 文件：修改 `desktop/src/renderer/index.ts`（尽量放在与侧边栏渲染分离的小函数里）、`desktop/src/renderer/chat/view.ts`（必要时）；测试新建 `desktop/scripts/test-sidebar-rename.mjs`（加入 `npm test`）、`.claude/skills/verify/scripts/gui-chat-smoke.mjs`
@@ -526,6 +526,7 @@
 | T12 | 2026-11-14 10:35 | 7c5bbfb | test-chat-session 新增 reload success keeps history、ended states（共 17）；test-chat-view 新增 ended banner, restart tracking and retry（chat-ended/chat-restart/chat-recheck/chat-handoff/chat-open-terminal/chat-retry，重载 202 → restarting → stopped → 新 epoch 成功、restart_failed 显示 message；共 10）；i18n 244 个键；`npm run typecheck && npm test && npm run build` 成功；`make check` 全绿（第一次运行 TestTerminalFramesUnchangedV3 偶发「tmux session did not become ready」，未改 Go 代码，重跑通过）；decisions #33 |
 | T13 | 2026-11-14 10:46 | 60cce4b（验证脚本）、9b7ad05（文档） | `ws-chat-smoke.mjs` 9 个用例全 PASS（chat: create / replay before ready / two clients / pending survives reconnect / resync 50 / handoff / daemon restart → ended / state without hooks / delete keeps jsonl）；终端 `ws-smoke.mjs` 12 项全 PASS；`gui-smoke.mjs` 原有 20 项 + 对话 3 项（chat session created via picker、chat reply rendered、permission allow once resumes）+ 第二个 daemon 启动共 25 项全 PASS；/protocol-sync 约 100 行核对，修正 9 处文档/注释漂移后三处一致，版本表第 3 行齐全；CLAUDE.md 三处 grep（终端模式、对话模式、只支持 claude）均有结果，「绝不解析」句含「终端模式」；`.devflow.yml` 登记 9 条不变规则（c2）；`make check` 全绿（全量并行运行时 TestTerminalFramesUnchangedV3 偶发「tmux session did not become ready」，单独与 `make check-server` 重跑均通过，见 decisions #35）；decisions #34–#35 |
 | T14（X7） | 2026-11-20 12:03 | 本提交 | 修复前失败：`test-chat-window`「…the window always reaches the newest…」（end 3000 ≠ 3005）、`test-chat-view` 3 个 X7 用例（自己的消息不在 DOM / 最新回复不在 DOM / 切回后 2600 ≠ 4600）、`gui-chat-smoke` 的 X7-send（5 s 内自己的消息没出现）和 X7-background（切回后离最新消息 1420px）；修复后全部通过，`npm run typecheck && npm test` 全绿（test-chat-view 20、test-chat-window 3）。变异核对：去掉 show() 的回底 / 去掉发送时回底 / 窗口不跟到最新，三处各有用例失败 |
+| T15（X8） | 2026-11-20 12:09 | 本提交 | 修复前失败：`test-sidebar-rename`（新建，8 个用例；第 1 个即失败「the rename input is in the sidebar」）、`gui-chat-smoke` 的 X8-chat（双击后 600 ms 焦点在对话输入框 `c-in`）和 X8-terminal（焦点在 `xterm-helper-textarea`）；修复后全部通过，`npm run typecheck && npm test` 全绿（24 个脚本）。变异核对：当前会话的点击仍走 setActive / focusView 不看改名状态 / 输入框没进文档仍置标志，三处各有用例失败 |
 
 ## 后续
 
