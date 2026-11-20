@@ -1,586 +1,114 @@
-commit bbc2e9bf8903a31033bcf560001bae1dfa1e2697
-Each check of .devflow.yml as written, handed to zsh, with GOFLAGS=-count=1 and a TMUX_TMPDIR of its own in the environment
-(checks 12-19 set a TMUX_TMPDIR themselves, which is the one that counts). 2026-11-20 12:00:57 - 12:05:37.
+commit 4c1e78cc1016096c8d98077cea6ff8a78618cfe9
+Each check of .devflow.yml as written, handed to zsh, with GOFLAGS=-count=1 , a TMUX_TMPDIR of its own and an empty CLAUDE_CONFIG_DIR in the environment
+(the checks that start tmux set a TMUX_TMPDIR themselves, which is the one that counts). 2026-11-20 17:32:23 start
 
-## 1: cd desktop && npm test
+## 1: 终端模式纯字节透传，客户端不解析 PTY 输出
+$ cd desktop && npm test
+ok - test-sidebar-rename: X10 a prompt that arrives in the current session while it is being renamed leaves the keyboard in the rename input [sessions under the
+ok - test-sidebar-rename: X10 a prompt that arrives in the current session while it is being renamed leaves the keyboard in the rename input [sessions under the
+ok - test-sidebar-rename: delete confirmation: chat says the conversation stays in claude's history, terminal keeps its own text (zh and en) [sessions under the
+ok - test-sidebar-rename: delete confirmation: chat says the conversation stays in claude's history, terminal keeps its own text (zh and en) [sessions under the
+test-sidebar-rename checks passed (34)
+source bytes check passed (40 files, no NUL)
+exit=1:0
 
-> vibe-remote@0.1.3 test
-> npm run test:preserved-notice && npm run test:attach-replay && npm run test:terminal-layout && npm run test:picker-layout && npm run test:slash-menu-layout && npm run test:terminal-clipboard && npm run test:terminal-selection && npm run test:terminal-activity && npm run test:client-reconnect && npm run test:client-liveness && npm run test:machine-store && npm run test:i18n-parity && npm run test:chat-client && npm run test:chat-parser && npm run test:chat-session && npm run test:chat-permission && npm run test:chat-diff && npm run test:chat-queue && npm run test:chat-markdown && npm run test:chat-render-guard && npm run test:chat-window && npm run test:chat-view && npm run test:chat-availability && npm run test:chat-activity && npm run test:rest-projects && npm run test:tree && npm run test:sidebar && npm run test:worktree-name && npm run test:session-form && npm run test:worktree-dialogs && npm run test:dialog-layout && npm run test:shortcuts && npm run test:legacy-daemon && npm run test:theme-tokens
+## 2: 协议在 protocol.go / protocol.ts / docs/protocol.md 三处一致
+(not a command: /protocol-sync skill)
 
+## 3: 终端会话的 v2 帧除 proto 外逐字节不变
+$ cd vibe-remoted && go test -race ./internal/server -run TestTerminalFramesUnchangedV3
+ok  	github.com/lflish/vibe-remote/vibe-remoted/internal/server	3.531s
+exit=3:0
 
-> vibe-remote@0.1.3 test:preserved-notice
-> node -e "const fs=require('fs');const s=fs.readFileSync('src/renderer/index.ts','utf8');const f=s.slice(s.indexOf('async function closeSession'),s.indexOf('function renderEmptyState'));const preserved=f.indexOf(\"e.code === 'worktree_preserved'\");const refresh=f.indexOf('await refreshAllMachines()',preserved);const notice=f.indexOf(\"t('session.worktreePreserved'\",preserved);if(!(preserved>=0&&refresh>preserved&&notice>refresh))throw new Error('Worktree-preserved notice must be applied after awaited refresh');"
+## 4: 同一 claude 会话 id 任何时刻最多一个 claude 进程（claudeOwners 先 claim 后 spawn；contin
+$ cd vibe-remoted && go test -race ./internal/chat -run 'TestSingleProcess|TestOrphanCleanup|TestLatestSessionChecksTranscriptCwd|TestLatestSessionReadsUntilFirst
+ok  	github.com/lflish/vibe-remote/vibe-remoted/internal/chat	6.120s
+ok  	github.com/lflish/vibe-remote/vibe-remoted/internal/session	7.096s
+ok  	github.com/lflish/vibe-remote/vibe-remoted/internal/server	12.878s
+exit=4:0
 
+## 5: 客户端断开不停对话进程、不发 exit
+$ cd vibe-remoted && go test -race ./internal/server -run TestChatDisconnectKeepsProcess
+ok  	github.com/lflish/vibe-remote/vibe-remoted/internal/server	4.416s
+exit=5:0
 
-> vibe-remote@0.1.3 test:attach-replay
-> node scripts/test-attach-replay.mjs
+## 6: 待答请求只因回答/取消/中断/退出而消失，不被缓冲淘汰
+$ cd vibe-remoted && go test -race ./internal/chat -run TestPendingSurvivesRingEviction
+ok  	github.com/lflish/vibe-remote/vibe-remoted/internal/chat	2.509s
+exit=6:0
 
-ok - test-attach-replay: replay_carries_worktree_name
-attach-replay regression checks passed
+## 7: 「不再询问」规则只能来自 claude 的建议
+$ cd vibe-remoted && go test -race ./internal/chat -run TestRespondRejectsForeignRule
+ok  	github.com/lflish/vibe-remote/vibe-remoted/internal/chat	2.182s
+exit=7:0
 
-> vibe-remote@0.1.3 test:terminal-layout
-> node scripts/test-terminal-layout.mjs
+## 8: 启动命令只由服务端配置拼成，客户端只传 id
+$ cd vibe-remoted && go test ./internal/chat -run TestCommandFromConfigOnly && go test ./internal/server -run TestAttachIgnoresCommandFields
+ok  	github.com/lflish/vibe-remote/vibe-remoted/internal/chat	0.457s
+ok  	github.com/lflish/vibe-remote/vibe-remoted/internal/server	1.301s
+exit=8:0
 
-terminal layout regression checks passed
-
-> vibe-remote@0.1.3 test:picker-layout
-> node scripts/test-picker-layout.mjs
-
-picker layout regression checks passed
-
-> vibe-remote@0.1.3 test:slash-menu-layout
-> node scripts/test-slash-menu-layout.mjs
-
-slash menu layout regression checks passed
-
-> vibe-remote@0.1.3 test:terminal-clipboard
-> node scripts/test-terminal-clipboard.mjs
-
-terminal clipboard regression checks passed
-
-> vibe-remote@0.1.3 test:terminal-selection
-> node scripts/test-terminal-selection.mjs
-
-terminal selection regression checks passed
-
-> vibe-remote@0.1.3 test:terminal-activity
-> node scripts/test-terminal-activity.mjs
-
-ok - test-terminal-activity: screenText is the text of the rows on screen, nothing else
-ok - test-terminal-activity: a tmux repaint of the same screen is not a change (tmux 3.6a, 80×24)
-ok - test-terminal-activity: a tmux repaint of the same screen is not a change (tmux 3.6a, 200×60)
-ok - test-terminal-activity: what counts as a change: the text, not the cursor, not the colours
-ok - test-terminal-activity: output that scrolls is a change even when every line reads the same
-ok - test-terminal-activity: one event per change, counted from what was last compared
-ok - test-terminal-activity: a screen that is being looked at is not remembered
-ok - test-terminal-activity: the bytes reach xterm unchanged and in order, whatever the comparison says
-ok - test-terminal-activity: index: a repaint does not light the dot of a background terminal session, new text does
-[notify] shown: dev · a · a
-ok - test-terminal-activity: index: the session shown gets no dot; hook events are not affected
-ok - test-terminal-activity: index: after a re-attach reset the screen, the comparison starts over
-test-terminal-activity checks passed (11)
-
-> vibe-remote@0.1.3 test:client-reconnect
-> node scripts/test-client-reconnect.mjs
-
-client-reconnect regression checks passed
-
-> vibe-remote@0.1.3 test:client-liveness
-> node scripts/test-client-liveness.mjs
-
-client-liveness regression checks passed
-
-> vibe-remote@0.1.3 test:machine-store
-> node scripts/test-machine-store.mjs
-
-machine-store checks passed
-
-> vibe-remote@0.1.3 test:i18n-parity
-> node scripts/test-i18n-parity.mjs
-
-i18n parity checks passed (336 keys)
-
-> vibe-remote@0.1.3 test:chat-client
-> node scripts/test-chat-client.mjs
-
-ok - test-chat-client: chat attach carries ui and position at send time
-ok - test-chat-client: 同步中途断线后重连仍走 reset
-ok - test-chat-client: 已确认的对话会话重连带 ui:'chat'
-ok - test-chat-client: create replay keeps newSessionId and ui
-ok - test-chat-client: exit keeps session
-ok - test-chat-client: chat_ack routed
-ok - test-chat-client: shutting_down before ready: create kept and replayed with the same id
-ok - test-chat-client: liveness throttled on a chat intent
-[m] spawn failed
-ok - test-chat-client: fatal create before ready: next new chat / terminal starts fresh
-chat client checks passed (9)
-
-> vibe-remote@0.1.3 test:chat-parser
-> node scripts/test-chat-parser.mjs
-
-ok - test-chat-parser: malformed input is ignored
-ok - test-chat-parser: system hook / init / status lines are ignored
-ok - test-chat-parser: assistant thinking part
-ok - test-chat-parser: assistant tool_use part keeps id/name/input
-ok - test-chat-parser: user tool_result with string content
-ok - test-chat-parser: tool_result array content is flattened
-ok - test-chat-parser: every tool_result in one user message
-ok - test-chat-parser: text_delta / thinking_delta keep the block index
-ok - test-chat-parser: message_start carries message.id and model; block start and stop
-ok - test-chat-parser: result success / error / interrupted
-ok - test-chat-parser: interrupt markers are not user text
-ok - test-chat-parser: string-content user messages
-ok - test-chat-parser: daemon echo and vr_* messages
-ok - test-chat-parser: api_retry
-ok - test-chat-parser: fixture lines
-test-chat-parser checks passed (15)
-
-> vibe-remote@0.1.3 test:chat-session
-> node scripts/test-chat-session.mjs
-
-ok - test-chat-session: echo → stream → result
-ok - test-chat-session: echo from another desktop is a plain user bubble
-ok - test-chat-session: tool pairing
-ok - test-chat-session: preview merged by message.id
-ok - test-chat-session: history then backlog
-ok - test-chat-session: submitting reverts
-ok - test-chat-session: cancelled
-ok - test-chat-session: bypass still shows question cards
-ok - test-chat-session: interrupted result
-ok - test-chat-session: string-content user messages render as blocks, not bubbles
-ok - test-chat-session: slash commands from state
-ok - test-chat-session: omitted marker
-ok - test-chat-session: turn error
-ok - test-chat-session: undelivered after resync
-ok - test-chat-session: reset sync past an overflow: a missing echo is unconfirmed, not undelivered; duplicate ack settles it
-ok - test-chat-session: prompt state transitions
-ok - test-chat-session: reload success keeps history
-ok - test-chat-session: ended states
-test-chat-session checks passed (18)
-
-> vibe-remote@0.1.3 test:chat-permission
-> node scripts/test-chat-permission.mjs
-
-ok - test-chat-permission: classifyPermissionKind
-ok - test-chat-permission: parsePermissionQuestions
-ok - test-chat-permission: summarizePermissionInput
-ok - test-chat-permission: describeSuggestion
-ok - test-chat-permission: suggestion grouping
-ok - test-chat-permission: only setMode suggestion
-ok - test-chat-permission: no suggestions
-ok - test-chat-permission: buildAnswer allow / deny
-ok - test-chat-permission: buildAnswer plan options
-ok - test-chat-permission: buildAnswer question
-ok - test-chat-permission: questionComplete
-test-chat-permission checks passed (11)
-
-> vibe-remote@0.1.3 test:chat-diff
-> node scripts/test-chat-diff.mjs
-
-ok - test-chat-diff: identical text → all context rows
-ok - test-chat-diff: pure addition (Write: empty → content)
-ok - test-chat-diff: one line replaced → one del, one add
-ok - test-chat-diff: line numbers stay continuous on both sides
-ok - test-chat-diff: Write → empty to content
-ok - test-chat-diff: Edit → old_string / new_string
-ok - test-chat-diff: MultiEdit → edits joined
-ok - test-chat-diff: non-edit tool (Bash) → null
-test-chat-diff checks passed (8)
-
-> vibe-remote@0.1.3 test:chat-queue
-> node scripts/test-chat-queue.mjs
-
-ok - test-chat-queue: empty not sent
-ok - test-chat-queue: idle: first message goes straight out
-ok - test-chat-queue: busy: two queued messages go in order, one per result
-ok - test-chat-queue: remove: withdrawn message is never sent
-ok - test-chat-queue: interrupt takes the queue back into the input box
-ok - test-chat-queue: own-result gating
-ok - test-chat-queue: stale result not paired
-ok - test-chat-queue: first send while busy queues
-ok - test-chat-queue: idle status releases an echoed message whose result was missed
-ok - test-chat-queue: undelivered message stops blocking
-ok - test-chat-queue: re-sending the same id twice queues it once
-ok - test-chat-queue: duplicate ack: completed releases the queue, not completed waits for its result
-ok - test-chat-queue: duplicate ack for a message the watchdog gave up on: completed:true unblocks the queue (C3)
-ok - test-chat-queue: socket down keeps the item queued
-ok - test-chat-queue: terminal-only command
-test-chat-queue checks passed (15)
-
-> vibe-remote@0.1.3 test:chat-markdown
-> node scripts/test-chat-markdown.mjs
-
-ok - test-chat-markdown: DOMPurify runs on the injected window
-ok - test-chat-markdown: gfm
+## 9: 模型输出不以原始 HTML 进入 DOM；chat/ 下只有 markdown.ts 写 innerHTML
+$ cd desktop && npm run test:chat-markdown && npm run test:chat-render-guard
 ok - test-chat-markdown: code block copy button
 ok - test-chat-markdown: raw html escaped
 ok - test-chat-markdown: sanitizer drops what markdown-it might let through
 ok - test-chat-markdown: links get no target and are intercepted
 test-chat-markdown checks passed (6)
-
-> vibe-remote@0.1.3 test:chat-render-guard
-> node scripts/test-chat-render-guard.mjs
-
 chat render guard passed (15 files)
+exit=9:0
 
-> vibe-remote@0.1.3 test:chat-window
-> node scripts/test-chat-window.mjs
+## 10: 主 token 不进 claude 环境（对话进程同样只有 hook token）
+$ cd vibe-remoted && go test ./internal/session -run TestChatEnvHookTokenOnly
+ok  	github.com/lflish/vibe-remote/vibe-remoted/internal/session	1.333s
+exit=10:0
 
-ok - test-chat-window: initial window is the newest 300
-ok - test-chat-window: expandUp adds 200 each time down to 0
-ok - test-chat-window: new messages: follow at the bottom, stay put otherwise
-test-chat-window checks passed (3)
+## 11: 不读取 claude 凭据
+$ cd vibe-remoted && go test ./internal/chat -run TestNoCredentialAccess
+ok  	github.com/lflish/vibe-remote/vibe-remoted/internal/chat	0.411s
+exit=11:0
 
-> vibe-remote@0.1.3 test:chat-view
-> node scripts/test-chat-view.mjs
+## 12: 删会话不删 worktree 目录和分支，协议 4 的 daemon 不返回 worktree_preserved
+$ cd vibe-remoted && TMUX_TMPDIR=$(mktemp -d) go test -race -timeout 10m ./internal/session ./internal/server -run 'TestDeleteSessionKeepsWorktreeAndBranch|TestDe
+ok  	github.com/lflish/vibe-remote/vibe-remoted/internal/session	3.731s
+ok  	github.com/lflish/vibe-remote/vibe-remoted/internal/server	4.421s
+exit=12:0
 
-ok - test-chat-view: structure and send
-ok - test-chat-view: tool blocks and diff
-ok - test-chat-view: permission prompt: allow, always, deny, handled elsewhere
-ok - test-chat-view: plan prompt options
-ok - test-chat-view: plan prompt in a locked (bypass) session: one approve option, no setMode
-ok - test-chat-view: question prompt
-ok - test-chat-view: question titled __proto__ keeps its answer
-ok - test-chat-view: mode switcher
-ok - test-chat-view: slash menu and terminal-only commands
-ok - test-chat-view: slash menu rows: description only when there is one, full text in titles, selection scrolled into view
-ok - test-chat-view: terminal-only notice: closed when the session ends, relabelled on a locale switch (X1)
-ok - test-chat-view: queue items, withdraw, interrupt returns them
-ok - test-chat-view: undelivered message can be re-sent under the same id
-ok - test-chat-view: resend clicked twice while offline: one queue entry, one bubble, queue not stuck
-ok - test-chat-view: reset sync past an overflow: the sent message is confirmed by a duplicate ack, not marked undelivered
-ok - test-chat-view: history in batches with frames between: only the newest 300 end up in the DOM
-ok - test-chat-view: ended banner, restart tracking and retry
-test-chat-view checks passed (17)
+## 13: 只删 daemon 自己读到的、在 allowed_roots 内的、不是主目录的 worktree
+$ cd vibe-remoted && TMUX_TMPDIR=$(mktemp -d) go test -race -timeout 10m ./internal/session ./internal/server -run 'TestRemoveOnlyListedWorktrees|TestRemoveMainRe
+ok  	github.com/lflish/vibe-remote/vibe-remoted/internal/session	12.435s
+ok  	github.com/lflish/vibe-remote/vibe-remoted/internal/server	2.026s [no tests to run]
+exit=13:0
 
-> vibe-remote@0.1.3 test:chat-availability
-> node scripts/test-chat-availability.mjs
+## 14: 不是 vibe-remote 创建的 worktree，分支永远不删
+$ cd vibe-remoted && TMUX_TMPDIR=$(mktemp -d) go test -race -timeout 10m ./internal/session -run 'TestRemoveExternalNeverDeletesBranch|TestManagedRequiresPathAndB
+ok  	github.com/lflish/vibe-remote/vibe-remoted/internal/session	4.865s
+exit=14:0
 
-ok - test-chat-availability: supported and trusted: selectable
-ok - test-chat-availability: not_claude
-ok - test-chat-availability: old daemon / too old: proto 2 means upgrade vibe-remoted
-ok - test-chat-availability: old daemon / too old: no chat field means upgrade vibe-remoted
-ok - test-chat-availability: proto 2
-ok - test-chat-availability: old daemon / too old: claude too old means upgrade claude, with both versions
-ok - test-chat-availability: other daemon reasons each have their own text
-ok - test-chat-availability: workdir untrusted
-ok - test-chat-availability: info not loaded yet / failed
-ok - test-chat-availability: proto3_daemon_supports_chat
-ok - test-chat-availability: proto2_reason_still_says_3
-ok - test-chat-availability: worktree_untrusted_reason
-test-chat-availability checks passed (12)
+## 15: 未经同意不丢文件和提交（删除前重查，结束会话之后重读它在 git 列表里的那一项，HEAD、分支、是否 detached 有一样与确认的不一
+$ cd vibe-remoted && TMUX_TMPDIR=$(mktemp -d) go test -race -timeout 10m ./internal/session -run 'TestRemoveDirtyNeedsConsent|TestRemoveUnmergedNeedsConsent|TestR
+ok  	github.com/lflish/vibe-remote/vibe-remoted/internal/session	88.268s
+exit=15:0
 
-> vibe-remote@0.1.3 test:chat-activity
-> node scripts/test-chat-activity.mjs
+## 16: 客户端传的 worktree 名字不经 shell；新建会话时本地规则不通过的名字在任何 git 调用之前被拒，预检时这样的名字不进入任何 
+$ cd vibe-remoted && TMUX_TMPDIR=$(mktemp -d) go test -race -timeout 10m ./internal/session ./internal/server -run 'TestWorktreeNameNeverReachesShell|TestValidate
+ok  	github.com/lflish/vibe-remote/vibe-remoted/internal/session	5.839s
+ok  	github.com/lflish/vibe-remote/vibe-remoted/internal/server	5.783s
+exit=16:0
 
-ok - test-chat-activity: chat frame lights the grey dot on a background session (R16.1)
-ok - test-chat-activity: result turns it green (R16.2)
-ok - test-chat-activity: pending prompt turns it yellow and notifies (R16.3)
-ok - test-chat-activity: REST activitySeq / state (R16.4: no hooks needed)
-ok - test-chat-activity: fallback does not switch
-[notify] shown: dev · w · conversation
-ok - test-chat-activity: machine overview shown: the hidden chat is not current, its prompt shows yellow and notifies (R16.3)
-test-chat-activity checks passed (6)
+## 17: 对话界面的信任只认目录本身，或「仓库自己列出的 worktree 根 + 主目录这一个路径被信任」（git 不认 worktree list
+$ cd vibe-remoted && TMUX_TMPDIR=$(mktemp -d) go test -race -timeout 10m ./internal/session -run 'TestChatTrust|TestFallbackListNeverInventsAWorktree|TestFallback
+ok  	github.com/lflish/vibe-remote/vibe-remoted/internal/session	25.675s
+exit=17:0
 
-> vibe-remote@0.1.3 test:rest-projects
-> node scripts/test-rest-projects.mjs
+## 18: daemon 交给 git 的分支只写成完整引用名 refs/heads/<名字>，不调用 git branch、不用 -b / -B；撤销
+$ cd vibe-remoted && TMUX_TMPDIR=$(mktemp -d) go test -race -timeout 10m ./internal/session -run 'TestGitNeverGetsShortBranchName|TestValidateWorktreeNameRejectsE
+ok  	github.com/lflish/vibe-remote/vibe-remoted/internal/session	41.141s
+exit=18:0
 
-ok - test-rest-projects: listProjects: 404 means an old daemon → null
-ok - test-rest-projects: listProjects: 200 → the projects array
-ok - test-rest-projects: listProjects: a 200 without the projects array is an error, not an empty tree
-ok - test-rest-projects: listProjects: 500 → RestError with status 500
-ok - test-rest-projects: removeProject: 409 → RestError.code project_has_sessions
-ok - test-rest-projects: removeProject: 204 → resolves
-ok - test-rest-projects: plan_encodes_query
-ok - test-rest-projects: worktree_status_encodes_query
-ok - test-rest-projects: remove_posts_request
-ok - test-rest-projects: remove_timeout_scales
-ok - test-rest-projects: remove_409_carries_status
-ok - test-rest-projects: remove_500_carries_ended_sessions
-test-rest-projects checks passed (12)
+## 19: daemon 运行的 git 不运行 core.fsmonitor 指定的程序（查看状态、预检、被拒绝的删除请求的检查都不运行它；每条 gi
+$ cd vibe-remoted && TMUX_TMPDIR=$(mktemp -d) go test -race -timeout 10m ./internal/session -run 'TestReadOnlyGitRunsNoRepositoryProgram|TestCreateAndRemoveWorktr
+ok  	github.com/lflish/vibe-remote/vibe-remoted/internal/session	12.298s
+exit=19:0
 
-> vibe-remote@0.1.3 test:tree
-> node scripts/test-tree.mjs
-
-ok - test-tree: two_worktrees_each_with_session
-ok - test-tree: single_worktree_is_flat
-ok - test-tree: single_worktree_that_is_not_main_keeps_its_row
-ok - test-tree: non_git_project
-ok - test-tree: detached_label_is_short_hash
-ok - test-tree: gone_sessions
-ok - test-tree: project_error
-ok - test-tree: duplicate_names_get_numbers
-ok - test-tree: keeps_daemon_order
-ok - test-tree: order_three_projects_eight_sessions_new_daemon
-ok - test-tree: order_three_projects_eight_sessions_old_daemon
-ok - test-tree: legacy_order_sorted
-ok - test-tree: legacy_groups_by_session_fields
-ok - test-tree: legacy_grouping_ignores_input_order
-ok - test-tree: unreferenced_session_in_plain_folder_joins_its_project
-ok - test-tree: tolerates_stale_ids
-ok - test-tree: unreferenced_session_placed_by_legacy_rule
-ok - test-tree: rollup_waiting_only
-ok - test-tree: visible_sessions_skip_collapsed
-ok - test-tree: session_context_and_notification_title
-ok - test-tree: capability_transitions
-ok - test-tree: project_hue_stable
-ok - test-tree: count_active_sessions_at
-test-tree checks passed (23)
-
-> vibe-remote@0.1.3 test:sidebar
-> node scripts/test-sidebar.mjs
-
-ok - test-sidebar: renders_three_levels
-ok - test-sidebar: rows_are_drawn_in_the_daemons_order
-ok - test-sidebar: flat_project_has_no_worktree_row
-ok - test-sidebar: single_worktree_that_is_not_main_has_a_row_and_a_menu
-ok - test-sidebar: non_git_has_no_worktree_entries
-ok - test-sidebar: empty_worktree_row
-ok - test-sidebar: machine_row_shows_connection_state
-ok - test-sidebar: collapsed_machine_without_sessions_can_expand
-ok - test-sidebar: gone_session_meta
-ok - test-sidebar: project_error_row_sessions_usable
-ok - test-sidebar: collapsed_project_shows_waiting_dot
-ok - test-sidebar: project_menu_remove
-ok - test-sidebar: row_menu_stays_inside_the_window
-ok - test-sidebar: focus_survives_a_rebuild
-ok - test-sidebar: double_click_renames_a_session_that_is_open
-ok - test-sidebar: menu_button_is_marked_expanded_while_its_menu_is_open
-ok - test-sidebar: row_menu_from_the_keyboard
-ok - test-sidebar: open_menu_follows_its_row_through_a_rebuild
-ok - test-sidebar: project_remove_disabled_with_sessions
-ok - test-sidebar: main_worktree_has_no_menu
-ok - test-sidebar: legacy_note_and_disabled_entries
-ok - test-sidebar: project_tag_hue_via_css_var
-ok - test-sidebar: optional_actions_hide_entries
-ok - test-sidebar: toolbar_title_parts
-ok - test-sidebar: toolbar_title_tag_and_kind
-ok - test-sidebar: keeps_tree_when_projects_request_fails
-ok - test-sidebar: slow_answers_survive_the_next_poll
-ok - test-sidebar: collapsed_projects_persist
-ok - test-sidebar: no_rerender_while_renaming
-ok - test-sidebar: inline_rename_commits
-ok - test-sidebar: actions_fire_once
-ok - test-sidebar: remove_result_closes_views
-ok - test-sidebar: new_session_count_uses_workdir
-test-sidebar checks passed (33)
-
-> vibe-remote@0.1.3 test:worktree-name
-> node scripts/test-worktree-name.mjs
-
-ok - test-worktree-name: shared_vectors
-ok - test-worktree-name: name_length_and_invisible_characters
-ok - test-worktree-name: dir_name
-ok - test-worktree-name: error_text
-test-worktree-name checks passed (4)
-
-> vibe-remote@0.1.3 test:session-form
-> node scripts/test-session-form.mjs
-
-ok - test-session-form: invalid_name_disables_confirm
-ok - test-session-form: base_info_text
-ok - test-session-form: detached_base_text
-ok - test-session-form: last_plan_wins
-ok - test-session-form: plan_failure_is_shown_and_not_ready
-ok - test-session-form: no_commits_turns_the_name_field_off
-ok - test-session-form: unknown_plan_reason_is_shown_not_taken_for_success
-ok - test-session-form: picker_worktree_mode_name_segment
-ok - test-session-form: picker_name_segment_follows_mode_and_folder
-ok - test-session-form: picker_proto3_has_no_name_segment
-ok - test-session-form: picker_normal_mode_unchanged
-ok - test-session-form: picker_waits_for_machine_info
-ok - test-session-form: picker_info_failed
-ok - test-session-form: continue_note_shown
-ok - test-session-form: continue_note_is_scrolled_into_view_when_ticked
-ok - test-session-form: continue_note_hidden_without_sessions
-ok - test-session-form: continue_note_default_checked
-ok - test-session-form: continue_note_other_flag
-ok - test-session-form: picker_count_follows_directory
-ok - test-session-form: flags_section_note_follows_count
-test-session-form checks passed (20)
-
-> vibe-remote@0.1.3 test:worktree-dialogs
-> node scripts/test-worktree-dialogs.mjs
-
-ok - test-worktree-dialogs: new_worktree_confirm_resolves
-ok - test-worktree-dialogs: plan_rejection_keeps_dialog_open
-ok - test-worktree-dialogs: new_worktree_cancel
-ok - test-worktree-dialogs: new_worktree_enter_confirms
-ok - test-worktree-dialogs: new_worktree_enter_right_after_typing
-ok - test-worktree-dialogs: new_worktree_unsupported_repo
-ok - test-worktree-dialogs: new_worktree_chat_follows_main_trust
-ok - test-worktree-dialogs: worktree_session_dialog_shape
-ok - test-worktree-dialogs: worktree_session_hidden_dir
-ok - test-worktree-dialogs: worktree_session_chat_disabled_reason
-ok - test-worktree-dialogs: worktree_session_main_row_uses_existing_reason
-ok - test-worktree-dialogs: flat_project_new_session
-ok - test-worktree-dialogs: worktree_session_waits_for_launch_options
-ok - test-worktree-dialogs: continue_note_counts
-ok - test-worktree-dialogs: delete_session_keeps_worktree_note
-ok - test-worktree-dialogs: delete_session_legacy_note
-ok - test-worktree-dialogs: delete_session_unknown_daemon_note
-ok - test-worktree-dialogs: delete_session_plain
-ok - test-worktree-dialogs: delete_session_enter_cancels
-ok - test-worktree-dialogs: delete_wt_clean
-ok - test-worktree-dialogs: delete_wt_files
-ok - test-worktree-dialogs: delete_wt_commits
-ok - test-worktree-dialogs: delete_wt_external
-ok - test-worktree-dialogs: delete_wt_detached
-ok - test-worktree-dialogs: delete_wt_detached_clean
-ok - test-worktree-dialogs: delete_wt_external_detached
-ok - test-worktree-dialogs: delete_wt_request_carries_the_branch_shown
-ok - test-worktree-dialogs: delete_wt_branch_without_commits
-ok - test-worktree-dialogs: delete_flow_sessions_are_the_statuses_not_the_rows
-ok - test-worktree-dialogs: delete_flow_500_new_refusals_show_the_daemons_words
-ok - test-worktree-dialogs: delete_wt_sessions_line
-ok - test-worktree-dialogs: delete_wt_ignored_note
-ok - test-worktree-dialogs: delete_wt_files_and_commits
-ok - test-worktree-dialogs: delete_wt_files_managed_merged
-ok - test-worktree-dialogs: delete_wt_enter_key
-ok - test-worktree-dialogs: delete_wt_text_is_never_markup
-ok - test-worktree-dialogs: delete_flow_success
-ok - test-worktree-dialogs: delete_flow_cancel_before_any_request
-ok - test-worktree-dialogs: delete_flow_404_notifies_gone
-ok - test-worktree-dialogs: delete_flow_409_reconfirms
-ok - test-worktree-dialogs: delete_flow_409_branch_switched
-ok - test-worktree-dialogs: delete_flow_409_then_cancel
-ok - test-worktree-dialogs: delete_flow_409_after_sessions_ended_then_cancel
-ok - test-worktree-dialogs: delete_flow_500_reopens_with_error
-ok - test-worktree-dialogs: delete_flow_500_after_sessions_ended
-ok - test-worktree-dialogs: delete_flow_500_then_cancel
-ok - test-worktree-dialogs: delete_flow_500_partial_shows_failure
-ok - test-worktree-dialogs: delete_flow_500_status_query_fails
-ok - test-worktree-dialogs: delete_flow_reports_request_in_flight
-ok - test-worktree-dialogs: delete_flow_says_whether_the_worktree_is_gone_when_the_request_is_over
-ok - test-worktree-dialogs: delete_flow_branch_error
-ok - test-worktree-dialogs: delete_flow_remove_404
-ok - test-worktree-dialogs: delete_flow_timeout_then_gone
-ok - test-worktree-dialogs: delete_flow_timeout_still_there
-ok - test-worktree-dialogs: delete_flow_ended_union
-ok - test-worktree-dialogs: delete_flow_other_refusal
-test-worktree-dialogs checks passed (56)
-
-> vibe-remote@0.1.3 test:dialog-layout
-> node scripts/test-dialog-layout.mjs
-
-dialog layout structure checks passed
-
-> vibe-remote@0.1.3 test:shortcuts
-> node scripts/test-shortcuts.mjs
-
-ok - test-shortcuts: match_digits
-ok - test-shortcuts: match_brackets
-ok - test-shortcuts: pick_index
-ok - test-shortcuts: pick_prev_next_wraps
-ok - test-shortcuts: capture_blocks_propagation
-ok - test-shortcuts: blocked_does_not_intercept
-ok - test-shortcuts: index_out_of_range_still_intercepted
-ok - test-shortcuts: no_sessions_still_intercepted
-ok - test-shortcuts: uninstall_removes_listener
-ok - test-shortcuts: opens_by_position_via_index
-ok - test-shortcuts: switching_reveals_the_row_via_index
-ok - test-shortcuts: skips_collapsed_via_index
-ok - test-shortcuts: crosses_machines_and_skips_collapsed_machine
-ok - test-shortcuts: closes_row_menu_via_index
-ok - test-shortcuts: dialog_or_rename_blocks_via_index
-test-shortcuts checks passed (15)
-
-> vibe-remote@0.1.3 test:legacy-daemon
-> node scripts/test-legacy-daemon.mjs
-
-ok - test-legacy-daemon: groups_by_session_fields
-ok - test-legacy-daemon: same_tree_whatever_order_the_daemon_lists
-ok - test-legacy-daemon: note_and_disabled_entries
-ok - test-legacy-daemon: chat_still_available
-ok - test-legacy-daemon: worktree_mode_sends_no_name
-ok - test-legacy-daemon: old_daemon_warning_text
-ok - test-legacy-daemon: delete_confirm_is_legacy_text
-ok - test-legacy-daemon: delete_removes_session_and_its_worktree_row
-delete session failed DeleteSessionError: worktree has uncommitted changes
-    at VibeRemoteRest.deleteSession (file:///private/var/folders/yq/p60klk5x4rddkhlf74cnj38m0000gn/T/vr-chat-index-4MzGjG/index.mjs:1196:13)
-    at async closeSession (file:///private/var/folders/yq/p60klk5x4rddkhlf74cnj38m0000gn/T/vr-chat-index-4MzGjG/index.mjs:14419:5) {
-  status: 409,
-  code: 'worktree_preserved',
-  detail: 'worktree has uncommitted changes',
-  worktreeRoot: '/r/devflow-worktrees/1794824025040-12b763ac',
-  branch: 'vibe/1794824025040-12b763ac'
-}
-ok - test-legacy-daemon: preserved_409_still_shown
-ok - test-legacy-daemon: unknown_is_not_called_old
-ok - test-legacy-daemon: upgrade_in_place
-test-legacy-daemon checks passed (11)
-
-> vibe-remote@0.1.3 test:theme-tokens
-> node scripts/test-theme-tokens.mjs
-
-ok - test-theme-tokens: root_values_match_design
-ok - test-theme-tokens: no_color_literals_outside_root
-ok - test-theme-tokens: tag_contrast_all_hues
-ok - test-theme-tokens: contrast_table
-ok - test-theme-tokens: button_text_contrast_from_the_stylesheet
-ok - test-theme-tokens: dot_shapes_differ
-ok - test-theme-tokens: window_background_matches_bg_app
-ok - test-theme-tokens: terminal_theme_from_css_vars
-ok - test-theme-tokens: ansi_colors_unchanged
-ok - test-theme-tokens: index_uses_terminal_theme
-ok - test-theme-tokens: main_area_is_card
-ok - test-theme-tokens: sidebar_shape_rules
-ok - test-theme-tokens: machine_state_readable_on_glow
-ok - test-theme-tokens: chat_shape_rules
-ok - test-theme-tokens: dialog_shape_rules
-ok - test-theme-tokens: selected_and_focused_cards_differ
-test-theme-tokens checks passed (16)
-## 1 exit=0 (58 s)
-## 2: /protocol-sync skill (a skill, not a command)
-## 3: cd vibe-remoted && go test -race ./internal/server -run TestTerminalFramesUnchangedV3
-ok  	github.com/lflish/vibe-remote/vibe-remoted/internal/server	2.419s
-## 3 exit=0 (4 s)
-## 4: cd vibe-remoted && go test -race ./internal/chat -run 'TestSingleProcess|TestOrphanCleanup' && go test -race ./internal/session ./internal/server -run 'TestReloadWaitsForOldProcess|TestChatCreateReplaySameID|TestContinueReusesRunningSession|TestConcurrentContinueCreatesOneProcess|TestRestartRefusedWhenUResumedElsewhere|TestHandoffVsReloadOneWins|TestReloadVsDeleteSerialized|TestTerminalContinueBusyWhenChatOwns|TestTerminalContinueClaimsLatest'
-ok  	github.com/lflish/vibe-remote/vibe-remoted/internal/chat	5.092s
-ok  	github.com/lflish/vibe-remote/vibe-remoted/internal/session	5.597s
-ok  	github.com/lflish/vibe-remote/vibe-remoted/internal/server	10.877s
-## 4 exit=0 (16 s)
-## 5: cd vibe-remoted && go test -race ./internal/server -run TestChatDisconnectKeepsProcess
-ok  	github.com/lflish/vibe-remote/vibe-remoted/internal/server	4.291s
-## 5 exit=0 (5 s)
-## 6: cd vibe-remoted && go test -race ./internal/chat -run TestPendingSurvivesRingEviction
-ok  	github.com/lflish/vibe-remote/vibe-remoted/internal/chat	1.940s
-## 6 exit=0 (2 s)
-## 7: cd vibe-remoted && go test -race ./internal/chat -run TestRespondRejectsForeignRule
-ok  	github.com/lflish/vibe-remote/vibe-remoted/internal/chat	1.955s
-## 7 exit=0 (3 s)
-## 8: cd vibe-remoted && go test ./internal/chat -run TestCommandFromConfigOnly && go test ./internal/server -run TestAttachIgnoresCommandFields
-ok  	github.com/lflish/vibe-remote/vibe-remoted/internal/chat	0.469s
-ok  	github.com/lflish/vibe-remote/vibe-remoted/internal/server	1.153s
-## 8 exit=0 (2 s)
-## 9: cd desktop && npm run test:chat-markdown && npm run test:chat-render-guard
-
-> vibe-remote@0.1.3 test:chat-markdown
-> node scripts/test-chat-markdown.mjs
-
-ok - test-chat-markdown: DOMPurify runs on the injected window
-ok - test-chat-markdown: gfm
-ok - test-chat-markdown: code block copy button
-ok - test-chat-markdown: raw html escaped
-ok - test-chat-markdown: sanitizer drops what markdown-it might let through
-ok - test-chat-markdown: links get no target and are intercepted
-test-chat-markdown checks passed (6)
-
-> vibe-remote@0.1.3 test:chat-render-guard
-> node scripts/test-chat-render-guard.mjs
-
-chat render guard passed (15 files)
-## 9 exit=0 (3 s)
-## 10: cd vibe-remoted && go test ./internal/session -run TestChatEnvHookTokenOnly
-ok  	github.com/lflish/vibe-remote/vibe-remoted/internal/session	1.321s
-## 10 exit=0 (2 s)
-## 11: cd vibe-remoted && go test ./internal/chat -run TestNoCredentialAccess
-ok  	github.com/lflish/vibe-remote/vibe-remoted/internal/chat	0.291s
-## 11 exit=0 (0 s)
-## 12: cd vibe-remoted && TMUX_TMPDIR=$(mktemp -d) go test -race -timeout 10m ./internal/session ./internal/server -run 'TestDeleteSessionKeepsWorktreeAndBranch|TestDeleteSessionNeverReturnsPreserved'
-ok  	github.com/lflish/vibe-remote/vibe-remoted/internal/session	3.340s
-ok  	github.com/lflish/vibe-remote/vibe-remoted/internal/server	3.917s
-## 12 exit=0 (5 s)
-## 13: cd vibe-remoted && TMUX_TMPDIR=$(mktemp -d) go test -race -timeout 10m ./internal/session ./internal/server -run 'TestRemoveOnlyListedWorktrees|TestRemoveMainRefused|TestListWorktreesPathWithNewline|TestListWorktreesFallsBackWithoutZ|TestParseWorktreeList'
-ok  	github.com/lflish/vibe-remote/vibe-remoted/internal/session	11.945s
-ok  	github.com/lflish/vibe-remote/vibe-remoted/internal/server	1.481s [no tests to run]
-## 13 exit=0 (12 s)
-## 14: cd vibe-remoted && TMUX_TMPDIR=$(mktemp -d) go test -race -timeout 10m ./internal/session -run 'TestRemoveExternalNeverDeletesBranch|TestManagedRequiresPathAndBranch'
-ok  	github.com/lflish/vibe-remote/vibe-remoted/internal/session	4.542s
-## 14 exit=0 (5 s)
-## 15: cd vibe-remoted && TMUX_TMPDIR=$(mktemp -d) go test -race -timeout 10m ./internal/session -run 'TestRemoveDirtyNeedsConsent|TestRemoveUnmergedNeedsConsent|TestRemoveWorktreeStopsWhenASessionDidNotEnd|TestRemoveWorktreeConfirmsSessionsAgainstTmux|TestSessionWhoseProcessIsInAnOddlyNamedDirectoryIsStillRead|TestSessionCreatedInAnOddlyNamedDirectoryIsStillRead|TestTmuxReadFailsWhenARecordDoesNotParse|TestRemoveChangedSinceStatus|TestRemoveHeadMovedWhileEndingSessions|TestRemoveRefusedWhenNestedWorktree|TestRemoveSubmoduleCheckoutRefused|TestRemoveUntrackedRepositoryRefused|TestRemoveBranchSwitchedAfterConfirmation|TestRemoveBranchSwitchedWhileEndingSessions|TestRemoveEndsSessionsAttributedElsewhere|TestRemoveWorktreeAfterRestartNeedsTheSessionsFromTmux|TestRemoveWorktreeRefusedWhenTmuxSocketDoesNotAnswer|TestSessionsOfAWorktreeGoByWhereTheyWereCreatedAcrossRestart|TestSocketFileGoneWhileTheTmuxServerRuns|TestMissingSocketIsNotAnEmptySetWhileTheTableHasTerminalSessions|TestRemoveWorktreeRefusedWhenTmuxIsNotOnPathButItsSocketIsThere|TestNoTmuxProgramIsAnEmptySetOnlyWithoutSocketAndWithoutTerminalSessions|TestTmuxSocketPathResolvesTheDirectoryLikeTmux|TestIsNoTmuxServerGoesByTheWholeLine|TestSocketPathSayingNoSessionsIsNotAnEmptySet'
-ok  	github.com/lflish/vibe-remote/vibe-remoted/internal/session	81.814s
-## 15 exit=0 (82 s)
-## 16: cd vibe-remoted && TMUX_TMPDIR=$(mktemp -d) go test -race -timeout 10m ./internal/session ./internal/server -run 'TestWorktreeNameNeverReachesShell|TestValidateWorktreeName|TestCreateRefusesBadWorktreeNameBeforeAnyGit|TestAttachRefusesBadWorktreeNameBeforeAnyGit'
-ok  	github.com/lflish/vibe-remote/vibe-remoted/internal/session	5.388s
-ok  	github.com/lflish/vibe-remote/vibe-remoted/internal/server	5.240s
-## 16 exit=0 (6 s)
-## 17: cd vibe-remoted && TMUX_TMPDIR=$(mktemp -d) go test -race -timeout 10m ./internal/session -run 'TestChatTrust|TestFallbackListNeverInventsAWorktree|TestFallbackListFailsWhenTheMainDirectoryCannotBeRead|TestParseWorktreeListByLine'
-ok  	github.com/lflish/vibe-remote/vibe-remoted/internal/session	22.154s
-## 17 exit=0 (22 s)
-## 18: cd vibe-remoted && TMUX_TMPDIR=$(mktemp -d) go test -race -timeout 10m ./internal/session -run 'TestGitNeverGetsShortBranchName|TestValidateWorktreeNameRejectsExpansion|TestUndoOnlyRemovesOwnArtifacts|TestUndoLeavesAWorktreeSomeoneElseAddedAtTheSamePath|TestUndoAfterWorktreeAddFailedOnItsOwn|TestWorktreeAddKilledDuringCheckoutIsUndone|TestRemoveDeletesBranchByFullRef|TestCreateFailedByPostCheckoutHookLeavesNothing|TestUndoLeavesAWorktreeSomeoneElseAddedWhileTheAddRan'
-ok  	github.com/lflish/vibe-remote/vibe-remoted/internal/session	40.607s
-## 18 exit=0 (41 s)
-## 19: cd vibe-remoted && TMUX_TMPDIR=$(mktemp -d) go test -race -timeout 10m ./internal/session -run 'TestReadOnlyGitRunsNoRepositoryProgram|TestCreateAndRemoveWorktreeDoNotRunFsmonitor|TestGitEnvKeepsInheritedConfig|TestDirtyFilesDoesNotRunFsmonitor|TestFsmonitorStaysOffOnGitWithoutConfigEnvironment|TestEveryGitCallTurnsFsmonitorOff'
-ok  	github.com/lflish/vibe-remote/vibe-remoted/internal/session	11.532s
-## 19 exit=0 (12 s)
+2026-11-20 17:37:30 end; checks that failed: 0

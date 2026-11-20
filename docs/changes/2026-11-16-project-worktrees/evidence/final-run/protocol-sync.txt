@@ -1,14 +1,39 @@
-Rule 2 of .devflow.yml (/protocol-sync) is a skill, not a command. What was checked in this round (code bbc2e9b):
+Rule 2 of .devflow.yml (/protocol-sync) is a skill, not a command. What was checked in this round (code 4c1e78c,
+after merging change/dual-mode 64e8b5e):
 
-$ git diff --stat b77fcd1..bbc2e9b -- vibe-remoted/internal/protocol desktop/src/shared desktop/src/renderer/rest.ts vibe-remoted/internal/server docs/protocol.md
-(no output: the rework after gate C was passed, T29-T32, changed no frame, no REST endpoint, no status code and no
- line of docs/protocol.md; the Go types, the TS interfaces, rest.ts, the routes and the document are byte-identical
- to the commit the round-2 verifier checked, 482ab63 - git diff --stat 482ab63..b77fcd1 on the same paths is empty too)
+$ git diff --stat 83a9ef6..HEAD -- vibe-remoted/internal/protocol desktop/src/shared desktop/src/renderer/rest.ts \
+      vibe-remoted/internal/server/server.go vibe-remoted/internal/server/ws.go vibe-remoted/internal/server/ws_chat.go docs/protocol.md
+ docs/protocol.md | 4 +++-
+ 1 file changed, 3 insertions(+), 1 deletion(-)
 
-What the rework does change that a client can observe, none of it in the protocol's shape:
-- attach with mode "worktree" in a repository whose post-checkout hook fails: still the fatal error create_failed, the
-  message still carries git's output; it no longer ends with "cleanup: directory ... not removed" (T30).
-- /api/v1/projects, /api/v1/fs (chatTrust), /api/v1/worktrees/status on a git without "worktree list -z": a directory
-  that is not a registered worktree is no longer listed, trusted or given a status (T29).
+The merge changed no Go type, no TS interface, no REST call, no route: only three passages of docs/protocol.md, all
+from dual-mode (its X5), all describing what the code already did. Each was compared with the code:
 
-Not done in this round: the full by-hand pass of the skill over the open sets (error codes, chat_ack codes).
+1. chat_sync step 3, "the stream tail is capped (20000 events / 8 MiB) ... message_start is always kept":
+   internal/chat/session.go  TailMax = 20000, TailBytesMax = 8 << 20.
+2. chat_ack `ok` ("always given"):
+   Go   ChatAckFrame.OK      `json:"ok"`  (no omitempty)
+   TS   ChatAckFrame.ok: boolean (not optional)
+3. chat_ack `message` ("optional, only with ok:false; with too_large, invalid_response, and invalid_mode when setMode
+   comes with an answer to a request that is not a plan"):
+   Go   ChatAckFrame.Message `json:"message,omitempty"`;  TS  message?: string
+   internal/chat/session.go: nackMsg(...) is called in exactly those places - AckTooLarge x2 (message body, clientMsgId),
+   AckInvalidResponse x2, AckInvalidMode x1 ("setMode is only accepted when answering a plan").
+
+chat_ack as a whole, the three places side by side:
+   fields  Go json tags : type op ref ok code message duplicate completed
+           TS props     : type op ref? ok code? message? duplicate? completed?
+           doc bullets  : op, ref, ok, duplicate / completed, code, message
+   codes   Go consts    : chat_busy chat_not_running empty foreign_rule invalid_mode invalid_response mode_locked request_not_pending too_large
+           doc          : the same nine
+           TS comment   : the same nine
+
+Version: protocol.Version = 4 (Go), PROTOCOL_VERSION = 4 and CHAT_MIN_PROTO = 3 (TS), the version table of
+docs/protocol.md has its rows for 3 and 4; both sides' text of the document is there (this branch's protocol 4
+sections were not touched by the merge: git diff 83a9ef6..HEAD shows only the three hunks above).
+
+Guards that ran in this round: TestTerminalFramesUnchangedV3 and TestV3ClientFlowAgainstV4Daemon (make check and
+rule 3 of .devflow.yml), ws-smoke / ws-chat-smoke / ws-worktree-smoke.
+
+Not done in this round: the full by-hand pass of the skill over every frame and endpoint (sections 2-5 of the skill).
+The last one was the round-2 verifier's, on 482ab63; since then only the three hunks above changed in these files.

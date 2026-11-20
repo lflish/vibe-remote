@@ -1,8 +1,8 @@
-$ TMUX_TMPDIR=<own /tmp/vr-XXXXXX> node .claude/skills/verify/scripts/gui-smoke.mjs
-start 2026-11-20 11:57:07
-work dir /var/folders/yq/p60klk5x4rddkhlf74cnj38m0000gn/T/vr-gui-rc1rAR
-PASS daemon up on 127.0.0.1:25345
-PASS chat daemon (fake claude) up on 127.0.0.1:24837
+HEAD 4c1e78c  2026-11-20 17:21
+$ TMUX_TMPDIR=<temp dir> node .claude/skills/verify/scripts/gui-smoke.mjs
+work dir /var/folders/yq/p60klk5x4rddkhlf74cnj38m0000gn/T/vr-gui-MSpC8a
+PASS daemon up on 127.0.0.1:29245
+PASS chat daemon (fake claude) up on 127.0.0.1:23367
 
 (!) Some chunks are larger than 500 kB after minification. Consider:
 - Using dynamic import() to code-split the application
@@ -31,7 +31,7 @@ NOTE notification outcome in this build: fallback
 PASS reconnect banner appears when the daemon goes away
 PASS client reconnects after the daemon restarts
 PASS the same tmux session is usable after reconnect
-NOTE sidebar 284px wide: 18 rows (18 also measured under the mouse), 9 sessions; names ending in "…": project "billing" name (31 of 38px, 0px free) | project "billing" branch (175 of 220px, 0px free) | worktree "change/general-skills-and-a-long-tail" name (193 of 237px, 0px free) | session "a-session-with-a-rather-long-name" name (200 of 217px, 0px free)
+NOTE sidebar 284px wide: 18 rows (18 also measured under the mouse), 9 sessions; names ending in "…": project "billing" name (30 of 38px, 0px free) | project "billing" branch (170 of 220px, 0px free) | worktree "change/general-skills-and-a-long-tail" name (187 of 237px, 0px free) | session "a-session-with-a-rather-long-name" name (194 of 217px, 0px free)
 PASS sidebar shows the projects, worktrees and sessions under test
 PASS sidebar rows are readable at the default width (names, badges, state text, dots)
 NOTE row menus in an 800×500 window: project row "new-api": button bottom 495, menu 405.1..470 in 800×500 | worktree row "release/next": button bottom 498, menu 430.8..473 in 800×500
@@ -60,4 +60,3 @@ PASS no uncaught renderer exceptions
 
 all GUI checks passed
 exit=0
-commit bbc2e9bf8903a31033bcf560001bae1dfa1e2697
