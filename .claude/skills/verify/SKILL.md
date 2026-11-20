@@ -167,8 +167,9 @@ What the feature is, where a user reaches it, and how the scripts operate it
 | Old daemon / old desktop | a machine whose daemon is built from the commit before the change | `machine-legacy-note`, the two entries disabled with a reason, the picker without a name field; `ws-smoke.mjs` of that commit against a new daemon |
 
 `gui-worktree-smoke.mjs` runs all of it against the built app (same launch
-model as the other two GUI scripts, ~2 min, 65 cases: 61 named by scenario, and
-four found by using the app by hand — X2.rename, X3.keys, X6.scroll, X8.menu):
+model as the other two GUI scripts, ~2 min, 67 cases: 62 named by scenario, and
+five found by using the app by hand — X1.redraw, X2.rename, X3.keys, X6.scroll,
+X8.menu):
 
 ```bash
 node .claude/skills/verify/scripts/gui-worktree-smoke.mjs                 # builds desktop/dist and the daemons first

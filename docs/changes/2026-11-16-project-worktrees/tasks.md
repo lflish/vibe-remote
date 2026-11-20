@@ -1018,7 +1018,7 @@
 - 实现时的调整（decisions #158、d74、d75；evidence/gate-c-3-rework.md 第 3 节）：新文件 `desktop/src/renderer/terminal-activity.ts`（`screenText`、`ScreenWatch`、`writeWatched`），`index.ts` 的 `client.onData` 改成经它写入；单元测试 `desktop/scripts/test-terminal-activity.mjs`（11 个用例，接进 `npm test`），用真的 xterm（不 `open` 也能解析）和真的 tmux 发出的重绘字节（`scripts/fixtures/tmux-redraw.json`，80×24 和 200×60 各一份）；`chat-test-util.mjs` 的 `loadIndex` 多一个 `realXterm` 选项（默认行为不变）。真实应用的用例是 `gui-worktree-smoke.mjs` 的 `X1.redraw`。比较在每一帧处理完之后立刻做，没有加「等输出停下来再比」的定时器：实测 tmux 的重绘是逐行原地重写、不先清屏，切成任意大小的片段中途的屏幕文字都与重绘前相同。没有任何已有断言描述「重绘也亮」的旧行为，所以没有改已有断言（`gui-smoke.mjs` 第 9 步、`gui-worktree-smoke.mjs` 的 R8.4 用的是 hook 事件和真实输出）
 
 ### T32 返工（c9）：写明支持的 git 版本
-- 状态：待办
+- 状态：完成
 - 来源：关口 C 已放行，先改 c9。用户确认的文字：推荐 git 2.36 及以上；2.31–2.35 可用，但路径带换行的 worktree 不会列出；低于 2.31 不支持
 - 文件：`README.md`、`README.zh-CN.md`（前置条件）、`CLAUDE.md`（「前置条件与联调」）、`design.md`（「升级步骤」）
 - 场景：无（只改文档）
@@ -1065,6 +1065,7 @@
 | T29 | 2026-11-20 11:05 | 本行所在的提交 | 修复前 `TestFallbackListNeverInventsAWorktree` 15 个子用例 FAIL 13 个（例：`a\nfoo` 读到 `{Path:…/devflow-worktrees/a Branch:odd}`）、`TestFallbackListFailsWhenTheMainDirectoryCannotBeRead` 3 个全 FAIL、`TestParseWorktreeListByLine` 25 个全 FAIL；修复后完成定义的命令两行 `ok`；`go test -race -count=1 -timeout 20m ./internal/session ./internal/server` 两行 `ok`（360 s、70 s）；`.devflow.yml`「对话界面的信任…」和「只删 daemon 自己读到的…」两条的 check 原样执行 exit 0；真的 git 2.34.1（临时目录里从源码构建）：列表和信任相关的用例 127 行 PASS、0 FAIL，整包 658 行 PASS、2 个 FAIL 都是基准上就有的（evidence/gate-c-3-rework.md 1.4）；变异核对 6 种各有用例 FAIL（同文件 1.3） |
 | T30 | 2026-11-20 11:22 | 本行所在的提交 | 修复前 `TestCreateFailedByPostCheckoutHookLeavesNothing` 3 个子用例 FAIL（`…/fix-login is still there: [.git README]`、`git still has a worktree registered: [fix-login]`）、`TestUndoLeavesAWorktreeSomeoneElseAddedWhileTheAddRan` 2 个 FAIL、改过断言的 `TestUndoAfterWorktreeAddFailedOnItsOwn/post_checkout_hook_fails` FAIL；GUI `R3.8.hook` 对着修复前的 daemon FAIL（`the daemon says it left something behind`）。修复后完成定义的命令 `ok`；`go test -race -count=1 -timeout 20m ./internal/session ./internal/server` 两行 `ok`（371 s、72 s）；`.devflow.yml` 第 18 条原样执行 exit 0；`gui-worktree-smoke.mjs --only=R3.8`：`2 cases: R3 2/2`；git 2.34.1 上相关用例 `ok`；X9 的三个反例原样通过；变异核对 4 种各有用例 FAIL（evidence/gate-c-3-rework.md 第 2 节） |
 | T31 | 2026-11-20 11:37 | 本行所在的提交 | 修复前真实应用的用例 `X1.redraw` FAIL（`dots before anything happened (A in the background, B shown): got ["output","none"], want ["none","none"]`）；单元测试在旧规则（任何字节都算变化）下 FAIL（`the repaint in pieces of 1976 bytes was taken for new output`）。修复后 `test-terminal-activity checks passed (11)`；`npm run typecheck` 退出 0；`npm test` 退出 0（`ok` 行 311 → 322）；`gui-worktree-smoke.mjs --only=X1.redraw,X2.rename,R8.4,R1.6`：`4 cases: R1 1/1, R8 1/1, other 2/2`（`X1.redraw`：12 帧重绘不亮、改名不亮、真有输出亮）；一次比较 80×24 约 33–117 µs、200×60 约 104–411 µs（中位数，evidence/gate-c-3-rework.md 3.3）；变异核对 8 种各有用例 FAIL（同文件 3.4）；没有改任何已有断言 |
+| T32 | 2026-11-20 11:38 | 本行所在的提交 | 只改文档，没有新增测试。README.md、README.zh-CN.md 的前置条件（快速开始第 1 步各加一处指向），CLAUDE.md「前置条件与联调」，design「升级步骤」第 3 步写了同一个结论：推荐 git 2.36 及以上（`worktree list -z`）；2.31–2.35 可用，路径带换行的 worktree 不会列出；低于 2.31 不支持（列表不输出 `locked` / `prunable`）。核对：`grep -n '2\.36\|2\.31\|2\.30\|2\.34\|最低' README*.md CLAUDE.md docs/protocol.md .devflow.yml .claude/skills/verify/SKILL.md` 里没有与此矛盾的说法（design 原来的「没有写明支持的最低版本」已改）。同一个提交把 verify skill 里 `gui-worktree-smoke.mjs` 的用例数改成 67（T30、T31 各加了一个） |
 
 关口 C 第 1 轮返工各行写「本行所在的提交」的，提交分别是：T22 `6282332`，T23 `44c049d`，T21 `f86be13`，T25 `f94ea31`，T24 `465945a`，T26 `771dcc6`，T27 `694e3f5`，T28 `3c9cff8`。全部修完后的一轮检查（`make check`、三份 ws 冒烟、18 条命令型规则）在 `3c9cff8` 上，结果见 evidence/gate-c-1-rework.md 第 5 节；三份 GUI 冒烟没有跑，等主会话安排。（之后回到测试阶段，在同一份代码上做了全量运行：`make check`、三份 GUI 冒烟、三份接口冒烟、18 条命令型规则都通过，见 test-report.md。）
 
@@ -1144,7 +1145,7 @@ spec「推迟到以后」的条目：
 
 - tmux 调用本身没有时限（`tmuxCmd(...).Output()`），删除 worktree 时在仓库锁内调用 `syncFromTmux`：tmux 卡住会让同一仓库的新建和删除一直等。原有写法，这次没有改；可以给 tmux 调用也加时限。
 - `rev-list --count` 的 30 秒时限在超大仓库（百万级提交、分支上有大量未合并提交）上的表现没有实测；正常的删除在那里可能变成失败。
-- 没有写明支持的最低 git 版本。本需求用到的 `git worktree list --porcelain`、`worktree add --detach`、`worktree remove`（撤销里是 `--force --force`，删被锁的项）、`update-ref`、`symbolic-ref`、`check-ref-format --branch` 需要的最低版本待核实后写进文档。这次实测过的是 2.30.2（fsmonitor 的 6 个用例、「检出中途被杀」和「读回失败」的用例通过）和本机的 2.50.1；更早的版本没有测，其中单个与两个 `--force` 对被锁的项有没有区别也没有核实。
+- （T32 已处理，decisions #153、d76：推荐 2.36 及以上；2.31–2.35 可用，路径带换行的 worktree 不会列出；低于 2.31 不支持）没有写明支持的最低 git 版本。本需求用到的 `git worktree list --porcelain`、`worktree add --detach`、`worktree remove`（撤销里是 `--force --force`，删被锁的项）、`update-ref`、`symbolic-ref`、`check-ref-format --branch` 需要的最低版本待核实后写进文档。这次实测过的是 2.30.2（fsmonitor 的 6 个用例、「检出中途被杀」和「读回失败」的用例通过）和本机的 2.50.1；更早的版本没有测，其中单个与两个 `--force` 对被锁的项有没有区别也没有核实。
 - 名字规则仍然放行的几个看不见的字符：U+034F（组合用字形连接符，Mn）、U+3164（韩文填充符，Lo）、U+2800（盲文空白，So）、U+FE0F（变体选择符，Mn）。它们不在 Cf / Zl / Zp 里，两个看上去一样的分支名仍可能出现；反过来，带 ZWJ 的 emoji、波斯文里拼写必需的 ZWNJ、方向标记被拒绝是这条规则已知的代价（decisions d61）。
 - 新建后读回登记项两次都失败、撤销又没能确认 worktree 已删时，worktree 和分支都留着但没有创建记录，按「外部」显示（decisions #116）。可以改成退回 `filepath.EvalSymlinks` 得到的路径加原分支名、不判创建失败。
 - daemon 重启后找回的终端会话，`sessions[].workdir`、默认标题和重载用的目录仍是进程现在的目录（`pane_current_path`），重启前是创建时的目录；这次只让「算不算在某个 worktree 里」不随重启变（decisions #118）。可以让找回的 `Workdir` 也取 `@vibe_remote_workdir`。
@@ -1201,3 +1202,4 @@ spec「推迟到以后」的条目：
 - T31 的点亮规则只在 tmux 3.6a 上看过重绘的字节（逐行原地重写、不先清屏，evidence/gate-c-3-rework.md 3.1）。别的版本的 tmux（Ubuntu 22.04 的 3.2a、Debian 12 的 3.3a、Ubuntu 24.04 的 3.4）如果先清屏再重画，重绘被切成几帧时中途的一帧会被判成屏幕变了，点会误亮（等于 T31 之前的行为，不会漏报）。真遇到时把比较改成「输出停下来之后再比」（d75）。
 - T31 只比较文字：只变颜色不变文字的输出（一行字从暗变亮、选中项的高亮换了位置而文字没动）不会点亮「有新消息」（d74）。真有 agent 靠这个表示进展时，把每个单元格的属性也算进快照（贵一个量级）。
 - T31：窗口尺寸变化、终端被重新 `fit` 之后 tmux 会按新的宽度重排，文字换行的位置变了就算屏幕变了，后台会话会亮点（T31 之前同样会亮；后台的终端容器是 `display:none`，平时不会被 `fit`）。
+- T32 没有加运行时的 git 版本检查（d76）。想加的话：daemon 启动时跑一次 `git --version`，低于 2.31 时在日志里写一行、并经 `/api/v1/info` 告诉桌面端在项目行上提示；只提示、不拦截，判断「认不认 `-z`」仍然靠实际探测。

@@ -44,7 +44,7 @@ docs/       协议文档
 
 ## 快速开始
 
-1. 远程机器需装好 `tmux` 和 `claude`。从
+1. 远程机器需装好 `tmux` 和 `claude`（项目与 worktree 功能还要 `git`，版本见[前置条件](#前置条件)）。从
    [releases 页面](https://github.com/lflish/vibe-remote/releases) 下载
    `vibe-remoted-<版本>-linux-<架构>`，并用 `SHA256SUMS` 校验。
 2. 复制 `vibe-remoted.example.json` 为私有配置（如
@@ -201,6 +201,10 @@ npm run build    # tsc + vite build + electron-builder
 - 客户端与目标机网络互通即可：同一 **Tailscale tailnet**（推荐，自带加密+跨网）
   或同一**可信局域网**（LAN 内 `ws://` 明文，仅在可信网络使用）。
 - 目标机器需安装 `claude` 和 `tmux`；只有从源码构建 daemon 时才需要 Go。
+- 侧边栏的项目和 worktree 用的是目标机器上的 `git`。**推荐 git 2.36 及以上**
+  （worktree 列表用 `git worktree list -z` 读）；2.31–2.35 可用，但路径带换行的
+  worktree 不会列出；低于 2.31 不支持（它的 worktree 列表不标出哪些被锁定、
+  哪些目录已经不在）。
 - 走 Tailscale 时，Mac 端需运行（`tailscale up`）。
 
 ## 本地开发冒烟（无需远程机）

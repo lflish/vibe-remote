@@ -46,7 +46,8 @@ docs/            protocol docs
 
 ## Quick start
 
-1. On the remote machine (needs `tmux` and `claude`), download
+1. On the remote machine (needs `tmux` and `claude`; `git` for projects and
+   worktrees, see [Prerequisites](#prerequisites)), download
    `vibe-remoted-<version>-linux-<arch>` from the
    [releases page](https://github.com/lflish/vibe-remote/releases) and verify it
    against `SHA256SUMS`.
@@ -214,6 +215,11 @@ System Settings. Official signed binaries are not yet provided.
   (plaintext `ws://` on the LAN; use only on trusted networks).
 - The target host has `claude` and `tmux`. Go is required only when building the
   daemon from source.
+- Projects and worktrees in the sidebar use the target host's `git`. **git 2.36
+  or later is recommended** (the worktree list is read with
+  `git worktree list -z`). 2.31–2.35 work, but a worktree whose path has a
+  newline in it is not listed. Versions before 2.31 are not supported (their
+  worktree list does not say which worktrees are locked or prunable).
 - When using Tailscale, the Mac must be up (`tailscale up`).
 
 ## Local smoke test (no remote machine)

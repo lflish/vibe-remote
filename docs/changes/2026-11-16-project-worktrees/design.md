@@ -992,6 +992,7 @@ CSS 变量：保留现有变量名（`styles.css` 里到处在用），换成 M1
   - T29（d71；decisions #154、#155、d72）：4.9 的 `ListWorktrees` 在退回模式（git 不认 `-z`）下不再单独采信按行读的结果。`parseWorktreeList` 按行读时要求每一项是 git 写的固定形状和顺序，不符合的去掉，前面不是空行的 `worktree` 行连前一项一起去掉，第一项不完整就什么都不返回；`worktreesFromLines` 再对照仓库登记的反向指针（`<git 公共目录>/worktrees/*/gitdir`，公共目录由 `gitCommonDirOf` 在文件系统上找，不起 git 进程）：其余各项的路径必须正好是其中之一，同一路径出现两次的都不留，第一项必须就是这个仓库，否则整次读取失败。上面 X14 那条的「退回模式下路径里有换行的 worktree 列不出来」改为：不列出，被拆出来的任何一段也不列出；被拆出来的一段是另一个真 worktree 的路径时那个也不列出；主目录路径带换行的仓库读不了。7.3 的信任规则不变（它只认列表），所以在旧 git 上也不再有反例。
   - T30（c8；decisions #156、#157、d73，推翻 d70 的代价部分）：6.1 的撤销，上面 X9 那条的「为假时（add 还没运行，或自己报错退出）该路径上登记的任何 worktree 都不认领」收窄。`CreateWorktree` 在运行自己的 `git worktree add` 之前记下仓库已有的 worktree 登记（`registeredBeforeAdd`：`<git 公共目录>/worktrees/` 下每一项的名字和 `gitdir` 指向）；add 以非零退出后再读一次，指向本次目录的登记正好一条、是 add 之前没有的、并且 add 的退出码不是 128 / 129，`added` 也为真（`addLeftItsWorktree`），这一项照原来的办法认领并删除（仍要在本次的分支上或 detached 在本次的提交上）。post-checkout 钩子失败因此不再留下 worktree：目录、登记、分支都清掉，同名可以再建。add 之前就在的登记、add 以 128 退出时出现的登记、读不到登记时，都和原来一样不动。钩子自己以 128 退出时 worktree 仍会留下（tasks.md「后续」）。
   - T31（c7；decisions #158、d74、d75）：桌面端终端会话「有新消息」点的规则，从「后台会话有字节到达即亮」改为「后台会话收到字节后屏幕上的文字变了才亮」。这条规则在本需求之前就有，design 原文没有写它；7.4 的状态点文案和三种点的含义不变。实现在 `desktop/src/renderer/terminal-activity.ts`：字节原样、无条件写进 xterm，写之前记下屏幕文字（当前缓冲区、`baseY`、各行去掉行尾空白的文字，不含光标和颜色），`term.write` 的回调里再取一次，只比较是否相同；前台会话、已经有点的会话、attach 之后 500 ms 内不取快照；会话切到前台或 attach 清屏时忘掉记下的屏幕。终端模式「客户端不解析 PTY 输出」的约束不变（只做相等比较）。对话会话的点、hook 事件的点不变。
+  - T32（c9；decisions d76）：下面「升级步骤」第 3 步写明支持的 git 版本（推荐 2.36 及以上；2.31–2.35 可用，路径带换行的 worktree 不会列出；低于 2.31 不支持），同样的话写进 README.md、README.zh-CN.md 的前置条件和 CLAUDE.md「前置条件与联调」。没有加运行时的版本检查。
 
 ### 升级步骤
 
@@ -1010,7 +1011,7 @@ daemon 的升级步骤：
 
 1. 构建并替换二进制：`make dist-daemon`（或 `cd vibe-remoted && GOOS=linux GOARCH=amd64 go build -o ../bin/vibe-remoted-linux-amd64 ./cmd/vibe-remoted`），复制到远程机器覆盖原文件。只重启旧二进制不会更新协议。
 2. 确认 `state_dir`（默认是配置文件旁的 `vibe-remoted-state/`）可写：`projects.json` 写在这里。不可写时 daemon 照常启动，但项目清单和「哪些 worktree 是 vibe-remote 建的」只在内存里，重启后这些 worktree 按「外部」显示（能删目录，不会删分支）。
-3. 确认 daemon 的运行环境里 `git`、`tmux` 在 PATH 上。实测过的 git 是 2.50.1（全部测试通过）、2.34.1 和 2.30.2（后两个从源码构建，整包测试里各有用例失败，原因和后果见 evidence/gate-c-1-rework.md 第 3 节），更早的版本没有测，没有写明支持的最低版本。已知的版本差别（关口 C 第 1 轮返工时补记，tasks.md「后续」）：git 低于 2.36 时路径里有换行的 worktree 列不出来；低于 2.31 时被 `git worktree lock` 锁定的 worktree 不会在结束会话之前被拦下（会话先被结束，git 再拒绝删除，响应如实带 `endedSessions`）。daemon 的 PATH 里找不到 tmux 而机器上还有终端会话时，删除 worktree 会被拒绝（500，`message` 写明原因）。`TMUX_TMPDIR` 若设置，必须指向存在的目录。
+3. 确认 daemon 的运行环境里 `git`、`tmux` 在 PATH 上。**支持的 git 版本**（2026-11-20 用户确认，T32）：推荐 2.36 及以上（worktree 列表用 `git worktree list -z` 读）；2.31–2.35 可用，但路径带换行的 worktree 不会列出；低于 2.31 不支持（`git worktree list --porcelain` 不输出 `locked` / `prunable`：被 `git worktree lock` 锁定的 worktree 不会在结束会话之前被拦下，会话先被结束，git 再拒绝删除，响应如实带 `endedSessions`）。daemon 不检查版本、不拦截。实测过的是 2.50.1（全部测试通过）和从源码构建的 2.34.1、2.30.2（evidence/gate-c-1-rework.md 第 3 节、gate-c-3-rework.md 1.4）；Debian 11 自带 2.30、Ubuntu 20.04 自带 2.25，属于不支持的范围，要先升级 git。daemon 的 PATH 里找不到 tmux 而机器上还有终端会话时，删除 worktree 会被拒绝（500，`message` 写明原因）。`TMUX_TMPDIR` 若设置，必须指向存在的目录。
 4. 重启 daemon。终端会话在 tmux 里，不受影响，桌面端自动重连；对话会话的进程随 daemon 结束，重启后显示「会话已结束：vibe-remoted 重启过」，点「重新启动」用同一段对话接上。
 5. 升级桌面端（替换 app）。在此之前旧桌面端仍可使用。
 

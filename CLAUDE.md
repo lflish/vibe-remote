@@ -185,6 +185,7 @@ shouldForceSelection(e) { return isMac ? e.altKey && macOptionClickForcesSelecti
 
 - 客户端和服务端需通过 Tailscale 或可信私有网络互通。
 - 目标 Linux 需 `claude` + `tmux`（不需要 Go，可部署预编译二进制）。
+- 项目与 worktree 用目标机器上的 `git`：**推荐 2.36 及以上**（worktree 列表用 `git worktree list -z` 读）；**2.31–2.35 可用**，但路径带换行的 worktree 不会列出（退回按行读，见「项目与 worktree」）；**低于 2.31 不支持**（`git worktree list --porcelain` 不输出 `locked` / `prunable`，被锁定的 worktree 不会在结束会话之前被拦下）。daemon 不检查 git 的版本、也不拦截：能力差别靠实际探测（`-z` 以 129 退出就退回），不靠版本号——发行版的版本号对不上上游（Apple Git）。
 - **本地无远程机冒烟**：macOS 本身有 PTY+tmux，用 `claude_cmd: "/bin/bash"` 代跑即可验证透传链路（纯字节透传不关心跑什么）。对话模式不能用 bash 代跑，测试一律用假 claude（`vibe-remoted/internal/chat/fakeclaude`，`go build -o <dir>/claude`，文件名必须是 claude）：`node .claude/skills/verify/scripts/ws-chat-smoke.mjs` 自建带假 claude 的临时 daemon 跑协议冒烟，gui-smoke 的对话用例同理。测试配置 `vibe-remoted.local.json`（无 tmux）/ `vibe-remoted.tmux.json`。
 - **GUI 调试**：`VIBE_REMOTE_DEBUG_PORT=9222` 开 CDP 端口，用 CDP over WebSocket 驱动/检查 renderer（chrome-devtools MCP 在此 Electron 版本有调用故障，改用裸 CDP）。`VIBE_REMOTE_NO_DEVTOOLS=1` 禁自动开 DevTools。
 
