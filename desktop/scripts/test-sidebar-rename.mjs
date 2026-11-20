@@ -322,6 +322,49 @@ test('X10 rename committed by clicking another session: the keyboard ends in tha
   t.close();
 });
 
+// The same with what the browser does on the press: the pressed name is a
+// button and takes the focus itself. The sidebar gives the focus back to "the
+// same control" whenever it is rebuilt, so when the rename is over the focus is
+// on that name, not nowhere — and the keys must still reach the session.
+test('X10 rename committed by pressing another session\'s name (which takes the focus): the keyboard ends in that session', async () => {
+  const t = await setup();
+  const c1 = t.openChat('c1');
+  const c2 = t.openChat('c2'); // current
+  t.page.flushFrames();
+  t.doubleClick('other', { humanPace: true }); // rename the current session c2
+  t.renameInput().value = 'kept';
+  const pressed = t.label('conversation');
+  pressed.focus(); // the press: the button takes the focus, the input loses it (blur commits)
+  pressed.dispatchEvent(new MouseEvent('click', { bubbles: true, detail: 1 }));
+  t.page.flushFrames();
+  await t.settle();
+  t.page.flushFrames();
+  assert.deepEqual(t.renames, [['c2', 'kept']]);
+  assert.equal(t.app.activeKey, c1.view.key, 'the clicked session is the current one');
+  assert.equal(document.activeElement, c1.input, 'the keyboard is in the session that was clicked');
+  assert.equal(c2.input.value, '', 'nothing went into the renamed session');
+  t.close();
+});
+
+// Leaving the rename with Tab is not asking for a session: the focus stays on
+// the sidebar control it moved to, also after the list was rebuilt.
+test('rename left with Tab: the keyboard stays on the sidebar control it moved to', async () => {
+  const t = await setup();
+  const c1 = t.openChat('c1');
+  t.page.flushFrames();
+  t.doubleClick('conversation', { humanPace: true });
+  t.renameInput().value = 'tabbed';
+  const next = t.label('shell');
+  next.focus(); // Tab: the next control of the sidebar takes the focus, blur commits
+  await t.settle();
+  t.page.flushFrames();
+  assert.deepEqual(t.renames, [['c1', 'tabbed']]);
+  assert.equal(t.renameInput(), null, 'the rename is over');
+  assert.equal(document.activeElement, t.label('shell'), 'the focus is on the name it moved to (the rebuilt one)');
+  assert.notEqual(document.activeElement, c1.input);
+  t.close();
+});
+
 test('X10 rename committed by a click into a field elsewhere, or a dialog: the keyboard stays there', async () => {
   const t = await setup();
   const c1 = t.openChat('c1', [bash('r1')]); // a prompt is waiting in the current session

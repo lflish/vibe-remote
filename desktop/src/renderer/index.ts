@@ -88,6 +88,10 @@ let overviewMachineKey: string | null = null;
 // recreates the whole sidebar DOM — that would delete the focused input and
 // its blur would silently commit half-typed text. Paused during editing.
 let renamingActive = false;
+// A session was to get the keyboard while a rename had it (focusView): the
+// user pressed another session's name, or a prompt arrived. Carried out when
+// the rename is over (focusAfterRename).
+let focusHeldByRename = false;
 // Sessions with a Reload in flight, keyed by viewKey(machine, sessionId).
 // Session-level rather than per-button because the sidebar is rebuilt from
 // several paths (5s poll, onReady/onExit, locale switch, and Reload's own
@@ -1239,19 +1243,29 @@ function notifyTitleFor(machine: MachineConfig, sessionId: string): string {
 // started, close it (blur commits), and the new name would be typed into the
 // session instead (X8).
 function focusView(view: AnyView) {
-  if (renamingActive) return;
+  if (renamingActive) {
+    focusHeldByRename = true;
+    return;
+  }
   if (view.ui === 'chat') view.focus();
   else view.terminal.focus();
 }
 
 // focusAfterRename: the rename input is gone (Enter, Esc, or a click elsewhere
 // committed it) and the keyboard it had goes back to the current session —
-// unless the user already put it somewhere (the click landed in a field), or
-// a dialog is open (X10).
+// unless the user already put it somewhere (the click landed in a field, Tab
+// moved it to another control), or a dialog is open (X10).
+// The sidebar hands the focus back to the same control whenever it is rebuilt,
+// so after the press on another session's name that ended the rename, the
+// focus is on that name, not nowhere. That press asked for the session
+// (focusHeldByRename), and the session gets the keyboard.
 function focusAfterRename() {
-  const el = document.activeElement;
-  if (el && el !== document.body) return;
+  const held = focusHeldByRename;
+  focusHeldByRename = false;
   if (document.querySelector('.modal-overlay')) return;
+  const el = document.activeElement;
+  const onSidebar = held && el instanceof HTMLElement && el.closest('#machine-list') !== null;
+  if (el && el !== document.body && !onSidebar) return;
   const view = activeKey ? views.get(activeKey) : undefined;
   if (view) focusView(view);
 }
@@ -1395,7 +1409,10 @@ const sidebarActions: SidebarActions = {
   },
   setRenaming: (active) => {
     renamingActive = active;
-    if (active) return;
+    if (active) {
+      focusHeldByRename = false;
+      return;
+    }
     renderSidebar();
     focusAfterRename();
   },
