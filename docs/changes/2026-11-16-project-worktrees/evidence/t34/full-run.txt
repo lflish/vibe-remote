@@ -16,3 +16,12 @@ ok  	github.com/lflish/vibe-remote/vibe-remoted/internal/session	395.930s
 exit=0
 files in the empty claude config dir afterwards: 0
 desktop: 384 lines 'ok - ', 0 lines 'not ok' / 'FAIL:'
+
+## Earlier attempts at make check and the Go suite on the same code (b6dea2c), 2026-11-20
+- 18:50, load 27–34: make check exit 2 — one Go test failed, the desktop half did not run:
+    --- FAIL: TestRemoveGitFailureKeepsState (6.44s)
+        worktree_remove_test.go:714: err = *fmt.wrapError read repository: git rev-parse --show-toplevel: no answer within 5s: context deadline exceeded, want *WorktreeRemoveError
+  The daemon's own 5 s limit on a git call ran out on the loaded machine. Nothing under vibe-remoted/ changed in this rework (git diff --stat 7b295b0..HEAD -- vibe-remoted is empty).
+  The same test alone right afterwards: go test -race -count=10 -run 'TestRemoveGitFailureKeepsState$' → 10 PASS (1.5–4.1 s each).
+- 18:58: go test -race -count=1 -v -timeout 25m ./... → exit 0; top-level tests PASS 468 / FAIL 0 / SKIP 0, subtests PASS 458 / FAIL 0 / SKIP 0 (that test PASS).
+- 19:06, load 38: a second make check was cut off when the session was interrupted (make: Terminated); chat, config, protocol, server were ok by then. No result.
