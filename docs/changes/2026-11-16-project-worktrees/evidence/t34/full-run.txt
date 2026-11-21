@@ -25,3 +25,12 @@ desktop: 384 lines 'ok - ', 0 lines 'not ok' / 'FAIL:'
   The same test alone right afterwards: go test -race -count=10 -run 'TestRemoveGitFailureKeepsState$' → 10 PASS (1.5–4.1 s each).
 - 18:58: go test -race -count=1 -v -timeout 25m ./... → exit 0; top-level tests PASS 468 / FAIL 0 / SKIP 0, subtests PASS 458 / FAIL 0 / SKIP 0 (that test PASS).
 - 19:06, load 38: a second make check was cut off when the session was interrupted (make: Terminated); chat, config, protocol, server were ok by then. No result.
+
+## gui-chat-smoke.mjs ×5   (HEAD d5a15c2, started 2026-11-21 17:09)
+$ TMUX_TMPDIR=<own temp dir> CLAUDE_CONFIG_DIR=<empty temp dir> VR_MAIN_DAEMON=<built from main> VR_BASE_DAEMON=<built from 6d88e45> node .claude/skills/verify/scripts/gui-chat-smoke.mjs --no-build
+run 1: exit 0, 37 PASS, 0 FAIL, 0 NOTE   (17:10, load 23.01 24.64 23.37)
+run 2: exit 0, 37 PASS, 0 FAIL, 0 NOTE   (17:11, load 18.67 23.05 22.85)
+run 3: exit 0, 37 PASS, 0 FAIL, 0 NOTE   (17:12, load 17.75 21.65 22.32)
+run 4: exit 0, 37 PASS, 0 FAIL, 0 NOTE   (17:13, load 24.01 22.52 22.58)
+run 5: exit 0, 37 PASS, 0 FAIL, 0 NOTE   (17:14, load 24.16 22.84 22.69)
+files in the empty claude config dir afterwards: 0
