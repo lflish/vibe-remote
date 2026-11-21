@@ -34,3 +34,17 @@ run 3: exit 0, 37 PASS, 0 FAIL, 0 NOTE   (17:12, load 17.75 21.65 22.32)
 run 4: exit 0, 37 PASS, 0 FAIL, 0 NOTE   (17:13, load 24.01 22.52 22.58)
 run 5: exit 0, 37 PASS, 0 FAIL, 0 NOTE   (17:14, load 24.16 22.84 22.69)
 files in the empty claude config dir afterwards: 0
+
+## gui-worktree-smoke.mjs ×5   (HEAD 7715c26, started 2026-11-21 17:14)
+$ TMUX_TMPDIR=<own temp dir> CLAUDE_CONFIG_DIR=<empty temp dir> VR_MAIN_DAEMON=<built from main> VR_BASE_DAEMON=<built from 6d88e45> node .claude/skills/verify/scripts/gui-worktree-smoke.mjs --no-build
+run 1: exit 0, 75 PASS, 0 FAIL, 0 NOTE   (17:17, load 28.09 24.13 23.18)
+    72 cases: R1 8/8, R2 7/7, R3 11/11, R4 6/6, R5 12/12, R6 2/2, R7 5/5, R8 6/6, R9 2/2, other 13/13
+run 2: exit 0, 75 PASS, 0 FAIL, 0 NOTE   (17:20, load 25.95 23.01 22.75)
+    72 cases: R1 8/8, R2 7/7, R3 11/11, R4 6/6, R5 12/12, R6 2/2, R7 5/5, R8 6/6, R9 2/2, other 13/13
+run 3: exit 0, 75 PASS, 0 FAIL, 0 NOTE   (17:23, load 24.73 23.37 22.96)
+    72 cases: R1 8/8, R2 7/7, R3 11/11, R4 6/6, R5 12/12, R6 2/2, R7 5/5, R8 6/6, R9 2/2, other 13/13
+run 4: exit 0, 75 PASS, 0 FAIL, 0 NOTE   (17:26, load 33.69 26.03 23.97)
+    72 cases: R1 8/8, R2 7/7, R3 11/11, R4 6/6, R5 12/12, R6 2/2, R7 5/5, R8 6/6, R9 2/2, other 13/13
+run 5: exit 0, 75 PASS, 0 FAIL, 0 NOTE   (17:28, load 24.08 24.74 23.74)
+    72 cases: R1 8/8, R2 7/7, R3 11/11, R4 6/6, R5 12/12, R6 2/2, R7 5/5, R8 6/6, R9 2/2, other 13/13
+files in the empty claude config dir afterwards: 0
