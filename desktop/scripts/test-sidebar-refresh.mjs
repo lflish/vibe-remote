@@ -73,7 +73,12 @@ async function setup() {
   for (const key of [DEV, LAB]) {
     app.rests.set(key, {
       async listSessions() { if (world[key].down) throw new Error('fetch failed'); return structuredClone(world[key].sessions); },
-      async listProjects() { if (world[key].down) throw new Error('fetch failed'); return world[key].legacy ? null : structuredClone(world[key].projects); },
+      async listProjects() {
+        // `holdProjects`: a promise the answer waits for (the daemon is still running git).
+        await world[key].holdProjects;
+        if (world[key].down || world[key].projectsFail) throw new Error('fetch failed');
+        return world[key].legacy ? null : structuredClone(world[key].projects);
+      },
     });
   }
   const refresh = () => app.refreshAllMachines(true);
@@ -464,6 +469,78 @@ test('a refresh that leaves the sidebar alone still redraws the overview page', 
   assert.equal(t.group(DEV).querySelector('[data-testid="machine-state"]').dataset.state, 'offline');
   assert.equal(document.getElementById('toolbar-status-text').textContent, '离线');
   assert.ok(overview.querySelector('.workspace-notice-error'), 'the overview page says the machine cannot be reached');
+  t.close();
+});
+
+// --- T35: the overview page shows nothing of the project tree, and is not
+// redrawn for its answer. A redraw replaces the page's buttons: a press and its
+// release with one in between lose the click, as in the sidebar before T34.
+
+test('the answer about the project tree — a list, an old daemon, a failure — leaves the overview page as it is; the answer about the sessions redraws it', async () => {
+  const t = await setup();
+  t.app.showMachineOverview(t.dev);
+  const overview = document.getElementById('machine-overview');
+  const page = () => overview.firstElementChild;
+  for (const [what, arrange] of [
+    ['the same project list again', () => {}],
+    ['a project list with one more worktree', () => { t.world[DEV].projects[0].worktrees.push({ path: '/w/repo-worktrees/t35', branch: 't35', head: sha('f'), managed: true, sessions: [] }); }],
+    ['a failed request', () => { t.world[DEV].projectsFail = true; }],
+    ['404 from an old daemon', () => { t.world[DEV].projectsFail = false; t.world[DEV].legacy = true; }],
+  ]) {
+    arrange();
+    let release;
+    t.world[DEV].holdProjects = new Promise((r) => { release = r; });
+    const before = page();
+    const round = t.app.pollMachines();
+    await t.settle();
+    // The sessions have answered, the project tree has not.
+    const afterSessions = page();
+    assert.notEqual(afterSessions, before, `${what}: the answer about the sessions redraws the page (as before this change)`);
+    release();
+    await round;
+    assert.equal(page(), afterSessions, `${what}: the page was redrawn for the answer about the project tree`);
+  }
+  t.world[DEV].holdProjects = undefined;
+  // The sidebar did follow those answers.
+  assert.ok(t.group(DEV).querySelector('[data-testid="machine-legacy-note"]'), 'the sidebar shows what the last answer said');
+  t.close();
+});
+
+test('what the overview page shows follows the sessions: one more, one less, another name, running here, offline and back', async () => {
+  const t = await setup();
+  t.app.showMachineOverview(t.dev);
+  const overview = document.getElementById('machine-overview');
+  const recent = () => [...overview.querySelectorAll('.workspace-session-row strong')].map((x) => x.textContent);
+  const summary = () => overview.querySelector('.workspace-summary').textContent;
+  assert.deepEqual(recent(), ['notes chat', 'shell', 'conversation']);
+  assert.ok(summary().startsWith('3 '), summary());
+
+  t.world[DEV].sessions.push({ id: 't9', title: 'newest', workdir: FIX, created: '2026-11-20T10:00:09Z', mode: 'normal' });
+  t.world[DEV].projects[0].worktrees[1].sessions.push('t9');
+  await t.app.pollMachines();
+  assert.deepEqual(recent(), ['newest', 'notes chat', 'shell', 'conversation'], 'a new session is listed');
+  assert.ok(summary().startsWith('4 '), summary());
+
+  t.world[DEV].sessions[1].title = 'build box';
+  await t.app.pollMachines();
+  assert.deepEqual(recent(), ['newest', 'notes chat', 'build box', 'conversation'], 'a rename done elsewhere shows');
+
+  t.world[DEV].sessions = t.world[DEV].sessions.filter((x) => x.id !== 't9');
+  t.world[DEV].projects[0].worktrees[1].sessions = ['t1'];
+  await t.app.pollMachines();
+  assert.deepEqual(recent(), ['notes chat', 'build box', 'conversation'], 'a session that is gone is not listed');
+  assert.ok(summary().startsWith('3 '), summary());
+
+  assert.equal(overview.querySelector('.workspace-notice-error'), null);
+  assert.equal(overview.querySelector('.workspace-mode-card').disabled, false);
+  t.world[DEV].down = true;
+  await t.refresh();
+  assert.ok(overview.querySelector('.workspace-notice-error'), 'offline: the page says so');
+  assert.equal(overview.querySelector('.workspace-mode-card'), null, 'offline: nothing to start a session with');
+  t.world[DEV].down = false;
+  await t.refresh();
+  assert.equal(overview.querySelector('.workspace-notice-error'), null, 'back: the notice is gone');
+  assert.equal(overview.querySelector('.workspace-mode-card').disabled, false, 'back: sessions can be started');
   t.close();
 });
 

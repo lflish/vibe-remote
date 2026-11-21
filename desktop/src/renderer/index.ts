@@ -453,10 +453,17 @@ async function refreshAllMachines(force = false, targetMachineKey?: string, poll
   // Publish each response independently. In particular, a slow / unavailable
   // info endpoint must not delay the session list (or make a healthy machine
   // appear offline after its sessions request succeeds).
-  const publish = (m: MachineConfig) => {
+  // The machine overview page shows the sessions and whether the machine
+  // answers (machineSessions, machineOnline, machineIssues, which sessions are
+  // open here) and nothing of the project tree or the capability: it is
+  // redrawn for the answer about the sessions only. A redraw replaces its
+  // buttons, and a press and its release with one in between lose the click.
+  // Whoever makes the page show something of the tree redraws it for that
+  // answer too.
+  const publish = (m: MachineConfig, kind: 'sessions' | 'projects') => {
     const mk = machineKey(m);
     renderSidebar();
-    if (overviewMachineKey === mk) {
+    if (kind === 'sessions' && overviewMachineKey === mk) {
       const overviewMachine = machines.find((candidate) => machineKey(candidate) === mk);
       if (overviewMachine) renderMachineOverview(overviewMachine);
     }
@@ -477,7 +484,7 @@ async function refreshAllMachines(force = false, targetMachineKey?: string, poll
           machineIssues.delete(mk);
           machineFailures.delete(mk);
           machineRetryAt.delete(mk);
-          publish(m);
+          publish(m, 'sessions');
         })
         .catch((error: unknown) => {
           if (!take(m, 'sessions')) return;
@@ -486,7 +493,7 @@ async function refreshAllMachines(force = false, targetMachineKey?: string, poll
           const failures = (machineFailures.get(mk) ?? 0) + 1;
           machineFailures.set(mk, failures);
           machineRetryAt.set(mk, Date.now() + Math.min(5000 * (2 ** (failures - 1)), 60000));
-          publish(m);
+          publish(m, 'sessions');
         });
       // The project tree is published independently (design 6.4): a success sets
       // v4 and stores the tree, a 404 marks the machine legacy, and a transient
@@ -496,12 +503,12 @@ async function refreshAllMachines(force = false, targetMachineKey?: string, poll
           if (!take(m, 'projects')) return;
           machineCaps.set(mk, nextCapability(machineCaps.get(mk) ?? 'unknown', projects));
           machineProjects.set(mk, projects);
-          publish(m);
+          publish(m, 'projects');
         })
         .catch((error: unknown) => {
           if (!take(m, 'projects')) return;
           machineCaps.set(mk, nextCapability(machineCaps.get(mk) ?? 'unknown', error instanceof Error ? error : new Error(String(error))));
-          publish(m);
+          publish(m, 'projects');
         });
       return [sessionsRequest, projectsRequest];
     }),

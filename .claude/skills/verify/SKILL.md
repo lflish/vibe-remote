@@ -202,7 +202,7 @@ What the feature is, where a user reaches it, and how the scripts operate it
 | Old daemon / old desktop | a machine whose daemon is built from the commit before the change | `machine-legacy-note`, the two entries disabled with a reason, the picker without a name field; `ws-smoke.mjs` of that commit against a new daemon |
 
 `gui-worktree-smoke.mjs` runs all of it against the built app (same launch
-model as the other two GUI scripts, ~3 min, 72 cases: 62 named by scenario, five
+model as the other two GUI scripts, ~3 min, 73 cases: 62 named by scenario, five
 found by using the app by hand — X1.redraw, X2.rename, X3.keys, X6.scroll,
 X8.menu — four that repeat what the chat sessions' rework fixed on session
 rows *under a worktree row* (gui-chat-smoke.mjs has them on rows under a
@@ -214,7 +214,9 @@ shown), `M.X7` (back at the bottom after a burst in the background) —
 changed across two polls of all five machines that bring nothing new (counted
 by a `MutationObserver`), and with a poll asked for every 150 ms 20 real clicks
 (button held 60 ms) switch the session and 10 real double clicks start a
-rename, none lost):
+rename, none lost; and `T35.overview`: with the machine overview shown and
+nothing changing, the page is redrawn at most once per answer about the
+sessions — not for the answers about the project tree — over two polls):
 
 ```bash
 node .claude/skills/verify/scripts/gui-worktree-smoke.mjs                 # builds desktop/dist and the daemons first

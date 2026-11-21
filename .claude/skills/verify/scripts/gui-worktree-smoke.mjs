@@ -3245,6 +3245,36 @@ test('T34.quiet', 'the sidebar is left alone while what it shows stays the same:
   }
 });
 
+// T35: the machine overview shows sessions and whether the machine answers,
+// nothing of the project tree. It is redrawn for the answer about the sessions
+// (once per poll, as before this change) and not for the one about the tree.
+test('T35.overview', 'the machine overview page is not redrawn for the answers about the project tree: over two polls with nothing changing it is redrawn at most once per answer about the sessions, and the sidebar not at all (T35)', async () => {
+  await openMachine(WT);
+  await refresh();
+  await sleep(600);
+  const sessionsAnswered = () => ev(`window.__vrNet.fetched.filter((x) => x.done && x.url.includes(':${WT.port}/api/v1/sessions')).length`);
+  const treesAnswered = () => ev(`window.__vrNet.fetched.filter((x) => x.done && x.url.includes(':${WT.port}/api/v1/projects')).length`);
+  const [s0, t0] = [await sessionsAnswered(), await treesAnswered()];
+  // A redraw empties the page and puts a new one in: counted by the records that add nodes.
+  await ev(`(() => { const w = window.__t35 = { page: 0, list: 0 };
+    new MutationObserver((rs) => { w.page += rs.filter((r) => r.addedNodes.length > 0).length; }).observe(document.getElementById('machine-overview'), { childList: true });
+    new MutationObserver((rs) => { w.list += rs.length; }).observe(document.getElementById('machine-list'), { childList: true, subtree: true });
+    return true; })()`);
+  await waitFor(async () => (await sessionsAnswered()) - s0 >= 2 && (await treesAnswered()) - t0 >= 2, 25000, 'two polls of this machine answered', 250);
+  await sleep(400);
+  const seen = await ev('window.__t35');
+  const [sessionsAnswers, treeAnswers] = [(await sessionsAnswered()) - s0, (await treesAnswered()) - t0];
+  await evidence('T35.overview');
+  assert(seen.page <= sessionsAnswers, `the overview page was redrawn ${seen.page} times while this machine answered ${sessionsAnswers} times about its sessions and ${treeAnswers} times about its project tree, nothing changing`);
+  eq(seen.list, 0, 'changes to the sidebar meanwhile');
+  // The page still works: a card opens the picker.
+  await click(`document.querySelector('#machine-overview .workspace-mode-card:not([disabled])')`, 'a "new session" card of the overview');
+  await waitFor(() => exists(`document.querySelector('.modal-overlay')`), 8000, 'the picker the card opens');
+  await pressKey('Escape');
+  await dialogGone();
+  return `${seen.page} redraws of the overview page for ${sessionsAnswers} answers about the sessions and ${treeAnswers} about the project tree; 0 changes to the sidebar`;
+});
+
 test('NFR.perf', 'performance: 20 projects × 5 worktrees add at most 200 ms to the lists', async () => {
   const P = join(work, 'p');
   const perf = defineDaemon('perf', { cfg: { default_workdir: P, allowed_roots: [P], claude_cmd: '/bin/bash', claude_reload_cmd: '/bin/bash' } });
