@@ -110,3 +110,17 @@ ok  	github.com/lflish/vibe-remote/vibe-remoted/internal/session	363.066s
 exit=0
 files in the empty claude config dir afterwards: 0
 desktop: 386 lines 'ok - ', 0 lines 'not ok' / 'FAIL:'
+
+## gui-smoke.mjs ×2   (started 2026-11-21 18:20)
+$ TMUX_TMPDIR=<own temp dir> CLAUDE_CONFIG_DIR=<empty temp dir> VR_MAIN_DAEMON=<built from main> VR_BASE_DAEMON=<built from 6d88e45> node .claude/skills/verify/scripts/gui-smoke.mjs --no-build
+run 1: exit 0, 46 PASS, 0 FAIL, 4 NOTE   (18:21, load 21.70 22.33 22.99)
+    NOTE notification outcome in this build: fallback
+    NOTE sidebar 284px wide: 18 rows (18 also measured under the mouse), 9 sessions; names ending in "…": project "billing" name (30 of 38px, 0px free) | project "billing" branch (170 of 220px, 0px free) | worktree "change/general-skills-and-a-long-tail" name (187 of 237px, 0px free) | session "a-session-with-a-rather-long-name" name (194 of 217px, 0px free)
+    NOTE row menus in an 800×500 window: project row "new-api": button bottom 495, menu 405.1..470 in 800×500 | worktree row "release/next": button bottom 498, menu 430.8..473 in 800×500
+    NOTE toolbar title in an 800×500 window: {"project":{"text":"devflow","shown":50,"needs":50},"branch":{"text":"change/general-skills-and-a-long-tail","shown":214,"needs":260},"session":{"text":"long","shown":49,"needs":49}}
+run 2: exit 0, 46 PASS, 0 FAIL, 4 NOTE   (18:21, load 21.97 22.36 22.98)
+    NOTE notification outcome in this build: fallback
+    NOTE sidebar 284px wide: 18 rows (18 also measured under the mouse), 9 sessions; names ending in "…": project "billing" name (30 of 38px, 0px free) | project "billing" branch (170 of 220px, 0px free) | worktree "change/general-skills-and-a-long-tail" name (187 of 237px, 0px free) | session "a-session-with-a-rather-long-name" name (194 of 217px, 0px free)
+    NOTE row menus in an 800×500 window: project row "new-api": button bottom 495, menu 405.1..470 in 800×500 | worktree row "release/next": button bottom 498, menu 430.8..473 in 800×500
+    NOTE toolbar title in an 800×500 window: {"project":{"text":"devflow","shown":50,"needs":50},"branch":{"text":"change/general-skills-and-a-long-tail","shown":214,"needs":260},"session":{"text":"long","shown":49,"needs":49}}
+files in the empty claude config dir afterwards: 0
