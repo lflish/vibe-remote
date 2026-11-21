@@ -70,3 +70,7 @@ exit=0, 12 PASS, 0 FAIL; files in the daemon's claude config dir afterwards: 0
 ## ws-chat-smoke.mjs   (2026-11-21 17:31, load 25.28 24.11 23.55)
 $ TMUX_TMPDIR=<own temp dir> CLAUDE_CONFIG_DIR=<empty temp dir> node .claude/skills/verify/scripts/ws-chat-smoke.mjs
 exit=0, 9 PASS, 0 FAIL, 0 NOTE
+
+## ws-worktree-smoke.mjs   (2026-11-21 17:32, load 23.83 23.84 23.47)
+$ TMUX_TMPDIR=<own temp dir> CLAUDE_CONFIG_DIR=<empty temp dir> node .claude/skills/verify/scripts/ws-worktree-smoke.mjs
+exit=0, 9 PASS, 0 FAIL, 0 NOTE
