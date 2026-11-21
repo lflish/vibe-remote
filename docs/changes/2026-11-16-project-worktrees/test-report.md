@@ -1,8 +1,10 @@
 # 测试报告：按项目和 worktree 组织会话，并更换视觉风格
 
-日期：2026-11-21　分支：change/project-worktrees　提交：b6dea2c（被测的代码；其后的提交只在 `docs/changes/` 下加运行记录、证据和文档，另有 `7cc5155` 改了 `CLAUDE.md` 里一处措辞）
+日期：2026-11-21　分支：change/project-worktrees　提交：5c13e46（被测的代码；其后的提交只在 `docs/changes/` 下加运行记录、证据和文档，另有 `2fe147c` 改了 `CLAUDE.md` 里一句话）
 
-> ⚠️ **这是第 5 轮全量运行：c10–c13 裁决之后，修掉「侧边栏要显示的内容没变也重建」（任务 T34）并撤掉测试里的「重做」之后。** 第 4 轮（合并 `change/dual-mode`，被测 `4c1e78c`）留下四项待裁决，协调者按用户的授权裁决：c10 不接受用重做过检查、改为修原因；c11、c12 接受；c13 的规则文件都加 / 保留。这一轮做了什么、修复前后的数据、变异核对，见下面「c10–c13 裁决之后的返工（T34）」一节。仓库里的 `verdict.md` 仍是关口 C 第 2 轮的（被测 `482ab63`）；合并和 T34 之后的代码都没有做独立验证。
+> ⚠️ **第 6 轮（T35 之后，被测 `5c13e46`）的重跑结果在下面「T35 之后的重跑（第 6 轮）」一节，以它为准。** 第 5 轮之后只多了一处产品代码改动（T35：机器概览页不再为项目树的应答重画，`desktop/src/renderer/index.ts` 的 `publish`），所以这一轮只重跑受它影响的检查：`make check`、三份 GUI 冒烟各 2 次、18 条命令型规则，全部一次通过；三份接口冒烟和带 `-v` 的 Go 计数沿用第 5 轮（`b6dea2c`）的结果——`git diff --stat b6dea2c..HEAD -- vibe-remoted desktop/src/shared docs/protocol.md` 为空。下面抬头的各条和「汇总」表仍是第 5 轮的原文，数量上的变化只有：桌面端单元 384 → 386 行 `ok`，`gui-worktree-smoke.mjs` 72 → 73 个用例（多了 `T35.overview`）。
+
+> ⚠️ **第 5 轮全量运行：c10–c13 裁决之后，修掉「侧边栏要显示的内容没变也重建」（任务 T34）并撤掉测试里的「重做」之后。** 第 4 轮（合并 `change/dual-mode`，被测 `4c1e78c`）留下四项待裁决，协调者按用户的授权裁决：c10 不接受用重做过检查、改为修原因；c11、c12 接受；c13 的规则文件都加 / 保留。这一轮做了什么、修复前后的数据、变异核对，见下面「c10–c13 裁决之后的返工（T34）」一节。仓库里的 `verdict.md` 仍是关口 C 第 2 轮的（被测 `482ab63`）；合并和 T34 之后的代码都没有做独立验证。
 > ⚠️ 端到端测试：**已完成**。`gui-chat-smoke.mjs` 完整运行 5 次、`gui-worktree-smoke.mjs` 完整运行 5 次、`gui-smoke.mjs` 2 次，三份接口冒烟各 1 次。
 > 浏览器环节：适用（桌面应用，裸 CDP；没有用 Playwright，跟随项目已有的做法）。
 > 测试环境：e2e_env = local。被测的是临时 daemon（终端会话跑 `/bin/bash`，对话会话跑假 claude）和本机的 git 2.50.1、tmux 3.6a，**不是真实的 claude，也不是远程 Linux**。
@@ -577,7 +579,7 @@ $ .devflow.yml 的 invariants：18 条 check 命令原样交给 zsh，环境里�
 一次性的，不进套件（`evidence/t34/probes-after-t34.txt`）。发现的两件事都没有修：
 
 - 改名时点另一个会话：10 次里 8 次没有切换（见「合并 change/dual-mode」的已知问题表）。
-- **机器概览页仍然每个应答重画一次**：正在看的那台机器每 5 秒 2 次（11 秒里 4 次，同一段时间侧边栏 0 次改动）。其中项目树那一次是本需求加的（基准上每台机器每轮一次），而概览页不显示项目树的内容。页面上的按钮和 T34 之前的侧边栏是同一种问题；有没有真的丢点击没有测。T34 的范围是侧边栏，没有动它，请协调者决定要不要追加（decisions d83）。
+- （**T35 已修掉本需求多出来的那一次**，见「T35 之后的重跑（第 6 轮）」；下面是第 5 轮时的原记录。）**机器概览页仍然每个应答重画一次**：正在看的那台机器每 5 秒 2 次（11 秒里 4 次，同一段时间侧边栏 0 次改动）。其中项目树那一次是本需求加的（基准上每台机器每轮一次），而概览页不显示项目树的内容。页面上的按钮和 T34 之前的侧边栏是同一种问题；有没有真的丢点击没有测。T34 的范围是侧边栏，没有动它，请协调者决定要不要追加（decisions d83）。
 
 ### 运行过程中的失败
 
@@ -585,6 +587,35 @@ $ .devflow.yml 的 invariants：18 条 check 命令原样交给 zsh，环境里�
 2. `make check` 第一次（2026-11-20 18:50）：`TestRemoveGitFailureKeepsState` 失败，`err = … git rev-parse --show-toplevel: no answer within 5s: context deadline exceeded, want *WorktreeRemoveError`。当时 load average 27–34（机器上有别的应用占着 CPU；这次测试只有这一个进程组在跑）。原因是清楚的：用例把 git 换成一个 shell 包装脚本，`RemoveWorktree` 的第一条 git 调用在 daemon 自己的 5 秒时限内没有返回，于是得到的是「读仓库失败」而不是用例等的「git 删除失败」。这一轮没有改 `vibe-remoted/`。随后：该用例单独 `-count=10` 10 次通过（1.5–4.1 秒）；带 `-v` 的整套 468 个顶层测试通过；第二次 `make check`（19:06，负载 38）在会话中断时被终止，没有结果；2026-11-21 17:08 的 `make check` 退出 0。与已在清单里的 `TestWorktreeStatus/ignored_timeout` 是同一类（负载高时一次普通的 git 调用超过时限），没有改断言，没有调时限。
 3. 此外没有失败。GUI 的 12 次完整运行、接口冒烟、规则都是第一次就通过。
 
+
+## T35 之后的重跑（第 6 轮）
+
+被测 `5c13e46`（`fix(desktop): the machine overview is not redrawn for an answer it shows nothing of (T35)`）。来源：decisions d83 第 ② 件事的裁决（#184、#185）。
+
+**改了什么**：`refreshAllMachines` 的 `publish` 多一个参数说明是哪一种应答；项目树的应答（成功、404、失败）只更新侧边栏和状态栏，不再重画正在看的那台机器的概览页；会话列表的应答照旧每次重画（与本需求之前一致）。依据是逐行读过 `renderMachineOverview`：它只读会话列表、机器是否应答、哪些会话在这里开着，不读项目树和能力。
+
+**修复前后**（`evidence/t34/t35.txt`）：
+
+- 修复前：单元 `test-sidebar-refresh` FAIL（`the same project list again: the page was redrawn for the answer about the project tree`）；真实应用 `gui-worktree-smoke.mjs --only=T35` FAIL（`the overview page was redrawn 4 times while this machine answered 2 times about its sessions and 2 times about its project tree, nothing changing`）。
+- 修复后：两轮轮询里概览页重画 2 次（每次会话列表的应答一次），侧边栏 0 次改动；`test-sidebar-refresh` 19 个检查通过。
+- 变异核对 2 种，各有用例失败。没有改任何已有断言。
+
+**重跑结果**（逐次记录在 `evidence/t34/full-run.txt` 的「Round 6」一节；每条命令带独立的 `TMUX_TMPDIR` 和同一个空的 `CLAUDE_CONFIG_DIR`，每项跑完它仍是 0 个文件）：
+
+| 项 | 结果 | 第 5 轮 |
+|----|------|---------|
+| `make check` | 退出 0；Go 5 个包 `ok`；桌面端 386 行 `ok`、0 失败 | 384 行 |
+| `gui-smoke.mjs` ×2 | 46 / 46 行 PASS，0 FAIL；每次 4 行固定的测量 `NOTE`，内容与第 5 轮相同 | 46 |
+| `gui-worktree-smoke.mjs` ×2 | 每次 73 / 73 个用例（76 行 PASS），0 FAIL，0 `NOTE` | 72 个用例 |
+| `gui-chat-smoke.mjs` ×2 | 37 / 37 行 PASS，0 FAIL，0 `NOTE` | 37 |
+| `.devflow.yml` 命令型规则 18 条（`GOFLAGS=-count=1`） | 18 条退出 0，没有 `(cached)` | 18 条 |
+| 三份接口冒烟、Go 带 `-v` 的计数（468 个顶层测试） | 没有重跑，沿用第 5 轮：`5c13e46` 没有动 `vibe-remoted/`、`desktop/src/shared`、`docs/protocol.md` | 12 / 9 / 9；468 |
+
+- 没有失败，没有重跑，已知偶发清单里的用例一次都没有出现。没有任何一行含「doing it again」「重做」。
+- 运行时机器负载很高（load average 19–54，别的应用占着 CPU）。
+- **这一轮由两方跑完**：`make check`、`gui-smoke.mjs` ×2、`gui-worktree-smoke.mjs` 第 1 次是开发者跑的；开发者的会话随后因为流中断停下，`gui-worktree-smoke.mjs` 第 2 次、`gui-chat-smoke.mjs` ×2、18 条规则由协调者用同样的命令和环境变量跑完（基准 daemon 用 `git archive` 从 `origin/main` 和 `6d88e45` 导出到 `/tmp` 构建）。`gui-worktree-smoke.mjs` 第 2 次没有带 `--no-build`，先从 HEAD 重新构建了 `desktop/dist/`，之后两次 `gui-chat-smoke.mjs` 用的是这份构建。
+- 还剩的：会话列表的应答仍然每轮重画一次概览页、不管内容变没变（本需求之前就是这样），重画正好落在一次点击的按下和松开之间时这次点击仍会丢；要去掉它得照 T34 给概览页算指纹，记在 tasks.md「后续」。
+- T33（合并）、T34、T35 之后的代码都还没有做独立验证，也没有独立代码评审。
 
 ## 待验证项
 
@@ -642,7 +673,7 @@ T34 只动桌面端 `index.ts` 的 `renderSidebar()` 一处（加上指纹函数
   - **T34 之后的代码没有做独立验证，也没有做独立代码评审**（约束是不派子 agent）。`15a37b2`（修复）、`5fc55e1`（焦点用例）、`1a99f46`（规则文件）都只有作者自己看过；合并提交 `c28c001` 之后的全部提交同样。
   - **规则文件是按协调者转达的用户授权改的，请用户在 PR 里看**：`CLAUDE.md` 两处（「GUI 回归」一段末尾的 `CLAUDE_CONFIG_DIR`；「侧边栏是三层树」一段里「什么时候重建」和「改名与键盘」）、`.devflow.yml` 第 4 条 check 加一个用例名、`.claude/skills/verify/SKILL.md`（`NOTE` 的含义、用例数 72、`T34.quiet`、「没有变化的刷新不重建」）。
   - **内容确实在变的那一瞬间的重建仍会吞点击**。实测到的是「改名时点另一个会话」：本机上 10 次里 8 次没有切换（名字都保存了，再点一次即可）。刚建完会话、某个会话的状态点正好在变的那一瞬间同理，没有专门测。
-  - **机器概览页每个应答重画一次**（每 5 秒 2 次），按钮有 T34 之前侧边栏的同一种问题，没有修，没有测有没有真的丢点击（decisions d83，请协调者决定）。
+  - **机器概览页**：本需求多出来的那一次重画（项目树的应答）T35 已修掉，现在每轮 1 次，与本需求之前相同；那一次不管内容变没变都重画，正好落在一次点击的按下和松开之间时点击仍会丢，没有测实际丢不丢（decisions #184、#185；tasks.md「后续」）。
   - **两个偶发仍然没有查到原因**：`X7-send`（18 次没有出现）、`M.X7`（26 次没有出现）。`M.X7` 怀疑过的那条路径已排除并有用例守着。
   - **`TestRemoveGitFailureKeepsState` 在机器负载高时失败过 1 次**（daemon 的 5 秒 git 时限），新列入偶发清单。这一轮的全部运行都是在 load average 17–38 的机器上做的。
   - `T34.quiet` 的「轮询进行期间」是脚本每 150 ms 调一次应用自己的轮询函数，比真实的 5 秒密得多；它保证的是「没有变化的应答不打断点击」。

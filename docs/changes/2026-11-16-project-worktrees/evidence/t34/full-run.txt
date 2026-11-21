@@ -124,3 +124,22 @@ run 2: exit 0, 46 PASS, 0 FAIL, 4 NOTE   (18:21, load 21.97 22.36 22.98)
     NOTE row menus in an 800×500 window: project row "new-api": button bottom 495, menu 405.1..470 in 800×500 | worktree row "release/next": button bottom 498, menu 430.8..473 in 800×500
     NOTE toolbar title in an 800×500 window: {"project":{"text":"devflow","shown":50,"needs":50},"branch":{"text":"change/general-skills-and-a-long-tail","shown":214,"needs":260},"session":{"text":"long","shown":49,"needs":49}}
 files in the empty claude config dir afterwards: 0
+
+## gui-worktree-smoke.mjs ×2   (started 2026-11-21 18:21)
+$ TMUX_TMPDIR=<own temp dir> CLAUDE_CONFIG_DIR=<empty temp dir> VR_MAIN_DAEMON=<built from main> VR_BASE_DAEMON=<built from 6d88e45> node .claude/skills/verify/scripts/gui-worktree-smoke.mjs --no-build
+run 1: exit 0, 76 PASS, 0 FAIL, 0 NOTE   (18:24, load 19.08 22.13 22.89)
+    73 cases: R1 8/8, R2 7/7, R3 11/11, R4 6/6, R5 12/12, R6 2/2, R7 5/5, R8 6/6, R9 2/2, other 14/14
+run 2: exit 0, 76 PASS, 0 FAIL, 0 NOTE   (19:03–19:06, load 54.30 35.58 28.27 at the start; run by the coordinator, the developer session having been cut off after run 1; without --no-build, so desktop/dist was rebuilt from HEAD first)
+    73 cases: R1 8/8, R2 7/7, R3 11/11, R4 6/6, R5 12/12, R6 2/2, R7 5/5, R8 6/6, R9 2/2, other 14/14
+files in the empty claude config dir afterwards: 0
+
+## gui-chat-smoke.mjs ×2   (started 2026-11-21 19:06, HEAD 2913273; run by the coordinator)
+$ TMUX_TMPDIR=<own temp dir> CLAUDE_CONFIG_DIR=<empty temp dir> VR_MAIN_DAEMON=<built from origin/main by git archive> node .claude/skills/verify/scripts/gui-chat-smoke.mjs --no-build
+run 1: exit 0, 37 PASS, 0 FAIL, 0 NOTE   (19:06–19:07, load 29.15 31.43 27.88)
+run 2: exit 0, 37 PASS, 0 FAIL, 0 NOTE   (19:07, load 30.94 31.70 28.21)
+files in the empty claude config dir afterwards: 0
+
+## .devflow.yml invariants   (2026-11-21 19:07–19:12, HEAD 2913273; run by the coordinator)
+Each of the 18 command-type checks as written in .devflow.yml, with GOFLAGS=-count=1, its own TMUX_TMPDIR and the same empty CLAUDE_CONFIG_DIR, one after the other:
+checks 1–18: exit 0 each; no "(cached)" in any output; 0 files in the empty claude config dir after each.
+(The remaining rule, "/protocol-sync skill", is not a command; nothing it covers changed since b6dea2c: git diff --stat b6dea2c..HEAD -- vibe-remoted desktop/src/shared docs/protocol.md is empty.)
