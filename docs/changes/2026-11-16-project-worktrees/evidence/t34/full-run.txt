@@ -62,3 +62,7 @@ run 2: exit 0, 46 PASS, 0 FAIL, 4 NOTE   (17:31, load 25.65 24.16 23.57)
     NOTE row menus in an 800×500 window: project row "new-api": button bottom 495, menu 405.1..470 in 800×500 | worktree row "release/next": button bottom 498, menu 430.8..473 in 800×500
     NOTE toolbar title in an 800×500 window: {"project":{"text":"devflow","shown":50,"needs":50},"branch":{"text":"change/general-skills-and-a-long-tail","shown":214,"needs":260},"session":{"text":"long","shown":49,"needs":49}}
 files in the empty claude config dir afterwards: 0
+
+## ws-smoke.mjs   (2026-11-21 17:31, load 25.65 24.16 23.57)
+$ VR_TOKEN=<token> node .claude/skills/verify/scripts/ws-smoke.mjs 127.0.0.1:<random port> <own temp dir>   # throwaway daemon built from this code
+exit=0, 12 PASS, 0 FAIL; files in the daemon's claude config dir afterwards: 0
