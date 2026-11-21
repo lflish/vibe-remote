@@ -66,3 +66,7 @@ files in the empty claude config dir afterwards: 0
 ## ws-smoke.mjs   (2026-11-21 17:31, load 25.65 24.16 23.57)
 $ VR_TOKEN=<token> node .claude/skills/verify/scripts/ws-smoke.mjs 127.0.0.1:<random port> <own temp dir>   # throwaway daemon built from this code
 exit=0, 12 PASS, 0 FAIL; files in the daemon's claude config dir afterwards: 0
+
+## ws-chat-smoke.mjs   (2026-11-21 17:31, load 25.28 24.11 23.55)
+$ TMUX_TMPDIR=<own temp dir> CLAUDE_CONFIG_DIR=<empty temp dir> node .claude/skills/verify/scripts/ws-chat-smoke.mjs
+exit=0, 9 PASS, 0 FAIL, 0 NOTE
