@@ -95,3 +95,18 @@ exit=0, 9 PASS, 0 FAIL, 0 NOTE
 18 exit=0  daemon 交给 git 的分支只写成完整引用名 refs/heads/<名字>，不调用 git branch、不用 
 19 exit=0  daemon 运行的 git 不运行 core.fsmonitor 指定的程序（查看状态、预检、被拒绝的删除请求的检查都
 cached results: 0; files in the empty claude config dir afterwards: 0
+
+# Round 6: after T35 (the machine overview is not redrawn for the project tree's answer)
+
+Code under test: 5c13e46 (the commits after it change CLAUDE.md and files under docs/changes/ only). Same rules as above: own TMUX_TMPDIR per command, one empty CLAUDE_CONFIG_DIR, one after the other.
+The three ws smokes were not run again: nothing under vibe-remoted/ and no protocol file changed since b6dea2c; their results above stand.
+
+## make check   (HEAD 86500bc, 2026-11-21 18:20, load before 25.00 23.72 23.17, after 17.79 21.72 22.80)
+ok  	github.com/lflish/vibe-remote/vibe-remoted/internal/chat	18.791s
+ok  	github.com/lflish/vibe-remote/vibe-remoted/internal/config	2.001s
+ok  	github.com/lflish/vibe-remote/vibe-remoted/internal/protocol	2.449s
+ok  	github.com/lflish/vibe-remote/vibe-remoted/internal/server	68.189s
+ok  	github.com/lflish/vibe-remote/vibe-remoted/internal/session	363.066s
+exit=0
+files in the empty claude config dir afterwards: 0
+desktop: 386 lines 'ok - ', 0 lines 'not ok' / 'FAIL:'
