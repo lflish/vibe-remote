@@ -37,3 +37,6 @@ rule 3 of .devflow.yml), ws-smoke / ws-chat-smoke / ws-worktree-smoke.
 
 Not done in this round: the full by-hand pass of the skill over every frame and endpoint (sections 2-5 of the skill).
 The last one was the round-2 verifier's, on 482ab63; since then only the three hunks above changed in these files.
+
+--- round 5 (after T34), 2026-11-21 ---
+git diff --stat 7b295b0..HEAD -- vibe-remoted desktop/src/shared desktop/src/renderer/rest.ts docs/protocol.md : empty. This rework touched no file the protocol lives in; protocol.Version and PROTOCOL_VERSION are still 4. The three-way comparison of the skill was not repeated.

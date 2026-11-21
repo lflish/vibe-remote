@@ -1,13 +1,13 @@
-HEAD 4c1e78c  2026-11-20 17:22
+HEAD 9919227  2026-11-21 17:31
 $ node .claude/skills/verify/scripts/ws-chat-smoke.mjs
-work dir /private/tmp/vr-chat-oZZPSq
-daemon up on 127.0.0.1:21224, claude 2.1.210 (fake)
-PASS chat: create — id=1795166540980-c28b019f
+work dir /private/tmp/vr-chat-YRx8DF
+daemon up on 127.0.0.1:28133, claude 2.1.210 (fake)
+PASS chat: create — id=1795253510841-da5a900b
 PASS chat: replay before ready — one session, one process
 PASS chat: two clients — both saw both, same order, one process
-PASS chat: pending survives reconnect — request 9a3aca55-b7ad-4a93-9c4e-b1941c2a5329 answered after reconnect
+PASS chat: pending survives reconnect — request cd0659b2-a219-45de-9b5d-230f2cfae68d answered after reconnect
 PASS chat: resync 50 — backlog 54, seq 14..67
-PASS chat: handoff — terminal 1795166541664-92dd28b1 runs --resume 8834a1ae-e7cc-460b-a8b9-350af7500b8b
+PASS chat: handoff — terminal 1795253511500-ec37e80e runs --resume 2b0386c8-390b-42af-a779-fc8ff53b2919
 PASS chat: daemon restart → ended — history 2, reloaded and replying
 PASS chat: state without hooks — idle → running → idle → waiting → idle
 PASS chat: delete keeps jsonl — process gone, transcript kept

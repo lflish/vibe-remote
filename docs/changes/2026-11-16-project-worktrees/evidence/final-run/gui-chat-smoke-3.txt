@@ -1,0 +1,45 @@
+code under test b6dea2c; run finished 2026-11-21 17:12
+$ TMUX_TMPDIR=<temp dir> CLAUDE_CONFIG_DIR=<empty temp dir> VR_MAIN_DAEMON=<daemon built from main> node .claude/skills/verify/scripts/gui-chat-smoke.mjs --no-build
+work dir /private/tmp/vr-gc-MjTeAj
+PASS 5 daemons up (gui-term:23263 gui-main:20609 gui-chat:21221 gui-old-claude:24868 gui-old-init:26420)
+PASS app started with 5 machines (zh), network hook installed
+PASS R1.3 bash machine: chat card disabled with the reason — 对话界面只支持 claude：这台机器的 claude_cmd 不是 claude
+PASS R1.1 default new session is a terminal session — session 1795252292655-405a41ad
+PASS R1.4 claude too old: chat card disabled, upgrade claude — 远程 claude 版本 1.0.51 低于对话界面要求的 2.1.210，请升级 claude
+PASS new-session dialog: buttons reachable in 500/700/803px-high windows — 500px ok, 700px ok, 803px ok
+PASS R17.2 new desktop + protocol-2 daemon: terminal works, chat card says upgrade vibe-remoted — 这台机器的 vibe-remoted（协议 2）不支持对话界面（需要协议 3），请升级 vibe-remoted; picker note: 这台机器的 vibe-remoted（dev，协议 2）比桌面端（协议 4）旧，部分功能不可用。建议先更新 daemon。
+PASS R1.5 chat + -c shows the full 3000-line history, windowed — session 1795252294164-ca87acd1; first screen 300 messages; 9 scrolls to the first; total 2000
+PASS R1.6/R11.2 bypass: mode fixed, no permission prompts — menu bypassPermissions (会话以 --dangerously-skip-permissions 启动，权限模式固定为「跳过权限」，不能切换。)
+PASS X7 scrolled up with the wheel: a typed message and its reply show; replies do not drag the view; reaching the bottom shows them — gap after sending 0px; history kept at 1835px while a reply arrived
+PASS X7 background session got more than a screen: back at the bottom with the newest, a typed message shows; left scrolled up → same place — back at the bottom (gap 0px) after 40 messages in the background; scrolled-up place kept (3292px)
+PASS X8 double click on an open chat session (current, then background) renames it; the name is not sent to claude; the sidebar keeps updating — current → "登录页重构", background → "x8 第二个名字"; no chat traffic; sidebar dot and switch still work
+PASS X8 double click on an open terminal session (current ×3, background ×2) renames it; nothing is typed into the shell — 5 renames, last "bg box 2"
+PASS X10 a background chat session asks for permission (yellow dot): a real click opens it, then 1 answers / Esc interrupts without clicking the card, and typing goes on in the input — opened from the yellow dot: keyboard on chat-perm; 1 → done Bash, next message typed without a click; Esc → request interrupted
+PASS X10 after renaming a chat session (Enter, Esc, a click on another session) the next keys go into the current session, without a click — Enter, Esc and click-elsewhere: the next message was typed without a click each time
+PASS X10 after renaming a terminal session (Enter, Esc) the next keys go into the terminal, without a click — Enter and Esc: the next command was typed without a click
+PASS main chat session created (dir main) — 1795252321765-bb048a63
+PASS R3.2 markdown + code copy button — font "SF Mono"
+PASS R3.3 raw html/script inert, links go to the system browser — links [["ok","https://example.com"]]; open-external got ["https://example.com"]
+PASS R4 tool blocks: Read/Grep folded, Bash output, Edit diff, failure — Read:ok Grep:ok Bash:ok Edit:ok:open Bash:error:open
+PASS R5.6 answer lost before reaching the daemon → prompt open again after reconnect — submitting → reconnect → open → allow → ran
+PASS R5.7 second answer → "handled elsewhere", claude gets one answer — vr_resolved allowed
+PASS R6 plan review: approve+acceptEdits, approve+manual, revise — opt1→acceptEdits, opt2→default, opt3→revised (mode while revising: default)
+PASS R7 AskUserQuestion form: incomplete → disabled, single/multi/other → answers — Banana / Blue + "my own colour"
+PASS R8 Esc and stop interrupt; Esc on a prompt; Esc idle does nothing — Esc + stop → 已中断; prompt Esc → tool error; idle Esc no-op
+PASS R9 queue while busy: queued, remove, interrupt returns to the input — queued ×2, removed one, interrupt put "echo q-three" back
+PASS R10 slash menu and terminal-only commands — menu /compact /review /fake-skill /baoyu-post-to-wechat /dev-build /dev-design /dev-release /dev-requirements /posthog:signals-scout-customer-analytics-billing-and-usage /reverse-engineering-with-code-eval-and-ida-domain:ida-domain-scripting /unbroken-description /very-long-command-name-that-keeps-going-that-keeps-going-that-keeps-going-that-keeps-going-that-keeps-going-that-keeps-going-that-keeps-going-that-keeps-going-to-the-end /zz-last; "/re" → /review /reverse-engineering-with-code-eval-and-ida-domain:ida-domain-scripting
+PASS slash menu with long names and descriptions: rows readable in 800x500 and 1280x800 windows, selection stays in view — 800x500: menu 460x290, 13 rows (4 whole) ok; 1280x800: menu 560x400, 13 rows (6 whole) ok
+PASS R11.1 permission mode: Shift+Tab cycle and menu — Shift+Tab acceptEdits→plan→default; menu default,acceptEdits,plan
+PASS R12/R12.2 offline, 500 messages meanwhile → divider, render ≤2000 ms — divider "— 本地连接在此中断，远程会话未受影响 —已补回断线期间 504 条消息"; ready → rendered 66 ms
+PASS R13.1 turn error shows retry; retry resends — 本轮回复失败API Error: 529 Overloaded重试
+PASS R16.3 waiting in a background session: yellow dot, notification / Dock fallback, click opens it — window focused before: true; notify fallback; badge while hidden "•", after focus() "" (window focused: true); click → main opened
+PASS R16.3 current session while the window is in the background: yellow dot on it + notification; cleared once the window is focused again — [notify] fallback: gui-chat · main · main; dot waiting while in the background, none after focus
+PASS R13.2 claude exits → ended banner, restart works — 会话已结束：claude 进程退出（代码 1）fake claude crash line 1
+fake claude crash line 2
+fake claude crash line 3
+重新启动新建终端会话接上
+PASS R14.2 handoff while a turn runs asks first, then continues in a terminal — dialog "Claude 正在回复，交给终端会中断当前回合。继续吗？"; terminal: fake-claude interactive resume=4c92711c-7d6a-4305-a572-7cf09d978412
+PASS R13.4 init reports an old claude → ended with required version, no reconnect — claude 版本过旧（1.0.0），对话界面需要 2.1.210 或更新已升级，重新检测新建终端会话接上
+PASS no uncaught renderer exceptions
+
+all GUI chat checks passed

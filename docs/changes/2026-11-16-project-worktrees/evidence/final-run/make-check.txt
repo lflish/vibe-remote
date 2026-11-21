@@ -1,15 +1,15 @@
-HEAD 4c1e78c  2026-11-20 17:22
+HEAD b6dea2c  2026-11-21 17:00  load: 22.07 23.54 21.26
 $ TMUX_TMPDIR=<temp dir> CLAUDE_CONFIG_DIR=<empty temp dir> make check
 cd vibe-remoted && go vet ./...
 cd vibe-remoted && go test -race -count=1 ./...
 ?   	github.com/lflish/vibe-remote/vibe-remoted/cmd/vibe-remoted	[no test files]
-ok  	github.com/lflish/vibe-remote/vibe-remoted/internal/chat	18.930s
+ok  	github.com/lflish/vibe-remote/vibe-remoted/internal/chat	20.519s
 ?   	github.com/lflish/vibe-remote/vibe-remoted/internal/chat/chattest	[no test files]
 ?   	github.com/lflish/vibe-remote/vibe-remoted/internal/chat/fakeclaude	[no test files]
-ok  	github.com/lflish/vibe-remote/vibe-remoted/internal/config	1.901s
-ok  	github.com/lflish/vibe-remote/vibe-remoted/internal/protocol	2.293s
-ok  	github.com/lflish/vibe-remote/vibe-remoted/internal/server	75.978s
-ok  	github.com/lflish/vibe-remote/vibe-remoted/internal/session	401.892s
+ok  	github.com/lflish/vibe-remote/vibe-remoted/internal/config	2.419s
+ok  	github.com/lflish/vibe-remote/vibe-remoted/internal/protocol	1.930s
+ok  	github.com/lflish/vibe-remote/vibe-remoted/internal/server	78.599s
+ok  	github.com/lflish/vibe-remote/vibe-remoted/internal/session	395.930s
 cd desktop && npm run typecheck
 
 > vibe-remote@0.1.3 typecheck
@@ -18,7 +18,7 @@ cd desktop && npm run typecheck
 cd desktop && npm test
 
 > vibe-remote@0.1.3 test
-> npm run test:preserved-notice && npm run test:attach-replay && npm run test:terminal-layout && npm run test:picker-layout && npm run test:slash-menu-layout && npm run test:terminal-clipboard && npm run test:terminal-selection && npm run test:terminal-activity && npm run test:client-reconnect && npm run test:client-liveness && npm run test:machine-store && npm run test:i18n-parity && npm run test:chat-client && npm run test:chat-parser && npm run test:chat-session && npm run test:chat-permission && npm run test:chat-diff && npm run test:chat-queue && npm run test:chat-markdown && npm run test:chat-render-guard && npm run test:chat-window && npm run test:chat-view && npm run test:chat-availability && npm run test:chat-activity && npm run test:rest-projects && npm run test:tree && npm run test:sidebar && npm run test:worktree-name && npm run test:session-form && npm run test:worktree-dialogs && npm run test:dialog-layout && npm run test:shortcuts && npm run test:legacy-daemon && npm run test:theme-tokens && npm run test:sidebar-rename && npm run test:source-bytes
+> npm run test:preserved-notice && npm run test:attach-replay && npm run test:terminal-layout && npm run test:picker-layout && npm run test:slash-menu-layout && npm run test:terminal-clipboard && npm run test:terminal-selection && npm run test:terminal-activity && npm run test:client-reconnect && npm run test:client-liveness && npm run test:machine-store && npm run test:i18n-parity && npm run test:chat-client && npm run test:chat-parser && npm run test:chat-session && npm run test:chat-permission && npm run test:chat-diff && npm run test:chat-queue && npm run test:chat-markdown && npm run test:chat-render-guard && npm run test:chat-window && npm run test:chat-view && npm run test:chat-availability && npm run test:chat-activity && npm run test:rest-projects && npm run test:tree && npm run test:sidebar && npm run test:worktree-name && npm run test:session-form && npm run test:worktree-dialogs && npm run test:dialog-layout && npm run test:shortcuts && npm run test:legacy-daemon && npm run test:theme-tokens && npm run test:sidebar-rename && npm run test:sidebar-refresh && npm run test:source-bytes
 
 
 > vibe-remote@0.1.3 test:preserved-notice
@@ -500,8 +500,8 @@ ok - test-legacy-daemon: old_daemon_warning_text
 ok - test-legacy-daemon: delete_confirm_is_legacy_text
 ok - test-legacy-daemon: delete_removes_session_and_its_worktree_row
 delete session failed DeleteSessionError: worktree has uncommitted changes
-    at VibeRemoteRest.deleteSession (file:///private/var/folders/yq/p60klk5x4rddkhlf74cnj38m0000gn/T/vr-chat-index-BZvQRl/index.mjs:1198:13)
-    at async closeSession (file:///private/var/folders/yq/p60klk5x4rddkhlf74cnj38m0000gn/T/vr-chat-index-BZvQRl/index.mjs:14523:5) {
+    at VibeRemoteRest.deleteSession (file:///private/var/folders/yq/p60klk5x4rddkhlf74cnj38m0000gn/T/vr-chat-index-9dxkRp/index.mjs:1216:13)
+    at async closeSession (file:///private/var/folders/yq/p60klk5x4rddkhlf74cnj38m0000gn/T/vr-chat-index-9dxkRp/index.mjs:14612:5) {
   status: 409,
   code: 'worktree_preserved',
   detail: 'worktree has uncommitted changes',
@@ -565,6 +565,8 @@ ok - test-sidebar-rename: rename left with Tab: the keyboard stays on the sideba
 ok - test-sidebar-rename: rename left with Tab: the keyboard stays on the sidebar control it moved to [sessions under the worktree row]
 ok - test-sidebar-rename: X10 rename committed by a click into a field elsewhere, or a dialog: the keyboard stays there [sessions under the project row]
 ok - test-sidebar-rename: X10 rename committed by a click into a field elsewhere, or a dialog: the keyboard stays there [sessions under the worktree row]
+ok - test-sidebar-rename: a sidebar rebuild after a session was opened from its name leaves the keyboard in the session (input, prompt card, terminal) [sessions under the project row]
+ok - test-sidebar-rename: a sidebar rebuild after a session was opened from its name leaves the keyboard in the session (input, prompt card, terminal) [sessions under the worktree row]
 [notify] shown: dev · repo / main · conversation
 [notify] shown: dev · repo / main · conversation
 ok - test-sidebar-rename: X10 opening a session whose prompt is waiting: the keyboard is on the card, 1 answers it and the input has it afterwards [sessions under the project row]
@@ -575,7 +577,31 @@ ok - test-sidebar-rename: X10 a prompt that arrives in the current session while
 ok - test-sidebar-rename: X10 a prompt that arrives in the current session while it is being renamed leaves the keyboard in the rename input [sessions under the worktree row]
 ok - test-sidebar-rename: delete confirmation: chat says the conversation stays in claude's history, terminal keeps its own text (zh and en) [sessions under the project row]
 ok - test-sidebar-rename: delete confirmation: chat says the conversation stays in claude's history, terminal keeps its own text (zh and en) [sessions under the worktree row]
-test-sidebar-rename checks passed (34)
+test-sidebar-rename checks passed (36)
+
+> vibe-remote@0.1.3 test:sidebar-refresh
+> node scripts/test-sidebar-refresh.mjs
+
+ok - test-sidebar-refresh: the same data again — polls, a refresh asked for by an action, a render — leaves every element in place
+ok - test-sidebar-refresh: a chat session that is not open keeps working (activitySeq, state, epoch move, its dot stays): nothing is rebuilt
+ok - test-sidebar-refresh: sessions: one more, one less, another name, another directory
+ok - test-sidebar-refresh: state dots of sessions open here: lit by a hook event or a chat frame, cleared when the session is opened
+[notify] shown: dev · repo / main · conversation
+ok - test-sidebar-refresh: state dots of chat sessions not open here: what the poll says (activitySeq, state), also on a folded project row
+ok - test-sidebar-refresh: projects and worktrees: added, removed, another branch, no longer one of ours, cannot be read
+ok - test-sidebar-refresh: a machine goes offline and comes back; a daemon turns out to be an old one
+ok - test-sidebar-refresh: folding and unfolding a machine and a project
+ok - test-sidebar-refresh: the session shown, and the machine overview
+[notify] fallback: dev · repo / main · conversation
+ok - test-sidebar-refresh: the chat session shown asks for permission while the window is in the background: yellow dot, gone once the window is focused (X6)
+ok - test-sidebar-refresh: a worktree being deleted says so, and stops saying so
+ok - test-sidebar-refresh: a reload in flight disables the row's reload button until it is over
+ok - test-sidebar-refresh: switching the language redraws the sidebar in the other language
+ok - test-sidebar-refresh: a machine edited in the manager: its new name shows, and a session opened from the sidebar uses the new settings
+ok - test-sidebar-refresh: a rename ended with Esc puts the name back, though nothing the sidebar shows has changed
+ok - test-sidebar-refresh: nothing is rebuilt while a rename is open; what changed meanwhile shows once it is over
+ok - test-sidebar-refresh: a refresh that leaves the sidebar alone still redraws the overview page
+test-sidebar-refresh checks passed (17)
 
 > vibe-remote@0.1.3 test:source-bytes
 > node scripts/test-source-bytes.mjs

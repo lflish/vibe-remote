@@ -1,23 +1,12 @@
-$ cd vibe-remoted && TMUX_TMPDIR=<own /tmp/vr-XXXXXX> CLAUDE_CONFIG_DIR=<empty temp dir> go test -race -count=1 -v -timeout 25m ./...
-(a second full run of the Go suite, with -v, to count passes and skips; the full output is not kept here)
-ok  	github.com/lflish/vibe-remote/vibe-remoted/internal/chat	19.094s
-ok  	github.com/lflish/vibe-remote/vibe-remoted/internal/config	1.494s
-ok  	github.com/lflish/vibe-remote/vibe-remoted/internal/protocol	2.257s
-ok  	github.com/lflish/vibe-remote/vibe-remoted/internal/server	76.795s
-ok  	github.com/lflish/vibe-remote/vibe-remoted/internal/session	476.306s
+$ cd vibe-remoted && TMUX_TMPDIR=<own temp dir> CLAUDE_CONFIG_DIR=<empty temp dir> go test -race -count=1 -v -timeout 25m ./...
+(a full run of the Go suite with -v, to count passes and skips; the full output is not kept here)
+code under test: b6dea2c, 2026-11-20 18:58–19:05 (nothing under vibe-remoted/ changed since 7b295b0)
+ok  	github.com/lflish/vibe-remote/vibe-remoted/internal/chat	17.721s   top-level PASS 99
+ok  	github.com/lflish/vibe-remote/vibe-remoted/internal/config	2.287s   top-level PASS 15
+ok  	github.com/lflish/vibe-remote/vibe-remoted/internal/protocol	1.846s   top-level PASS 2
+ok  	github.com/lflish/vibe-remote/vibe-remoted/internal/server	75.376s   top-level PASS 101
+ok  	github.com/lflish/vibe-remote/vibe-remoted/internal/session	391.860s   top-level PASS 251
 exit=0
-code under test: 4c1e78c (the run happened with later doc-only edits in the working tree, HEAD 4c1e78c)
 
 top-level tests: PASS 468 / FAIL 0 / SKIP 0
 subtests:        PASS 458 / FAIL 0 / SKIP 0
-
-not PASS:
-(none)
-
-the tests listed as known to be flaky, and the one added in this round:
-TestStopAccountsForEveryQueuedMessage/restart: --- PASS: TestStopAccountsForEveryQueuedMessage/restart (0.21s)
-TestProjectsOneGitCallPerProject/unresolved_session: --- PASS: TestProjectsOneGitCallPerProject/unresolved_session (10.93s)
-TestProjectStoreRemoveWorktreeIfSame: --- PASS: TestProjectStoreRemoveWorktreeIfSame (0.00s)
-TestWorktreeStatus/ignored_timeout: --- PASS: TestWorktreeStatus/ignored_timeout (2.79s)
-TestOrphanCleanup: --- PASS: TestOrphanCleanup (0.00s)
-TestContinueInWorktreesSharingProjectDir: --- PASS: TestContinueInWorktreesSharingProjectDir (2.49s)

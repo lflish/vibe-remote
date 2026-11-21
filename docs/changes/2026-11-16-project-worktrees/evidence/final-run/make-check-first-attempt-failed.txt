@@ -1,0 +1,15 @@
+code under test b6dea2c; 2026-11-20 18:50, load average 27–34. The first make check of this round: one Go test failed, the desktop half did not run. Lines of the output that say what failed:
+6:ok  	github.com/lflish/vibe-remote/vibe-remoted/internal/chat	17.582s
+9:ok  	github.com/lflish/vibe-remote/vibe-remoted/internal/config	2.233s
+10:ok  	github.com/lflish/vibe-remote/vibe-remoted/internal/protocol	1.774s
+11:ok  	github.com/lflish/vibe-remote/vibe-remoted/internal/server	77.501s
+81:--- FAIL: TestRemoveGitFailureKeepsState (6.44s)
+84:FAIL
+85:FAIL	github.com/lflish/vibe-remote/vibe-remoted/internal/session	427.723s
+86:FAIL
+87:make: *** [check-server] Error 1
+88:exit=2
+--- FAIL: TestRemoveGitFailureKeepsState (6.44s)
+    worktree_remove_test.go:714: err = *fmt.wrapError read repository: git rev-parse --show-toplevel: no answer within 5s: context deadline exceeded, want *WorktreeRemoveError
+
+Afterwards, same code: go test -race -count=10 -run 'TestRemoveGitFailureKeepsState$' ./internal/session → 10 PASS; go test -race -count=1 -v ./... → 468 top-level PASS; make check on 2026-11-21 17:08 → exit 0 (make-check.txt).

@@ -1,13 +1,8 @@
-HEAD 4c1e78c  2026-11-20 17:21
-$ TMUX_TMPDIR=<temp dir> node .claude/skills/verify/scripts/gui-smoke.mjs
-work dir /var/folders/yq/p60klk5x4rddkhlf74cnj38m0000gn/T/vr-gui-wHlzZU
-PASS daemon up on 127.0.0.1:27204
-PASS chat daemon (fake claude) up on 127.0.0.1:27054
-
-(!) Some chunks are larger than 500 kB after minification. Consider:
-- Using dynamic import() to code-split the application
-- Use build.rollupOptions.output.manualChunks to improve chunking: https://rollupjs.org/configuration-options/#output-manualchunks
-- Adjust chunk size limit for this warning via build.chunkSizeWarningLimit.
+code under test b6dea2c; run finished 2026-11-21 17:31
+$ TMUX_TMPDIR=<temp dir> CLAUDE_CONFIG_DIR=<empty temp dir> node .claude/skills/verify/scripts/gui-smoke.mjs --no-build
+work dir /var/folders/yq/p60klk5x4rddkhlf74cnj38m0000gn/T/vr-gui-brorrT
+PASS daemon up on 127.0.0.1:25513
+PASS chat daemon (fake claude) up on 127.0.0.1:29559
 electron 44.7.0
 PASS app started and lists the machine
 PASS legacy plaintext token encrypted on launch
@@ -59,4 +54,3 @@ PASS ordinary keys typed afterwards still reach the remote shell
 PASS no uncaught renderer exceptions
 
 all GUI checks passed
-exit=0
