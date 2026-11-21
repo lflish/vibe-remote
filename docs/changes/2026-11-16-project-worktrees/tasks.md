@@ -1058,7 +1058,7 @@
 - 依赖：T33
 
 ### T35 机器概览页不为它不显示的应答重画
-- 状态：进行中
+- 状态：完成
 - 来源：decisions d83 第 ② 件事的裁决（2026-11-21）。`refreshAllMachines` 的 `publish` 在每个应答之后都重画正在看的那台机器的概览页；项目树的应答是本需求加的，概览页因此从每轮一次变成每轮两次，而它不显示项目树的内容。重画落在一次点击的按下和松开之间时这次点击会丢，和 T34 是同一类退化
 - 文件：`desktop/src/renderer/index.ts`（`refreshAllMachines` 的 `publish`）；`desktop/scripts/test-sidebar-refresh.mjs`；`.claude/skills/verify/scripts/gui-worktree-smoke.mjs`（新用例）；`.claude/skills/verify/SKILL.md`（用例数）
 - 行为：先逐行核实概览页不读项目树 / 能力的任何内容。确实不读 → 项目树的应答（成功和失败）不再重画概览页，只更新侧边栏和状态栏；会话列表的应答照旧（与基准一致：每台机器每轮一次）。读了 → 改成照 T34 算指纹
@@ -1108,6 +1108,7 @@
 | T32 | 2026-11-20 11:38 | 本行所在的提交 | 只改文档，没有新增测试。README.md、README.zh-CN.md 的前置条件（快速开始第 1 步各加一处指向），CLAUDE.md「前置条件与联调」，design「升级步骤」第 3 步写了同一个结论：推荐 git 2.36 及以上（`worktree list -z`）；2.31–2.35 可用，路径带换行的 worktree 不会列出；低于 2.31 不支持（列表不输出 `locked` / `prunable`）。核对：`grep -n '2\.36\|2\.31\|2\.30\|2\.34\|最低' README*.md CLAUDE.md docs/protocol.md .devflow.yml .claude/skills/verify/SKILL.md` 里没有与此矛盾的说法（design 原来的「没有写明支持的最低版本」已改）。同一个提交把 verify skill 里 `gui-worktree-smoke.mjs` 的用例数改成 67（T30、T31 各加了一个） |
 | T33 | 2026-11-20 17:59 | 合并 `c28c001`；之后 `0734e1a`（改名后键盘的修复）、`9fa11a7`（worktree 上的 `-c` 测试）、`847dd80` / `41bc280` / `4c1e78c`（GUI 用例）、`db90678`（测试 daemon 不读真实的 `~/.claude.json`） | 合并后、移植之前 `test-sidebar-rename` 15 个里 6 个失败、`test-chat-activity` 的 X6 用例失败（修复被合进了不再调用的旧侧边栏代码）；移植后全过。真实应用里 `X10-rename-chat` 失败（`the keyboard was on: session-label`）→ 补单元用例确认失败 → 修 → 通过。`4c1e78c` 上：`make check` 退出 0（Go 5 个包 `ok`，带 `-v` 468 个顶层测试 0 FAIL 0 SKIP；桌面端 365 行 `ok`）；`gui-smoke` 46 / 46、`gui-chat-smoke` 37 / 37（第 2 次有 1 次被吞的双击重做）、`gui-worktree-smoke` 71 / 71 个用例各两次；ws 冒烟 12 / 9 / 9；18 条命令型规则退出 0。新增 4 个 `M.*` 用例和 `TestContinueInWorktreesSharingProjectDir`，各做了变异核对。到这份代码之前有两个没复现出来的失败（`X7-send`、`M.X7` 各 1 次）。c10、c11、c12 等用户裁决。详见 test-report.md「合并 change/dual-mode」 |
 | T34 | 2026-11-20 18:31 | 本行所在的提交 | 修复前：`test-sidebar-refresh` FAIL（`after a poll: elements of the sidebar were replaced`）；真实应用 `gui-worktree-smoke.mjs --only=T34` FAIL（`the sidebar was changed 120 times while two polls of 5 machines brought nothing new; 16 of 20 clicks did not switch the session…; 7 of 10 double clicks did not start a rename…`）。修复后：`test-sidebar-refresh checks passed (17)`；`npm run typecheck` 退出 0；`npm test` 退出 0（`ok` 行 365 → 382）；`gui-worktree-smoke.mjs --only=T34,M,X11,X8,X2,X1,X3,X6`：`12 cases: other 12/12`（`T34.quiet`：两轮轮询 0 次改动，20 次单击、10 次双击全部生效）；撤掉重做之后 `gui-chat-smoke` 的 7 个 X 用例连跑 3 次，每次 10 行 PASS、0 NOTE；变异核对 15 种单元 + 1 种真实应用（evidence/t34/mutations.txt）。改了准备步骤、没改断言的已有用例见 decisions #175 |
+| T35 | 2026-11-21 18:10 | 本行所在的提交 | 修复前：`test-sidebar-refresh` FAIL（`the same project list again: the page was redrawn for the answer about the project tree`）；真实应用 `gui-worktree-smoke.mjs --only=T35` FAIL（`the overview page was redrawn 4 times while this machine answered 2 times about its sessions and 2 times about its project tree, nothing changing`）。修复后：`test-sidebar-refresh checks passed (19)`；`npm run typecheck` 退出 0；`npm test` 退出 0（`ok` 行 384 → 386）；`gui-worktree-smoke.mjs --only=T35,T34`：`2 cases: other 2/2`（`T35.overview`：2 次会话列表应答、2 次项目树应答，概览页重画 2 次，侧边栏 0 次改动）；变异核对 2 种各有用例失败（evidence/t34/t35.txt）。没有改任何已有断言 |
 
 关口 C 第 1 轮返工各行写「本行所在的提交」的，提交分别是：T22 `6282332`，T23 `44c049d`，T21 `f86be13`，T25 `f94ea31`，T24 `465945a`，T26 `771dcc6`，T27 `694e3f5`，T28 `3c9cff8`。全部修完后的一轮检查（`make check`、三份 ws 冒烟、18 条命令型规则）在 `3c9cff8` 上，结果见 evidence/gate-c-1-rework.md 第 5 节；三份 GUI 冒烟没有跑，等主会话安排。（之后回到测试阶段，在同一份代码上做了全量运行：`make check`、三份 GUI 冒烟、三份接口冒烟、18 条命令型规则都通过，见 test-report.md。）
 
@@ -1265,7 +1266,7 @@ spec「推迟到以后」的条目：
 
 c10–c13 裁决之后的返工（T34）之后留下的：
 
-- **机器概览页仍然每个应答重画一次**（`refreshAllMachines` 的 `publish` → `renderMachineOverview`）：正在看的那台机器每 5 秒两次（会话列表、项目树各一次；实测 11 秒里 4 次，这段时间侧边栏 0 次改动，evidence/t34/probes-after-t34.txt），页面上的按钮（最近会话的行、两张新建卡片、重试）和侧边栏在 T34 之前是同一种问题：按下和松开之间落进一次重画，这次点击就丢。其中项目树那一次是本需求加的，而概览页不显示项目树里的任何东西。T34 的范围是侧边栏，没有动它；有没有真的丢点击没有测。可以照 T34 的办法给概览页也算一个指纹，或者项目树的应答不重画概览页。
+- **（T35 已处理本需求多出来的那一次，decisions #184、#185：项目树的应答不再重画概览页；实测两轮轮询里概览页重画 4 次 → 2 次，`gui-worktree-smoke` 的 `T35.overview` 守着。还剩的是基准上就有的那一次：会话列表的应答每轮重画一次、不管内容变没变，重画正好落在一次点击的按下和松开之间时这次点击仍会丢；要去掉它得照 T34 给概览页算指纹。下面是 T34 时的原记录。）机器概览页仍然每个应答重画一次**（`refreshAllMachines` 的 `publish` → `renderMachineOverview`）：正在看的那台机器每 5 秒两次（会话列表、项目树各一次；实测 11 秒里 4 次，这段时间侧边栏 0 次改动，evidence/t34/probes-after-t34.txt），页面上的按钮（最近会话的行、两张新建卡片、重试）和侧边栏在 T34 之前是同一种问题：按下和松开之间落进一次重画，这次点击就丢。其中项目树那一次是本需求加的，而概览页不显示项目树里的任何东西。T34 的范围是侧边栏，没有动它；有没有真的丢点击没有测。可以照 T34 的办法给概览页也算一个指纹，或者项目树的应答不重画概览页。
 - 指纹不含对话会话的 `activitySeq` / `epoch` / `state`（d81）。现在行上的处理函数不读它们；以后有人让某个处理函数读（例如按 `state` 决定点击做什么），会读到上一次重建时的值，要同时把它们放回指纹，或改成从 `machineSessions` 现取。
 - `TestRemoveGitFailureKeepsState`（session 包）在机器负载高时失败过 1 次（第 5 轮第一次 `make check`，load average 27–34）：用例把 git 换成 shell 包装脚本，`RemoveWorktree` 的第一条 git 调用（`rev-parse --show-toplevel`）没有在 daemon 的 5 秒时限内返回，得到「读仓库失败」而不是用例等的「git 删除失败」。单独跑 10 次、整套带 `-v` 一次、重跑 `make check` 都通过；这一轮没有改 Go。与 `TestWorktreeStatus/ignored_timeout` 是同一类。可以让这类用例在测试里把时限放宽，或者先确认包装脚本能在时限内跑完一次再开始。
 - `T34.quiet` 里「轮询进行期间」是脚本每 150 ms 调一次应用自己的轮询函数，比真实的 5 秒密得多；它保证的是「没有变化的应答不打断点击」，不保证「有变化的应答不打断点击」（见上面两条仍然存在的情况）。

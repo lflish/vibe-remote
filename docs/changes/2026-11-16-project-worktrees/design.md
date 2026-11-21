@@ -1008,6 +1008,7 @@ CSS 变量：保留现有变量名（`styles.css` 里到处在用），换成 M1
   - 改名：`renamingActive` 期间暂停重建的规则不变；改名一开始就把记下的指纹清掉（#174），所以改名结束的那次渲染一定重建（Esc 取消时模型没变，改名框也要换回名字）。
   - 跟在渲染后面的事不受影响：`publish` 里的概览页重画和 `updateStatusBar()`、`setActive` 里的 `scrollIntoView` 和 `updateStatusBar()`、`setRenaming` 里的 `focusAfterRename()` 都在 `renderSidebar()` 返回之后由调用方做，`renderSidebar()` 提前返回不会跳过它们（`test-sidebar-refresh` 的最后一个用例守着概览页）。
   - 没有解决的：内容确实在变的那一瞬间的重建仍会吞掉正好跨在它两边的点击。实测到的一种是「改名时点另一个会话」（改名框失焦即提交，本机上改名请求和随后的刷新在按键松开之前就回来了，10 次里 8 次没有切换，evidence/t34/probes-after-t34.txt）。另外机器概览页仍是每个应答重画一次（它所在的机器每 5 秒两次），它上面的按钮有同样的问题，这次没有动（tasks.md「后续」）。
+- T35（d83 ② 的裁决；decisions #184、#185）：6.4 里机器概览页的重画从「每个应答一次」改为「只在会话列表的应答之后」。`refreshAllMachines` 的 `publish` 多一个参数说明是哪一种应答，项目树的应答（成功、404、失败）只更新侧边栏和状态栏。依据是逐行核对 `renderMachineOverview`：它读 `machineOnline`、`machineSessions`、`machineIssues`、`views.has`、机器配置和 `t()`，不读 `machineProjects`、`machineCaps`、`machineTrees`（会话的名字用的是 `title`，不是树里去重后的显示名）。概览页因此回到基准的次数：每台机器每轮一次；会话列表那一次仍然不比较内容。
 
 ### 升级步骤
 

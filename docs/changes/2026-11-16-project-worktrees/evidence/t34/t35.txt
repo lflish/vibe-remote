@@ -1,0 +1,32 @@
+# T35: the machine overview is not redrawn for the answer about the project tree
+
+## Before the fix (2e0ecdb + the new cases)
+$ cd desktop && node scripts/test-sidebar-refresh.mjs
+FAIL: test-sidebar-refresh: the answer about the project tree — a list, an old daemon, a failure — leaves the overview page as it is; the answer about the sessions redraws it
+AssertionError [ERR_ASSERTION]: the same project list again: the page was redrawn for the answer about the project tree
+(the other new case, "what the overview page shows follows the sessions", describes what the page already did)
+
+$ TMUX_TMPDIR=<temp> CLAUDE_CONFIG_DIR=<empty temp dir> VR_BASE_DAEMON=<built from 6d88e45> node .claude/skills/verify/scripts/gui-worktree-smoke.mjs --only=T35
+PASS 5 daemons up (this-mac:28237 proto 4, lab-mac:26045 proto 4, keep-mac:23323 proto 4, narrow-mac:26695 proto 4, old-mac:23836 proto 3)
+PASS app started with 5 machines (zh), hooks installed
+FAIL the machine overview page is not redrawn for the answers about the project tree: over two polls with nothing changing it is redrawn at most once per answer about the sessions, and the sidebar not at all (T35) — the overview page was redrawn 4 times while this machine answered 2 times about its sessions and 2 times about its project tree, nothing changing
+PASS no uncaught renderer exceptions
+1 cases: other 0/1
+exit=1
+
+## After the fix
+$ … gui-worktree-smoke.mjs --only=T35,T34
+PASS 5 daemons up (this-mac:27704 proto 4, lab-mac:20795 proto 4, keep-mac:28968 proto 4, narrow-mac:26843 proto 4, old-mac:22536 proto 3)
+PASS app started with 5 machines (zh), hooks installed
+PASS the sidebar is left alone while what it shows stays the same: no change to it across two polls of every machine; with a poll asked for every 150 ms, 20 real clicks switch the session and 10 real double clicks start a rename, none lost (T34) — 0 changes to the sidebar across two polls of 5 machines; with a poll every 150 ms: 20 of 20 clicks switched the session, 10 of 10 double clicks started a rename (220 changes to the sidebar meanwhile, from the switches and renames themselves)
+PASS the machine overview page is not redrawn for the answers about the project tree: over two polls with nothing changing it is redrawn at most once per answer about the sessions, and the sidebar not at all (T35) — 2 redraws of the overview page for 2 answers about the sessions and 2 about the project tree; 0 changes to the sidebar
+PASS no uncaught renderer exceptions
+2 cases: other 2/2
+exit=0
+
+## Mutation checks (in a copy of desktop/, unit test test-sidebar-refresh)
+M1 the page is redrawn for the project tree's answer instead of the sessions' / M2 the page is never redrawn by a refresh:
+FAIL: test-sidebar-refresh: the answer about the project tree — a list, an old daemon, a failure — leaves the overview page as it is; the answer about the sessions redraws it
+AssertionError [ERR_ASSERTION]: the same project list again: the answer about the sessions redraws the page (as before this change)
+FAIL: test-sidebar-refresh: a refresh that leaves the sidebar alone still redraws the overview page
+AssertionError [ERR_ASSERTION]: the overview page was drawn again
