@@ -48,3 +48,17 @@ run 4: exit 0, 75 PASS, 0 FAIL, 0 NOTE   (17:26, load 33.69 26.03 23.97)
 run 5: exit 0, 75 PASS, 0 FAIL, 0 NOTE   (17:28, load 24.08 24.74 23.74)
     72 cases: R1 8/8, R2 7/7, R3 11/11, R4 6/6, R5 12/12, R6 2/2, R7 5/5, R8 6/6, R9 2/2, other 13/13
 files in the empty claude config dir afterwards: 0
+
+## gui-smoke.mjs ×2   (HEAD 747b14c, started 2026-11-21 17:31)
+$ TMUX_TMPDIR=<own temp dir> CLAUDE_CONFIG_DIR=<empty temp dir> VR_MAIN_DAEMON=<built from main> VR_BASE_DAEMON=<built from 6d88e45> node .claude/skills/verify/scripts/gui-smoke.mjs --no-build
+run 1: exit 0, 46 PASS, 0 FAIL, 4 NOTE   (17:31, load 26.74 24.24 23.58)
+    NOTE notification outcome in this build: fallback
+    NOTE sidebar 284px wide: 18 rows (18 also measured under the mouse), 9 sessions; names ending in "…": project "billing" name (30 of 38px, 0px free) | project "billing" branch (170 of 220px, 0px free) | worktree "change/general-skills-and-a-long-tail" name (187 of 237px, 0px free) | session "a-session-with-a-rather-long-name" name (194 of 217px, 0px free)
+    NOTE row menus in an 800×500 window: project row "new-api": button bottom 495, menu 405.1..470 in 800×500 | worktree row "release/next": button bottom 498, menu 430.8..473 in 800×500
+    NOTE toolbar title in an 800×500 window: {"project":{"text":"devflow","shown":50,"needs":50},"branch":{"text":"change/general-skills-and-a-long-tail","shown":214,"needs":260},"session":{"text":"long","shown":49,"needs":49}}
+run 2: exit 0, 46 PASS, 0 FAIL, 4 NOTE   (17:31, load 25.65 24.16 23.57)
+    NOTE notification outcome in this build: fallback
+    NOTE sidebar 284px wide: 18 rows (18 also measured under the mouse), 9 sessions; names ending in "…": project "billing" name (30 of 38px, 0px free) | project "billing" branch (170 of 220px, 0px free) | worktree "change/general-skills-and-a-long-tail" name (187 of 237px, 0px free) | session "a-session-with-a-rather-long-name" name (194 of 217px, 0px free)
+    NOTE row menus in an 800×500 window: project row "new-api": button bottom 495, menu 405.1..470 in 800×500 | worktree row "release/next": button bottom 498, menu 430.8..473 in 800×500
+    NOTE toolbar title in an 800×500 window: {"project":{"text":"devflow","shown":50,"needs":50},"branch":{"text":"change/general-skills-and-a-long-tail","shown":214,"needs":260},"session":{"text":"long","shown":49,"needs":49}}
+files in the empty claude config dir afterwards: 0
