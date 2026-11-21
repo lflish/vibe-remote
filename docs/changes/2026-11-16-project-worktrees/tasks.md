@@ -1057,6 +1057,15 @@
 - 完成定义：`make check` 退出 0；撤掉重做之后 `gui-chat-smoke.mjs` 5 次、`gui-worktree-smoke.mjs` 5 次、`gui-smoke.mjs` 2 次全部用例通过（已知偶发清单之外的失败都查清），日志里没有「重做」的 `NOTE`；三份 ws 冒烟、`.devflow.yml` 全部命令型规则通过；用例数量不少于 `7b295b0` 上的数量
 - 依赖：T33
 
+### T35 机器概览页不为它不显示的应答重画
+- 状态：进行中
+- 来源：decisions d83 第 ② 件事的裁决（2026-11-21）。`refreshAllMachines` 的 `publish` 在每个应答之后都重画正在看的那台机器的概览页；项目树的应答是本需求加的，概览页因此从每轮一次变成每轮两次，而它不显示项目树的内容。重画落在一次点击的按下和松开之间时这次点击会丢，和 T34 是同一类退化
+- 文件：`desktop/src/renderer/index.ts`（`refreshAllMachines` 的 `publish`）；`desktop/scripts/test-sidebar-refresh.mjs`；`.claude/skills/verify/scripts/gui-worktree-smoke.mjs`（新用例）；`.claude/skills/verify/SKILL.md`（用例数）
+- 行为：先逐行核实概览页不读项目树 / 能力的任何内容。确实不读 → 项目树的应答（成功和失败）不再重画概览页，只更新侧边栏和状态栏；会话列表的应答照旧（与基准一致：每台机器每轮一次）。读了 → 改成照 T34 算指纹
+- 测试（先写、先失败）：单元——概览页开着，一轮刷新里项目树的应答没有把 `#machine-overview` 下的节点换掉；概览页该更新的变化（会话增删、机器上下线、它显示的其它东西）之后确实更新。真实应用——概览页开着、两轮轮询无变化，概览页的重画次数不多于会话列表应答的次数。变异核对一次
+- 完成定义：`make check` 退出 0；`gui-smoke.mjs`、`gui-worktree-smoke.mjs`、`gui-chat-smoke.mjs` 各 2 次全部通过；`.devflow.yml` 全部命令型规则通过
+- 依赖：T34
+
 ## 进度
 
 （dev-build 每完成一个任务追加一行）
