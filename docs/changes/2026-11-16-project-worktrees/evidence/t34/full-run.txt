@@ -1,0 +1,18 @@
+# Full run after T34 (round 5)
+
+Code under test: b6dea2c (later commits only add this file and other files under docs/changes/).
+Every command: a TMUX_TMPDIR of its own under the run's temp directory, an empty CLAUDE_CONFIG_DIR of the run, one after the other.
+Daemons of older protocols: built from `git archive main` / `git archive 6d88e45` exported to the temp directory (VR_MAIN_DAEMON, VR_BASE_DAEMON).
+The machine was busy with other applications throughout; the load average is noted with each result.
+One line per run, written as the run ends; a commit per script.
+
+## make check   (HEAD b6dea2c, 2026-11-21 17:08, load before 22.07 23.54 21.26, after 30.67 26.30 23.60)
+$ TMUX_TMPDIR=<temp dir> CLAUDE_CONFIG_DIR=<empty temp dir> make check
+ok  	github.com/lflish/vibe-remote/vibe-remoted/internal/chat	20.519s
+ok  	github.com/lflish/vibe-remote/vibe-remoted/internal/config	2.419s
+ok  	github.com/lflish/vibe-remote/vibe-remoted/internal/protocol	1.930s
+ok  	github.com/lflish/vibe-remote/vibe-remoted/internal/server	78.599s
+ok  	github.com/lflish/vibe-remote/vibe-remoted/internal/session	395.930s
+exit=0
+files in the empty claude config dir afterwards: 0
+desktop: 384 lines 'ok - ', 0 lines 'not ok' / 'FAIL:'
