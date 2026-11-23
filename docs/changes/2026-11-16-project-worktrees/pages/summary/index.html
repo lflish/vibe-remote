@@ -103,80 +103,57 @@
 <body>
 <div class="wrap">
 
-<p class="meta">devflow 汇总页 · 需求 2026-11-16-project-worktrees · 分支 change/project-worktrees · 被测提交 482ab63 · 更新于 2026-11-20 07:35</p>
-<h1>按项目和 worktree 组织会话，并更换视觉风格 · 独立验证通过（有备注）</h1>
+<p class="meta">devflow 汇总页 · 需求 2026-11-16-project-worktrees · 分支 change/project-worktrees · 被测提交 4941b53 · 更新于 2026-11-23</p>
+<h1>按项目和 worktree 组织会话，并更换视觉风格 · 独立验证通过（有备注），等你合并</h1>
 
-<div class="lead"><strong>等你的事：6 件。</strong>1 个关口（C）要你回复，另有 5 个决定（d71、c8、c6、c7、c9），每个都有推荐。你回复之前，不会推送分支，也不会开 PR。</div>
+<div class="lead"><strong>等你的事：合并。</strong>先合并对话模式的 <a href="https://github.com/lflish/vibe-remote/pull/14">PR #14</a>，再合并这个需求的 <a href="https://github.com/lflish/vibe-remote/pulls?q=is%3Apr+head%3Achange%2Fproject-worktrees">PR</a>（它叠在 #14 之上）。合并由你本人操作；合并前 PR 有新提交的话告诉我，我来复验。</div>
 
 <h2 id="asks">等你的事</h2>
 
 <div class="card">
-  <div class="ask-head"><span class="id">关口 C</span><h3>独立验证已通过（有备注），回复后进入发布阶段</h3></div>
+  <div class="ask-head"><span class="id">人工合并</span><h3>两个 PR，按顺序合并</h3></div>
   <dl class="kv">
-    <dt>要你决定</dt><dd>是否放行。放行后进入发布阶段：推送分支、开 PR、等 CI。合并由你本人操作。</dd>
-    <dt>现状</dt><dd>第 2 轮独立验证的结论是「通过，有备注」：第 1 轮拦下的 7 个问题原样重跑都不再出现，全部检查通过；新发现 5 条（N-1 – N-5）都不拦，其中两条验证者认为风险被低估，就是下面的 d71 和 c8。</dd>
-    <dt>依据</dt><dd class="ev"><code>verdict.md</code>（结论全文）、<code>verdict-history.md</code>（第 1 轮）、<code>test-report.md</code></dd>
-    <dt>风险</dt><dd>这一轮没有另一个模型把关（原因见「验证」一节）；测的不是真实的 claude 和远程 Linux（见「没有覆盖的」）。</dd>
+    <dt>顺序</dt><dd>① <a href="https://github.com/lflish/vibe-remote/pull/14">PR #14</a>（对话模式，<code>change/dual-mode</code> → <code>main</code>）；② 这个需求的 <a href="https://github.com/lflish/vibe-remote/pulls?q=is%3Apr+head%3Achange%2Fproject-worktrees">PR</a>（<code>change/project-worktrees</code>，#14 合并前指向 <code>change/dual-mode</code>，#14 合并后我把它改指向 <code>main</code>）。</dd>
+    <dt>现状</dt><dd>第 3 轮独立验证两份结论都是「通过，有备注」，没有拦的问题。被验证的提交是 <code>4941b53</code>，之后只改了 <code>docs/changes/</code> 下的文档，验证快照仍然覆盖。</dd>
+    <dt>依据</dt><dd class="ev"><code>verdict.md</code>（第 3 轮结论全文）、<code>verdict-history.md</code>（第 1、2 轮）、<code>test-report.md</code></dd>
+    <dt>风险</dt><dd>测的不是真实的 claude 和远程 Linux（见「没有覆盖的」）；下面「合并前建议知道的已知问题」里的 5 条这一版没有修。<code>CHANGELOG.md</code> 还没有这个需求的条目（它在 <code>docs/changes/</code> 之外，现在加会让验证结论失效），发版时随发版 PR 补上。</dd>
   </dl>
 </div>
 
 <div class="card">
-  <div class="ask-head"><span class="id">d71</span><h3>旧版 git 上，一个特殊路径会让不相干的目录被当成「受信任」</h3><span class="rec">推荐：现在改</span></div>
+  <div class="ask-head"><span class="id">请过目</span><h3>你不在时按「直接干就行」由我定的事</h3></div>
   <dl class="kv">
-    <dt>要你决定</dt><dd>现在改掉，还是只把文档改成实际行为、记为已知限制。</dd>
-    <dt>是什么</dt><dd>远程机器的 git 低于 2.36（例如 Ubuntu 22.04 自带的 2.34）时，如果一个已被信任的仓库里登记了「路径里带换行」的 worktree，daemon 会把它读成<strong>另一个路径</strong>上的一项，那个目录就会通过对话界面的信任规则（对话模式下 claude 不弹信任确认，会直接执行目录里的 hook）。文档现在写的是这种 worktree「列不出来」，与实际不符。git 2.36 及以上没有这个问题。</dd>
-    <dt>推荐</dt><dd>现在改。改法小：按行读列表时遇到不认识的行、或 <code>worktree</code> 行前面不是空行，就丢掉相邻的条目；文档改准；在真的旧版 git 上实测。改完要再验证一次。</dd>
-    <dt>依据</dt><dd class="ev"><code>verdict.md</code> N-1；<code>evidence/verdict-2/v2_probe_test.go.txt</code>（<code>TestV2FallbackNewlinePath</code>）、<code>evidence/verdict-2/v2-probes-1.txt</code>、<code>evidence/verdict-2/daemon-probe.txt</code>；<code>decisions.md</code> d71</dd>
-    <dt>风险</dt><dd>中。验证者的判断：普通用户碰不到，能往受信任仓库里写这种登记的人本来就能自己建一个真正的 worktree，没有多得到权限；删除也没有造成损失。但它是 <code>.devflow.yml</code> 里一条安全规则的反例，而文档把它写成了已经挡住。验证者是用包装脚本模拟的旧 git，没有在真的旧版上重做。</dd>
+    <dt>c10</dt><dd>合并对话模式之后，开发者在测试里加了「双击被吞就重做」才让检查通过。我没有接受，改为修原因：侧边栏要显示的内容没变就不重建（T34），测试里的重做已撤掉。</dd>
+    <dt>c11、c12</dt><dd>两处检查的改动接受了：「旧测试脚本不减少断言」的基准加上合并进来的对话模式版本；终端会话删除确认的一条断言换成这个需求已验收的文案。</dd>
+    <dt>c13</dt><dd><code>CLAUDE.md</code> 补了三处说明（侧边栏什么时候重建、改名与键盘、测试 daemon 的 claude 配置目录），<code>.devflow.yml</code> 的一条检查命令加了一个测试名，verify skill 跟着更新。规则文件按约定由你定，请在 PR 里看。</dd>
+    <dt>T35</dt><dd>机器概览页多余的一次重画（这个需求带来的）顺手修掉了。</dd>
+    <dt>测试读过真实配置</dt><dd>三份界面冒烟里跑 bash 的临时 daemon 没有配自己的 claude 配置目录，会读你真实的 <code>~/.claude.json</code>（只读、只看「是否已信任」一个字段，不打印不保存）。两个分支此前每一轮都是这样；这个分支已修掉，每个测试 daemon 都带空的配置目录。PR #14 里的脚本还是旧的，这处修正随这个需求的 PR 进来。</dd>
   </dl>
+  <p class="ev"><code>decisions.md</code> c10–c13、#168–#188、d77–d84</p>
 </div>
 
-<div class="card">
-  <div class="ask-head"><span class="id">c8</span><h3>仓库的钩子跑不起来时，新建 worktree「失败」却留下一个残留</h3><span class="rec">推荐：改</span></div>
-  <dl class="kv">
-    <dt>要你决定</dt><dd>改掉，还是保持现在的做法（d70）。</dd>
-    <dt>是什么</dt><dd>仓库装了 git-lfs、husky 这类 post-checkout 钩子，而 daemon 的环境里找不到对应的程序时（例如 daemon 由 systemd 启动，PATH 里没有 <code>git-lfs</code>；或 node 由 fnm / nvm 管理），新建命名 worktree 会报「创建失败」，但磁盘上留下一个 worktree。项目还不在侧边栏时它在界面里看不见，同名重试只会看到「目录已存在」，换个名字再试就再留一个。这改变了你确认过的场景 R3.8（创建失败不留半截）在这一类失败下的结果。</dd>
-    <dt>推荐</dt><dd>改成：运行创建之前记下仓库已有的 worktree 登记，失败后只认领新出现的那一个。这样既不会删掉别人的，也能清掉自己的。</dd>
-    <dt>依据</dt><dd class="ev"><code>verdict.md</code> N-2；<code>evidence/verdict-2/daemon-probe.txt</code>（临时 daemon 实测）；<code>decisions.md</code> c8、d70</dd>
-    <dt>风险</dt><dd>中。不丢东西：残留是一个干净的 worktree，能从接口删掉，钩子修好后同名能建。它是第 1 轮修「撤销时不删别人的 worktree」换来的代价；当时把风险定为低的理由之一「在侧边栏里看得见、删得掉」，在项目不在侧边栏时不成立。</dd>
-  </dl>
-</div>
+<h2 id="known">合并前建议知道的已知问题</h2>
+<p>都不拦合并，这一版没有修（修它们要再改代码、再验证一轮，验证轮次已用完）。按对你的影响从大到小：</p>
+<ol>
+  <li><strong>改名时直接点另一个会话，基本每次都要点两下。</strong>daemon 在本机或同一局域网、用鼠标点时，24 次里 24 次没有切换；名字会保存，接着打的字不会进任何地方，再点一次或按回车就切过去。daemon 较远（往返多 30 毫秒以上）或按得很轻时不出现。对话模式那边也有。合并后优先修。</li>
+  <li><strong>侧边栏内容正在变化的那一瞬间，点击可能丢。</strong>后台有两个对话会话在跑时，单击丢约 5.6%、双击约 2.8%；机器概览页上的按钮安静时也丢约 2.8%（107 次丢 3 次）。内容没变时已经不丢（322 次真实操作 0 丢失）。</li>
+  <li><strong>机器概览页的「最近会话」里看不到刚建的对话会话。</strong>对话会话的创建时间是 UTC、终端会话是本地时区，排序时对话会话等于早了 8 小时。这是对话模式带来的，不是这个需求引入的。</li>
+  <li><strong>侧边栏对已结束的对话会话没有任何标记</strong>，要点开才知道。</li>
+  <li><strong>创建 worktree 时仓库的钩子以 128 或 129 退出，会留下一个残留的 worktree</strong>，同名重试前要先清掉。常见的钩子失败（例如找不到 git-lfs）已经不留残留。</li>
+  <li>对话模式的已知问题在新侧边栏上同样存在：权限卡片一出现就拿走键盘，而单个数字键就是回答（见 PR #14 的说明）。</li>
+</ol>
+<p class="ev">（<code>verdict.md</code>「问题」「备注」；全部 114 条在 <code>tasks.md</code>「后续」，最前面两条是上面的 1 和 2）</p>
 
-<div class="card">
-  <div class="ask-head"><span class="id">c6</span><h3>一个测试在旧版 git 上跳过其中一个子用例</h3><span class="rec">推荐：保留</span></div>
-  <dl class="kv">
-    <dt>要你决定</dt><dd>是否同意保留这个条件跳过（放松检查一律由人决定）。</dd>
-    <dt>是什么</dt><dd><code>TestGitEnvKeepsInheritedConfig</code> 里依赖 <code>GIT_CONFIG_COUNT</code> 的子用例在 git 低于 2.31 时跳过，因为那些版本的 git 本来就不读这个环境变量；另有一个不依赖它的子用例覆盖同一件事。</dd>
-    <dt>依据</dt><dd class="ev"><code>review.md</code>「交给用户决定」；<code>decisions.md</code> c6、#151；<code>verdict.md</code>「放松检查」（跳过条件已收紧：探测失败算测试失败；本机 git 2.50.1 上不跳过）</dd>
-    <dt>风险</dt><dd>低。不保留的话，旧版 git 上这个用例和对应规则的检查会一直失败，与 daemon 的行为无关。</dd>
-  </dl>
-</div>
-
-<div class="card">
-  <div class="ask-head"><span class="id">c7</span><h3>新建或重命名任何终端会话时，其它后台终端会话都会亮「有新消息」</h3><span class="rec">推荐：改点亮规则</span></div>
-  <dl class="kv">
-    <dt>要你决定</dt><dd>要不要改、怎么改。两种改法都会动已确认的东西（点亮规则，或会话元数据的存法）。</dd>
-    <dt>是什么</dt><dd>daemon 往 tmux 写会话名字和归属时，tmux 会重绘所有客户端；后台会话收到这些重绘的字节，就按「有字节到达即亮」亮了点。原来就是这样，不是这个需求引入的，但这个需求让同时开多个会话成了常态，每开一个会话别的全亮一遍，点就失去了意义。</dd>
-    <dt>推荐</dt><dd>改点亮规则：后台终端收到字节后，屏幕内容与之前相同就不亮（只比较已经渲染出来的屏幕，不解析字节流）。</dd>
-    <dt>依据</dt><dd class="ev"><code>test-report.md</code>「探索式检查」X1；<code>evidence/X1.png</code>、<code>evidence/exploration-findings.md</code>；<code>decisions.md</code> c7</dd>
-    <dt>风险</dt><dd>中。不改，状态点在多会话下经常误报；改错，会漏报真实的输出。</dd>
-  </dl>
-</div>
-
-<div class="card">
-  <div class="ask-head"><span class="id">c9</span><h3>支持的最低 git 版本没有写明</h3><span class="rec">推荐：写明</span></div>
-  <dl class="kv">
-    <dt>要你决定</dt><dd>对外写不写支持范围，写成什么。</dd>
-    <dt>推荐</dt><dd>写进文档：「推荐 git 2.36 及以上；2.31–2.35 可用，有限制；低于 2.31 不支持」。</dd>
-    <dt>依据</dt><dd>实测：2.36 及以上全部功能正常；2.31–2.35 可用，但路径带换行的 worktree 列不出来（d71 修后）；2.30 及以下另外不能在结束会话之前拦下被锁定的 worktree。<span class="ev"><code>evidence/gate-c-1-rework.md</code> 第 3 节（2.30.2、2.34.1 实测）、<code>test-report.md</code>「未覆盖和遗留」、<code>verdict.md</code> N-1、<code>decisions.md</code> c9</span></dd>
-    <dt>风险</dt><dd>低。远程 Linux 的 git 版本各不相同：Ubuntu 22.04 是 2.34（可用，有限制），Debian 11 是 2.30（按这个写法不在支持范围内）。</dd>
-  </dl>
-</div>
-
-<div class="reply">
-  <strong>怎么回复：</strong>回 <code>all</code> = 关口 C 放行，其余 5 条都按推荐。也可以逐条回，例如 <code>d71 只改文档</code>、<code>c8 不同意</code>、<code>c7 不同意</code>、<code>问 c9</code>、<code>重做 &lt;原因&gt;</code>；没提到的按推荐。<br>
-  按推荐的话，d71、c8、c7 三条要改代码（c9 只改文档，c6 不用改），改完按规则再验证一次，通过后直接进入发布，不再为关口 C 问第二次。验证者轮次已用 5/6，还剩 1 轮。
-</div>
+<h2 id="compat">兼容与升级</h2>
+<ul>
+  <li><strong>协议 3 → 4</strong>：多一个 attach 字段 <code>worktreeName</code> 和五个 REST 端点（项目列表、移除项目、worktree 预检 / 状态 / 删除）；所有服务端发给客户端的帧与协议 3 相同。</li>
+  <li><strong>删除会话不再清理 worktree 和分支</strong>，删 worktree 是侧边栏里单独的操作。</li>
+  <li><strong>桌面端和 daemon 要一起升级，先升 daemon。</strong>只升一边时降级工作、不报错：新桌面端连旧 daemon 时「新建 worktree」「删除 worktree」置灰并提示升级，没有会话的 worktree 不显示；旧桌面端连新 daemon 时原有功能照常。注意：新桌面端连着旧 daemon 时，旧 daemon 删除 Worktree 模式的会话仍会在工作区干净时连 worktree 和分支一起删（确认框上写明了），这种状态不要久留。</li>
+  <li><strong><code>state_dir</code> 里多一个 <code>projects.json</code></strong>（项目清单和 vibe-remote 自己建的 worktree）。没有新增配置项，没有要手工迁移的数据；升级前的会话和旧 Worktree 模式建的 worktree 自动归到项目下。</li>
+  <li><strong>git 版本</strong>：推荐 2.36 及以上；2.31–2.35 可用，但路径带换行的 worktree 不会列出；低于 2.31 不支持（Debian 11 的 2.30、Ubuntu 20.04 的 2.25 要先升级 git）。daemon 不检查版本。</li>
+  <li><strong>回退</strong>：把 daemon 换回协议 3 的二进制即可，<code>projects.json</code> 和新增的 tmux 选项会被忽略。</li>
+</ul>
+<p class="ev">（<code>design.md</code> 第 10 节「升级步骤」；<code>docs/protocol.md</code>「协议版本」「版本互连」；README「前置条件」）</p>
 
 <h2 id="done">做了什么</h2>
 
@@ -214,7 +191,7 @@
     <figcaption>M1 视觉方案，终端会话。左边是效果页，右边是实际应用。两边的差别见下面「已知限制」第 1 条。<span class="ev"><code>evidence/m1-terminal.png</code></span></figcaption>
   </figure>
 </div>
-<p class="small">点图片看大图。截图是第 1 轮测试时在临时实例里截的（临时 daemon、假 claude、<code>/tmp</code> 下的临时仓库）；之后桌面端代码没有改动。没有录屏，交付的是截图。</p>
+<p class="small">点图片看大图。截图是第 1 轮测试时在临时实例里截的（临时 daemon、假 claude、<code>/tmp</code> 下的临时仓库）；之后侧边栏的行为有改动（后台终端的「新消息」点、合并对话模式、内容没变不重建），外观没有变。第 3 轮验证的截图在 <code>evidence/verdict-3/</code>。没有录屏，交付的是截图。</p>
 
 <ul>
   <li>侧边栏按 机器 → 项目 → worktree 组织；项目下列出该仓库的全部 worktree，包括别的工具建的和没有会话的。<span class="ev">（<code>evidence/R1.1.png</code>、<code>R1.2.png</code>、<code>R2.1.png</code>、<code>R2.2.png</code>；<code>verdict.md</code> 场景表 R2.1）</span></li>
@@ -224,28 +201,32 @@
   <li>整体换成你选定的 M1 视觉方案。<span class="ev">（<code>evidence/m1-chat.png</code>、<code>m1-terminal.png</code>、<code>m1-delete-worktree.png</code>、<code>R8.1.png</code>）</span></li>
   <li>新旧版本互连时降级而不是报错。<span class="ev">（<code>evidence/R9.1.png</code>；<code>verdict.md</code> 场景表 R9.2）</span></li>
   <li>过程中拦下并修掉的问题：三轮代码评审 57 条（修 52 条，含 2 条严重）；探索式检查 8 个（修 4 个）；关口 C 第 1 轮由另一个模型（codex）拦下 7 个（3 个严重，都在删除、撤销和 tmux 对账的路径上），全部修掉并有回归测试。<span class="ev">（<code>review.md</code>；<code>test-report.md</code>「探索式检查」「关口 C 第 1 轮返工」；<code>verdict-history.md</code>；<code>verdict.md</code>「第 1 轮问题的复验」；<code>evidence/gate-c-1-rework.md</code>）</span></li>
-  <li>最终代码上：<code>make check</code> 通过，Go 454 个测试全过，桌面端 311 项全过，三份界面冒烟 46 / 29 / 65 全过，三份接口冒烟 12 / 9 / 9 全过，18 条不变规则的检查命令全过。<span class="ev">（<code>test-report.md</code>、<code>verdict.md</code>「检查」；完整输出在 <code>evidence/final-run/</code> 和 <code>evidence/verdict-2/</code>）</span></li>
+  <li>关口 C 第 2 轮之后：你放行后的四处返工（T29–T32）；把对话模式的关口 C 返工合并进来并在三层侧边栏上重新接好（T33）；侧边栏内容没变就不重建（T34）；机器概览页不为项目树的应答重画（T35）。<span class="ev">（<code>test-report.md</code> 后四节；<code>design.md</code> 第 10 节）</span></li>
+  <li>最终代码上：<code>make check</code> 通过，Go 468 个测试全过，桌面端 386 项全过，三份界面冒烟各 2 次全过（46 行 / 37 行 / 73 个用例），三份接口冒烟 12 / 9 / 9，18 条不变规则的检查命令全过。<span class="ev">（<code>test-report.md</code>；逐次记录在 <code>evidence/t34/full-run.txt</code>）</span></li>
 </ul>
 
 <h2 id="verify">验证</h2>
 
 <div class="steps">
-  <div class="step bad"><b>第 1 轮 · 不通过</b>提交 <code>91e0fab</code>。另一个模型（codex）验证非界面部分，拦下 7 个问题；同模型的全新验证者验证界面，通过有备注。</div>
-  <div class="step mid"><b>返工</b>T21–T28，只改了 daemon。每个问题先把验证者的反例写成回归测试，确认失败后再修。</div>
-  <div class="step good"><b>第 2 轮 · 通过，有备注</b>提交 <code>482ab63</code>。7 个问题和 2 条测试备注原反例原样重跑，全部不再出现；新发现 5 条都不拦。</div>
+  <div class="step bad"><b>第 1 轮 · 不通过</b>提交 <code>91e0fab</code>。codex 验证非界面部分，拦下 7 个问题；同模型的全新验证者验证界面，通过有备注。</div>
+  <div class="step good"><b>第 2 轮 · 通过，有备注</b>提交 <code>482ab63</code>。7 个问题原反例重跑全部不再出现；新发现 5 条都不拦（codex 这一轮被其平台的内容过滤中止，由同模型的全新验证者完成）。</div>
+  <div class="step mid"><b>放行后的返工、合并、T34、T35</b>你回复 all 之后改了四处；合并对话模式的返工；修掉合并暴露出的「侧边栏重复重建」。</div>
+  <div class="step good"><b>第 3 轮 · 通过，有备注</b>提交 <code>4941b53</code>。codex（非界面）和同模型的全新验证者（界面）两份结论都没有拦的问题。</div>
 </div>
 
 <div class="card">
   <dl class="kv">
     <dt>结论</dt><dd><strong>通过，有备注</strong> <span class="ev">（<code>verdict.md</code>）</span></dd>
-    <dt>验证者</dt><dd>Claude（Fable 5，模型 id <code>claude-fable-5-2[1m]</code>），同一模型的全新验证者，没有写过这段代码，没有派发子 agent。</dd>
-    <dt>被测提交</dt><dd><code>482ab63</code>（<code>482ab63df9ec109e0f991834b5e267cd118ffbfb</code>）</dd>
-    <dt>验证快照</dt><dd><pre>{"schema":1,"docs_dir":"docs/changes","head":"482ab63df9ec109e0f991834b5e267cd118ffbfb","head_tree":"81f7194080ef794484d8e6eefa77c0cef647e44dbaa60bb506c272aabcd6ed80","target":"6d88e45f511b92b84d46bca1ffd917afae548221","target_tree":"b58c4926876d6dca94d03f0e017504a74b2a24ec80eff298d3a5f37737ec1751"}</pre></dd>
+    <dt>验证者</dt><dd>非界面：codex（GPT-6）。界面：Claude（Fable 5），同一模型的全新验证者。都没有写过这段代码，各自在独立的副本里验证同一提交。</dd>
+    <dt>非界面</dt><dd>上一轮的两条备注（旧版 git 下路径带换行的 worktree 被读错、创建在钩子里失败留下残留）原反例重跑确认已解决；针对「侧边栏该变的不变」自建 7 组实验，没有找到反例；协议三处一致；合并没有丢测试、没有改弱断言。它的沙箱里跑不了的两组孤儿进程清理测试，协调者在同一提交上补跑通过。</dd>
+    <dt>界面</dt><dd>三份界面冒烟各 2 次全部一次通过。应用自己的轮询照常进行时，322 次真实操作（132 单击、44 双击、88 折叠、44 菜单、14 右键）没有丢失或异常。「该变的都变了」80 个检查点没有发现陈旧界面。合并进来的对话模式修复在项目行下和 worktree 行下的会话上都生效。</dd>
+    <dt>被测提交</dt><dd><code>4941b53</code>（<code>4941b53d65eb170a7c6d3a57ae6d27b97937e57f</code>），目标 <code>change/dual-mode</code> 的 <code>64e8b5e</code></dd>
+    <dt>验证快照</dt><dd><pre>{"schema":1,"docs_dir":"docs/changes","head":"4941b53d65eb170a7c6d3a57ae6d27b97937e57f","head_tree":"bc8c7a647be6031fc48039abe5e277e7b689115e1cbf47797cbda46264439ccf","target":"64e8b5e2468cc9e9852a8b56e24ab8120c9b847e","target_tree":"7045e554bc63150ae3c89f739d502bc49c139688a5d84b075208f68d76417e84"}</pre></dd>
   </dl>
 </div>
 
 <div class="note">
-  <strong>第 2 轮没有另一个模型把关。</strong>本轮先派的验证者是 codex，它的运行约 4 分钟后被其平台的内容安全过滤中止，没有产出结论；按配置的顺序退到同一模型的全新验证者，没有改写说明去重试被过滤的运行。第 1 轮的 7 个问题正是另一个模型找到的。验证者自己也写明：第 1 轮验证者对触发条件同样少见的问题判了「拦」，按那个标准，这一轮的 N-1 和 N-3 也会被拦。<span class="ev">（<code>decisions.md</code> #152；<code>verdict.md</code>「问题」开头）</span>
+  <strong>两个偶发失败没有查到原因。</strong>合并之后各出现过 1 次：点开后台对话会话后键盘不在输入框；最新回复不在屏幕上。之后开发方和两名验证者的所有运行里都没有再出现（前者 26 次以上、后者 18 次以上），没有改任何东西，留在偶发清单。<span class="ev">（<code>decisions.md</code> #178、#179）</span>
 </div>
 
 <div class="tablewrap">
@@ -254,28 +235,28 @@
   <tbody>
     <tr><td>R1</td><td>侧边栏按 机器 → 项目 → worktree 组织</td><td class="num">8 / 8</td><td class="pass">通过</td></tr>
     <tr><td>R2</td><td>列出项目的全部 worktree</td><td class="num">7 / 7</td><td class="pass">通过</td></tr>
-    <tr><td>R3</td><td>在项目里新建带名字的 worktree</td><td class="num">10 / 10</td><td class="pass">通过</td></tr>
+    <tr><td>R3</td><td>在项目里新建带名字的 worktree</td><td class="num">11 / 11</td><td class="pass">通过</td></tr>
     <tr><td>R4</td><td>在已有 worktree 里开会话</td><td class="num">6 / 6</td><td class="pass">通过</td></tr>
     <tr><td>R5</td><td>会话与 worktree 分开收尾</td><td class="num">12 / 12</td><td class="pass">通过</td></tr>
     <tr><td>R6</td><td><code>-c</code> 的后果写在新建对话框里</td><td class="num">2 / 2</td><td class="pass">通过</td></tr>
     <tr><td>R7</td><td>用快捷键切换会话</td><td class="num">5 / 5</td><td class="pass">通过</td></tr>
     <tr><td>R8</td><td>视觉风格</td><td class="num">6 / 6</td><td class="pass">通过</td></tr>
     <tr><td>R9</td><td>新旧版本互连</td><td class="num">2 / 2</td><td class="pass">通过</td></tr>
-    <tr><td>其它</td><td>探索式检查后加的用例、性能等</td><td class="num">7 / 7</td><td class="pass">通过</td></tr>
+    <tr><td>其它</td><td>探索式检查后加的用例、合并和 T34 / T35 的用例等</td><td class="num">14 / 14</td><td class="pass">通过</td></tr>
   </tbody>
 </table>
 </div>
-<p class="small">数字来自验证者在 <code>482ab63</code> 上重跑的 <code>gui-worktree-smoke.mjs</code>（65 个用例，第一次运行即全过；<code>evidence/verdict-2/gui-wt-1.txt</code>）。受返工影响的场景（R2.1、R3.5、R3.8、R4.2、R5.6、R5.9、R5.12、R9.2）验证者另外用自己的反例和临时 daemon 实测过；其中 R3.8 在「钩子失败」这一种下会留下残留，就是上面的 c8，R2.1 在旧版 git 上的情况就是 d71。其余场景沿用第 1 轮界面验证者的结论（58 个场景里 50 个用真实指针和按键走过），这一轮没有用真实指针重走界面。</p>
+<p class="small">数字来自界面验证者在 <code>4941b53</code> 上重跑的 <code>gui-worktree-smoke.mjs</code>（73 个用例，两次都是第一次运行即全过）。这一轮改动波及的场景（侧边栏的点击、改名、状态点、删除确认、概览页、新旧版本互连）验证者另外用自己的脚本和真实指针、按键重做过；其余场景沿用第 1、2 轮的结论。</p>
 
 <h2 id="gaps">没有覆盖的</h2>
 <ul>
-  <li>测的不是真实的 claude，也不是远程 Linux：用的是本机的临时 daemon，终端会话跑 <code>/bin/bash</code>，对话会话跑假 claude。</li>
+  <li>测的不是真实的 claude，也不是远程 Linux：用的是本机的临时 daemon，终端会话跑 <code>/bin/bash</code>，对话会话跑假 claude；远程延迟用代理模拟。</li>
   <li>真实键盘下的快捷键要人在打包后的 app 里按一遍（自动化的按键不经过 macOS 的菜单和输入法）。步骤在 <code>test-report.md</code> 和 <code>evidence/pending-checks.md</code> 第 4 条。</li>
-  <li>冷启动最初约 0.1 秒（窗口创建到第一次绘制之间）的屏幕没有取到。</li>
+  <li>真实输入法组字时改名框、说明框里的按键没有测。</li>
   <li>原生通知（只对已签名的 app 生效）没有验证。</li>
-  <li>没有录屏，交付的是截图（<code>evidence/flow-01.png</code> – <code>flow-12.png</code>，每一步核对了什么在 <code>evidence/flow-run.txt</code>）。</li>
-  <li>其它版本的 tmux 没有实测：返工改了读 tmux 的方式，验证者只在 3.6a 上跑过；Ubuntu 22.04 的 3.2a、Debian 12 的 3.3a、Ubuntu 24.04 的 3.4 要在目标机器上跑一次。</li>
-  <li>返工的 8 个提交没有再做独立代码评审，由第 2 轮验证把关。</li>
+  <li>其它版本的 tmux（3.2a、3.3a、3.4）和真正的旧版 git（2.31–2.35）没有在这一轮实测：本机是 tmux 3.6a、git 2.50.1；旧 git 的退回路径这一轮用包装脚本模拟。</li>
+  <li>冷启动最初约 0.1 秒的屏幕没有取到；没有录屏，交付的是截图。</li>
+  <li>合并、T34、T35 的提交没有单独做代码评审，由第 3 轮验证把关。</li>
 </ul>
 <p class="ev">（<code>test-report.md</code>「未覆盖和遗留」；<code>verdict.md</code>「待验证项」）</p>
 
@@ -290,19 +271,23 @@
   <li>正在看的对话会话出现待答的权限请求后切到别的会话，它的行不亮「等你处理」（X7，双模式会话原有的规则）。</li>
   <li>会话多到侧边栏要滚动时，新建会话后侧边栏不会滚到新会话那一行。</li>
 </ul>
-<p class="ev">（全部条目在 <code>tasks.md</code>「后续」，包括第 2 轮验证的 N-3、N-4、N-5 和两条说明；后台会话全亮「有新消息」的 X1 见上面的 c7）</p>
+<p class="ev">（全部条目在 <code>tasks.md</code>「后续」。第 2 轮汇总里的 d71、c8、c7、c9 你回复 all 之后都已改掉：旧版 git 的列表解析、钩子失败不留残留、后台终端只在屏幕文字变了时亮「新消息」、文档写明 git 版本）</p>
 
 <h2 id="dep">依赖</h2>
-<div class="card">这个需求叠在「双模式会话」（分支 <code>change/dual-mode</code>）之上。「双模式会话」还没有合并，在等它自己的 c6。它不合并，这个需求只能做到「待合并」。</div>
+<div class="card">这个需求叠在「双模式会话」（分支 <code>change/dual-mode</code>，<a href="https://github.com/lflish/vibe-remote/pull/14">PR #14</a>）之上，并且已经把它的最新提交合并进来。#14 要先合并。#14 合并之后如果 <code>main</code> 上还有别的改动（例如 dependabot 的 Electron 升级），这个需求要先把 <code>main</code> 合进来并复验，再合并。</div>
 
 <h2 id="next">接下来</h2>
-<div class="card">你回复之后：有要改的先改并复验，然后进入发布阶段：推送分支、开 PR、等 CI。合并由你本人操作。</div>
+<div class="card">你合并 #14 → 我把这个需求的 PR 改指向 <code>main</code>、确认验证结论仍然覆盖 → 你合并它。之后发版（<code>/release</code>，走 PR）时补 <code>CHANGELOG.md</code> 的条目。要试用新界面的话告诉我，我构建并装到本机（会重启 daemon 和桌面端）。</div>
 
 <h2 id="history">历史</h2>
 <div class="tablewrap">
 <table>
   <tbody>
-    <tr><td class="num">2026-11-20 07:35</td><td>机器关口 C 第 2 轮通过（有备注）；发出这份汇总，等你回复。</td></tr>
+    <tr><td class="num">2026-11-23</td><td>机器关口 C 第 3 轮通过（有备注）；推送分支、开 PR，等你合并。</td></tr>
+    <tr><td class="num">2026-11-21</td><td>T34（侧边栏内容没变不重建）、T35（概览页）完成；第 5、6 轮全量运行。</td></tr>
+    <tr><td class="num">2026-11-20 17:59</td><td>合并对话模式的关口 C 返工（T33）。</td></tr>
+    <tr><td class="num">2026-11-20</td><td>你回复 all：四处返工 T29–T32。</td></tr>
+    <tr><td class="num">2026-11-20 07:35</td><td>机器关口 C 第 2 轮通过（有备注）。</td></tr>
     <tr><td class="num">2026-11-20 06:07</td><td>返工 T21–T28 完成，回到测试；06:37 出第 2 轮测试报告。</td></tr>
     <tr><td class="num">2026-11-20 04:19</td><td>机器关口 C 第 1 轮不通过：codex 拦下 7 个问题。</td></tr>
     <tr><td class="num">2026-11-20 00:40</td><td>可提测，进入测试。</td></tr>
@@ -315,7 +300,7 @@
 
 <div class="footer">
   <h2 id="numbers">小结</h2>
-  <p class="small">从 <code>metrics.md</code> 统计，截至 2026-11-20 07:35。</p>
+  <p class="small">下面的数字从 <code>metrics.md</code> 统计，<strong>截至 2026-11-20 07:35（第 2 轮之后）</strong>，没有重算。之后新增：返工 3 次（T29–T32、T33、T34 / T35）；机器关口 C 第 3 轮（验证者轮次 6/6）；等你回复关口 C 约半天。</p>
   <ul>
     <li>阶段：需求 11-16 17:57 – 11-18 10:08；设计 11-18 10:08 – 11-19 10:45；开发 11-19 10:45 – 11-20 00:40，返工 11-20 04:19 – 06:07；测试 11-20 00:40 起（返工复验 06:07 起），还没有结束。从开始到现在 3 天 13 小时 38 分。</li>
     <li>问用户 3 次：评审消息、关口 A、关口 C（这一次）。前两次等回复 1429 分钟和 888 分钟，合计 2317 分钟（约 38.6 小时）。设计阶段另有 2 次用户回复（c3 / c4 / R5.9 的答复、关口 B 放行），metrics.md 里没有对应的「问用户」行。</li>
