@@ -617,6 +617,13 @@ $ .devflow.yml 的 invariants：18 条 check 命令原样交给 zsh，环境里�
 - 还剩的：会话列表的应答仍然每轮重画一次概览页、不管内容变没变（本需求之前就是这样），重画正好落在一次点击的按下和松开之间时这次点击仍会丢；要去掉它得照 T34 给概览页算指纹，记在 tasks.md「后续」。
 - 写这一节时 T33（合并）、T34、T35 之后的代码还没有做独立验证。**现状（2026-11-23）**：关口 C 第 3 轮独立验证已通过（被测 `4941b53`；codex 验非界面部分、同模型的全新验证者验界面部分，两份结论都是「通过，有备注」，见 verdict.md）。独立代码评审仍然没有做（返工的约束是不派子 agent），由这一轮的两名验证者把关。
 
+## PR 的 Linux CI 失败与之后的复验
+
+- PR #16 第一次 CI（Linux，tmux 3.6a，git 2.56.1）：Go server 一项失败，2 个测试——`TestLiveTmuxSessionsTellsNothingRunningFromAFailedQuery/socket_path_does_not_answer`（`liveTmuxSessions() = map[], true; want a failed query`）、`TestRemoveWorktreeRefusedWhenTmuxSocketDoesNotAnswer`（`err = <nil> <nil>, want *WorktreeRemoveError`）。本分支的 Go 测试此前只在 macOS 上跑过。
+- 原因和修法：夹具在 socket 路径上放普通文件，两个系统上 tmux 的回答不同；提交 `4e2a4bc` 只改夹具（decisions #189）。本机：相关 20 个用例通过；变异核对（去掉 `isNoTmuxServer` 的判断）两个测试失败。重新推送后 CI 的 4 项全过。
+- 这次改动之后没有重跑全量：只改了一个 Go 测试文件；CI 在 Linux 上跑了 `make check` 的全部内容并通过。
+- 范围受限的复验（codex）结论**不通过**：夹具修复成立，但拦下 daemon 的一个早已存在的问题 P1（tmux 说没有 server 时不核对原 server 是否还活着）。用户决定这一版记为已知限制、先合并（decisions c14；tasks.md「后续」【优先 0】；verdict.md「第 3 轮之后」）。
+
 ## 待验证项
 
 来自 review.md 的 13 条。实验是测试阶段前半做的（`evidence/pending-checks.md`，被测 `ba9caa4`），第 1 轮探索时对第 11 条有新的发现（X8）。关口 C 第 1 轮的两名验证者把这 13 条各看了一遍（`verdict-history.md` 两份结论的「待验证项」）：与这里不同的是第 7 条（被推翻了一部分），第 9、10、13 条由验证者独立重做后排除，第 3、4、8 条仍缺条件。这一轮（返工复验）没有重做这些实验，只按返工的结果更新了第 5、7 条。
@@ -668,6 +675,9 @@ $ .devflow.yml 的 invariants：18 条 check 命令原样交给 zsh，环境里�
 T34 只动桌面端 `index.ts` 的 `renderSidebar()` 一处（加上指纹函数约 60 行）和测试，没有涉及删除、撤销、信任规则、协议这些关键路径。它的风险在另一头：指纹漏掉一样渲染读到的状态，界面就会停在旧的样子；`test-sidebar-refresh` 每种变化一条断言守着，变异核对见上。修复前的失败输出和变异核对是开发方自己做的，没有经过独立评审。
 
 ## 未覆盖和遗留
+
+- **已知限制（P1，用户决定这一版不修）**：tmux 说没有 server 时 daemon 不核对它的会话所在的 server 是否还活着；socket 路径在活着的 server 脚下被换掉时，会话表被清空、里面有活会话的 worktree 可以被删掉。见上面「PR 的 Linux CI 失败与之后的复验」。
+- **Go 测试在 Linux 上只由 CI 跑过**，三轮独立验证都在 macOS 上。
 
 - **关口 C 第 3 轮独立验证之后（2026-11-23；被测 `4941b53`，两份结论都是「通过，有备注」，见 verdict.md）**：
   - 下面各段里说「没有做独立验证」的三句已被这一轮取代：第 5 轮那段的「T34 之后的代码没有做独立验证」、第 4 轮那段的「合并后的代码没有做独立验证」、第 3 轮那段的「返工后的第 3 轮还没有做」。T29–T32、合并（T33）、T34、T35 都已由两名验证者独立验证。独立代码评审仍然没有做。

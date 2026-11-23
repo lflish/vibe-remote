@@ -1,0 +1,70 @@
+- 结论：不通过
+- 提交：4e2a4bcdd17bf610ba77409d0be360c870125db7
+- 验证快照：{"schema":1,"docs_dir":"docs/changes","head":"4e2a4bcdd17bf610ba77409d0be360c870125db7","head_tree":"431014c134bbff667849029b4af74e359b2b763f5fac7f1df62a118c4627db91","target":"64e8b5e2468cc9e9852a8b56e24ab8120c9b847e","target_tree":"7045e554bc63150ae3c89f739d502bc49c139688a5d84b075208f68d76417e84"}
+- 环境版本：开始 `git rev-parse HEAD` = 4e2a4bcdd17bf610ba77409d0be360c870125db7；`git status --short` 空。macOS/Darwin arm64，git 2.50.1，Go 1.26.2，tmux 3.6a。纯库/测试复验，无服务版本接口；未访问真实 daemon。
+- 验证者：Codex（GPT-6），未参与此段代码开发，本轮独立验证。
+- 检查：
+  - 第 1 步：`git diff --name-only 4941b53..HEAD -- . ':!docs/changes'` 仅 `vibe-remoted/internal/session/review_round2_test.go`；已读同范围完整 diff。新增 unusableTmuxSocket 并替换两处夹具，两个原断言未变。
+  - 第 2 步变异 `mutant-ran`（仅 /tmp 副本）：`go test -race -count=1 -timeout 20m ./internal/session -run 'TestLiveTmuxSessionsTellsNothingRunningFromAFailedQuery/socket_path_does_not_answer|TestRemoveWorktreeRefusedWhenTmuxSocketDoesNotAnswer|TestRemoveWorktreeRefusedWhenTmuxIsNotOnPathButItsSocketIsThere'` 退出 1；日志 `/tmp/vr-pw4-t1y6id0x/mutant-ran.log`。
+    - `--- FAIL: TestLiveTmuxSessionsTellsNothingRunningFromAFailedQuery (0.03s)`
+    - `--- FAIL: TestLiveTmuxSessionsTellsNothingRunningFromAFailedQuery/socket_path_does_not_answer (0.03s)`
+    - `review_round2_test.go:147: liveTmuxSessions() = map[], true; want a failed query: something is at the socket path and did not answer`
+    - `--- FAIL: TestRemoveWorktreeRefusedWhenTmuxSocketDoesNotAnswer (0.60s)`
+    - `review_round2_test.go:232: err = <nil> <nil>, want *WorktreeRemoveError`
+    - `FAIL	github.com/lflish/vibe-remote/vibe-remoted/internal/session	2.827s`
+  - 第 2 步变异 `mutant-gone`（仅 /tmp 副本）：`go test -race -count=1 -timeout 20m ./internal/session -run 'TestLiveTmuxSessionsTellsNothingRunningFromAFailedQuery/socket_path_does_not_answer|TestRemoveWorktreeRefusedWhenTmuxSocketDoesNotAnswer|TestRemoveWorktreeRefusedWhenTmuxIsNotOnPathButItsSocketIsThere'` 退出 1；日志 `/tmp/vr-pw4-t1y6id0x/mutant-gone.log`。
+    - `--- FAIL: TestLiveTmuxSessionsTellsNothingRunningFromAFailedQuery (0.03s)`
+    - `--- FAIL: TestLiveTmuxSessionsTellsNothingRunningFromAFailedQuery/socket_path_does_not_answer (0.03s)`
+    - `review_round2_test.go:147: liveTmuxSessions() = map[], true; want a failed query: something is at the socket path and did not answer`
+    - `--- FAIL: TestRemoveWorktreeRefusedWhenTmuxSocketDoesNotAnswer (0.61s)`
+    - `review_round2_test.go:232: err = <nil> <nil>, want *WorktreeRemoveError`
+    - `--- FAIL: TestRemoveWorktreeRefusedWhenTmuxIsNotOnPathButItsSocketIsThere (0.45s)`
+    - `FAIL	github.com/lflish/vibe-remote/vibe-remoted/internal/session	1.650s`
+  - 第 3 步 `cd vibe-remoted && gofmt -l .`：退出 0；输出为空。
+  - 第 3 步 `cd vibe-remoted && go vet ./...`：退出 0；输出为空。
+  - 第 2 步独立反例（/tmp 副本产品代码未改）：`go test -race -count=1 -timeout 20m ./internal/session -run 'TestPW4' -v` 退出 1；日志 `/tmp/vr-pw4-t1y6id0x/probe.log`。
+    - `pw4_probe_test.go:46: server_pid=89676; replacement exists as socket; list-sessions="no server running on /private/tmp/vr-tmux-352909830/tmux-501/vibe-remote\n" err=exit status 1`
+    - `pw4_probe_test.go:49: read: sessions=map[] ok=true; table had 1 session`
+    - `pw4_probe_test.go:53: after List: count=0 remembered=false owner=""`
+    - `pw4_probe_test.go:58: RemoveWorktree: removed=true ended=[] err=<nil> directory_exists=false; original server/session after removal: "89676 vibe-remote-1795432895215-426cc8ba pane_dead=0" err=<nil>`
+    - `--- FAIL: TestPW4LiveServerBehindReplacedSocket (0.87s)`
+    - `pw4_probe_test.go:70: 0707 fixture: out="directory /private/tmp/vr-tmux-1083738763/tmux-501 has unsafe permissions\n" err=exit status 1`
+    - `--- PASS: TestPW4UnusableFixtureSelfCheckAndCleanup (0.02s)`
+  - 第 3 步 `cd vibe-remoted && go test -race -count=1 -timeout 20m ./internal/session -run 'TestLiveTmuxSessions|TestRemoveWorktree|TestTmuxSocketPath|TestIsNoTmuxServer|TestSocketPath'`：退出 0；`ok  	github.com/lflish/vibe-remote/vibe-remoted/internal/session	12.805s`。
+  - 第 3 步 invariant 原样（环境 `GOFLAGS=-count=1`、空 `CLAUDE_CONFIG_DIR`）：`cd vibe-remoted && TMUX_TMPDIR=$(mktemp -d) go test -race -timeout 10m ./internal/session -run 'TestRemoveDirtyNeedsConsent|TestRemoveUnmergedNeedsConsent|TestRemoveWorktreeStopsWhenASessionDidNotEnd|TestRemoveWorktreeConfirmsSessionsAgainstTmux|TestSessionWhoseProcessIsInAnOddlyNamedDirectoryIsStillRead|TestSessionCreatedInAnOddlyNamedDirectoryIsStillRead|TestTmuxReadFailsWhenARecordDoesNotParse|TestRemoveChangedSinceStatus|TestRemoveHeadMovedWhileEndingSessions|TestRemoveRefusedWhenNestedWorktree|TestRemoveSubmoduleCheckoutRefused|TestRemoveUntrackedRepositoryRefused|TestRemoveBranchSwitchedAfterConfirmation|TestRemoveBranchSwitchedWhileEndingSessions|TestRemoveEndsSessionsAttributedElsewhere|TestRemoveWorktreeAfterRestartNeedsTheSessionsFromTmux|TestRemoveWorktreeRefusedWhenTmuxSocketDoesNotAnswer|TestSessionsOfAWorktreeGoByWhereTheyWereCreatedAcrossRestart|TestSocketFileGoneWhileTheTmuxServerRuns|TestMissingSocketIsNotAnEmptySetWhileTheTableHasTerminalSessions|TestRemoveWorktreeRefusedWhenTmuxIsNotOnPathButItsSocketIsThere|TestNoTmuxProgramIsAnEmptySetOnlyWithoutSocketAndWithoutTerminalSessions|TestTmuxSocketPathResolvesTheDirectoryLikeTmux|TestIsNoTmuxServerGoesByTheWholeLine|TestSocketPathSayingNoSessionsIsNotAnEmptySet'`；退出 0；`ok  	github.com/lflish/vibe-remote/vibe-remoted/internal/session	71.549s`。
+  - 第 2 步自然陈旧 socket／自检故障注入（/tmp 副本）：`go test -race -count=1 -timeout 20m ./internal/session -run 'TestPW4LiveServerBehindSecondServerStaleSocket|TestPW4FixturePreflight' -v` 退出 1；日志 `/tmp/vr-pw4-t1y6id0x/probe-natural-preflight.log`。
+    - `pw4_probe_test.go:100: original server_pid=97750 second server_pid=97773`
+    - `pw4_probe_test.go:119: server_pid=97750; replacement exists as socket; list-sessions="no server running on /private/tmp/vr-tmux-3291870156/tmux-501/vibe-remote\n" err=exit status 1`
+    - `pw4_probe_test.go:126: after List: count=0 remembered=false owner=""`
+    - `pw4_probe_test.go:131: RemoveWorktree: removed=true ended=[] err=<nil> directory_exists=false; original server/session after removal: "97750 vibe-remote-1795433018133-488a92e8 pane_dead=0" err=<nil>`
+    - `--- FAIL: TestPW4LiveServerBehindSecondServerStaleSocket (0.92s)`
+    - `pw4_probe_test.go:144: the fixture does not hold on this system: tmux list-sessions = "no server running on fixture\n", exit status 1; want a failure that does not say that no server is running`
+    - `--- FAIL: TestPW4FixturePreflightRejectsNoServer (0.48s)`
+    - `pw4_probe_test.go:151: the fixture does not hold on this system: tmux list-sessions = "", <nil>; want a failure that does not say that no server is running`
+    - `--- FAIL: TestPW4FixturePreflightRejectsSuccess (0.43s)`
+- 对开发方判断的核对（第 2 步）：
+  - 新夹具仍测 tmux 客户端实际非零退出、非「没有 server」、socket 路径存在时读取失败及删除拒绝；EndedSessions 为空、目录和分支存在的断言原样保留。两处原夹具也没有启动真实 server，测的是失败分支。
+  - `if ran` 变异让两测试分别报 `map[], true; want a failed query` 和 `err = <nil> <nil>, want *WorktreeRemoveError`；移除 `gone &&` 让这两项及「PATH 无 tmux 但 socket 在」相邻检查失败。
+  - 标准 tmux 3.6a `tmux.c:225` 显式检查 `st_uid != getuid()` 或 `mode & TMUX_SOCK_PERM`，`tmux.h:90` 默认掩码为 7；无 root 豁免，0707 & 7 != 0。root 结论来自源码，未以 root 实跑。
+  - 核对标准 tmux 2.6:134、2.9a、3.2a:218、3.4:225：都有 `mode & S_IRWXO` 检查且无 root 豁免；旧版文案可为 Permission denied，仍满足自检，不能泛称所有版本都打印 unsafe permissions。自定义编译改掉 3.6a 掩码不在此保证内。
+  - 实跑 0707 返回 `directory … has unsafe permissions`、退出 1；owner 仍有 rwx，`os.RemoveAll` 成功并确认目录不存在，未改变 teardown。
+  - 公开依据：https://github.com/tmux/tmux/blob/3.6a/client.c#L292 仅按 ECONNREFUSED 输出 no server running，未核对 server PID／会话；Linux v6.12 `net/unix/af_unix.c:1132–1139` 对普通文件及无监听 socket 都返回 ECONNREFUSED。本机普通文件的 ENOTSOCK 与已给 Linux CI 失败相符。
+  - 无活 server 时，普通文件／陈旧 socket 可按文档第②条视为空；不能从该报错推导「所有旧 server 都没会话」。替换 socket 后仍活着的原 server 是确凿反例，见实跑日志。
+  - 本机独立路径 `TMUX_TMPDIR=<mktemp /tmp/vr-pw4-XXXXXX> tmux -L vibe-remote list-sessions`：普通文件退出 1（Socket operation on non-socket）；陈旧 socket 退出 1（no server running）；0707 目录退出 1（unsafe permissions）；目录清理成功。
+  - 版本快照命令：`python3 /Users/mac/github/devflow/dev-workflow/scripts/verification_snapshot.py snapshot --repo . --docs-dir docs/changes --head 4e2a4bcdd17bf610ba77409d0be360c870125db7 --target 64e8b5e2468cc9e9852a8b56e24ab8120c9b847e`：退出 0，JSON 与指定快照逐字一致。
+  - 已读完整 `git diff 4941b53..HEAD -- . ':!docs/changes'`；运行目录均为指定 worktree 或 /tmp 副本，Go 构建使用 `/tmp/vr-pw4-gocache`，各次 tmux 使用独立 TMUX_TMPDIR，CLAUDE_CONFIG_DIR 为自建空目录。
+  - 只读 GitHub API 核对 `https://api.github.com/repos/lflish/vibe-remote/actions/runs/45163417707` 及 `/jobs`：head_sha 为本次完整 HEAD，状态 completed/success，Go server 为 success；CI 通过不能排除反例。
+  - 第 2 步夹具自检：注入退出 1 且 no server running、退出 0 两种错误夹具，均在 unusableTmuxSocket 报 `the fixture does not hold on this system`，未静默通过。
+  - 第 2 步自然反例：原 server socket 改名以保留可观测入口；同一 -L 路径启动另一个 server 后结束其最后会话，留下真实陈旧 socket。原 server/session 仍活着，而 daemon 清表、释放占用、删除目录，和人工陈旧 socket 结果一致。
+  - 三个反例/0707 实验目录结束后均已不存在；原 socket 在 cleanup 前恢复，所启动会话和 server 由其自己的 cleanup 结束。
+- 对开发方判断的补充：
+  - Linux 推断有充分源码依据：https://github.com/torvalds/linux/blob/v6.12/net/unix/af_unix.c#L1132 与 tmux 3.6a client.c 的 ECONNREFUSED 分支。普通文件替换也会触发同问题；macOS 普通文件是 ENOTSOCK，故用两平台均为 ECONNREFUSED 的陈旧 socket 作实证。
+  - 监听队列满不是此反例：Linux unix_stream_connect:1609–1620 是等待或 EAGAIN，tmux client.c:126 的 connect 使用阻塞 socket，不会因队列满直接译成 no server running。退出最后会话的正常 server 可短暂尚有 PID，但已无会话；server.c:281–305 默认保留有会话的 server。没有把这些状态当成额外已证实问题。
+  - 另一个用户的默认 server 按 uid 分目录；tmux 会检查目录所有者，正常越权访问是权限失败。不能据此排除同用户/管理员置换路径，后者已复现。
+  - 实现严格符合 CLAUDE.md 第②条文字和 invariant；问题是该条把「此地址无人监听」当成「原会话不存在」，与「拿不准就失败」的总原则及占用唯一性冲突。
+- 问题：
+  - P1（高，拦）：ECONNREFUSED 不能证明原 tmux 会话结束。证据：runner.go:274 无条件采信 no server running；manager.go:651–655 清表并释放 claudeOwners；projects.go:697 采信对账后允许删除。自然反例原 PID 97750/新 PID 97773，新 server 退出后客户端报 no server running；原会话仍 `pane_dead=0`，List=0、owner=""、RemoveWorktree removed=true/ended=[]/目录不存在。日志与复现测试保留在 `/tmp/vr-pw4-t1y6id0x/probe-natural-preflight.log` 和 `/tmp/vr-pw4-t1y6id0x/probe/internal/session/pw4_probe_test.go`。
+    - 早于本次提交：产品代码与 4941b53 完全相同；但不是已记录的限制。CLAUDE.md:101／tasks.md:1207 只记录「daemon 重启后、socket 不存在、表为空」；这里同一 daemon 已有会话、socket 存在仍被清表。tasks.md:1214（单独 Delete）、:1248（换行伪造 stderr）也不是此路径。建议第②条在 daemon 记得终端会话时核实 server 身份／存活，否则拒绝采信；重启场景需持久化身份，不能只靠 socket 存在。
+- 待验证项：Linux 原生反例及 root 实跑未做；Linux CI 常规测试成功已核实，Linux/root/旧版本结论分别基于公开内核与 tmux 源码，已标明推断。此项缺少原生实跑不影响已有等效反例的阻拦结论。其余场景及第 3 轮备注沿用原 verdict.md。
+- 放松检查：无。新增夹具与自检完成可移植的失败注入，原断言、超时及产品代码未改，两类变异均被检出；本次测试改动本身达到声明目标，但「Linux 产品行为就是对的」不成立，需拦产品行为。
+- 环境版本（结束）：`git rev-parse HEAD` = 4e2a4bcdd17bf610ba77409d0be360c870125db7；`git status --short` 空，HEAD 未漂移、已跟踪文件未改。未访问 127.0.0.1:8765/default tmux socket、用户 Claude 文件或 Application Support，未启动 Electron，未变更被测仓库的提交/分支/worktree 登记。

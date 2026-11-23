@@ -1,14 +1,26 @@
 # 验证结论 · 按项目和 worktree 组织会话，并更换视觉风格 · 机器关口 C 第 3 轮
 
-- 结论：通过，有备注
-- 提交：4941b53d65eb170a7c6d3a57ae6d27b97937e57f
-- 验证快照：{"schema":1,"docs_dir":"docs/changes","head":"4941b53d65eb170a7c6d3a57ae6d27b97937e57f","head_tree":"bc8c7a647be6031fc48039abe5e277e7b689115e1cbf47797cbda46264439ccf","target":"64e8b5e2468cc9e9852a8b56e24ab8120c9b847e","target_tree":"7045e554bc63150ae3c89f739d502bc49c139688a5d84b075208f68d76417e84"}
+- 结论：第 3 轮（提交 `4941b53`）通过，有备注；之后对提交 `4e2a4bc` 的范围受限的复验**不通过**（1 个问题 P1，是 daemon 早已存在的缺陷）。用户 2026-11-23 决定把 P1 记为已知限制、先合并（decisions c14）。详见下面「第 3 轮之后」
+- 提交：4e2a4bcdd17bf610ba77409d0be360c870125db7（第 3 轮两份结论验证的是 `4941b53d65eb170a7c6d3a57ae6d27b97937e57f`；两者之间在 `docs/changes/` 之外只差一个测试文件 `vibe-remoted/internal/session/review_round2_test.go`，产品代码相同）
+- 验证快照：{"schema":1,"docs_dir":"docs/changes","head":"4e2a4bcdd17bf610ba77409d0be360c870125db7","head_tree":"431014c134bbff667849029b4af74e359b2b763f5fac7f1df62a118c4627db91","target":"64e8b5e2468cc9e9852a8b56e24ab8120c9b847e","target_tree":"7045e554bc63150ae3c89f739d502bc49c139688a5d84b075208f68d76417e84"}
+- 第 3 轮的验证快照（提交 `4941b53`）：{"schema":1,"docs_dir":"docs/changes","head":"4941b53d65eb170a7c6d3a57ae6d27b97937e57f","head_tree":"bc8c7a647be6031fc48039abe5e277e7b689115e1cbf47797cbda46264439ccf","target":"64e8b5e2468cc9e9852a8b56e24ab8120c9b847e","target_tree":"7045e554bc63150ae3c89f739d502bc49c139688a5d84b075208f68d76417e84"}
 - 目标分支：`change/dual-mode` 的 `64e8b5e`（`64e8b5e2468cc9e9852a8b56e24ab8120c9b847e`）。本需求叠在对话模式之上，随它进 `main`：对话模式的 PR #14 合并后，本需求的 PR 改指向 `main`。被测提交已包含这个 tip。
 - 验证者：两名，都没写过被验代码，各自在独立的 worktree 里对同一提交验证。非界面部分：codex（GPT-6）；界面部分：同模型的全新验证者（Claude Fable 5）。
 - 日期：非界面部分的结论写于 2026-11-21，界面部分写于 2026-11-23；协调者 2026-11-23 裁决。
 - 拦下的问题：0 个。备注：codex 4 条；界面 3 个不拦的问题（P1–P3）+ 10 条备注。
 - 放松检查：两份结论都核对了 `482ab63..4941b53` 的测试改动，没有未经裁决的放松（各自的「放松检查」一节）。c10 的重做已撤；c11、c12 是协调者按用户授权裁决过的，两名验证者都独立重算了被改动的检查，结论是没有让原检查失去意义。
 - 未决的 `c<n>`：无（c1–c13 都已有处理结果，见 decisions.md）。
+
+## 第 3 轮之后：Linux CI、范围受限的复验（提交 4e2a4bc）和用户的决定
+
+1. **PR #16 第一次 CI 没过**（2026-11-23）。这是本分支的 Go 测试第一次在 Linux 上运行（此前三轮验证都在同一台 Mac 上）。2 个测试失败：`TestLiveTmuxSessionsTellsNothingRunningFromAFailedQuery/socket_path_does_not_answer`、`TestRemoveWorktreeRefusedWhenTmuxSocketDoesNotAnswer`。两个测试的夹具是在 tmux 的 socket 路径上放一个普通文件：macOS 上 tmux 报 `error connecting to …`，Linux 上 tmux 回答 `no server running on …`，daemon 按规则 ② 读成「没有会话」。
+2. **夹具修复**（提交 `4e2a4bc`，只改这一个测试文件，产品代码和断言都没改）：夹具另把 socket 目录的权限改成 0707，tmux 在连接之前就拒绝，并先自检 tmux 确实以「不是 no server running」的方式失败。重新推送后 4 个 CI 检查全过。
+3. **范围受限的复验**（codex，GPT-6，提交 `4e2a4bc`，验证快照即本文件开头那一行）：结论**不通过**，全文在 `evidence/verdict-3b/verdict-codex.md`。
+   - 夹具修复本身成立：断言原样，两类变异都被检出，夹具自检在夹具失效时报出夹具问题，0707 的做法在各 tmux 版本和 root 下有源码依据。没有放松检查。
+   - 协调者当时的说法「产品在 Linux 上的行为是对的」**不成立**。
+   - **P1（高，验证者判拦）**：tmux 回答「这个 socket 上没有 server 在运行」时，daemon 直接当成没有会话，不核对它的会话所在的 tmux server 是否真的不在了：那个 server 还活着、socket 路径却被换成没人监听的陈旧 socket（Linux 上换成普通文件也一样）时，daemon 清空会话表、释放 claude 会话占用，并允许把里面还有活会话的 worktree 目录删掉。验证者在本机用陈旧 socket 复现（`evidence/verdict-3b/pw4_probe_test.go.txt`、`probe-natural-preflight.txt`：原 server 和会话仍活着，`List` 之后会话数 0、占用被释放，`RemoveWorktree` 返回 `removed=true ended=[]`、目录已删）；Linux 上普通文件那一种是按内核和 tmux 源码推断的，没有在 Linux 上实跑。触发条件少见（socket 路径在活着的 server 脚下被换掉）。产品代码与第 3 轮验证过的 `4941b53` 完全相同，不是最近的改动引入的；也不在已记录的已知限制里。
+4. **用户的决定**（2026-11-23，原话「先合并吧，我想试用下最新的版本怎么用」，是对协调者「如果你更愿意把这个问题当作已知限制、先合并 #16，告诉我，我就停掉返工」的答复）：P1 记为已知限制，先合并；修复（T36：daemon 在一次运行里记住 tmux server 的进程号，tmux 说没有 server 而该进程还活着时按读取失败处理）刚开始就停下了，没有留下任何改动，合并后单独做。记在 decisions c14、tasks.md「后续」的【优先 0】。
+5. 界面部分在 `4e2a4bc` 上没有重新验证：桌面端代码与 `4941b53` 相同（`git diff 4941b53..4e2a4bc -- desktop` 为空）。
 
 这是本文件的汇总部分，由协调者（主会话）整理；两份结论收在后面（界面部分全文，非界面部分摘录，见「证据」）。此前两轮的结论在 `verdict-history.md`「第 1 轮」「第 2 轮（提交 482ab63）」。
 

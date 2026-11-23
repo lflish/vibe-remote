@@ -114,7 +114,7 @@
   <div class="ask-head"><span class="id">人工合并</span><h3>两个 PR，按顺序合并</h3></div>
   <dl class="kv">
     <dt>顺序</dt><dd>① <a href="https://github.com/lflish/vibe-remote/pull/14">PR #14</a>（对话模式，<code>change/dual-mode</code> → <code>main</code>）；② 这个需求的 <a href="https://github.com/lflish/vibe-remote/pulls?q=is%3Apr+head%3Achange%2Fproject-worktrees">PR</a>（<code>change/project-worktrees</code>，#14 合并前指向 <code>change/dual-mode</code>，#14 合并后我把它改指向 <code>main</code>）。</dd>
-    <dt>现状</dt><dd>第 3 轮独立验证两份结论都是「通过，有备注」，没有拦的问题。被验证的提交是 <code>4941b53</code>，之后只改了 <code>docs/changes/</code> 下的文档，验证快照仍然覆盖。</dd>
+    <dt>现状</dt><dd>第 3 轮独立验证（提交 <code>4941b53</code>）两份结论都是「通过，有备注」。开 PR 之后第一次在 Linux CI 上跑，2 个测试因夹具不可移植失败，修了夹具（<code>4e2a4bc</code>，只改一个测试文件）后 CI 全过；对这处改动的复验拦下 daemon 一个早已存在的问题（下面已知问题第 1 条），你决定记为已知限制、先合并。</dd>
     <dt>依据</dt><dd class="ev"><code>verdict.md</code>（第 3 轮结论全文）、<code>verdict-history.md</code>（第 1、2 轮）、<code>test-report.md</code></dd>
     <dt>风险</dt><dd>测的不是真实的 claude 和远程 Linux（见「没有覆盖的」）；下面「合并前建议知道的已知问题」里的 5 条这一版没有修。<code>CHANGELOG.md</code> 还没有这个需求的条目（它在 <code>docs/changes/</code> 之外，现在加会让验证结论失效），发版时随发版 PR 补上。</dd>
   </dl>
@@ -133,8 +133,9 @@
 </div>
 
 <h2 id="known">合并前建议知道的已知问题</h2>
-<p>都不拦合并，这一版没有修（修它们要再改代码、再验证一轮，验证轮次已用完）。按对你的影响从大到小：</p>
+<p>这一版都没有修。第 1 条是开 PR 之后的复验里验证者判「拦」的，你 2026-11-23 决定记为已知限制、先合并；其余几条验证者没有拦。</p>
 <ol>
+  <li><strong>tmux 的 socket 路径被换掉时，daemon 会以为会话都没了。</strong>tmux 回答「这个 socket 上没有 server」时，daemon 不核对它的会话所在的 tmux server 是否还活着。那个 server 还活着、socket 路径却被换成没人监听的 socket 或文件时（清理脚本、另一个抢同一路径的 tmux），会话从侧边栏消失、同一段 claude 对话可能被再开一次，里面还有活会话的 worktree 可以被删掉。条件少见，后果重。合并后第一个修。<span class="ev">（<code>evidence/verdict-3b/</code>；<code>decisions.md</code> c14）</span></li>
   <li><strong>改名时直接点另一个会话，基本每次都要点两下。</strong>daemon 在本机或同一局域网、用鼠标点时，24 次里 24 次没有切换；名字会保存，接着打的字不会进任何地方，再点一次或按回车就切过去。daemon 较远（往返多 30 毫秒以上）或按得很轻时不出现。对话模式那边也有。合并后优先修。</li>
   <li><strong>侧边栏内容正在变化的那一瞬间，点击可能丢。</strong>后台有两个对话会话在跑时，单击丢约 5.6%、双击约 2.8%；机器概览页上的按钮安静时也丢约 2.8%（107 次丢 3 次）。内容没变时已经不丢（322 次真实操作 0 丢失）。</li>
   <li><strong>机器概览页的「最近会话」里看不到刚建的对话会话。</strong>对话会话的创建时间是 UTC、终端会话是本地时区，排序时对话会话等于早了 8 小时。这是对话模式带来的，不是这个需求引入的。</li>

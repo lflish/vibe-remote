@@ -1,0 +1,17 @@
+=== RUN   TestPW4LiveServerBehindSecondServerStaleSocket
+    pw4_probe_test.go:100: original server_pid=97750 second server_pid=97773
+    pw4_probe_test.go:119: server_pid=97750; replacement exists as socket; list-sessions="no server running on /private/tmp/vr-tmux-3291870156/tmux-501/vibe-remote\n" err=exit status 1
+    pw4_probe_test.go:122: read: sessions=map[] ok=true; table had 1 session
+    pw4_probe_test.go:126: after List: count=0 remembered=false owner=""
+    pw4_probe_test.go:131: RemoveWorktree: removed=true ended=[] err=<nil> directory_exists=false; original server/session after removal: "97750 vibe-remote-1795433018133-488a92e8 pane_dead=0" err=<nil>
+    pw4_probe_test.go:134: 活着的 tmux 会话被清表、释放占用，且 worktree 被删除；应保留会话/占用并拒绝删除
+--- FAIL: TestPW4LiveServerBehindSecondServerStaleSocket (0.92s)
+=== RUN   TestPW4FixturePreflightRejectsNoServer
+    pw4_probe_test.go:144: the fixture does not hold on this system: tmux list-sessions = "no server running on fixture\n", exit status 1; want a failure that does not say that no server is running
+--- FAIL: TestPW4FixturePreflightRejectsNoServer (0.48s)
+=== RUN   TestPW4FixturePreflightRejectsSuccess
+    pw4_probe_test.go:151: the fixture does not hold on this system: tmux list-sessions = "", <nil>; want a failure that does not say that no server is running
+--- FAIL: TestPW4FixturePreflightRejectsSuccess (0.43s)
+FAIL
+FAIL	github.com/lflish/vibe-remote/vibe-remoted/internal/session	2.418s
+FAIL
