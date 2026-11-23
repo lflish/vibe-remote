@@ -56,6 +56,32 @@ func onlyGitOnPath(t *testing.T) {
 	t.Setenv("PATH", dir)
 }
 
+// unusableTmuxSocket puts a file at the socket path and leaves tmux unable to
+// use it: `tmux list-sessions` then fails, and not with "no server running".
+// A plain file there is not enough on every system — macOS fails the connect
+// with ENOTSOCK ("error connecting to …"), Linux with ECONNREFUSED, which tmux
+// reports as "no server running on …", an honest "nothing is running". A
+// socket directory that others may enter is refused by tmux before it
+// connects ("directory … has unsafe permissions"), on every system and for
+// every user, root included.
+func unusableTmuxSocket(t *testing.T, tmuxDir string) {
+	t.Helper()
+	sockDir := filepath.Join(tmuxDir, fmt.Sprintf("tmux-%d", os.Getuid()))
+	if err := os.MkdirAll(sockDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(sockDir, tmuxSocket), nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(sockDir, 0o707); err != nil {
+		t.Fatal(err)
+	}
+	out, err := tmuxCmd("list-sessions").CombinedOutput()
+	if err == nil || isNoTmuxServer(out) {
+		t.Fatalf("the fixture does not hold on this system: tmux list-sessions = %q, %v; want a failure that does not say that no server is running", out, err)
+	}
+}
+
 // The socket path the daemon works out is the one tmux really uses: a server
 // started through tmuxCmd has its socket there.
 func TestTmuxSocketPathIsWhereTmuxPutsIt(t *testing.T) {
@@ -116,14 +142,7 @@ func TestLiveTmuxSessionsTellsNothingRunningFromAFailedQuery(t *testing.T) {
 	})
 
 	t.Run("socket_path_does_not_answer", func(t *testing.T) {
-		dir := freshTmuxDir(t)
-		sockDir := filepath.Join(dir, fmt.Sprintf("tmux-%d", os.Getuid()))
-		if err := os.Mkdir(sockDir, 0o700); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.WriteFile(filepath.Join(sockDir, tmuxSocket), nil, 0o600); err != nil {
-			t.Fatal(err)
-		}
+		unusableTmuxSocket(t, freshTmuxDir(t))
 		if live, ok := liveTmuxSessions(); ok {
 			t.Fatalf("liveTmuxSessions() = %v, true; want a failed query: something is at the socket path and did not answer", live)
 		}
@@ -208,13 +227,7 @@ func TestRemoveWorktreeRefusedWhenTmuxSocketDoesNotAnswer(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	sockDir := filepath.Join(dir, fmt.Sprintf("tmux-%d", os.Getuid()))
-	if err := os.MkdirAll(sockDir, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(sockDir, tmuxSocket), nil, 0o600); err != nil {
-		t.Fatal(err)
-	}
+	unusableTmuxSocket(t, dir)
 	_, err = m.RemoveWorktree(request(st), allowAny)
 	if failed := wantRemoveError(t, err); len(failed.EndedSessions) != 0 {
 		t.Fatalf("failed = %+v, want a refusal that ends nobody", failed)
