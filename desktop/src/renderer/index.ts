@@ -1,18 +1,26 @@
 import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import '@xterm/xterm/css/xterm.css';
-import type { MachineConfig, SessionInfo, SessionMode } from '../shared/protocol';
+import type { MachineConfig, Project, SessionInfo, SessionMode } from '../shared/protocol';
 import { PROTOCOL_VERSION } from '../shared/protocol';
 import { VibeRemoteClient, ConnectionState, type AttachOptions } from './client';
-import { VibeRemoteRest, DeleteSessionError, ReloadSessionError } from './rest';
-import { openDirPicker } from './dirpicker';
+import { VibeRemoteRest, DeleteSessionError, ReloadSessionError, RestError } from './rest';
+import { openDirPicker, type PickedSession } from './dirpicker';
+import { confirmDeleteSession, deleteWorktreeFlow, openNewWorktreeDialog, openWorktreeSessionDialog } from './worktree-dialogs';
+import { worktreeErrorText } from './worktree-name';
 import { openMachineManager } from './machines';
 import { t, toggleLocale, getLocale, onLocaleChange } from './i18n';
 import { fitWhenVisible, dimensionsWhenVisible } from './terminal-layout';
 import { attachMacClipboardShortcuts } from './terminal-clipboard';
+import { terminalTheme } from './theme';
 import { ChatView } from './chat/view';
 import { nextDot, type ActivityEvent, type Dot, type RestSnapshot } from './chat/activity';
+import { ScreenWatch, writeWatched } from './terminal-activity';
 import type { Prompt } from './chat/types';
+import { renderSidebar as renderSidebarView, renderToolbarTitle, rendererIcon, type SidebarModel, type SidebarActions } from './sidebar';
+import { buildTree, countActiveSessionsAt, nextCapability, projectHue, sessionContext, sessionProject, notificationTitle, visibleSessions, type Capability, type TreeProject, type TreeSession, type TreeWorktree } from './tree';
+import { installShortcuts } from './shortcuts';
+import { closeMenu } from './menu';
 
 // Declared by preload
 
@@ -32,6 +40,7 @@ interface SessionView {
   banner: HTMLElement; // reconnect banner overlay, hidden by default
   activity: Dot; // sidebar dot state
   suppressUntil: number; // ms timestamp: ignore onData activity until then (attach repaint)
+  screen: ScreenWatch; // the screen as it was when the session went to the background (terminal-activity.ts)
   warnedProto: boolean; // already told the user this daemon is older than the client
 }
 
@@ -58,6 +67,14 @@ const rests = new Map<string, VibeRemoteRest>(); // machineKey -> REST client
 const views = new Map<string, AnyView>(); // view key -> open session view
 const machineSessions = new Map<string, SessionInfo[]>(); // machineKey -> sessions (REST)
 const machineOnline = new Map<string, boolean>(); // machineKey -> reachable
+// Last GET /api/v1/projects result per machine: a project array (v4 daemon), or
+// null (old daemon, 404). A failed request keeps the previous value (d7). The
+// built tree and capability are derived from this (design 6.4).
+const machineProjects = new Map<string, Project[] | null>();
+const machineCaps = new Map<string, Capability>(); // machineKey -> 'v4' | 'legacy' | 'unknown'
+const machineTrees = new Map<string, TreeProject[]>(); // machineKey -> last built tree
+const COLLAPSED_PROJECTS_KEY = 'vibe-remote.collapsed-projects';
+const collapsedProjects = loadCollapsedProjects(); // elements: `${machineKey}|${projectId}`
 type MachineIssue = 'auth' | 'version' | 'unreachable';
 const machineIssues = new Map<string, MachineIssue>();
 const machineFailures = new Map<string, number>();
@@ -68,23 +85,47 @@ let activeKey: string | null = null;
 let overviewMachineKey: string | null = null;
 // While an inline rename input is open we suppress full sidebar rebuilds:
 // the 5s poll (and onReady/onExit) call renderSidebar(), which wipes and
-// recreates the whole sidebar DOM — that would delete the focused input and
-// its blur would silently commit half-typed text. Paused during editing.
+// recreates the whole sidebar DOM when something it shows has changed — that
+// would delete the focused input and its blur would silently commit
+// half-typed text. Paused during editing.
 let renamingActive = false;
+// A session was to get the keyboard while a rename had it (focusView): the
+// user pressed another session's name, or a prompt arrived. Carried out when
+// the rename is over (focusAfterRename).
+let focusHeldByRename = false;
 // Sessions with a Reload in flight, keyed by viewKey(machine, sessionId).
 // Session-level rather than per-button because the sidebar is rebuilt from
 // several paths (5s poll, onReady/onExit, locale switch, and Reload's own
 // refresh) — a fresh button would come back enabled and let the user fire a
 // second respawn-pane at the same pane while the first is still running.
 const reloadingSessions = new Set<string>();
+// Worktrees with a removal request in flight, keyed `${machineKey}|${path}`.
+// Kept here for the same reason: the row is rebuilt while the daemon is still
+// ending the sessions and deleting the directory, and has to keep saying so
+// (and keep its entries off, so the removal cannot be asked for twice).
+const removingWorktrees = new Set<string>();
 // Chat sessions not open here get their sidebar dot from the 5s REST poll
 // (activitySeq / epoch / state, R16.4). Keyed by viewKey; open views keep
 // their own `activity` from live frames instead.
 const sessionDots = new Map<string, Dot>();
 const restSnapshots = new Map<string, RestSnapshot>();
-// Every refresh captures a generation. A newer refresh or machine-list edit
-// invalidates older in-flight requests without serializing the 5s poll.
+// Which answers of the REST refresh may still be applied.
+//
+// machineRefreshGeneration: a refresh asked for by an action (a session became
+// ready, something was deleted, a rename…) and a machine-list edit start a new
+// generation, and answers to requests of an older one are dropped — what they
+// say predates the action. The 5 s poll does NOT start a generation: a
+// repository whose git hangs makes the daemon answer /projects after its own
+// 5 s timeout, later than the next poll, and a host that stopped answering
+// fails after the 8 s deadline; were each poll to invalidate the previous one,
+// none of those answers would ever be applied.
+//
+// refreshApplied: within a generation, the answers of one machine to one kind
+// of request (sessions, projects) are applied in the order the requests were
+// sent; one that arrives after a later request has been answered is dropped.
 let machineRefreshGeneration = 0;
+let refreshSeq = 0;
+const refreshApplied = new Map<string, number>(); // `${machineKey}|${kind}` -> seq of the last answer applied
 let statusMessageTimer: ReturnType<typeof setTimeout> | null = null;
 
 const machineKey = (m: MachineConfig) => `${m.addr}:${m.port}`;
@@ -94,25 +135,6 @@ const viewKey = (m: MachineConfig, sid: string) => `${machineKey(m)}::${sid}`;
 // mistaken for the next one; `ready` re-keys it to viewKey(machine, id).
 let creatingSeq = 0;
 const creatingKey = (m: MachineConfig) => `${machineKey(m)}::#new-${++creatingSeq}`;
-
-function rendererIcon(name: 'machine' | 'terminal' | 'chat' | 'branch' | 'chevron' | 'reload' | 'close'): SVGSVGElement {
-  const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
-  svg.setAttribute('viewBox', '0 0 20 20');
-  svg.setAttribute('aria-hidden', 'true');
-  const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
-  const paths = {
-    machine: 'M4 3.5h12a1.5 1.5 0 0 1 1.5 1.5v10A1.5 1.5 0 0 1 16 16.5H4A1.5 1.5 0 0 1 2.5 15V5A1.5 1.5 0 0 1 4 3.5Zm-1.5 6h15M5.5 6.5h.01m2.49 0h.01m-2.51 6h.01m2.49 0h.01',
-    terminal: 'M4.5 5.5 8 9l-3.5 3.5M10 13h5.5',
-    chat: 'M4 4.5h12A1.5 1.5 0 0 1 17.5 6v6.5A1.5 1.5 0 0 1 16 14h-6l-3.5 2.5V14H4a1.5 1.5 0 0 1-1.5-1.5V6A1.5 1.5 0 0 1 4 4.5Z',
-    branch: 'M6 3.5v9.25A3.75 3.75 0 0 0 9.75 16.5H14M6 6.5h5A3 3 0 0 0 14 3.5v0M4 3.5h4m4 0h4m-4 13h4',
-    chevron: 'm7 5 5 5-5 5',
-    reload: 'M15.5 6.4A6.5 6.5 0 1 0 16.2 12M15.5 6.4V2.8m0 3.6h-3.6',
-    close: 'M5.5 5.5l9 9m0-9-9 9',
-  };
-  path.setAttribute('d', paths[name]);
-  svg.appendChild(path);
-  return svg;
-}
 
 function loadCollapsedMachines(): Set<string> {
   try {
@@ -125,6 +147,19 @@ function loadCollapsedMachines(): Set<string> {
 
 function persistCollapsedMachines() {
   localStorage.setItem(COLLAPSED_MACHINES_KEY, JSON.stringify([...collapsedMachines]));
+}
+
+function loadCollapsedProjects(): Set<string> {
+  try {
+    const value = JSON.parse(localStorage.getItem(COLLAPSED_PROJECTS_KEY) ?? '[]');
+    return new Set(Array.isArray(value) ? value.filter((item): item is string => typeof item === 'string') : []);
+  } catch {
+    return new Set();
+  }
+}
+
+function persistCollapsedProjects() {
+  localStorage.setItem(COLLAPSED_PROJECTS_KEY, JSON.stringify([...collapsedProjects]));
 }
 
 // --- base64 <-> bytes helpers (UTF-8 safe) ---
@@ -182,6 +217,34 @@ window.vibeRemote?.onNotificationClick?.((tag) => {
   }
 });
 
+// Session-switching keys (R7): ⌘1–9 by position, ⌘⇧[ / ⌘⇧] to cycle. Positions
+// are the sessions the sidebar shows, top to bottom across machines; folded
+// machines and projects are left out. Wired once at load.
+function shortcutSessions(): { machineKey: string; id: string }[] {
+  return visibleSessions(
+    machines.map((m) => {
+      const key = machineKey(m);
+      return { key, collapsed: collapsedMachines.has(key), tree: treeFor(key) };
+    }),
+    collapsedProjects,
+  );
+}
+installShortcuts(window, {
+  blocked: () => renamingActive || document.querySelector('.modal-overlay') !== null,
+  count: () => shortcutSessions().length,
+  activeIndex: () => shortcutSessions().findIndex((s) => `${s.machineKey}::${s.id}` === activeKey),
+  open: (index) => {
+    const target = shortcutSessions()[index];
+    if (!target) return;
+    const machine = machines.find((m) => machineKey(m) === target.machineKey);
+    const session = machineSessions.get(target.machineKey)?.find((s) => s.id === target.id);
+    if (!machine || !session) return;
+    // A row menu left open would point at a row the switch is about to redraw.
+    closeMenu();
+    openExisting(machine, session);
+  },
+});
+
 // wireLanguageToggle wires the sidebar language button and re-renders all
 // dynamically-built UI when the locale switches. Static HTML labels are read
 // through t() at render time, so re-running the render functions is enough —
@@ -237,7 +300,14 @@ let pollingStarted = false;
 function startPolling() {
   if (pollingStarted) return;
   pollingStarted = true;
-  setInterval(refreshAllMachines, 5000);
+  setInterval(pollMachines, 5000);
+}
+
+// pollMachines is the periodic refresh. Unlike a refresh asked for by an
+// action it leaves the requests that are still in flight valid (see
+// machineRefreshGeneration).
+function pollMachines(): Promise<void> {
+  return refreshAllMachines(false, undefined, true);
 }
 
 // rebuildRests rebuilds the machineKey→REST map after the machine list changes
@@ -266,13 +336,24 @@ function wireManageMachinesButton() {
           machineFailures.delete(rk);
           machineRetryAt.delete(rk);
           collapsedMachines.delete(rk);
+          machineProjects.delete(rk);
+          machineCaps.delete(rk);
+          machineTrees.delete(rk);
+          refreshApplied.delete(`${rk}|sessions`);
+          refreshApplied.delete(`${rk}|projects`);
+          for (const pk of [...collapsedProjects]) {
+            if (pk.startsWith(`${rk}|`)) collapsedProjects.delete(pk);
+          }
           // Reload markers are keyed "<machineKey>::<sessionId>"; drop the
           // machine's entries so they can't outlive it.
           for (const marker of [...reloadingSessions]) {
             if (marker.startsWith(`${rk}::`)) reloadingSessions.delete(marker);
           }
+          for (const marker of [...removingWorktrees]) {
+            if (marker.startsWith(`${rk}|`)) removingWorktrees.delete(marker);
+          }
         }
-        if (removedKeys.length > 0) persistCollapsedMachines();
+        if (removedKeys.length > 0) { persistCollapsedMachines(); persistCollapsedProjects(); }
         if (overviewMachineKey && !machines.some((m) => machineKey(m) === overviewMachineKey)) {
           overviewMachineKey = null;
         }
@@ -346,10 +427,12 @@ function wireTerminalResizeObserver() {
   ro.observe(container);
 }
 
-// refreshAllMachines pulls each machine's session list over REST. It is the
-// single reachability signal used by the desktop sidebar.
-async function refreshAllMachines(force = false, targetMachineKey?: string) {
-  const generation = ++machineRefreshGeneration;
+// refreshAllMachines pulls each machine's session list and project tree over
+// REST. It is the single reachability signal used by the desktop sidebar.
+// `poll` is set by the 5 s timer only (pollMachines).
+async function refreshAllMachines(force = false, targetMachineKey?: string, poll = false) {
+  const generation = poll ? machineRefreshGeneration : ++machineRefreshGeneration;
+  const seq = ++refreshSeq;
   const now = Date.now();
   const refreshMachines = machines.filter((machine) => {
     const mk = machineKey(machine);
@@ -357,18 +440,30 @@ async function refreshAllMachines(force = false, targetMachineKey?: string) {
     return force || (machineRetryAt.get(mk) ?? 0) <= now;
   });
 
+  // take reports whether this refresh's answer of one kind may be applied for
+  // a machine, and records it as the latest applied if so.
+  const take = (m: MachineConfig, kind: 'sessions' | 'projects') => {
+    const mk = machineKey(m);
+    if (generation !== machineRefreshGeneration || !machines.some((current) => machineKey(current) === mk)) return false;
+    const key = `${mk}|${kind}`;
+    if (seq <= (refreshApplied.get(key) ?? 0)) return false;
+    refreshApplied.set(key, seq);
+    return true;
+  };
   // Publish each response independently. In particular, a slow / unavailable
   // info endpoint must not delay the session list (or make a healthy machine
   // appear offline after its sessions request succeeds).
-  const isCurrent = (m: MachineConfig) => {
+  // The machine overview page shows the sessions and whether the machine
+  // answers (machineSessions, machineOnline, machineIssues, which sessions are
+  // open here) and nothing of the project tree or the capability: it is
+  // redrawn for the answer about the sessions only. A redraw replaces its
+  // buttons, and a press and its release with one in between lose the click.
+  // Whoever makes the page show something of the tree redraws it for that
+  // answer too.
+  const publish = (m: MachineConfig, kind: 'sessions' | 'projects') => {
     const mk = machineKey(m);
-    return generation === machineRefreshGeneration && machines.some((current) => machineKey(current) === mk);
-  };
-  const publish = (m: MachineConfig) => {
-    const mk = machineKey(m);
-    if (!isCurrent(m)) return;
     renderSidebar();
-    if (overviewMachineKey === mk) {
+    if (kind === 'sessions' && overviewMachineKey === mk) {
       const overviewMachine = machines.find((candidate) => machineKey(candidate) === mk);
       if (overviewMachine) renderMachineOverview(overviewMachine);
     }
@@ -382,24 +477,40 @@ async function refreshAllMachines(force = false, targetMachineKey?: string) {
       if (!rest) return [];
       const sessionsRequest = rest.listSessions()
         .then((sessions) => {
-          if (!isCurrent(m)) return;
+          if (!take(m, 'sessions')) return;
           trackChatActivity(m, sessions);
           machineSessions.set(mk, sessions);
           machineOnline.set(mk, true);
           machineIssues.delete(mk);
           machineFailures.delete(mk);
           machineRetryAt.delete(mk);
+          publish(m, 'sessions');
         })
         .catch((error: unknown) => {
-          if (!isCurrent(m)) return;
+          if (!take(m, 'sessions')) return;
           machineOnline.set(mk, false);
           machineIssues.set(mk, classifyMachineIssue(error));
           const failures = (machineFailures.get(mk) ?? 0) + 1;
           machineFailures.set(mk, failures);
           machineRetryAt.set(mk, Date.now() + Math.min(5000 * (2 ** (failures - 1)), 60000));
+          publish(m, 'sessions');
+        });
+      // The project tree is published independently (design 6.4): a success sets
+      // v4 and stores the tree, a 404 marks the machine legacy, and a transient
+      // failure keeps the previous capability and tree (nextCapability, d7).
+      const projectsRequest = rest.listProjects()
+        .then((projects) => {
+          if (!take(m, 'projects')) return;
+          machineCaps.set(mk, nextCapability(machineCaps.get(mk) ?? 'unknown', projects));
+          machineProjects.set(mk, projects);
+          publish(m, 'projects');
         })
-        .finally(() => publish(m));
-      return [sessionsRequest];
+        .catch((error: unknown) => {
+          if (!take(m, 'projects')) return;
+          machineCaps.set(mk, nextCapability(machineCaps.get(mk) ?? 'unknown', error instanceof Error ? error : new Error(String(error))));
+          publish(m, 'projects');
+        });
+      return [sessionsRequest, projectsRequest];
     }),
   );
 }
@@ -420,7 +531,7 @@ function trackChatActivity(machine: MachineConfig, sessions: SessionInfo[]) {
     const r = nextDot(sessionDots.get(key) ?? 'none', { kind: 'rest', prev, next }, { isActive: false, windowFocused: document.hasFocus() });
     sessionDots.set(key, r.dot);
     if (r.notify && notificationsEnabled()) {
-      const title = `${machine.name} · ${s.title || s.id}`;
+      const title = notifyTitleFor(machine, s.id);
       notifyDesktop(title, t('session.waitingFallback'), key, (result) => {
         const after = nextDot(sessionDots.get(key) ?? 'none', { kind: 'notifyResult', result }, { isActive: key === activeKey, windowFocused: document.hasFocus() });
         sessionDots.set(key, after.dot);
@@ -449,7 +560,7 @@ function applyViewActivity(view: ChatView, ev: ActivityEvent, prompt?: Prompt) {
       : prompt?.kind === 'question'
         ? t('chat.notify.question')
         : prompt?.toolName ? t('chat.notify.tool', { tool: prompt.toolName }) : t('session.waitingFallback');
-    notifyDesktop(`${view.machine.name} · ${sessionDisplayTitle(view.machine, view.sessionId)}`, body, view.key, (result) => {
+    notifyDesktop(notifyTitleFor(view.machine, view.sessionId), body, view.key, (result) => {
       applyViewActivity(view, { kind: 'notifyResult', result });
     });
   }
@@ -678,11 +789,50 @@ function isLoopbackAddress(address: string): boolean {
   return normalized === 'localhost' || normalized === '::1' || normalized.startsWith('127.');
 }
 
+// sessionCountAt answers the new-session dialogs' "is a session already running
+// in this directory" for one machine (the -c note, d24).
+function sessionCountAt(machine: MachineConfig): (workdir: string) => number {
+  return (workdir) => countActiveSessionsAt(machineSessions.get(machineKey(machine)) ?? [], workdir);
+}
+
 async function startNewSession(machine: MachineConfig, initialMode?: SessionMode) {
-  const picked = await openDirPicker(machine, initialMode);
-  if (!picked) return;
-  if (picked.ui === 'chat') openChatSession(machine, '', picked.workdir, picked.flags, picked.mode);
-  else openSession(machine, '', picked.workdir, picked.flags, picked.mode);
+  const picked = await openDirPicker(machine, initialMode, { sessionCountAt: sessionCountAt(machine) });
+  if (picked) startPicked(machine, picked);
+}
+
+// startNewWorktree is "New worktree" on a project row (R3): the dialog asks for
+// the name, then the session is created like any other, with the name on the
+// attach so the daemon creates the branch and the directory.
+async function startNewWorktree(machine: MachineConfig, project: TreeProject) {
+  const picked = await openNewWorktreeDialog(machine, project);
+  if (picked) startPicked(machine, picked);
+}
+
+// startSessionInWorktree is "New session" on a worktree row, or on the row of a
+// project that has only one directory (R4.1).
+async function startSessionInWorktree(machine: MachineConfig, project: TreeProject, worktree: TreeWorktree) {
+  const picked = await openWorktreeSessionDialog(machine, project, worktree, { sessionCountAt: sessionCountAt(machine) });
+  if (picked) startPicked(machine, picked);
+}
+
+// What a create asked the daemon to name its new worktree, kept to word an
+// error frame that refuses it.
+type NamedWorktree = { name: string; path?: string };
+
+// startPicked creates the session a new-session dialog was confirmed with.
+function startPicked(machine: MachineConfig, picked: PickedSession) {
+  const named = picked.worktreeName ? { name: picked.worktreeName, path: picked.worktreePath } : undefined;
+  if (picked.ui === 'chat') openChatSession(machine, '', picked.workdir, picked.flags, picked.mode, named);
+  else openSession(machine, '', picked.workdir, picked.flags, picked.mode, undefined, named);
+}
+
+// attachErrorText words an attach error frame for the user. The worktree codes
+// read the way they do in the dialog (the frame has no `conflict`, so a
+// directory/file clash shows as "branch … already exists"); anything else
+// keeps the daemon's message.
+function attachErrorText(msg: string, code: string | undefined, named: NamedWorktree | undefined): string {
+  if (!code || !named) return msg;
+  return worktreeErrorText(code, { branch: named.name, path: named.path }) ?? msg;
 }
 
 function showMachineOverview(machine: MachineConfig) {
@@ -704,15 +854,9 @@ function makeTerminal(): { term: Terminal; fit: FitAddon } {
   const term = new Terminal({
     fontSize: 14,
     fontFamily: "'JetBrains Mono', 'SF Mono', 'Fira Code', 'Cascadia Code', monospace",
-    theme: {
-      background: '#FBFAF7', foreground: '#2B2A28', cursor: '#AD5048',
-      selectionBackground: '#DED7CB',
-      black: '#3B3A37', red: '#C0564B', green: '#5E8C58', yellow: '#B07D2E',
-      blue: '#4A72B0', magenta: '#9A5BA0', cyan: '#3E8C8C', white: '#6B6862',
-      brightBlack: '#9B978E', brightRed: '#C0564B', brightGreen: '#5E8C58',
-      brightYellow: '#B07D2E', brightBlue: '#4A72B0', brightMagenta: '#9A5BA0',
-      brightCyan: '#3E8C8C', brightWhite: '#2B2A28',
-    },
+    // Background, foreground, cursor and selection follow the app theme; the
+    // 16 ANSI colors are fixed (theme.ts).
+    theme: terminalTheme(),
     cursorBlink: true, scrollback: 10000, allowProposedApi: true,
     // claude turns on mouse reporting, which otherwise makes xterm forward every
     // drag to the app and disable its own selection — getSelection() would always
@@ -736,7 +880,7 @@ function openExisting(machine: MachineConfig, session: SessionInfo): AnyView {
 
 // openChatSession creates a ChatView (its own WS + transcript) and attaches
 // with ui:'chat'. sessionId '' means create a brand-new chat session.
-function openChatSession(machine: MachineConfig, sessionId: string, workdir?: string, flags?: string[], mode: SessionMode = 'normal'): AnyView {
+function openChatSession(machine: MachineConfig, sessionId: string, workdir?: string, flags?: string[], mode: SessionMode = 'normal', named?: NamedWorktree): AnyView {
   const key = sessionId ? viewKey(machine, sessionId) : creatingKey(machine);
   const existing = views.get(key);
   if (existing) {
@@ -797,8 +941,9 @@ function openChatSession(machine: MachineConfig, sessionId: string, workdir?: st
     updateStatusBar(t('status.sessionExited', { code }));
     refreshAllMachines();
   };
-  client.onError = (msg, fatal) => {
-    console.error(`[${machine.name}]`, msg);
+  client.onError = (raw, fatal, code) => {
+    console.error(`[${machine.name}]`, raw);
+    const msg = attachErrorText(raw, code, named);
     if (fatal && dropFailedCreate(view, msg)) return;
     if (fatal) {
       view.banner.style.display = 'none';
@@ -809,7 +954,7 @@ function openChatSession(machine: MachineConfig, sessionId: string, workdir?: st
   };
 
   client.connect();
-  client.attach(sessionId, 80, 24, workdir, flags, sessionId ? undefined : mode, { ui: 'chat' });
+  client.attach(sessionId, 80, 24, workdir, flags, sessionId ? undefined : mode, { ui: 'chat', worktreeName: named?.name });
   setActive(view.key);
   return view;
 }
@@ -817,7 +962,7 @@ function openChatSession(machine: MachineConfig, sessionId: string, workdir?: st
 // openSession creates a new SessionView (its own WS + xterm) and attaches.
 // sessionId '' means create a brand-new session with the given workdir.
 // `opts.handoffFrom` creates the terminal session that takes over a chat session (R14).
-function openSession(machine: MachineConfig, sessionId: string, workdir?: string, flags?: string[], mode: SessionMode = 'normal', opts?: AttachOptions): AnyView {
+function openSession(machine: MachineConfig, sessionId: string, workdir?: string, flags?: string[], mode: SessionMode = 'normal', opts?: AttachOptions, named?: NamedWorktree): AnyView {
   const key = sessionId ? viewKey(machine, sessionId) : creatingKey(machine);
   const existing = views.get(key);
   if (existing) {
@@ -848,7 +993,7 @@ function openSession(machine: MachineConfig, sessionId: string, workdir?: string
   const banner = document.createElement('div');
   banner.className = 'reconnect-banner';
   banner.style.display = 'none';
-  const view: SessionView = { ui: 'terminal', key, machine, sessionId, client, terminal: term, fitAddon: fit, container, banner, activity: 'none', suppressUntil: 0, warnedProto: false };
+  const view: SessionView = { ui: 'terminal', key, machine, sessionId, client, terminal: term, fitAddon: fit, container, banner, activity: 'none', suppressUntil: 0, screen: new ScreenWatch(term), warnedProto: false };
   views.set(key, view);
 
   // Classed so a locale switch can retranslate banners that already exist:
@@ -872,16 +1017,24 @@ function openSession(machine: MachineConfig, sessionId: string, workdir?: string
 
   // Server PTY bytes → terminal (Uint8Array so xterm decodes UTF-8 itself)
   client.onData = (payload: string) => {
-    term.write(base64ToBytes(payload));
-    // Mark background activity as a dot — but not during the post-attach
-    // suppression window (tmux full repaint would false-trigger it), and not
-    // for the session the user is actively viewing.
-    if (view.key !== activeKey && Date.now() >= view.suppressUntil) {
-      if (view.activity === 'none') {
+    const bytes = base64ToBytes(payload);
+    // The session being looked at shows no dot, a dot that is lit already
+    // cannot be lit by output again, and the full repaint that follows an
+    // attach is not news: the bytes go to xterm and that is all.
+    if (view.key === activeKey || view.activity !== 'none' || Date.now() < view.suppressUntil) {
+      term.write(bytes);
+      return;
+    }
+    // A background session with no dot: "new messages" if the screen is
+    // another one once xterm has taken these bytes in. Bytes alone do not say
+    // so — tmux repaints every client when any session is created or renamed.
+    // The bytes are written as they came either way.
+    writeWatched(term, bytes, view.screen, () => {
+      if (view.key !== activeKey && view.activity === 'none') {
         view.activity = 'output';
         renderSidebar();
       }
-    }
+    });
   };
 
   client.onReady = (sid: string, _workdir: string, proto: number) => {
@@ -901,6 +1054,7 @@ function openSession(machine: MachineConfig, sessionId: string, workdir?: string
     // Suppress activity marking briefly so the tmux full repaint on (re)attach
     // doesn't false-light the dot. 500ms is an empirical, tunable value.
     view.suppressUntil = Date.now() + 500;
+    view.screen.forget(); // the screen was just reset; compare from what the repaint leaves
     refreshAllMachines();
     updateStatusBar();
     // An older daemon accepts the attach but silently ignores what it doesn't
@@ -930,8 +1084,9 @@ function openSession(machine: MachineConfig, sessionId: string, workdir?: string
     updateStatusBar(t('status.sessionExited', { code }));
     refreshAllMachines();
   };
-  client.onError = (msg, fatal) => {
-    console.error(`[${machine.name}]`, msg);
+  client.onError = (raw, fatal, code) => {
+    console.error(`[${machine.name}]`, raw);
+    const msg = attachErrorText(raw, code, named);
     if (fatal && dropFailedCreate(view, msg)) return;
     // Show the error to the user instead of leaving a blank terminal.
     if (view.terminal) view.terminal.write(`\r\n\x1b[31m[${t('terminal.error', { msg })}]\x1b[0m\r\n`);
@@ -953,14 +1108,14 @@ function openSession(machine: MachineConfig, sessionId: string, workdir?: string
       }
       // waiting = 需要用户介入，可选弹桌面通知。
       if (kind === 'waiting' && notificationsEnabled()) {
-        notifyDesktop(`${machine.name} · ${sessionDisplayTitle(machine, view.sessionId)}`, message || t('session.waitingFallback'));
+        notifyDesktop(notifyTitleFor(machine, view.sessionId), message || t('session.waitingFallback'));
       }
     }
   };
 
   client.connect();
   const dims = dimensionsWhenVisible(container, () => fit.proposeDimensions());
-  client.attach(sessionId, dims?.cols || 80, dims?.rows || 24, workdir, flags, sessionId ? undefined : mode, opts);
+  client.attach(sessionId, dims?.cols || 80, dims?.rows || 24, workdir, flags, sessionId ? undefined : mode, named ? { ...opts, worktreeName: named.name } : opts);
 
   setActive(view.key);
   return view;
@@ -1067,12 +1222,24 @@ async function recheckChat(view: ChatView) {
   }
 }
 
-// sessionDisplayTitle is the name the sidebar shows for a session (custom
-// name, else the workdir-derived default from the server), falling back to the
-// raw id when the session list hasn't caught up yet (e.g. a brand-new session).
+// sessionDisplayTitle is the name the sidebar shows for a session: the tree's
+// display name (custom name or workdir-derived default, with duplicate numbering
+// like "fix-login 2"), falling back to the server title, then the raw id when
+// the session list hasn't caught up yet (e.g. a brand-new session).
 function sessionDisplayTitle(machine: MachineConfig, sessionId: string): string {
+  const ctx = sessionContext(treeFor(machineKey(machine)), sessionId);
+  if (ctx) return ctx.name;
   const session = machineSessions.get(machineKey(machine))?.find((s) => s.id === sessionId);
   return session?.title || sessionId || 'vibe-remote';
+}
+
+// notifyTitleFor builds the notification title "<machine> · <project> / <branch>
+// · <session>" (design 7.4), falling back to the machine + session name when the
+// session is not yet in the tree.
+function notifyTitleFor(machine: MachineConfig, sessionId: string): string {
+  const ctx = sessionContext(treeFor(machineKey(machine)), sessionId);
+  if (ctx) return notificationTitle(machine.name, ctx);
+  return `${machine.name} · ${sessionDisplayTitle(machine, sessionId)}`;
 }
 
 // focusView puts the keyboard in a session view: the terminal, or a chat
@@ -1084,28 +1251,38 @@ function sessionDisplayTitle(machine: MachineConfig, sessionId: string): string 
 // started, close it (blur commits), and the new name would be typed into the
 // session instead (X8).
 function focusView(view: AnyView) {
-  if (renamingActive) return;
+  if (renamingActive) {
+    focusHeldByRename = true;
+    return;
+  }
   if (view.ui === 'chat') view.focus();
   else view.terminal.focus();
 }
 
 // focusAfterRename: the rename input is gone (Enter, Esc, or a click elsewhere
 // committed it) and the keyboard it had goes back to the current session —
-// unless the user already put it somewhere (the click landed in a field), or
-// a dialog is open (X10).
+// unless the user already put it somewhere (the click landed in a field, Tab
+// moved it to another control), or a dialog is open (X10).
+// The sidebar hands the focus back to the same control whenever it is rebuilt,
+// so after the press on another session's name that ended the rename, the
+// focus is on that name, not nowhere. That press asked for the session
+// (focusHeldByRename), and the session gets the keyboard.
 function focusAfterRename() {
-  const el = document.activeElement;
-  if (el && el !== document.body) return;
+  const held = focusHeldByRename;
+  focusHeldByRename = false;
   if (document.querySelector('.modal-overlay')) return;
+  const el = document.activeElement;
+  const onSidebar = held && el instanceof HTMLElement && el.closest('#machine-list') !== null;
+  if (el && el !== document.body && !onSidebar) return;
   const view = activeKey ? views.get(activeKey) : undefined;
   if (view) focusView(view);
 }
 
-// selectOpenSession handles a click on the sidebar name of a session that is
-// already open. The current session is already on screen: there is nothing to
-// switch or redraw, the keyboard just goes back to it. (Going through
-// setActive here rebuilt the sidebar on every click, so the second click of a
-// double click replaced the label the rename was about to start on.)
+// selectOpenSession handles a click on a session's name in the sidebar
+// (SidebarActions.open). The current session is already on screen: there is
+// nothing to switch or redraw, the keyboard just goes back to it. (Going
+// through setActive here rebuilt the sidebar on every click, so the second
+// click of a double click replaced the label the rename was about to start on.)
 function selectOpenSession(machine: MachineConfig, session: SessionInfo) {
   const view = views.get(viewKey(machine, session.id));
   if (view && view.key === activeKey) focusView(view);
@@ -1122,11 +1299,14 @@ function setActive(key: string) {
   if (activeView && activeView.activity !== 'none') {
     activeView.activity = 'none';
   }
+  // What is on its screen from now on is seen as it comes; nothing to compare with.
+  if (activeView?.ui === 'terminal') activeView.screen.forget();
   sessionDots.delete(key);
   if (activeView) {
     const activeMachineKey = machineKey(activeView.machine);
     if (collapsedMachines.delete(activeMachineKey)) persistCollapsedMachines();
   }
+  expandActiveProject(key);
   for (const [k, v] of views) {
     v.container.style.display = k === key ? 'block' : 'none';
   }
@@ -1145,261 +1325,303 @@ function setActive(key: string) {
     });
   }
   renderSidebar();
+  // In a long sidebar the row of the session now shown can be outside the part
+  // that shows (switched to with ⌘1–9 / ⌘⇧[ / ⌘⇧], or just created). Only here,
+  // when the session shown changes: a refresh must not move the list while the
+  // user is reading another part of it.
+  document.querySelector<HTMLElement>('#machine-list .session-item.active')?.scrollIntoView?.({ block: 'nearest' });
   updateStatusBar();
 }
 
 // --- Sidebar ---
 
+// What the sidebar shows right now: the fingerprint of the model it was last
+// built from, and the machine entries its rows hand to their handlers. While
+// the next model has the same ones, renderSidebar leaves the DOM alone. null:
+// nothing was rendered yet, or the DOM is no longer what the last render left
+// (a rename input took the place of a label), so the next render rebuilds.
+let sidebarShown: { print: string; machines: MachineConfig[] } | null = null;
+
+// sidebarFingerprint puts everything the sidebar's rendering reads into one
+// string (sidebar.ts reads its model, the language through t(), and nothing
+// else): two models with the same fingerprint draw the same sidebar.
+//
+// Left out on purpose: activitySeq, epoch and state of a chat session. Nothing
+// in the sidebar shows them and none of its handlers reads them; what they mean
+// for the row is its dot (trackChatActivity), which is in. They move with every
+// poll while claude works — with them in, a busy session in the background
+// would have the list rebuilt on each poll for nothing.
+//
+// Whoever makes the rendering read something new adds it here; a state that is
+// missing means a sidebar that stays as it was (test-sidebar-refresh has one
+// case per kind of change).
+function sidebarFingerprint(model: SidebarModel): string {
+  const session = (mk: string) => (s: TreeSession) => ({
+    name: s.name,
+    gone: s.gone,
+    info: { ...s.info, activitySeq: undefined, epoch: undefined, state: undefined },
+    dot: model.dotOf(mk, s.id),
+    reloading: model.isReloading(`${mk}::${s.id}`),
+  });
+  return JSON.stringify({
+    locale: getLocale(),
+    activeKey: model.activeKey,
+    overviewMachineKey: model.overviewMachineKey,
+    machines: model.machines.map((m) => ({
+      name: m.machine.name,
+      key: m.key,
+      online: m.online,
+      collapsed: m.collapsed,
+      cap: m.cap,
+      tree: m.tree.map((p) => ({
+        ...p,
+        collapsed: model.collapsedProjects.has(`${m.key}|${p.id}`),
+        worktrees: p.worktrees.map((w) => ({ ...w, removing: model.isRemoving?.(m.key, w.path) ?? false, sessions: w.sessions.map(session(m.key)) })),
+        sessions: p.sessions.map(session(m.key)),
+      })),
+    })),
+  });
+}
+
+// renderSidebar brings the sidebar in line with the app's state. It is called
+// after anything that may have changed what the sidebar shows — every answer of
+// a refresh among them, two per machine every 5 s — and rebuilds the list only
+// when something it shows did change. A rebuild replaces every row: a press
+// and its release that have one in between land on two different elements, and
+// the click (or the second click of a double click) is never delivered.
 function renderSidebar() {
   // Skip rebuilds while an inline rename is in progress (see renamingActive).
   if (renamingActive) return;
   const container = document.getElementById('machine-list')!;
-  container.textContent = '';
+  const model = buildSidebarModel();
+  const print = sidebarFingerprint(model);
+  // The rows hold their machine entry (name, address, token) for their
+  // handlers: an edited machine is a new entry even when it looks the same.
+  const sameMachines = sidebarShown?.machines.length === model.machines.length
+    && model.machines.every((m, i) => m.machine === sidebarShown!.machines[i]);
+  if (sidebarShown?.print === print && sameMachines) return;
+  renderSidebarView(container, model, sidebarActions);
+  sidebarShown = { print, machines: model.machines.map((m) => m.machine) };
+}
 
-  for (const machine of machines) {
-    const group = document.createElement('div');
-    group.className = 'machine-group';
+// treeFor returns the latest tree for a machine, building it if the sidebar has
+// not rendered since the last data change.
+function treeFor(mk: string): TreeProject[] {
+  return machineTrees.get(mk)
+    ?? buildTree(machineSessions.get(mk) || [], machineProjects.has(mk) ? machineProjects.get(mk)! : null);
+}
 
-    const sessions = machineSessions.get(machineKey(machine)) || [];
-    const collapsed = collapsedMachines.has(machineKey(machine));
-    const groupHeader = document.createElement('div');
-    groupHeader.className = 'machine-group-header';
-    const toggle = document.createElement('button');
-    toggle.type = 'button';
-    toggle.className = 'machine-toggle';
-    toggle.appendChild(rendererIcon('chevron'));
-    toggle.setAttribute('aria-expanded', String(!collapsed));
-    toggle.setAttribute('aria-label', t('a11y.actionTarget', { action: collapsed ? t('sidebar.expand') : t('sidebar.collapse'), target: machine.name }));
-    toggle.disabled = sessions.length === 0;
-    toggle.addEventListener('click', () => {
-      if (collapsedMachines.has(machineKey(machine))) collapsedMachines.delete(machineKey(machine));
-      else collapsedMachines.add(machineKey(machine));
-      persistCollapsedMachines();
-      renderSidebar();
-    });
-    const nameRow = document.createElement('button');
-    nameRow.type = 'button';
-    const mKey = machineKey(machine);
-    const machineState = machineOnline.get(mKey);
-    const isOverview = mKey === overviewMachineKey;
-    nameRow.className = 'machine-name' + (isOverview ? ' selected' : '');
-    if (isOverview) nameRow.setAttribute('aria-current', 'page');
-    nameRow.setAttribute('aria-label', `${machine.name} · ${machineState === true ? t('workspace.connected') : machineState === false ? t('workspace.offline') : t('status.connecting')}`);
-    const nameSpan = document.createElement('span');
-    nameSpan.className = 'machine-name-label';
-    nameSpan.textContent = machine.name;
-    const machineIcon = document.createElement('span');
-    machineIcon.className = `machine-kind-icon ${machineState === true ? 'connected' : machineState === false ? 'error' : 'checking'}`;
-    machineIcon.appendChild(rendererIcon('machine'));
-    const sessionCount = document.createElement('span');
-    sessionCount.className = 'machine-session-count';
-    sessionCount.textContent = String(sessions.length);
-    sessionCount.setAttribute('aria-hidden', 'true');
-    nameRow.append(machineIcon, nameSpan, sessionCount);
-    nameRow.addEventListener('click', () => {
-      showMachineOverview(machine);
-    });
-
-    const list = document.createElement('div');
-    list.className = 'session-list';
-    list.hidden = collapsed;
-
-    for (const s of sessions) {
-      const key = viewKey(machine, s.id);
-      const item = document.createElement('div');
-      item.className = 'session-item' + (key === activeKey ? ' active' : '');
-      item.dataset.ui = s.ui ?? 'terminal';
-
-      const label = document.createElement('button');
-      label.type = 'button';
-      label.className = 'session-label';
-      const sessionIcon = document.createElement('span');
-      sessionIcon.className = 'session-kind-icon';
-      sessionIcon.appendChild(rendererIcon(s.ui === 'chat' ? 'chat' : 'terminal'));
-      const sessionText = document.createElement('span');
-      sessionText.className = 'session-label-text';
-      sessionText.textContent = s.title || (s.workdir ? s.workdir.split('/').pop() : '') || s.id;
-      label.append(sessionIcon, sessionText);
-      if (s.ui === 'chat') {
-        const badge = document.createElement('span');
-        badge.className = 'session-ui-badge';
-        badge.textContent = t('chat.badge');
-        label.appendChild(badge);
-      }
-      label.title = s.workdir || s.id;
-      // Click vs dblclick: dblclick=rename. A dblclick fires as click→click→
-      // dblclick, so a naive click handler would open (and WS-connect) an
-      // unopened session before the rename even starts. Only unopened sessions
-      // pay a short delay so an incoming dblclick can cancel the open; already-
-      // open sessions switch instantly (openSession is an idempotent setActive,
-      // no side effects), keeping the primary interaction zero-latency.
-      let openTimer: number | undefined;
-      label.addEventListener('click', () => {
-        if (views.has(key)) {
-          selectOpenSession(machine, s); // already open: instant, no delay
-        } else {
-          window.clearTimeout(openTimer);
-          openTimer = window.setTimeout(() => openExisting(machine, s), 220);
-        }
-      });
-      label.addEventListener('dblclick', (e) => {
-        e.stopPropagation();
-        window.clearTimeout(openTimer); // cancel any pending open for this label
-        startInlineRename(machine, s, label);
-      });
-
-      const dot = document.createElement('span');
-      dot.className = 'session-unread';
-      dot.setAttribute('aria-hidden', 'true');
-      const openView = views.get(key);
-      const act = openView?.activity ?? sessionDots.get(key) ?? 'none';
-      // The current session shows no dot — except a chat session that needs
-      // the user while the window is in the background (R16.3).
-      if (act === 'none' || (key === activeKey && !(s.ui === 'chat' && act === 'waiting'))) {
-        dot.classList.add('hidden');
-        item.dataset.dot = 'none';
-      } else {
-        dot.classList.add(act); // 'output' | 'idle' | 'waiting'
-        item.dataset.dot = act;
-      }
-
-      const reload = document.createElement('button');
-      reload.type = 'button';
-      reload.className = 'session-action session-reload';
-      reload.appendChild(rendererIcon('reload'));
-      reload.title = t('session.reloadTitle');
-      reload.setAttribute('aria-label', t('a11y.actionTarget', { action: t('session.reloadTitle'), target: s.title || s.id }));
-      // Reflect any in-flight Reload for this session, so a sidebar rebuild
-      // mid-request doesn't hand back an enabled button.
-      const reloadKey = viewKey(machine, s.id);
-      if (reloadingSessions.has(reloadKey)) {
-        reload.disabled = true;
-        reload.setAttribute('aria-busy', 'true');
-      }
-      reload.addEventListener('click', async (e) => {
-        e.stopPropagation();
-        if (reloadingSessions.has(reloadKey)) return;
-        const name = s.title || (s.workdir ? s.workdir.split('/').pop() : '') || s.id;
-        if (s.ui === 'chat') {
-          // Chat: 202 now, the outcome later through chat_state (d10).
-          if (!window.confirm(t('chat.reload.confirm', { name }))) return;
-          void reloadChat(machine, s.id, name);
-          return;
-        }
-        if (!window.confirm(t('session.reloadConfirm', { name }))) return;
-        reloadingSessions.add(reloadKey);
-        reload.disabled = true;
-        reload.setAttribute('aria-busy', 'true');
-        try {
-          await rests.get(machineKey(machine))!.reloadSession(s.id);
-          updateStatusBar(t('session.reloadSuccess', { name }));
-          reloadingSessions.delete(reloadKey);
-          await refreshAllMachines();
-        } catch (error) {
-          updateStatusBar(t('session.reloadFailed', {
-            msg: error instanceof Error ? error.message : String(error),
-          }));
-          reloadingSessions.delete(reloadKey);
-        } finally {
-          // This button may already be detached by a rebuild; harmless either way.
-          reload.disabled = false;
-          reload.removeAttribute('aria-busy');
-        }
-      });
-
-      const close = document.createElement('button');
-      close.type = 'button';
-      close.className = 'session-action session-close';
-      close.appendChild(rendererIcon('close'));
-      close.title = t('session.deleteTitle');
-      close.setAttribute('aria-label', t('a11y.actionTarget', { action: t('session.deleteTitle'), target: s.title || s.id }));
-      // Deleting truly kills the remote tmux + claude; the current screen is
-      // lost and unrecoverable. Confirm first (mirrors machine-delete in
-      // machines.ts), showing the session's display name so a mis-hover on the
-      // wrong row is caught before the DELETE fires.
-      close.addEventListener('click', (e) => {
-        e.stopPropagation();
-        const name = s.title || (s.workdir ? s.workdir.split('/').pop() : '') || s.id;
-        if (!window.confirm(deleteConfirmText(s, name))) {
-          return;
-        }
-        closeSession(machine, s.id);
-      });
-
-      item.append(label, dot, reload, close);
-      list.appendChild(item);
+// expandActiveProject uncollapses the project that holds the session being shown
+// so it is visible after setActive (design 7.4).
+function expandActiveProject(key: string) {
+  const sep = key.indexOf('::');
+  if (sep < 0) return;
+  const mk = key.slice(0, sep);
+  const sid = key.slice(sep + 2);
+  for (const p of treeFor(mk)) {
+    const here = p.sessions.some((s) => s.id === sid) || p.worktrees.some((w) => w.sessions.some((s) => s.id === sid));
+    if (here) {
+      if (collapsedProjects.delete(`${mk}|${p.id}`)) persistCollapsedProjects();
+      return;
     }
-
-    groupHeader.append(toggle, nameRow);
-    group.append(groupHeader, list);
-    container.appendChild(group);
   }
 }
 
-// deleteConfirmText is what the delete button asks first. Deleting a terminal
-// session loses its screen; a chat session's conversation stays in claude's
-// own history files on the remote machine (R15.2), so it says that instead.
-function deleteConfirmText(session: SessionInfo, name: string): string {
-  return t(session.ui === 'chat' ? 'chat.delete.confirm' : 'session.deleteConfirm', { name });
+// buildSidebarModel snapshots the module state the sidebar reads and rebuilds
+// each machine's tree from its sessions and last projects result; sidebarActions
+// routes every side effect back here (the window.confirm dialog for reload and
+// the delete confirmation stay in these callbacks).
+function buildSidebarModel(): SidebarModel {
+  return {
+    machines: machines.map((machine) => {
+      const key = machineKey(machine);
+      const sessions = machineSessions.get(key) || [];
+      const projects = machineProjects.has(key) ? machineProjects.get(key)! : null;
+      const tree = buildTree(sessions, projects);
+      machineTrees.set(key, tree);
+      return { machine, key, online: machineOnline.get(key), collapsed: collapsedMachines.has(key), cap: machineCaps.get(key) ?? 'unknown', tree };
+    }),
+    activeKey,
+    overviewMachineKey,
+    collapsedProjects,
+    dotOf: (mk, id) => {
+      const key = `${mk}::${id}`;
+      return views.get(key)?.activity ?? sessionDots.get(key) ?? 'none';
+    },
+    isOpen: (key) => views.has(key),
+    isReloading: (key) => reloadingSessions.has(key),
+    isRemoving: (mk, path) => removingWorktrees.has(`${mk}|${path}`),
+  };
 }
 
-// startInlineRename replaces a session label with an input for in-place rename.
-// Enter/blur commits, Esc cancels. Empty input clears the custom name (server
-// falls back to the default title). After commit we refresh from the server so
-// the authoritative title is shown (keeps multi-client views consistent).
-function startInlineRename(machine: MachineConfig, s: SessionInfo, label: HTMLElement) {
-  const input = document.createElement('input');
-  input.className = 'session-rename-input';
-  input.value = s.title || '';
-  label.replaceWith(input);
-  // The label was rebuilt away before the double click got here: there is no
-  // input to edit, and nothing would ever clear the flag again (X8).
-  if (!input.isConnected) return;
-  renamingActive = true; // pause sidebar rebuilds while editing (see flag docs)
-  input.focus();
-  input.select();
-
-  let done = false;
-  const commit = async () => {
-    if (done) return;
-    // If the input is no longer in the document, this blur came from the DOM
-    // being torn down (not a deliberate user focus change) — treat as cancel,
-    // never commit half-typed text. (Belt-and-suspenders with renamingActive.)
-    if (!document.body.contains(input)) { done = true; renamingActive = false; return; }
-    done = true;
-    const name = input.value.trim();
+const sidebarActions: SidebarActions = {
+  open: (machine, session) => {
+    selectOpenSession(machine, session);
+  },
+  openOverview: (machine) => {
+    showMachineOverview(machine);
+  },
+  rename: async (machine, session, name) => {
     const mk = machineKey(machine);
     // Invalidate in-flight session polls before the rename request starts. Their
     // old title must not be allowed to render over the rename transaction.
     machineRefreshGeneration++;
     try {
-      await rests.get(mk)!.renameSession(s.id, name);
+      await rests.get(mk)!.renameSession(session.id, name);
     } catch (e) {
       console.error('rename failed', e);
     } finally {
       // Refresh even after failure so the sidebar returns to the server's
-      // authoritative title. Keep the input protected until that refresh is done.
+      // authoritative title. The renaming flag (cleared by the caller) keeps
+      // the input protected until that refresh is done.
       await refreshAllMachines(false, mk);
-      renamingActive = false;
-      renderSidebar();
-      focusAfterRename();
     }
-  };
-  const cancel = () => {
-    if (done) return;
-    done = true;
-    renamingActive = false; // clear before renderSidebar so it rebuilds
+  },
+  setRenaming: (active) => {
+    renamingActive = active;
+    if (active) {
+      focusHeldByRename = false;
+      // The input replaced a label: the list is not what was rendered, and the
+      // render that ends the rename has to put the label back whatever the
+      // model says by then.
+      sidebarShown = null;
+      return;
+    }
     renderSidebar();
     focusAfterRename();
-  };
+  },
+  reload: (machine, session) => {
+    void handleReload(machine, session);
+  },
+  deleteSession: (machine, session) => {
+    void confirmAndDeleteSession(machine, session);
+  },
+  toggleMachine: (mk) => {
+    if (collapsedMachines.has(mk)) collapsedMachines.delete(mk);
+    else collapsedMachines.add(mk);
+    persistCollapsedMachines();
+    renderSidebar();
+  },
+  toggleProject: (mk, projectId) => {
+    const key = `${mk}|${projectId}`;
+    if (collapsedProjects.has(key)) collapsedProjects.delete(key);
+    else collapsedProjects.add(key);
+    persistCollapsedProjects();
+    renderSidebar();
+  },
+  removeProject: (machine, project) => {
+    void handleRemoveProject(machine, project.id);
+  },
+  newWorktree: (machine, project) => {
+    void startNewWorktree(machine, project);
+  },
+  newSession: (machine, project, worktree) => {
+    void startSessionInWorktree(machine, project, worktree);
+  },
+  deleteWorktree: (machine, _project, worktree) => {
+    void handleDeleteWorktree(machine, worktree);
+  },
+};
 
-  input.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter') { e.preventDefault(); commit(); }
-    else if (e.key === 'Escape') { e.preventDefault(); cancel(); }
+// handleDeleteWorktree runs "Delete worktree" from a worktree row's menu. Once
+// a removal was requested the daemon may have ended sessions even if the
+// worktree is still there, so their views are closed and the machine is
+// refreshed whatever the result; null means nothing was requested.
+async function handleDeleteWorktree(machine: MachineConfig, worktree: TreeWorktree) {
+  const mk = machineKey(machine);
+  const rest = rests.get(mk);
+  if (!rest) return;
+  const marker = `${mk}|${worktree.path}`;
+  // Already being removed (a menu opened before the request can still be on screen).
+  if (removingWorktrees.has(marker)) return;
+  const outcome = await deleteWorktreeFlow(rest, { path: worktree.path, label: worktree.label }, (text) => updateStatusBar(text), (inFlight, removed) => {
+    if (inFlight) removingWorktrees.add(marker);
+    // Gone on the daemon, still a row here: it stays marked until the refresh
+    // below has replaced the list. Unmarked now, it would be an ordinary row
+    // for as long as that refresh takes, offering a new session in a
+    // directory that no longer exists.
+    else if (removed) return;
+    else removingWorktrees.delete(marker);
+    renderSidebar();
   });
-  input.addEventListener('blur', commit);
+  if (!outcome) return;
+  for (const id of outcome.endedSessions) dropSessionView(viewKey(machine, id));
+  try {
+    await refreshAllMachines(true, mk);
+  } finally {
+    if (removingWorktrees.delete(marker)) renderSidebar();
+  }
 }
 
+// confirmAndDeleteSession asks before deleting a session. A terminal session
+// is gone for good; a chat session's conversation stays in claude's own
+// history files on the remote machine (R15.2 of the chat sessions), so its
+// dialog says that instead. The dialog also says what
+// happens to the worktree the session sits in: kept (protocol 4), or removed
+// with the session when clean (an older daemon, R9.1). While the daemon's
+// version is not known (its project list has not been read once) it says that
+// either can happen.
+async function confirmAndDeleteSession(machine: MachineConfig, session: SessionInfo) {
+  const mk = machineKey(machine);
+  const ctx = sessionContext(treeFor(mk), session.id);
+  const name = ctx?.name || session.title || (session.workdir ? session.workdir.split('/').pop() : '') || session.id;
+  let worktreeLabel: string | undefined;
+  for (const p of treeFor(mk)) {
+    const wt = p.worktrees.find((w) => !w.main && w.sessions.some((s) => s.id === session.id));
+    if (wt) worktreeLabel = wt.label;
+  }
+  const cap = machineCaps.get(mk) ?? 'unknown';
+  const legacyWorktree = cap === 'legacy' && session.mode === 'worktree';
+  const unknownWorktree = cap === 'unknown' && session.mode === 'worktree';
+  if (!(await confirmDeleteSession({ name, chat: session.ui === 'chat', worktreeLabel, legacyWorktree, unknownWorktree }))) return;
+  void closeSession(machine, session.id);
+}
+
+// handleRemoveProject drops a project from the sidebar (disk untouched). A 409
+// means it still has sessions; show the reason in the status bar (R2.4).
+async function handleRemoveProject(machine: MachineConfig, id: string) {
+  const mk = machineKey(machine);
+  try {
+    await rests.get(mk)!.removeProject(id);
+    await refreshAllMachines(true, mk);
+  } catch (error) {
+    if (error instanceof RestError && error.code === 'project_has_sessions') {
+      updateStatusBar(t('sidebar.project.removeBlocked'));
+    } else {
+      updateStatusBar(t('status.error', { msg: error instanceof Error ? error.message : String(error) }));
+    }
+  }
+}
+
+// handleReload runs a session Reload: terminal sessions block the button while
+// the respawn-pane request is in flight (reloadingSessions, reflected on the
+// next rebuild); chat sessions get the outcome later through chat_state (d10).
+async function handleReload(machine: MachineConfig, s: SessionInfo) {
+  const reloadKey = viewKey(machine, s.id);
+  if (reloadingSessions.has(reloadKey)) return;
+  const name = s.title || (s.workdir ? s.workdir.split('/').pop() : '') || s.id;
+  if (s.ui === 'chat') {
+    if (!window.confirm(t('chat.reload.confirm', { name }))) return;
+    void reloadChat(machine, s.id, name);
+    return;
+  }
+  if (!window.confirm(t('session.reloadConfirm', { name }))) return;
+  reloadingSessions.add(reloadKey);
+  renderSidebar();
+  try {
+    await rests.get(machineKey(machine))!.reloadSession(s.id);
+    updateStatusBar(t('session.reloadSuccess', { name }));
+    reloadingSessions.delete(reloadKey);
+    await refreshAllMachines();
+  } catch (error) {
+    updateStatusBar(t('session.reloadFailed', {
+      msg: error instanceof Error ? error.message : String(error),
+    }));
+    reloadingSessions.delete(reloadKey);
+  } finally {
+    renderSidebar();
+  }
+}
 function updateStatusBar(extra?: string, attempt?: number) {
   const statusBar = document.getElementById('status-bar')!;
   const statusMessage = document.getElementById('status-message')!;
@@ -1425,7 +1647,7 @@ function updateStatusBar(extra?: string, attempt?: number) {
 
   if (overviewMachine) {
     const state = machineOnline.get(overviewMachineKey!);
-    tbTitle.textContent = overviewMachine.name;
+    renderToolbarTitle(tbTitle, null, overviewMachine.name);
     tbStatus.className = state === true ? 'connected' : state === false ? 'error' : 'checking';
     tbStatusText.textContent = state === true
       ? t('status.connected')
@@ -1434,10 +1656,13 @@ function updateStatusBar(extra?: string, attempt?: number) {
   }
 
   if (view) {
-    // Toolbar title: machine name · short session code (SessionView holds no
-    // display name; short code is enough to locate the active session).
+    // Toolbar title: project / branch · session (design 7.4). A brand-new
+    // session not yet in the tree falls back to machine · short session code.
+    const tree = treeFor(machineKey(view.machine));
+    const ctx = view.sessionId ? sessionContext(tree, view.sessionId) : null;
+    const project = ctx ? sessionProject(tree, view.sessionId) : null;
     const shortId = view.sessionId ? view.sessionId.slice(-6) : 'new';
-    tbTitle.textContent = `${view.machine.name} · ${shortId}`;
+    renderToolbarTitle(tbTitle, ctx && { ...ctx, hue: project ? projectHue(project.id) : undefined, ui: view.ui }, `${view.machine.name} · ${shortId}`);
 
     const st = view.client.state;
     if (st === ConnectionState.Connected) {
@@ -1452,10 +1677,27 @@ function updateStatusBar(extra?: string, attempt?: number) {
       tbStatusText.textContent = t('status.disconnected');
     }
   } else {
-    tbTitle.textContent = 'vibe-remote';
+    renderToolbarTitle(tbTitle, null, 'vibe-remote');
     const anyOnline = [...machineOnline.values()].some(Boolean);
     tbStatus.className = anyOnline ? 'connected' : '';
     tbStatusText.textContent = anyOnline ? t('status.ready') : t('status.noConnection');
+  }
+}
+
+// dropSessionView removes the local view of a session that no longer exists on
+// the daemon, and moves on to another open session if it was the active one.
+function dropSessionView(key: string) {
+  // Drop any Reload marker so the key can't linger and disable a future
+  // session that happens to reuse the id.
+  reloadingSessions.delete(key);
+  const view = views.get(key);
+  if (!view) return;
+  disposeView(view);
+  views.delete(key);
+  if (activeKey === key) {
+    activeKey = null;
+    const next = views.keys().next();
+    if (!next.done) setActive(next.value);
   }
 }
 
@@ -1479,20 +1721,7 @@ async function closeSession(machine: MachineConfig, sessionId: string) {
     refreshAllMachines();
     return;
   }
-  const key = viewKey(machine, sessionId);
-  // The session is gone; drop any Reload marker so the key can't linger and
-  // disable a future session that happens to reuse the id.
-  reloadingSessions.delete(key);
-  const view = views.get(key);
-  if (view) {
-    disposeView(view);
-    views.delete(key);
-    if (activeKey === key) {
-      activeKey = null;
-      const next = views.keys().next();
-      if (!next.done) setActive(next.value);
-    }
-  }
+  dropSessionView(viewKey(machine, sessionId));
   refreshAllMachines();
 }
 

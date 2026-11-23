@@ -1,0 +1,56 @@
+code under test b6dea2c; run finished 2026-11-21 17:31
+$ TMUX_TMPDIR=<temp dir> CLAUDE_CONFIG_DIR=<empty temp dir> node .claude/skills/verify/scripts/gui-smoke.mjs --no-build
+work dir /var/folders/yq/p60klk5x4rddkhlf74cnj38m0000gn/T/vr-gui-RnDX2F
+PASS daemon up on 127.0.0.1:24525
+PASS chat daemon (fake claude) up on 127.0.0.1:29666
+electron 44.7.0
+PASS app started and lists the machine
+PASS legacy plaintext token encrypted on launch
+PASS dir picker lists the remote directory
+PASS dir picker fits a 500px-high window
+PASS dir picker fits a 700px-high window
+PASS dir picker fits a 803px-high window
+PASS terminal attached and shows the remote shell prompt
+PASS exactly one session created on the daemon
+PASS terminal fills its container on first layout
+PASS keystrokes reach the remote shell and output renders
+PASS remote mouse reporting is active and ⌥ routes the mouse to the app
+PASS without ⌥ the mouse stays with xterm selection
+PASS drag-select under mouse reporting + ⌘C copies the text
+PASS ⌘V pastes the native clipboard into the remote shell
+PASS navigation away from the app is blocked
+PASS window.open is denied
+PASS events endpoint accepted the hook event
+PASS waiting event raises a desktop notification titled with the session name
+NOTE notification outcome in this build: fallback
+PASS reconnect banner appears when the daemon goes away
+PASS client reconnects after the daemon restarts
+PASS the same tmux session is usable after reconnect
+NOTE sidebar 284px wide: 18 rows (18 also measured under the mouse), 9 sessions; names ending in "…": project "billing" name (30 of 38px, 0px free) | project "billing" branch (170 of 220px, 0px free) | worktree "change/general-skills-and-a-long-tail" name (187 of 237px, 0px free) | session "a-session-with-a-rather-long-name" name (194 of 217px, 0px free)
+PASS sidebar shows the projects, worktrees and sessions under test
+PASS sidebar rows are readable at the default width (names, badges, state text, dots)
+NOTE row menus in an 800×500 window: project row "new-api": button bottom 495, menu 405.1..470 in 800×500 | worktree row "release/next": button bottom 498, menu 430.8..473 in 800×500
+PASS the "more" menu of a project row and of a worktree row at the bottom of the sidebar stays inside an 800×500 window and takes a click
+NOTE toolbar title in an 800×500 window: {"project":{"text":"devflow","shown":50,"needs":50},"branch":{"text":"change/general-skills-and-a-long-tail","shown":214,"needs":260},"session":{"text":"long","shown":49,"needs":49}}
+PASS under a long branch the toolbar title of an 800×500 window shortens the branch and keeps the session name whole
+PASS in an 800×500 window the note under "continue" is fully visible once the option is ticked
+PASS dir picker with chat chosen fits a 500px-high window
+PASS dir picker with chat chosen fits a 700px-high window
+PASS dir picker with chat chosen fits a 803px-high window
+PASS chat session created via picker
+PASS chat reply rendered
+PASS permission allow once resumes
+PASS sidebar rows stay readable with a chat session listed
+PASS ⌘3 opens the third session in the sidebar; ⌘⇧] and ⌘⇧[ step to its neighbours
+PASS in a focused terminal ⌘⇧] and ⌘3 are taken before the page sees them (prevented, not delivered), while ⌘K is delivered untouched
+PASS ⌘⇧[ on the first session goes to the last one and ⌘⇧] comes back
+PASS with the focus in the chat input the keys switch sessions and type nothing into it
+PASS with the focus in the chat input ⌘⇧[ is taken before the input sees it, while ⌘K reaches the input and changes nothing
+PASS a folded project is skipped by ⌘⇧], and ⌘9 with fewer than nine sessions showing does nothing
+PASS with a dialog open ⌘4 and ⌘⇧] leave the session shown alone
+PASS with a dialog open ⌘4 and ⌘⇧] are not intercepted: they are delivered to the page with their default action intact
+PASS the switching keys pressed in a focused terminal send no bytes to the remote
+PASS ordinary keys typed afterwards still reach the remote shell
+PASS no uncaught renderer exceptions
+
+all GUI checks passed

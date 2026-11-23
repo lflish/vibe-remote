@@ -291,3 +291,86 @@ func TestReconnectReapsRetiredAttachProcesses(t *testing.T) {
 			leaked, reconnects)
 	}
 }
+
+// TestParseTmuxSessionLineColumns pins the column count: exactly the columns
+// list-sessions is asked for (tmuxListColumns, fourteen of them). Any other
+// count — fewer, or more — makes the whole answer unreadable rather than
+// silently mis-parsed, and so does a record that is cut short.
+func TestParseTmuxSessionLineColumns(t *testing.T) {
+	if len(tmuxListColumns) != 14 {
+		t.Fatalf("list-sessions asks for %d columns; tmuxSessionRecord reads 14", len(tmuxListColumns))
+	}
+	mk := func(n int) []string {
+		parts := make([]string, n)
+		parts[0] = "vibe-remote-s1"
+		for i := 1; i < n; i++ {
+			parts[i] = fmt.Sprintf("c%d", i)
+		}
+		return parts
+	}
+	good := tmuxFields("vibe-remote-s0", "/w0")
+	if sessions, err := parseTmuxSessions(tmuxAnswer(mk(14)), testMarks); err != nil || len(sessions) != 1 {
+		t.Fatalf("14 columns should parse: %v, %#v", err, sessions)
+	}
+	for _, n := range []int{1, 8, 9, 10, 11, 12, 13, 15} {
+		// Next to a record that is fine: one bad record spoils the answer.
+		if sessions, err := parseTmuxSessions(tmuxAnswer(good, mk(n)), testMarks); err == nil {
+			t.Fatalf("%d columns should be rejected, got %#v", n, sessions)
+		}
+	}
+	fields := []string{
+		"vibe-remote-s1", "/w", "name", "normal", "", "", "", "", "",
+		"/proj", "/home", "2026-01-02T03:04:05Z", "1700000000", "/started here",
+	}
+	sessions, err := parseTmuxSessions(tmuxAnswer(fields), testMarks)
+	info := sessions["s1"]
+	if err != nil || info.project != "/proj" || info.home != "/home" ||
+		info.created != "2026-01-02T03:04:05Z" || info.sessionCreated != "1700000000" {
+		t.Fatalf("info=%+v err=%v", info, err)
+	}
+	// The fourteenth column is the start directory; the working directory in
+	// the second one is where the process is now.
+	if info.startDir != "/started here" || info.workdir != "/w" {
+		t.Fatalf("14 columns: info=%+v", info)
+	}
+
+	// A tab or a newline inside a field is part of the field.
+	odd := tmuxFields("vibe-remote-s2", "/now/tab\there\n", "name", "normal", "", "", "", "", "",
+		"/proj", "/home\twith tab", "", "1700000000", "/started\nhere\t")
+	sessions, err = parseTmuxSessions(tmuxAnswer(good, odd, tmuxFields("vibe-remote-s3", "/w3")), testMarks)
+	info = sessions["s2"]
+	if err != nil || len(sessions) != 3 || info.workdir != "/now/tab\there\n" || info.home != "/home\twith tab" || info.startDir != "/started\nhere\t" {
+		t.Fatalf("fields with a tab and a newline: sessions=%#v err=%v", sessions, err)
+	}
+
+	// An answer that stops in the middle of a record, and text after the last one.
+	whole := tmuxAnswer(good, fields)
+	for name, out := range map[string]string{
+		"cut short":           whole[:len(whole)-len(testMarks.end)-1],
+		"no newline":          strings.TrimSuffix(whole, "\n"),
+		"text after the last": whole + "something else\n",
+		"no marks at all":     "vibe-remote-s1\t/w\n",
+	} {
+		if sessions, err := parseTmuxSessions(out, testMarks); err == nil {
+			t.Fatalf("%s: accepted as %#v", name, sessions)
+		}
+	}
+	// Nothing at all is no session.
+	if sessions, err := parseTmuxSessions("", testMarks); err != nil || len(sessions) != 0 {
+		t.Fatalf("empty answer: %#v, %v", sessions, err)
+	}
+	// A session someone started on the socket under another name is left out.
+	sessions, err = parseTmuxSessions(tmuxAnswer(tmuxFields("scratch", "/w"), good), testMarks)
+	if _, ok := sessions["s0"]; err != nil || !ok || len(sessions) != 1 {
+		t.Fatalf("a session under another name: sessions=%#v err=%v", sessions, err)
+	}
+
+	// The marks of two readings differ, and the format carries them.
+	a, b := newTmuxListMarks(), newTmuxListMarks()
+	if a == b || a.sep == a.end || strings.Contains(a.end, a.sep) || strings.Contains(a.sep, a.end) {
+		t.Fatalf("marks %+v and %+v", a, b)
+	}
+	if got := strings.Count(a.format(), a.sep); got != 13 || !strings.HasSuffix(a.format(), a.end) {
+		t.Fatalf("format %q: %d separators", a.format(), got)
+	}
+}

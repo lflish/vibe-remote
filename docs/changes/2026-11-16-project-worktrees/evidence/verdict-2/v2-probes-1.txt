@@ -1,0 +1,59 @@
+=== RUN   TestV2FallbackNewlinePath
+=== RUN   TestV2FallbackNewlinePath/simple
+    v2_probe_test.go:68: [-z] ListWorktrees err=<nil>
+    v2_probe_test.go:70: [-z]   "/private/tmp/TestV2FallbackNewlinePathsimple4210578736/002/devflow" branch="main" head=c5f168f
+    v2_probe_test.go:70: [-z]   "/private/tmp/TestV2FallbackNewlinePathsimple4210578736/002/devflow-worktrees/a\nfoo" branch="nl" head=c5f168f
+    v2_probe_test.go:72: [-z] ChatTrust(victim "/private/tmp/TestV2FallbackNewlinePathsimple4210578736/002/devflow-worktrees/a") = untrusted
+    v2_probe_test.go:76: [fallback] ListWorktrees err=<nil>
+    v2_probe_test.go:79: [fallback]   "/private/tmp/TestV2FallbackNewlinePathsimple4210578736/002/devflow" branch="main" head=c5f168f
+    v2_probe_test.go:79: [fallback]   "/private/tmp/TestV2FallbackNewlinePathsimple4210578736/002/devflow-worktrees/a" branch="nl" head=c5f168f
+    v2_probe_test.go:85: [fallback] victim listed as a worktree = true; ChatTrust(victim) = trusted
+    v2_probe_test.go:90: [fallback] WorktreeStatus(victim) = {Path:/private/tmp/TestV2FallbackNewlinePathsimple4210578736/002/devflow-worktrees/a Project:/private/tmp/TestV2FallbackNewlinePathsimple4210578736/002/devflow Branch:nl Head:c5f168f0df2af9282f10ccfcc25315f340a36306 Detached:false Main:false Managed:false DirtyFiles:3 UnmergedCommits:0 IgnoredFiles:0 Sessions:[]} err=<nil>
+    v2_probe_test.go:95: [fallback] RemoveWorktree(victim, discardFiles) = {Removed:false BranchDeleted:false BranchError: EndedSessions:[]} err=fatal: '/private/tmp/TestV2FallbackNewlinePathsimple4210578736/002/devflow-worktrees/a' is not a working tree
+    v2_probe_test.go:98: [fallback] victim/precious.txt = "keep" err=<nil>; real worktree still there = true
+    v2_probe_test.go:100: FORGED: "/private/tmp/TestV2FallbackNewlinePathsimple4210578736/002/devflow-worktrees/a" is listed as a worktree of /private/tmp/TestV2FallbackNewlinePathsimple4210578736/002/devflow although it is not one
+    v2_probe_test.go:103: FORGED TRUST: ChatTrust("/private/tmp/TestV2FallbackNewlinePathsimple4210578736/002/devflow-worktrees/a") = trusted
+=== RUN   TestV2FallbackNewlinePath/arbitrary
+    v2_probe_test.go:68: [-z] ListWorktrees err=<nil>
+    v2_probe_test.go:70: [-z]   "/private/tmp/TestV2FallbackNewlinePatharbitrary930008777/002/devflow" branch="main" head=13e0733
+    v2_probe_test.go:70: [-z]   "/private/tmp/TestV2FallbackNewlinePatharbitrary930008777/002/devflow-worktrees/a\nworktree /private/tmp/TestV2FallbackNewlinePatharbitrary930008777/003/evil" branch="nl" head=13e0733
+    v2_probe_test.go:72: [-z] ChatTrust(victim "/private/tmp/TestV2FallbackNewlinePatharbitrary930008777/003/evil") = untrusted
+    v2_probe_test.go:76: [fallback] ListWorktrees err=<nil>
+    v2_probe_test.go:79: [fallback]   "/private/tmp/TestV2FallbackNewlinePatharbitrary930008777/002/devflow" branch="main" head=13e0733
+    v2_probe_test.go:79: [fallback]   "/private/tmp/TestV2FallbackNewlinePatharbitrary930008777/003/evil" branch="nl" head=13e0733
+    v2_probe_test.go:85: [fallback] victim listed as a worktree = true; ChatTrust(victim) = trusted
+    v2_probe_test.go:90: [fallback] WorktreeStatus(victim) = {Path:/private/tmp/TestV2FallbackNewlinePatharbitrary930008777/003/evil Project:/private/tmp/TestV2FallbackNewlinePatharbitrary930008777/002/devflow Branch:nl Head:13e0733d3f15fbe02653d43e1381d70cd91ced66 Detached:false Main:false Managed:false DirtyFiles:3 UnmergedCommits:0 IgnoredFiles:0 Sessions:[]} err=<nil>
+    v2_probe_test.go:95: [fallback] RemoveWorktree(victim, discardFiles) = {Removed:false BranchDeleted:false BranchError: EndedSessions:[]} err=fatal: '/private/tmp/TestV2FallbackNewlinePatharbitrary930008777/003/evil' is not a working tree
+    v2_probe_test.go:98: [fallback] victim/precious.txt = "keep" err=<nil>; real worktree still there = true
+    v2_probe_test.go:100: FORGED: "/private/tmp/TestV2FallbackNewlinePatharbitrary930008777/003/evil" is listed as a worktree of /private/tmp/TestV2FallbackNewlinePatharbitrary930008777/002/devflow although it is not one
+    v2_probe_test.go:103: FORGED TRUST: ChatTrust("/private/tmp/TestV2FallbackNewlinePatharbitrary930008777/003/evil") = trusted
+--- FAIL: TestV2FallbackNewlinePath (2.41s)
+    --- FAIL: TestV2FallbackNewlinePath/simple (1.24s)
+    --- FAIL: TestV2FallbackNewlinePath/arbitrary (1.17s)
+=== RUN   TestV2InheritedCLocale
+=== RUN   TestV2InheritedCLocale/ascii
+    v2_probe_test.go:124: same daemon: status.sessions=[1795129194356-75ac2f01] err=<nil>
+    v2_probe_test.go:129: restarted daemon: read ok=true record={workdir:/private/tmp/TestV2InheritedCLocaleascii3175320811/001/ascii/devflow-worktrees/feat name: mode:normal sourceWorkdir: sourceRepo: worktreeRoot: branch: claudeU: project:/private/tmp/TestV2InheritedCLocaleascii3175320811/001/ascii/devflow home:/private/tmp/TestV2InheritedCLocaleascii3175320811/001/ascii/devflow-worktrees/feat created:2026-11-19T22:59:54.394939Z sessionCreated:1795129194 startDir:/private/tmp/TestV2InheritedCLocaleascii3175320811/001/ascii/devflow-worktrees/feat}
+    v2_probe_test.go:134: restarted daemon: status.sessions=[1795129194356-75ac2f01] (session 1795129194356-75ac2f01 was created in this worktree)
+2026/11/20 06:59:55 tmux list-sessions failed: exit status 1 (stderr="server exited unexpectedly\n")
+    v2_probe_test.go:137: restarted daemon: removal={Removed:true BranchDeleted:false BranchError: EndedSessions:[1795129194356-75ac2f01]} err=<nil> directoryExists=false tmuxSessionAlive=false
+2026/11/20 06:59:55 warning: failed to kill tmux session vibe-remote-1795129194356-75ac2f01: exit status 1
+=== RUN   TestV2InheritedCLocale/项目
+    v2_probe_test.go:124: same daemon: status.sessions=[1795129195977-34d35a93] err=<nil>
+    v2_probe_test.go:129: restarted daemon: read ok=true record={workdir:/private/tmp/TestV2InheritedCLocale____785186246/001/____/devflow-worktrees/feat name: mode:normal sourceWorkdir: sourceRepo: worktreeRoot: branch: claudeU: project:/private/tmp/TestV2InheritedCLocale____785186246/001/____/devflow home:/private/tmp/TestV2InheritedCLocale____785186246/001/____/devflow-worktrees/feat created:2026-11-19T22:59:56.01412Z sessionCreated:1795129196 startDir:/private/tmp/TestV2InheritedCLocale____785186246/001/____/devflow-worktrees/feat}
+    v2_probe_test.go:134: restarted daemon: status.sessions=[] (session 1795129195977-34d35a93 was created in this worktree)
+    v2_probe_test.go:137: restarted daemon: removal={Removed:true BranchDeleted:false BranchError: EndedSessions:[]} err=<nil> directoryExists=false tmuxSessionAlive=true
+    v2_probe_test.go:139: worktree removed while the session created in it is still alive (endedSessions=[])
+--- FAIL: TestV2InheritedCLocale (2.47s)
+    --- PASS: TestV2InheritedCLocale/ascii (1.61s)
+    --- FAIL: TestV2InheritedCLocale/项目 (0.85s)
+=== RUN   TestV2OddFieldValues
+2026/11/20 06:59:57 tmux list-sessions: "work" is not a vibe-remote session, left out
+2026/11/20 06:59:57 tmux list-sessions: "work" is not a vibe-remote session, left out
+2026/11/20 06:59:57 tmux list-sessions: "work" is not a vibe-remote session, left out
+    v2_probe_test.go:176: 3 readings with fresh marks: both sessions read with every field exact; foreign session 'work' left out; PWNED2 exists=false
+2026/11/20 06:59:57 tmux list-sessions: "work" is not a vibe-remote session, left out
+--- PASS: TestV2OddFieldValues (0.72s)
+FAIL
+FAIL	github.com/lflish/vibe-remote/vibe-remoted/internal/session	6.593s
+FAIL

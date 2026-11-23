@@ -1,0 +1,107 @@
+// Probes for three known problems of the chat sessions (follow-up list of
+// docs/changes/2026-11-13-dual-mode/tasks.md), run once each on the merged build
+// (code 4c1e78c). Not part of any suite: these three cases were put into a copy
+// of .claude/skills/verify/scripts/gui-chat-smoke.mjs just before its
+// test('X10-rename-terminal', …) and run with VR_ONLY=P-card / P-rename-click /
+// P-dot-click; the copy was deleted afterwards. They assert nothing: each
+// returns what it saw (known-issues-probes.txt).
+// ---- temporary probes (not part of the suite): known problems of the chat sessions on the three-level sidebar ----
+test('P-card', 'probe: a prompt card arriving while the user types', async () => {
+  const id = await newChat(CHAT, 'x10');
+  const c = await Conn.open(CHAT);
+  const out = [];
+  try {
+    await c.attachChat(id);
+    // (a) typing in the chat input
+    await realClick(INPUT, 'chat input');
+    await cdp.send('Input.insertText', { text: 'half a sentence ' });
+    let turn = c.chat('tool Bash');
+    await waitFor(() => ev(`!!${inChat('[data-testid="chat-perm"]')}`), 8000, 'card');
+    await sleep(400);
+    const f1 = await focusedOn();
+    await pressKey('1');
+    await sleep(800);
+    out.push(`typing in the chat input: keyboard went to ${f1}; then "1" → card ${await ev(`!!${inChat('[data-testid="chat-perm"]')}`) ? 'still open' : 'answered (gone)'}; draft kept: ${JSON.stringify(await ev(`${INPUT}.value`))}`);
+    await c.turn(turn).catch(() => {});
+    await idle();
+    // (b) the machine manager dialog is open, typing into its address field
+    await ev(`document.getElementById('btn-manage-machines').click(), true`);
+    await waitFor(() => ev(`!!document.querySelector('.modal-overlay')`), 5000, 'machine manager');
+    await ev(`(() => { const b = [...document.querySelectorAll('.modal-overlay button')].find((x) => /添加|新增|Add/.test(x.textContent)); b?.click(); return !!b; })()`);
+    await sleep(300);
+    const field = `document.querySelector('.modal-overlay input[type="text"], .modal-overlay input:not([type])')`;
+    const hasField = await ev(`!!${field}`);
+    if (hasField) {
+      await ev(`${field}.focus(), true`);
+      await cdp.send('Input.insertText', { text: '10.0.' });
+      turn = c.chat('perm touch probe.txt');
+      await c.wait((fs) => fs.filter((f) => f.type === 'chat_state').at(-1)?.pending?.[0], 8000, 'pending');
+      await sleep(500);
+      const f2 = await focusedOn();
+      await pressKey('1');
+      await sleep(800);
+      const st = c.lastState();
+      out.push(`machine manager open, typing an address: keyboard went to ${f2}; then "1" → request ${st?.pending?.length ? 'still pending' : 'ANSWERED'}; field value ${JSON.stringify(await ev(`${field}?.value`))}`);
+      if (st?.pending?.length) c.send({ type: 'chat_respond', requestId: st.pending[0].requestId, response: { behavior: 'deny', message: 'probe' } });
+    } else out.push('machine manager: no text field found, not probed');
+    await pressKey('Escape');
+    await ev(`document.querySelector('.modal-overlay')?.remove(), true`);
+    return out.join(' || ');
+  } finally { c.close(); }
+});
+
+test('P-rename-click', 'probe: while renaming, a real click on another session (no delay added to the rename request)', async () => {
+  await newChat(CHAT, 'x10r');
+  await newChat(CHAT, 'x10s');
+  let switched = 0; const N = 5; const notes = [];
+  let a = 'x10r', b = 'x10s';
+  for (let k = 0; k < N; k++) {
+    await clickSidebar(CHAT, a);
+    await doubleClickName(sidebarLabel(CHAT, a), `sidebar item ${a}`);
+    await waitFor(renameFocused, 3000, 'rename input focused');
+    const name = `pr${k}`;
+    await cdp.send('Input.insertText', { text: name });
+    // a real click on the other session's name, button held 60 ms
+    const p = await pointOf(sidebarLabel(CHAT, b), `sidebar item ${b}`);
+    await cdp.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: p.x, y: p.y });
+    await cdp.send('Input.dispatchMouseEvent', { type: 'mousePressed', x: p.x, y: p.y, button: 'left', clickCount: 1 });
+    await sleep(60);
+    await cdp.send('Input.dispatchMouseEvent', { type: 'mouseReleased', x: p.x, y: p.y, button: 'left', clickCount: 1 });
+    await waitFor(async () => (await sessions(CHAT)).some((x) => x.title === name), 5000, 'saved');
+    await sleep(700);
+    const onB = await sidebarItem(CHAT, b, `it.classList.contains('active')`);
+    if (onB) switched++;
+    notes.push(`${onB ? 'switched' : 'not switched'}/${await focusedOn()}`);
+    a = name; if (onB) { const t = a; a = b; b = t; }
+  }
+  return `${switched}/${N} clicks switched the session (name saved every time): ${notes.join(', ')}`;
+});
+
+test('P-dot-click', 'probe: a real click on a background session the moment its yellow dot appears', async () => {
+  const id = await newChat(CHAT, 'x10');
+  await newChat(CHAT, 'x10b');
+  const c = await Conn.open(CHAT);
+  let ok = 0; const N = 8; const lost = [];
+  try {
+    await c.attachChat(id);
+    for (let k = 0; k < N; k++) {
+      if (!(await sidebarItem(CHAT, 'x10b', `it.classList.contains('active')`))) await clickSidebar(CHAT, 'x10b');
+      await sleep(900);
+      c.chat('perm touch dot.txt');
+      await waitFor(() => sidebarItem(CHAT, 'x10', `it.dataset.dot === 'waiting'`), 10000, 'yellow dot', 15);
+      const p = await pointOf(sidebarLabel(CHAT, 'x10'), 'sidebar item x10');
+      await cdp.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: p.x, y: p.y });
+      await cdp.send('Input.dispatchMouseEvent', { type: 'mousePressed', x: p.x, y: p.y, button: 'left', clickCount: 1 });
+      await sleep(60);
+      await cdp.send('Input.dispatchMouseEvent', { type: 'mouseReleased', x: p.x, y: p.y, button: 'left', clickCount: 1 });
+      await sleep(700);
+      if (await sidebarItem(CHAT, 'x10', `it.classList.contains('active')`)) ok++; else { lost.push(k + 1); await clickSidebar(CHAT, 'x10'); }
+      await waitFor(() => ev(`!!${inChat('[data-testid="chat-perm"]')}`), 5000, 'card');
+      await pressKey('Escape');
+      await sleep(500);
+      await idle();
+    }
+    return `${ok}/${N} clicks opened the session; lost: ${lost.length ? lost.join(',') : 'none'}`;
+  } finally { c.close(); }
+});
+

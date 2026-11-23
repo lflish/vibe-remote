@@ -250,8 +250,11 @@ func TestChatWorktreeAndFlags(t *testing.T) {
 	if err := f.m.Delete(id); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := os.Stat(info.WorktreeRoot); !os.IsNotExist(err) {
-		t.Fatal("clean worktree not removed with the session")
+	if _, err := os.Stat(info.WorktreeRoot); err != nil {
+		t.Fatalf("deleting the session removed its worktree: %v", err)
+	}
+	if branchOID(t, repo, "vibe/"+id) == "" {
+		t.Fatal("deleting the session removed its branch")
 	}
 }
 
@@ -1189,17 +1192,46 @@ func TestLoadChatsReclaimsHandoff(t *testing.T) {
 }
 
 func TestParseTmuxSessionLineReadsClaudeU(t *testing.T) {
-	got, ok := parseTmuxSessionLine("vibe-remote-s1\t/src\tname\tnormal\t\t\t\t\t0b6c0000-0000-4000-8000-000000000000")
-	if !ok || got.claudeU != "0b6c0000-0000-4000-8000-000000000000" || got.workdir != "/src" {
-		t.Fatalf("parsed %#v ok=%v", got, ok)
+	sessions, err := parseTmuxSessions(tmuxAnswer(tmuxFields("vibe-remote-s1", "/src", "name", "normal", "", "", "", "", "0b6c0000-0000-4000-8000-000000000000")), testMarks)
+	if got := sessions["s1"]; err != nil || got.claudeU != "0b6c0000-0000-4000-8000-000000000000" || got.workdir != "/src" {
+		t.Fatalf("parsed %#v err=%v", got, err)
 	}
-	got, ok = parseTmuxSessionLine("vibe-remote-s1\t/src\t\t\t\t\t\t\t")
-	if !ok || got.claudeU != "" {
-		t.Fatalf("empty column: %#v ok=%v", got, ok)
+	sessions, err = parseTmuxSessions(tmuxAnswer(tmuxFields("vibe-remote-s1", "/src")), testMarks)
+	if got, ok := sessions["s1"]; err != nil || !ok || got.claudeU != "" {
+		t.Fatalf("empty column: %#v err=%v", got, err)
 	}
-	if _, ok := parseTmuxSessionLine("vibe-remote-s1\t/src\t\t\t\t\t\t\tu\textra"); !ok {
-		// A tab inside the last value stays in that value (SplitN).
-		t.Fatal("rejected a value containing a tab")
+	if sessions, err := parseTmuxSessions(tmuxAnswer([]string{"vibe-remote-s1", "/src", "", "", "", "", "", "", "u", "extra"}), testMarks); err == nil {
+		// Ten columns is not what list-sessions was asked for; it is rejected
+		// rather than silently folding the extra field into claudeU.
+		t.Fatalf("accepted a 10-column record: %#v", sessions)
+	}
+}
+
+// TestHandoffCopiesHome checks that a terminal session created by handing off a
+// worktree chat session inherits the chat's attribution verbatim (design 5.1).
+func TestHandoffCopiesHome(t *testing.T) {
+	f := newChatFixture(t, true)
+	repo := tempRepo(t)
+	id := newID("hoh")
+	if _, err := f.m.CreateChat(ChatCreateOptions{ID: id, Workdir: repo,
+		Mode: protocol.SessionModeWorktree, Parsed: parsed(t, f.exe)}); err != nil {
+		t.Fatal(err)
+	}
+	f.m.mu.RLock()
+	rec := f.m.chats[id].rec
+	f.m.mu.RUnlock()
+	if rec.Home == "" || rec.Project == "" {
+		t.Fatalf("chat record has no attribution: %+v", rec)
+	}
+
+	termID := newID("hoht")
+	r, err := f.m.Handoff(id, termID, 80, 24)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { f.m.Delete(termID) })
+	if p, h := r.Home(); p != rec.Project || h != rec.Home {
+		t.Fatalf("handoff home=(%q,%q), want (%q,%q)", p, h, rec.Project, rec.Home)
 	}
 }
 

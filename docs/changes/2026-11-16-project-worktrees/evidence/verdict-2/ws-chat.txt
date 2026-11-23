@@ -1,0 +1,14 @@
+work dir /private/tmp/vr-chat-BIWblp
+daemon up on 127.0.0.1:24278, claude 2.1.210 (fake)
+PASS chat: create — id=1795129825221-f5d85cd0
+PASS chat: replay before ready — one session, one process
+PASS chat: two clients — both saw both, same order, one process
+PASS chat: pending survives reconnect — request 0c6af6e5-4c98-4e0f-aa8e-8a2b9220430b answered after reconnect
+PASS chat: resync 50 — backlog 54, seq 14..67
+PASS chat: handoff — terminal 1795129825873-411efe8f runs --resume 8aad017b-a2df-46f6-a819-92ad3d3f1eaa
+PASS chat: daemon restart → ended — history 2, reloaded and replying
+PASS chat: state without hooks — idle → running → idle → waiting → idle
+PASS chat: delete keeps jsonl — process gone, transcript kept
+
+all chat checks passed
+exit=0

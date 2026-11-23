@@ -2,12 +2,16 @@
 package session
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"log"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -36,14 +40,35 @@ func tmuxCmd(args ...string) *exec.Cmd {
 	return cmd
 }
 
+// tmuxSocketPath is where `tmux -L vibe-remote` puts its socket for this
+// process: <dir>/tmux-<uid>/vibe-remote. tmux takes <dir> from its TMUX_SOCK
+// search path, "$TMUX_TMPDIR:/tmp/": each entry is resolved with realpath, an
+// entry that does not resolve (TMUX_TMPDIR unset, empty, or naming a directory
+// that does not exist) is skipped, and the first one left is used. So <dir> is
+// TMUX_TMPDIR with its symbolic links resolved when that works, and /tmp
+// otherwise; /tmp itself is left as written (on macOS it is a link to
+// /private/tmp, which os.Stat follows). tmuxCmd passes the daemon's own
+// TMUX_TMPDIR on, so this is the path its tmux commands use. It is only ever
+// looked at (os.Stat), never created, removed or connected to from here.
+func tmuxSocketPath() string {
+	dir := "/tmp"
+	if env := os.Getenv("TMUX_TMPDIR"); env != "" {
+		if resolved, err := filepath.EvalSymlinks(env); err == nil {
+			dir = resolved
+		}
+	}
+	return filepath.Join(dir, fmt.Sprintf("tmux-%d", os.Getuid()), tmuxSocket)
+}
+
 // utf8Env returns the process environment with a UTF-8 locale guaranteed.
 //
 // tmux decides whether it is in UTF-8 mode from LC_ALL/LC_CTYPE/LANG. With none
 // set it assumes non-UTF-8 and rewrites every byte it deems unprintable as "_",
-// which corrupts two things at once: the tab delimiters in our `-F` format
-// strings (breaking list-sessions parsing) and the box-drawing/CJK bytes in the
-// attached PTY stream (breaking the byte-passthrough guarantee). launchd-started
-// daemons inherit no locale at all, so this is the default path in production.
+// which corrupts two things at once: the fields list-sessions answers with
+// (directory and session names outside ASCII, and any tab in them) and the
+// box-drawing/CJK bytes in the attached PTY stream (breaking the
+// byte-passthrough guarantee). launchd-started daemons inherit no locale at
+// all, so this is the default path in production.
 //
 // An inherited locale is left untouched — the user's own setting wins.
 //
@@ -78,92 +103,215 @@ type tmuxSessionInfo struct {
 	// claudeU is @vibe_remote_claude_u: the claude conversation this terminal
 	// session holds (handed off from a chat session, or started with -c).
 	claudeU string
+	// project and home are the session's attribution (@vibe_remote_project,
+	// @vibe_remote_home); created/sessionCreated recover its creation time
+	// (@vibe_remote_created as RFC 3339 nanos, then tmux's session_created).
+	project        string
+	home           string
+	created        string
+	sessionCreated string
+	// startDir is @vibe_remote_workdir: the directory the session was started
+	// in. workdir above is where its process is now (pane_current_path). Empty
+	// for a session started before the option existed.
+	startDir string
 }
 
-func parseTmuxSessionLine(line string) (tmuxSessionInfo, bool) {
-	// Eight columns is the format before @vibe_remote_claude_u was added.
-	parts := strings.SplitN(line, "\t", 9)
-	if (len(parts) != 8 && len(parts) != 9) || !strings.HasPrefix(parts[0], "vibe-remote-") || strings.TrimPrefix(parts[0], "vibe-remote-") == "" {
-		return tmuxSessionInfo{}, false
-	}
-	info := tmuxSessionInfo{}
-	if len(parts) > 1 {
-		info.workdir = parts[1]
-	}
-	if len(parts) > 2 {
-		info.name = strings.TrimSpace(parts[2])
-	}
-	if len(parts) > 3 {
-		info.mode = parts[3]
-	}
-	if len(parts) > 4 {
-		info.sourceWorkdir = parts[4]
-	}
-	if len(parts) > 5 {
-		info.sourceRepo = parts[5]
-	}
-	if len(parts) > 6 {
-		info.worktreeRoot = parts[6]
-	}
-	if len(parts) > 7 {
-		info.branch = parts[7]
-	}
-	if len(parts) > 8 {
-		info.claudeU = strings.TrimSpace(parts[8])
-	}
-	return info, true
+// tmuxListColumns are the fields of one session in the answer to
+// `tmux list-sessions`, in the order tmuxSessionRecord reads them. Adding one
+// means adding it here and there.
+var tmuxListColumns = []string{
+	"#{session_name}", "#{pane_current_path}", "#{@vibe_remote_name}", "#{@vibe_remote_mode}",
+	"#{@vibe_remote_source_workdir}", "#{@vibe_remote_source_repo}", "#{@vibe_remote_worktree_root}",
+	"#{@vibe_remote_branch}", "#{@vibe_remote_claude_u}", "#{@vibe_remote_project}", "#{@vibe_remote_home}",
+	"#{@vibe_remote_created}", "#{session_created}", "#{@vibe_remote_workdir}",
 }
 
-// liveTmuxSessions returns the vibe-remote session IDs that currently have a live
-// tmux session, mapped to each session's working directory (from tmux's
-// pane_current_path) and user-set name (@vibe_remote_name). The bool return is
-// false if the query itself failed (server not running or command error) so
-// callers can distinguish "no sessions" from "couldn't tell" and avoid wrongly
-// discarding live sessions on a transient failure. Pulling name here (rather
-// than a per-session show-options) keeps Manager.List to a single tmux exec.
-// isNoTmuxServer reports whether tmux's stderr means "there is nothing running"
-// (an honest empty set) rather than "the query failed". tmux prints
-// "no server running on <socket>" for the former and "error connecting to
-// <socket> (...)" for the latter, both with a non-zero exit.
-func isNoTmuxServer(stderr []byte) bool {
-	msg := strings.ToLower(string(stderr))
-	return strings.Contains(msg, "no server running") ||
-		strings.Contains(msg, "no sessions")
+// tmuxListMarks are the two pieces of text that give the answer to
+// `tmux list-sessions` its structure: sep stands between the fields of a
+// session and end closes its record (tmux adds a newline after it). Most of
+// the fields are directory names, and a directory name can hold any character
+// a fixed separator could be made of — a tab, a newline — so the marks are
+// made up anew for every reading, from random bytes: no name that already
+// exists can contain them.
+type tmuxListMarks struct{ sep, end string }
+
+func newTmuxListMarks() tmuxListMarks {
+	var b [8]byte
+	nonce := ""
+	if _, err := rand.Read(b[:]); err == nil {
+		nonce = hex.EncodeToString(b[:])
+	} else {
+		nonce = strconv.FormatInt(time.Now().UnixNano(), 16)
+	}
+	return tmuxListMarks{sep: "<vr-" + nonce + ">", end: "<vr-" + nonce + "-end>"}
 }
 
-func liveTmuxSessions() (map[string]tmuxSessionInfo, bool) {
-	out, err := tmuxCmd("list-sessions", "-F", "#{session_name}\t#{pane_current_path}\t#{@vibe_remote_name}\t#{@vibe_remote_mode}\t#{@vibe_remote_source_workdir}\t#{@vibe_remote_source_repo}\t#{@vibe_remote_worktree_root}\t#{@vibe_remote_branch}\t#{@vibe_remote_claude_u}").Output()
-	if err != nil {
-		// tmux exits non-zero both when there genuinely are no sessions and when
-		// the query could not run at all, and only stderr tells them apart.
-		// Treating every non-zero exit as an empty set would let a transient
-		// failure (unreachable socket, permission problem) wipe every session
-		// from the in-memory table via reconcile.
-		var exitErr *exec.ExitError
-		if errors.As(err, &exitErr) && isNoTmuxServer(exitErr.Stderr) {
-			return map[string]tmuxSessionInfo{}, true
-		}
-		if errors.As(err, &exitErr) {
-			log.Printf("tmux list-sessions failed: %v (stderr=%q)", err, exitErr.Stderr)
-		} else {
-			log.Printf("tmux list-sessions failed: %v", err)
-		}
-		return nil, false
+// format is the -F argument of list-sessions for these marks.
+func (k tmuxListMarks) format() string {
+	return strings.Join(tmuxListColumns, k.sep) + k.end
+}
+
+// tmuxSessionRecord reads the fields of one session, in tmuxListColumns order.
+// The caller has made sure there are exactly that many.
+func tmuxSessionRecord(f []string) tmuxSessionInfo {
+	return tmuxSessionInfo{
+		workdir:        f[1],
+		name:           strings.TrimSpace(f[2]),
+		mode:           f[3],
+		sourceWorkdir:  f[4],
+		sourceRepo:     f[5],
+		worktreeRoot:   f[6],
+		branch:         f[7],
+		claudeU:        strings.TrimSpace(f[8]),
+		project:        f[9],
+		home:           f[10],
+		created:        strings.TrimSpace(f[11]),
+		sessionCreated: strings.TrimSpace(f[12]),
+		startDir:       f[13],
 	}
+}
+
+// parseTmuxSessions reads the answer to `tmux list-sessions -F k.format()`.
+// It is all or nothing: every record must be closed by the end mark and have
+// exactly the fields that were asked for, and one that does not makes the
+// whole answer unreadable — a list with a session missing from it, or with a
+// session's fields shifted into each other, would be taken for the truth by
+// everything that reconciles against it. A session whose name is not
+// vibe-remote-<id> is not one of ours (someone started it on this socket by
+// hand); it is read like any other and left out.
+func parseTmuxSessions(out string, k tmuxListMarks) (map[string]tmuxSessionInfo, error) {
 	sessions := make(map[string]tmuxSessionInfo)
-	for _, line := range strings.Split(strings.TrimRight(string(out), "\r\n"), "\n") {
-		info, ok := parseTmuxSessionLine(line)
-		if !ok {
-			// A line that doesn't parse means tmux and vibe-remote disagree on
-			// the format contract — the session would silently vanish from the
-			// list, so make it loud rather than skipping in silence.
-			log.Printf("tmux list-sessions unparsed line: %q", line)
+	closer := k.end + "\n"
+	for n := 1; out != ""; n++ {
+		i := strings.Index(out, closer)
+		if i < 0 {
+			return nil, fmt.Errorf("record %d is not complete", n)
+		}
+		fields := strings.Split(out[:i], k.sep)
+		out = out[i+len(closer):]
+		if len(fields) != len(tmuxListColumns) {
+			return nil, fmt.Errorf("record %d has %d fields, not the %d that were asked for", n, len(fields), len(tmuxListColumns))
+		}
+		id, ours := strings.CutPrefix(fields[0], "vibe-remote-")
+		if !ours || id == "" {
+			log.Printf("tmux list-sessions: %q is not a vibe-remote session, left out", fields[0])
 			continue
 		}
-		id := strings.TrimPrefix(strings.SplitN(line, "\t", 2)[0], "vibe-remote-")
-		sessions[id] = info
+		sessions[id] = tmuxSessionRecord(fields)
 	}
-	return sessions, true
+	return sessions, nil
+}
+
+// isNoTmuxServer reports whether tmux's stderr means "there is nothing running"
+// (an honest empty set) rather than "the query failed". tmux has two sentences
+// for the former, "no server running on <socket>" and "no sessions", and
+// prints "error connecting to <socket> (...)" for the latter, all with a
+// non-zero exit. Only the sentences themselves count — a line that starts with
+// the first, or is the second — and not their words anywhere in the output:
+// the socket path is part of every one of these messages, and a directory can
+// be called anything. A socket file that is not there also gets the error
+// message, whether no server was ever started or a running server lost its
+// file; readTmuxSessions tells those apart without reading the message.
+func isNoTmuxServer(stderr []byte) bool {
+	for _, line := range strings.Split(string(stderr), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "no sessions" || strings.HasPrefix(line, "no server running on ") {
+			return true
+		}
+	}
+	return false
+}
+
+// tmuxSocketGone reports whether the socket file of the vibe-remote tmux
+// server does not exist. A file that is there, and one that could not be
+// looked at, are both "not gone".
+func tmuxSocketGone() bool {
+	_, err := os.Stat(tmuxSocketPath())
+	return errors.Is(err, fs.ErrNotExist)
+}
+
+// readTmuxSessions returns the vibe-remote session IDs that currently have a
+// live tmux session, mapped to each session's working directory (from tmux's
+// pane_current_path), user-set name (@vibe_remote_name) and the other options.
+// ok is false when it could not be told which sessions there are, so callers
+// can distinguish "no sessions" from "couldn't tell" and avoid wrongly
+// discarding live sessions; why then says what is known about the failure, for
+// the log and for the user ("" when there is nothing to add). Pulling the name
+// here (rather than a per-session show-options) keeps Manager.List to a single
+// tmux exec.
+//
+// haveTerminal reports whether the caller's own session table has a terminal
+// session. The rule, whenever it is not certain that there is no tmux session,
+// is that the reading failed:
+//
+//  1. tmux answered: its answer is the set — all of it or none of it. An
+//     answer with a record that cannot be read (parseTmuxSessions) is a failed
+//     reading, not the set of the records that could.
+//  2. tmux said that no server is running (isNoTmuxServer): no sessions.
+//  3. tmux ran and failed, or there is no tmux program to run; the socket file
+//     does not exist; and haveTerminal is false: no sessions. No server was
+//     started since the socket directory was last cleared (a reboot, or a
+//     daemon that has only ever run chat sessions). Decided from the error
+//     value and the file system, not from tmux's words.
+//  4. Everything else is a failed reading. That includes a socket file that is
+//     gone while haveTerminal is true: a tmux server outlives its socket file
+//     (someone cleared /tmp) and creates it again on SIGUSR1, so the sessions
+//     the table remembers may well be running. And it includes a tmux program
+//     that is not found while the socket file is there or haveTerminal is
+//     true: "not on the daemon's PATH" is not "no tmux on this machine".
+func readTmuxSessions(haveTerminal func() bool) (sessions map[string]tmuxSessionInfo, ok bool, why string) {
+	marks := newTmuxListMarks()
+	out, err := tmuxCmd("list-sessions", "-F", marks.format()).Output()
+	if err != nil {
+		// tmux exits non-zero both when there genuinely are no sessions and when
+		// the query could not run at all. Treating every non-zero exit as an
+		// empty set would let a transient failure (unreachable socket,
+		// permission problem) wipe every session from the in-memory table via
+		// reconcile; treating every one as a failure would leave a daemon that
+		// never started a tmux server unable to say "no terminal sessions".
+		var exitErr *exec.ExitError
+		ran := errors.As(err, &exitErr)
+		if ran && isNoTmuxServer(exitErr.Stderr) {
+			return map[string]tmuxSessionInfo{}, true, ""
+		}
+		// No tmux program on the daemon's PATH is not "no tmux on this machine":
+		// sessions of an earlier run, started with another PATH, may be alive
+		// behind the socket. So that case goes by the socket file and the table
+		// like a query that ran and failed.
+		noProgram := errors.Is(err, exec.ErrNotFound)
+		if ran || noProgram {
+			gone := tmuxSocketGone()
+			if gone && !haveTerminal() {
+				return map[string]tmuxSessionInfo{}, true, ""
+			}
+			switch {
+			case noProgram && !gone:
+				why = fmt.Sprintf("the tmux program was not found on the daemon's PATH, but tmux's socket %s is there: terminal sessions may be running behind it. Put tmux on the daemon's PATH and restart the daemon", tmuxSocketPath())
+			case noProgram:
+				why = "the tmux program was not found on the daemon's PATH, but the daemon remembers terminal sessions. Put tmux on the daemon's PATH and restart the daemon"
+			case gone:
+				why = fmt.Sprintf("tmux's socket file %s is gone while the daemon remembers terminal sessions. If tmux is still running, sending SIGUSR1 to the tmux server process makes it create the socket again; otherwise restart the daemon", tmuxSocketPath())
+			}
+		}
+		detail := ""
+		if why != "" {
+			detail = ": " + why
+		}
+		if ran {
+			log.Printf("tmux list-sessions failed: %v (stderr=%q)%s", err, exitErr.Stderr, detail)
+		} else {
+			log.Printf("tmux list-sessions failed: %v%s", err, detail)
+		}
+		return nil, false, why
+	}
+	sessions, err = parseTmuxSessions(string(out), marks)
+	if err != nil {
+		// Not "no sessions", and not the sessions that did read either.
+		why = fmt.Sprintf("tmux answered, but its answer could not be read as a list of sessions (%v), so nothing is known about the sessions that are running. Try again; if it stays like this, run `tmux -L %s list-sessions` on that machine to see what tmux says", err, tmuxSocket)
+		log.Printf("tmux list-sessions: %s", why)
+		return nil, false, why
+	}
+	return sessions, true, ""
 }
 
 // Runner manages a single PTY session connected to tmux→claude (or bare claude).
@@ -186,6 +334,16 @@ type Runner struct {
 	// claudeU (guarded by metaMu) is the claude conversation this session
 	// holds in the Manager's claudeOwners table; "" = none.
 	claudeU string
+	// project and home (guarded by metaMu) are the session's attribution
+	// (design 5.1); fixed at creation, recovered from tmux options, never
+	// following a later cd. Read them through Home().
+	project string
+	home    string
+	// startDir (guarded by metaMu) is the directory the session was started
+	// in: Workdir at creation, @vibe_remote_workdir for a recovered session,
+	// "" for one recovered from before that option existed. Unlike a recovered
+	// session's Workdir it never follows the process. Read it through StartDir().
+	startDir string
 
 	ptmx    *os.File // PTY master (guarded by mu)
 	cmd     *exec.Cmd
@@ -228,7 +386,13 @@ type RunnerConfig struct {
 	EventsURL  string
 	HookToken  string // injected as VIBE_REMOTE_TOKEN; see HookToken
 	ClaudeU    string // claude conversation the session holds (@vibe_remote_claude_u)
-	ExtraEnv   []string
+	// Project and Home are the session's attribution (design 5.1); empty when
+	// it could not be resolved (git failure), to be backfilled later.
+	Project string
+	Home    string
+	// Created is the session's creation time; the zero value means now.
+	Created  time.Time
+	ExtraEnv []string
 }
 
 // NewRunner creates and starts a new session.
@@ -241,7 +405,7 @@ func NewRunner(cfg RunnerConfig) (*Runner, error) {
 		SourceRepo:    cfg.SourceRepo,
 		WorktreeRoot:  cfg.WorktreeRoot,
 		Branch:        cfg.Branch,
-		Created:       time.Now(),
+		Created:       cfg.Created,
 		useTmux:       cfg.UseTmux,
 		claudeCmd:     cfg.ClaudeCmd,
 		claudeArgv:    cfg.ClaudeArgv,
@@ -250,7 +414,13 @@ func NewRunner(cfg RunnerConfig) (*Runner, error) {
 		eventsURL:     cfg.EventsURL,
 		hookToken:     cfg.HookToken,
 		claudeU:       cfg.ClaudeU,
+		project:       cfg.Project,
+		home:          cfg.Home,
+		startDir:      cfg.Workdir,
 		extraEnv:      cfg.ExtraEnv,
+	}
+	if r.Created.IsZero() {
+		r.Created = time.Now()
 	}
 
 	if err := r.start(cfg.Cols, cfg.Rows); err != nil {
@@ -280,6 +450,37 @@ func (r *Runner) setClaudeUMeta(u string) {
 	r.metaMu.Lock()
 	r.claudeU = u
 	r.metaMu.Unlock()
+}
+
+// Home returns the session's attribution (project id and the root of the
+// worktree it sits in). Both are empty when attribution was not resolved.
+func (r *Runner) Home() (project, home string) {
+	r.metaMu.Lock()
+	defer r.metaMu.Unlock()
+	return r.project, r.home
+}
+
+// StartDir returns the directory the session was started in, or "" when that
+// is not known (a session recovered from before @vibe_remote_workdir existed).
+func (r *Runner) StartDir() string {
+	r.metaMu.Lock()
+	defer r.metaMu.Unlock()
+	return r.startDir
+}
+
+// backfillHome records attribution resolved after creation (design 5.4): it
+// updates memory and, for a tmux session, persists the two options so a later
+// daemon restart recovers them. A persist failure is tolerated; the next
+// Projects() retries.
+func (r *Runner) backfillHome(project, home string) {
+	r.metaMu.Lock()
+	r.project, r.home = project, home
+	r.metaMu.Unlock()
+	if r.useTmux {
+		name := fmt.Sprintf("vibe-remote-%s", r.ID)
+		_ = setTmuxOption(name, "@vibe_remote_project", project)
+		_ = setTmuxOption(name, "@vibe_remote_home", home)
+	}
 }
 
 // CurrentWorkdir returns the session's working directory under metaMu, since a
@@ -409,6 +610,7 @@ func (r *Runner) start(cols, rows uint16) error {
 			return fmt.Errorf("tmux session %s did not become ready", tmuxSessionName)
 		}
 		meta := r.Metadata()
+		project, home := r.Home()
 		options := []struct{ key, value string }{
 			{"@vibe_remote_mode", string(meta.Mode)},
 			{"@vibe_remote_source_workdir", meta.SourceWorkdir},
@@ -416,6 +618,10 @@ func (r *Runner) start(cols, rows uint16) error {
 			{"@vibe_remote_worktree_root", meta.WorktreeRoot},
 			{"@vibe_remote_branch", meta.Branch},
 			{"@vibe_remote_claude_u", r.ClaudeU()},
+			{"@vibe_remote_project", project},
+			{"@vibe_remote_home", home},
+			{"@vibe_remote_created", r.Created.UTC().Format(time.RFC3339Nano)},
+			{"@vibe_remote_workdir", workdir},
 		}
 		for _, option := range options {
 			if err := setTmuxOption(tmuxSessionName, option.key, option.value); err != nil {
@@ -664,24 +870,48 @@ func (r *Runner) bareProcessGone() bool {
 	return !pidAlive(r.cmd.Process.Pid)
 }
 
-// Kill terminates the session entirely (including the tmux session).
+// Kill terminates the session entirely (including the tmux session). A tmux
+// session that could not be killed is only logged: whoever needs to know that
+// the session is gone uses killTmuxSession and reads tmux again.
 func (r *Runner) Kill() {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	if err := r.killTmuxSessionLocked(); err != nil {
+		log.Printf("warning: failed to kill tmux session vibe-remote-%s: %v", r.ID, err)
+	}
+	r.releaseLocked()
+}
 
+// killTmuxSession asks tmux to end the session and returns tmux's failure.
+// Nothing else about the runner changes, so one whose session is still
+// running stays usable. Without tmux there is nothing to ask.
+func (r *Runner) killTmuxSession() error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.killTmuxSessionLocked()
+}
+
+// release gives up the runner's PTY and marks it stopped: with tmux that ends
+// the attach client, without it the CLI itself.
+func (r *Runner) release() {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.releaseLocked()
+}
+
+func (r *Runner) killTmuxSessionLocked() error {
+	if !r.useTmux {
+		return nil
+	}
+	return tmuxCmd("kill-session", "-t", fmt.Sprintf("vibe-remote-%s", r.ID)).Run()
+}
+
+func (r *Runner) releaseLocked() {
 	oldPTY, oldCmd := r.ptmx, r.cmd
 	r.ptmx, r.cmd = nil, nil
-
-	if r.useTmux {
-		tmuxSessionName := fmt.Sprintf("vibe-remote-%s", r.ID)
-		if err := tmuxCmd("kill-session", "-t", tmuxSessionName).Run(); err != nil {
-			log.Printf("warning: failed to kill tmux session %s: %v", tmuxSessionName, err)
-		}
-	}
 	// reap kills the process and waits for it, which covers both cases: the
-	// tmux attach client above, or the directly-spawned CLI when tmux is off.
+	// tmux attach client, or the directly-spawned CLI when tmux is off.
 	reap(oldPTY, oldCmd)
-
 	r.stopped = true
 }
 

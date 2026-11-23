@@ -2,11 +2,13 @@
 package server
 
 import (
+	"bytes"
 	"context"
 	"crypto/subtle"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"os"
@@ -136,6 +138,11 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /healthz", s.handleHealthz)
 	s.mux.HandleFunc("GET /api/v1/info", s.handleInfo)
 	s.mux.HandleFunc("GET /api/v1/sessions", s.handleListSessions)
+	s.mux.HandleFunc("GET /api/v1/projects", s.handleProjects)
+	s.mux.HandleFunc("POST /api/v1/projects/remove", s.handleRemoveProject)
+	s.mux.HandleFunc("GET /api/v1/worktrees/plan", s.handleWorktreePlan)
+	s.mux.HandleFunc("GET /api/v1/worktrees/status", s.handleWorktreeStatus)
+	s.mux.HandleFunc("POST /api/v1/worktrees/remove", s.handleWorktreeRemove)
 	s.mux.HandleFunc("DELETE /api/v1/sessions/{id}", s.handleDeleteSession)
 	s.mux.HandleFunc("POST /api/v1/sessions/{id}/rename", s.handleRenameSession)
 	s.mux.HandleFunc("POST /api/v1/sessions/{id}/reload", s.handleReloadSession)
@@ -318,15 +325,6 @@ func (s *Server) handleDeleteSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := s.mgr.Delete(id); err != nil {
-		if preserved, ok := err.(*session.WorktreePreservedError); ok {
-			writeJSON(w, http.StatusConflict, map[string]string{
-				"error":        "worktree_preserved",
-				"message":      preserved.Error(),
-				"worktreeRoot": preserved.WorktreeRoot,
-				"branch":       preserved.Branch,
-			})
-			return
-		}
 		if strings.Contains(err.Error(), "not found") {
 			writeJSON(w, http.StatusNotFound, map[string]string{"error": err.Error()})
 			return
@@ -464,8 +462,9 @@ func (s *Server) handleFS(w http.ResponseWriter, r *http.Request) {
 		"parent":  parent,
 		"entries": dirs,
 		// Whether a chat session may start here (c3): claude's own trust
-		// answer for this directory.
-		"chatTrust": string(chat.WorkdirTrusted(absPath)),
+		// answer for this directory, or for the main directory of the
+		// repository it is a worktree root of.
+		"chatTrust": string(session.ChatTrust(absPath)),
 	})
 }
 
@@ -503,6 +502,29 @@ func decodeJSONBody(w http.ResponseWriter, r *http.Request, v any) (int, error) 
 			return http.StatusRequestEntityTooLarge, fmt.Errorf("body exceeds %d bytes", maxRESTBody)
 		}
 		return http.StatusBadRequest, errors.New("invalid body")
+	}
+	return 0, nil
+}
+
+// decodeSingleJSONBody is decodeJSONBody for a request that acts on what the
+// body says: the whole body is read first, so the size limit holds for all of
+// it (413), and it must be exactly one JSON value — anything but white space
+// after it is 400, not ignored.
+func decodeSingleJSONBody(w http.ResponseWriter, r *http.Request, v any) (int, error) {
+	data, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxRESTBody))
+	if err != nil {
+		var tooLarge *http.MaxBytesError
+		if errors.As(err, &tooLarge) {
+			return http.StatusRequestEntityTooLarge, fmt.Errorf("body exceeds %d bytes", maxRESTBody)
+		}
+		return http.StatusBadRequest, errors.New("invalid body")
+	}
+	dec := json.NewDecoder(bytes.NewReader(data))
+	if err := dec.Decode(v); err != nil {
+		return http.StatusBadRequest, errors.New("invalid body")
+	}
+	if _, err := dec.Token(); err != io.EOF {
+		return http.StatusBadRequest, errors.New("invalid body: data after the JSON object")
 	}
 	return 0, nil
 }

@@ -6,7 +6,9 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"strconv"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/lflish/vibe-remote/vibe-remoted/internal/chat"
@@ -25,10 +27,12 @@ func sessionNotFound(id string) error {
 // tmux) and chat sessions (chat.Session, a claude process the daemon owns).
 //
 // Lock order, only ever downward (design 2): a creating placeholder (per id)
-// → chat.Session.opMu → Manager.mu → Runner.mu / chat.Session.mu →
-// Runner.metaMu / store. Manager.mu is never acquired while holding a Runner
-// or Session lock, metaMu is a leaf, and no tmux command or file IO runs under
-// Manager.mu (a slow tmux would otherwise stall every handler).
+// → a repository lock (lockRepo) → chat.Session.opMu → Manager.mu →
+// Runner.mu / chat.Session.mu → Runner.metaMu / store / ProjectStore.
+// Manager.mu is never acquired while holding a Runner or Session lock, metaMu
+// is a leaf, and no tmux command or file IO runs under Manager.mu (a slow tmux
+// would otherwise stall every handler). A repository lock is never taken while
+// holding opMu or Manager.mu.
 type Manager struct {
 	mu       sync.RWMutex
 	sessions map[string]*Runner
@@ -49,6 +53,19 @@ type Manager struct {
 	// the snapshot, or resurrect one deleted after it.
 	gen uint64
 
+	// repoLocks serializes creating (and undoing) worktrees per repository,
+	// keyed by Home.Repo; repoMu guards the map only.
+	repoMu    sync.Mutex
+	repoLocks map[string]*sync.Mutex
+
+	// startingDirs counts the sessions being created per workdir, from the
+	// moment the workdir is settled until the session is in the table;
+	// removingRoots holds the worktree roots being removed. Together (both
+	// guarded by mu) they keep a removal and a session starting in the same
+	// worktree from missing each other (design 6.2 step 4).
+	startingDirs  map[string]int
+	removingRoots map[string]struct{}
+
 	useTmux          bool
 	claudeCmd        string
 	loginShell       bool
@@ -58,41 +75,76 @@ type Manager struct {
 	// mainToken is held only to derive per-session hook tokens; it is never
 	// injected into a session's environment.
 	mainToken string
+	// tmuxWhy is what the last reading of tmux by readTmux had to say about
+	// its failure ("" when it worked, or failed with nothing to add).
+	tmuxWhy atomic.Pointer[string]
 
-	chatCfg ChatConfig
-	store   *chat.Store
-	persist persister
+	chatCfg      ChatConfig
+	store        *chat.Store
+	projectStore *ProjectStore
+	persist      persister
 	// closing (guarded by mu) is set by Shutdown: no new chat process starts.
 	// chatCreates counts the CreateChat calls Shutdown waits for.
 	closing     bool
 	chatCreates sync.WaitGroup
 
 	// Seams for tests.
-	orphanCleanup    func([]chat.Record) ([]chat.Record, []chat.Orphan)
-	testAfterResolve func(workdir string) // after a -c terminal resolved its conversation
-	testFailRespawn  error                // makes the next fixed-identity reload fail to start
+	orphanCleanup             func([]chat.Record) ([]chat.Record, []chat.Orphan)
+	testAfterResolve          func(workdir string)  // after a -c terminal resolved its conversation
+	testFailRespawn           error                 // makes the next fixed-identity reload fail to start
+	testAfterWorktreeSnapshot func()                // Projects: after the worktree-record snapshot, before reading lists
+	testUndoLocked            func()                // undoing a created worktree: repository lock held, nothing removed yet
+	testAfterBeginStart       func(workdir string)  // creating a session: its workdir is registered as starting, nothing runs yet
+	testAfterRemovingMarked   func()                // removing a worktree: marked as being removed, no session ended yet
+	testAfterSessionsEnded    func()                // removing a worktree: its sessions are ended, HEAD not yet re-read
+	testBeforeWorktreeRemove  func()                // removing a worktree: every check passed, git worktree remove not yet run
+	testEndSession            func(id string) error // removing a worktree: ends a session instead of endSessionConfirmed
 }
 
 // NewManager creates a session manager.
 func NewManager(useTmux bool, claudeCmd string, loginShell bool, shell string) *Manager {
 	m := &Manager{
-		sessions:         make(map[string]*Runner),
-		chats:            make(map[string]*chatEntry),
-		claudeOwners:     make(map[string]string),
-		orphans:          make(map[string]chat.Orphan),
-		orphanCleanup:    chat.CleanupOrphans,
-		subs:             make(map[string][]chan protocol.NotifyFrame),
-		creating:         make(map[string]chan struct{}),
-		useTmux:          useTmux,
-		claudeCmd:        claudeCmd,
-		loginShell:       loginShell,
-		shell:            shell,
-		liveTmuxSessions: liveTmuxSessions,
+		sessions:      make(map[string]*Runner),
+		chats:         make(map[string]*chatEntry),
+		claudeOwners:  make(map[string]string),
+		orphans:       make(map[string]chat.Orphan),
+		orphanCleanup: chat.CleanupOrphans,
+		subs:          make(map[string][]chan protocol.NotifyFrame),
+		creating:      make(map[string]chan struct{}),
+		useTmux:       useTmux,
+		claudeCmd:     claudeCmd,
+		loginShell:    loginShell,
+		shell:         shell,
 	}
+	m.liveTmuxSessions = m.readTmux
 	if useTmux {
 		scrubTmuxMainToken()
 	}
 	return m
+}
+
+// readTmux is the reading of tmux the session table is reconciled from. It
+// tells tmux's reader whether the table has a terminal session: a socket file
+// that is gone only means "no sessions" to a daemon that remembers none. Call
+// it without mu held.
+func (m *Manager) readTmux() (map[string]tmuxSessionInfo, bool) {
+	live, ok, why := readTmuxSessions(m.hasTerminalSessions)
+	m.tmuxWhy.Store(&why)
+	return live, ok
+}
+
+func (m *Manager) hasTerminalSessions() bool {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return len(m.sessions) > 0
+}
+
+// tmuxFailure is what the last reading of tmux said about its failure, or "".
+func (m *Manager) tmuxFailure() string {
+	if why := m.tmuxWhy.Load(); why != nil {
+		return *why
+	}
+	return ""
 }
 
 // scrubTmuxMainToken removes the daemon's main token variable from the global
@@ -133,7 +185,7 @@ func (m *Manager) recoveredRunner(id string, info tmuxSessionInfo, now time.Time
 		SourceRepo:    info.sourceRepo,
 		WorktreeRoot:  info.worktreeRoot,
 		Branch:        info.branch,
-		Created:       now,
+		Created:       recoveredCreated(info, now),
 		useTmux:       m.useTmux,
 		claudeCmd:     m.claudeCmd,
 		loginShell:    m.loginShell,
@@ -141,8 +193,30 @@ func (m *Manager) recoveredRunner(id string, info tmuxSessionInfo, now time.Time
 		eventsURL:     m.eventsURL,
 		hookToken:     m.hookTokenFor(id),
 		claudeU:       info.claudeU,
+		project:       info.project,
+		home:          info.home,
+		startDir:      info.startDir,
 		extraEnv:      m.chatCfg.Env,
 	}
+}
+
+// recoveredCreated reconstructs a recovered session's creation time: the
+// RFC 3339 @vibe_remote_created option if it parses, else tmux's own
+// session_created (unix seconds), else the recovery moment (design 5.1). The
+// value is converted to local time so /api/v1/sessions formats it identically
+// across restarts.
+func recoveredCreated(info tmuxSessionInfo, now time.Time) time.Time {
+	if info.created != "" {
+		if t, err := time.Parse(time.RFC3339Nano, info.created); err == nil {
+			return t.Local()
+		}
+	}
+	if info.sessionCreated != "" {
+		if secs, err := strconv.ParseInt(info.sessionCreated, 10, 64); err == nil {
+			return time.Unix(secs, 0).Local()
+		}
+	}
+	return now
 }
 
 // ErrInvalidSessionID rejects a client-chosen session id that could not be
@@ -171,10 +245,12 @@ type CreateOptions struct {
 	// ClaudeArgv, when set, is the command as argv (handoff); it takes
 	// precedence over ClaudeCmdOverride.
 	ClaudeArgv []string
-	// ValidateWorkdir, when set, re-checks the workdir a worktree session will
-	// actually run in. The caller validated the source directory, but the
-	// worktree is created next to the repo root — possibly outside the allowed
-	// roots — so the derived path needs the same check.
+	// ValidateWorkdir, when set, vets the paths a worktree session derives.
+	// The caller validated the source directory, but the worktree is created
+	// next to the repo root — possibly outside the allowed roots. It is asked
+	// about the new worktree's root before that exists (so it must accept a
+	// path that is not there yet) and about the workdir the session will
+	// actually run in once it does.
 	ValidateWorkdir func(string) (string, error)
 	// ClaudeU, when set, is a claude conversation the caller already claimed
 	// for this session (handoff); the command must already open it.
@@ -182,6 +258,12 @@ type CreateOptions struct {
 	// Worktree, when set, is an existing worktree the session takes over
 	// (handoff) instead of creating one; Workdir is then used as is.
 	Worktree *WorktreeMetadata
+	// Home, when set, is the attribution to record verbatim (a handoff copies
+	// the chat session's); when nil, Create resolves it from the workdir.
+	Home *Home
+	// WorktreeName (worktree mode only) names the new branch; empty keeps the
+	// original naming, vibe/<session id>.
+	WorktreeName string
 }
 
 // Create starts a new session and registers it. Worktree resources are created
@@ -216,6 +298,27 @@ func (m *Manager) Create(opts CreateOptions) (*Runner, error) {
 	return m.createTerminalLocked(id, opts)
 }
 
+// resolveSessionHome computes the attribution to record for a new session
+// (design 5.1). A handoff supplies it directly; a session in a worktree this
+// call created takes what CreateWorktree returned; otherwise it is
+// ResolveHome(workdir), and a git failure leaves both empty for later
+// backfill. git reports whether the project should enter the project list
+// (H18: only git projects, and a handoff's project was already added by its
+// origin).
+func resolveSessionHome(handoff, own *Home, workdir string) (project, home string, git bool) {
+	if handoff != nil {
+		return handoff.Project, handoff.Path, false
+	}
+	if own != nil {
+		return own.Project, own.Path, true
+	}
+	h, err := ResolveHome(workdir)
+	if err != nil {
+		return "", "", false
+	}
+	return h.Project, h.Path, h.Git
+}
+
 // createTerminalLocked starts terminal session id. The caller holds id's
 // creating placeholder (or generated id), so it must not call beginCreate
 // again — a handoff, which already holds the placeholder, would wait for
@@ -237,22 +340,31 @@ func (m *Manager) createTerminalLocked(id string, opts CreateOptions) (*Runner, 
 	workdir := opts.Workdir
 	var meta WorktreeMetadata
 	var err error
+	// ownWorktree: this call created the worktree, so a failed start undoes it.
+	ownWorktree := mode == protocol.SessionModeWorktree && opts.Worktree == nil
+	var created CreatedWorktree
+	var ownHome *Home
+	// started ends the registration of workdir as "a session is starting
+	// here" (beginStart); it runs after the session is registered, or after a
+	// failed start has undone its worktree.
+	var started func()
 	if opts.Worktree != nil {
 		meta = *opts.Worktree
-	} else if mode == protocol.SessionModeWorktree {
-		meta, workdir, err = CreateWorktree(opts.Workdir, id)
+	} else if ownWorktree {
+		created, started, err = m.createOwnWorktree(opts.Workdir, id, opts.WorktreeName, opts.ValidateWorkdir)
 		if err != nil {
 			return nil, err
 		}
-		if opts.ValidateWorkdir != nil {
-			if _, err := opts.ValidateWorkdir(workdir); err != nil {
-				err = fmt.Errorf("worktree workdir %q: %w", workdir, err)
-				if rollbackErr := RollbackWorktree(meta); rollbackErr != nil {
-					return nil, fmt.Errorf("%v; rollback worktree: %w", err, rollbackErr)
-				}
-				return nil, err
-			}
+		meta, workdir, ownHome = created.Meta, created.Workdir, &created.Home
+	}
+	if started == nil {
+		if started, err = m.beginStart(workdir); err != nil {
+			return nil, err
 		}
+	}
+	defer started()
+	if m.testAfterBeginStart != nil {
+		m.testAfterBeginStart(workdir)
 	}
 
 	claudeCmd := m.claudeCmd
@@ -263,7 +375,6 @@ func (m *Manager) createTerminalLocked(id string, opts CreateOptions) (*Runner, 
 	if len(claudeArgv) > 0 {
 		claudeCmd = chat.ShellJoin(claudeArgv)
 	}
-	ownWorktree := mode == protocol.SessionModeWorktree && opts.Worktree == nil
 	claudeU := opts.ClaudeU
 	claimedHere := false
 	if claudeU == "" {
@@ -277,9 +388,7 @@ func (m *Manager) createTerminalLocked(id string, opts CreateOptions) (*Runner, 
 			}
 			if err := m.claimClaude(u, id); err != nil {
 				if ownWorktree {
-					if rollbackErr := RollbackWorktree(meta); rollbackErr != nil {
-						return nil, fmt.Errorf("%v; rollback worktree: %w", err, rollbackErr)
-					}
+					err = m.undoOwnWorktree(created, err)
 				}
 				return nil, err
 			}
@@ -288,6 +397,7 @@ func (m *Manager) createTerminalLocked(id string, opts CreateOptions) (*Runner, 
 			claudeU, claimedHere = u, true
 		}
 	}
+	project, home, git := resolveSessionHome(opts.Home, ownHome, workdir)
 	runner, err := NewRunner(RunnerConfig{
 		ID:            id,
 		Workdir:       workdir,
@@ -306,6 +416,8 @@ func (m *Manager) createTerminalLocked(id string, opts CreateOptions) (*Runner, 
 		EventsURL:     m.eventsURL,
 		HookToken:     m.hookTokenFor(id),
 		ClaudeU:       claudeU,
+		Project:       project,
+		Home:          home,
 		ExtraEnv:      m.chatCfg.Env,
 	})
 	if err != nil {
@@ -313,9 +425,7 @@ func (m *Manager) createTerminalLocked(id string, opts CreateOptions) (*Runner, 
 			m.releaseClaude(claudeU, id)
 		}
 		if ownWorktree {
-			if rollbackErr := RollbackWorktree(meta); rollbackErr != nil {
-				return nil, fmt.Errorf("%v; rollback worktree: %w", err, rollbackErr)
-			}
+			err = m.undoOwnWorktree(created, err)
 		}
 		return nil, err
 	}
@@ -324,7 +434,97 @@ func (m *Manager) createTerminalLocked(id string, opts CreateOptions) (*Runner, 
 	m.sessions[id] = runner
 	m.gen++
 	m.mu.Unlock()
+	m.recordCreated(project, git)
 	return runner, nil
+}
+
+// recordCreated adds a newly created session's git project to the store
+// (design 5.2). It takes the store's own leaf lock, never Manager.mu.
+func (m *Manager) recordCreated(project string, git bool) {
+	if m.projectStore != nil && git && project != "" {
+		m.projectStore.AddProject(project)
+	}
+}
+
+// lockRepo takes the lock that serializes worktree creation in one repository
+// and returns its unlock.
+func (m *Manager) lockRepo(repo string) (unlock func()) {
+	m.repoMu.Lock()
+	if m.repoLocks == nil {
+		m.repoLocks = make(map[string]*sync.Mutex)
+	}
+	l := m.repoLocks[repo]
+	if l == nil {
+		l = &sync.Mutex{}
+		m.repoLocks[repo] = l
+	}
+	m.repoMu.Unlock()
+	l.Lock()
+	return l.Unlock
+}
+
+// createOwnWorktree creates the worktree of a worktree-mode session under the
+// repository's lock and records it as created by vibe-remote (design 6.1).
+// validate is the caller's ValidateWorkdir. Before the lock is released the
+// session's workdir is registered as starting (beginStart), so a removal that
+// takes the lock next does not find the new worktree without a session; the
+// caller calls started once the session is registered, or after
+// undoOwnWorktree.
+func (m *Manager) createOwnWorktree(source, id, name string, validate func(string) (string, error)) (created CreatedWorktree, started func(), err error) {
+	if name != "" {
+		// Before ResolveHome below, the first git call of a create.
+		if err := CheckWorktreeNameLocal(name); err != nil {
+			return CreatedWorktree{}, nil, err
+		}
+	}
+	spec := WorktreeSpec{Source: source, SessionID: id, Name: name}
+	if validate != nil {
+		spec.AllowPath = func(path string) error {
+			_, err := validate(path)
+			return err
+		}
+	}
+	// Which lock to take depends on the repository, so it is resolved once out
+	// here; CreateWorktree resolves it again under the lock and goes by that.
+	home, err := ResolveHome(source)
+	if err != nil {
+		return CreatedWorktree{}, nil, fmt.Errorf("discover repository: %w", err)
+	}
+	if !home.Git {
+		return CreatedWorktree{}, nil, errNotGit(source)
+	}
+	unlock := m.lockRepo(home.Repo)
+	defer unlock()
+	if created, err = CreateWorktree(spec); err != nil {
+		return CreatedWorktree{}, nil, err
+	}
+	if started, err = m.beginStart(created.Workdir); err != nil {
+		return CreatedWorktree{}, nil, withCleanup(err, created.Undo())
+	}
+	if m.projectStore != nil {
+		m.projectStore.AddWorktree(created.Home.Project, created.Meta.WorktreeRoot, created.Meta.Branch)
+	}
+	return created, started, nil
+}
+
+// undoOwnWorktree takes back a worktree whose session failed to start, again
+// under the repository's lock: outside it, removing the container this create
+// made could pull it from under another create that has just seen it exist.
+// It returns cause, extended by whatever could not be removed.
+func (m *Manager) undoOwnWorktree(created CreatedWorktree, cause error) error {
+	unlock := m.lockRepo(created.Home.Repo)
+	defer unlock()
+	if m.testUndoLocked != nil {
+		m.testUndoLocked()
+	}
+	undoErr := created.Undo()
+	if m.projectStore != nil {
+		m.projectStore.RemoveWorktree(created.Meta.WorktreeRoot)
+	}
+	if undoErr != nil {
+		return fmt.Errorf("%w; rollback worktree: %v", cause, undoErr)
+	}
+	return cause
 }
 
 // beginCreate claims id for creation. It returns exists=true (and no done
@@ -462,8 +662,8 @@ func (m *Manager) syncFromTmux() (map[string]tmuxSessionInfo, bool) {
 	return live, true
 }
 
-// Delete kills and removes a session. Worktree cleanup happens after the
-// runner is stopped; dirty resources are intentionally preserved and surfaced.
+// Delete kills and removes a session. A worktree session's directory and
+// branch stay (H16): removing a worktree is its own operation.
 func (m *Manager) Delete(id string) error {
 	m.mu.RLock()
 	entry := m.chats[id]
@@ -481,22 +681,83 @@ func (m *Manager) Delete(id string) error {
 
 	runner.Kill()
 	m.mu.Lock()
+	delete(m.sessions, id)
 	m.releaseOwnerLocked(id) // its claude process is gone with the tmux session
+	m.gen++
 	m.mu.Unlock()
-	if meta := runner.Metadata(); meta.Mode == protocol.SessionModeWorktree {
-		err := CleanupWorktree(WorktreeMetadata{
-			SourceWorkdir: meta.SourceWorkdir,
-			SourceRepo:    meta.SourceRepo,
-			WorktreeRoot:  meta.WorktreeRoot,
-			Branch:        meta.Branch,
-		})
-		if err != nil {
-			return err
+	return nil
+}
+
+// How often, and how far apart, endSessionConfirmed reads tmux before it gives
+// up on learning whether a session ended.
+const (
+	endConfirmReadings = 3
+	endConfirmPause    = 100 * time.Millisecond
+)
+
+// endSessionConfirmed ends session id for the removal of its worktree, and
+// returns nil only when the session is known to be gone. Delete does not ask
+// that much of a terminal session: it takes the session out of the table
+// whether or not tmux killed it, which is all a deleted session needs and is
+// the way out when tmux itself is gone. A worktree is another matter: its
+// directory must not go while a session in it may still be running. So here
+// tmux is read again after the kill, by the same rules as every reconcile
+// (readTmuxSessions): a reading that fails, or one that still has the session,
+// is a session that was not ended. It then stays in the table, with its PTY,
+// as it was.
+func (m *Manager) endSessionConfirmed(id string) error {
+	m.mu.RLock()
+	entry := m.chats[id]
+	m.mu.RUnlock()
+	if entry != nil || !m.useTmux {
+		// A chat process is stopped and waited for by its own supervisor, and a
+		// terminal session without tmux is the daemon's own child, killed and
+		// reaped by Kill.
+		return m.Delete(id)
+	}
+	m.syncFromTmux()
+	m.mu.RLock()
+	runner, ok := m.sessions[id]
+	m.mu.RUnlock()
+	if !ok {
+		return sessionNotFound(id)
+	}
+	killErr := runner.killTmuxSession()
+	// The session is still in the table, so a socket file that is gone reads as
+	// a failure here, not as "no sessions". A tmux server that has just lost its
+	// last session is on its way out, and for a moment answers neither with a
+	// list nor with "no server running" ("server exited unexpectedly"): a
+	// reading that fails is tried again, briefly.
+	var live map[string]tmuxSessionInfo
+	read := false
+	for attempt := 0; attempt < endConfirmReadings; attempt++ {
+		if attempt > 0 {
+			time.Sleep(endConfirmPause)
+		}
+		if live, read = m.liveTmuxSessions(); read {
+			break
 		}
 	}
+	if !read {
+		msg := "tmux could not be read after it was asked to end the session, so it is not known whether the session ended"
+		if killErr != nil {
+			msg = fmt.Sprintf("tmux kill-session failed (%v), and tmux could not be read to see whether the session is still running", killErr)
+		}
+		if why := m.tmuxFailure(); why != "" {
+			msg += ": " + why
+		}
+		return errors.New(msg)
+	}
+	if _, alive := live[id]; alive {
+		if killErr != nil {
+			return fmt.Errorf("tmux kill-session failed (%v) and the session is still running", killErr)
+		}
+		return errors.New("tmux still lists the session after it was asked to end it")
+	}
+	runner.release()
 	m.mu.Lock()
 	delete(m.sessions, id)
-	m.releaseOwnerLocked(id)
+	m.releaseOwnerLocked(id) // its claude process is gone with the tmux session
 	m.gen++
 	m.mu.Unlock()
 	return nil
@@ -618,6 +879,9 @@ func applyTmuxSessionMetadata(r *Runner, info tmuxSessionInfo) {
 	defer r.metaMu.Unlock()
 	if r.Workdir == "" {
 		r.Workdir = info.workdir
+	}
+	if r.startDir == "" {
+		r.startDir = info.startDir
 	}
 	// A complete Worktree snapshot is authoritative for a recovered runner whose
 	// zero/default mode was already normalized to "normal". Apply the metadata as

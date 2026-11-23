@@ -1,0 +1,12 @@
+$ cd vibe-remoted && TMUX_TMPDIR=<own temp dir> CLAUDE_CONFIG_DIR=<empty temp dir> go test -race -count=1 -v -timeout 25m ./...
+(a full run of the Go suite with -v, to count passes and skips; the full output is not kept here)
+code under test: b6dea2c, 2026-11-20 18:58–19:05 (nothing under vibe-remoted/ changed since 7b295b0)
+ok  	github.com/lflish/vibe-remote/vibe-remoted/internal/chat	17.721s   top-level PASS 99
+ok  	github.com/lflish/vibe-remote/vibe-remoted/internal/config	2.287s   top-level PASS 15
+ok  	github.com/lflish/vibe-remote/vibe-remoted/internal/protocol	1.846s   top-level PASS 2
+ok  	github.com/lflish/vibe-remote/vibe-remoted/internal/server	75.376s   top-level PASS 101
+ok  	github.com/lflish/vibe-remote/vibe-remoted/internal/session	391.860s   top-level PASS 251
+exit=0
+
+top-level tests: PASS 468 / FAIL 0 / SKIP 0
+subtests:        PASS 458 / FAIL 0 / SKIP 0

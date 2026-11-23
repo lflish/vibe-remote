@@ -1,0 +1,23 @@
+# 补充探针（2026-11-18，git 2.50.1，临时仓库，跑完即删）
+
+$ git worktree add -b @ <tmp>/wt-at HEAD
+Preparing worktree (new branch '@')
+[exit 0]                       # git 接受名为 @ 的分支；设计不对它特判，以 git 的判定为准
+
+$ git worktree add -q -b '$(touch${IFS}PWNED)' <tmp>/wt-meta HEAD
+[exit 0]
+$ git branch --list
++ $(touch${IFS}PWNED)          # 名字原样成为分支名
+$ find <tmp> -name PWNED | wc -l
+0                              # 没有任何 shell 求值（参数直接进 argv）
+
+$ git -c core.fsmonitor=false -C <tmp>/wt-meta status --porcelain --untracked-files=all
+[exit 0]
+
+$ git -C <tmp>/plain worktree list --porcelain      # 非 git 目录
+fatal: not a git repository (or any of the parent directories): .git
+[exit 128]
+
+# 单次 git 调用的耗时（20 次平均，含进程启动）
+/usr/bin/git                                       23.3 ms   # macOS 的 xcrun 转发壳
+/Library/Developer/CommandLineTools/usr/bin/git    12.8 ms

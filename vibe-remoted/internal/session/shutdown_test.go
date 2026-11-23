@@ -2,6 +2,8 @@ package session
 
 import (
 	"errors"
+	"os"
+	"sync"
 	"testing"
 	"time"
 
@@ -19,13 +21,20 @@ func TestShutdownWaitsForInFlightChatCreate(t *testing.T) {
 	var a ChatAttachment
 	var err error
 	done := make(chan struct{})
+	// The create is held where it used to be: after its worktree exists. The
+	// path is checked once before that too (it does not exist yet then).
+	var hold sync.Once
 	go func() {
 		defer close(done)
 		a, err = f.m.CreateChat(ChatCreateOptions{ID: newID("shutdown-create"), Workdir: repo,
 			Mode: protocol.SessionModeWorktree, Parsed: parsed(t, f.exe),
 			ValidateWorkdir: func(path string) (string, error) {
-				close(entered)
-				<-release
+				if _, statErr := os.Stat(path); statErr == nil {
+					hold.Do(func() {
+						close(entered)
+						<-release
+					})
+				}
 				return path, nil
 			}})
 	}()

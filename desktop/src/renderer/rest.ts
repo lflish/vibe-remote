@@ -1,4 +1,4 @@
-import type { MachineConfig, SessionInfo } from '../shared/protocol';
+import type { MachineConfig, Project, ProjectsResponse, SessionInfo, WorktreePlan, WorktreeRemoveRequest, WorktreeRemoveResult, WorktreeStatus } from '../shared/protocol';
 import { t } from './i18n';
 
 // Every REST call gets a deadline. Without one, a black-holed host (daemon
@@ -7,8 +7,17 @@ import { t } from './i18n';
 // request on every tick.
 const REQUEST_TIMEOUT_MS = 8000;
 
-export function timedFetch(input: string, init: RequestInit = {}): Promise<Response> {
-  return fetch(input, { ...init, signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS) });
+export function timedFetch(input: string, init: RequestInit = {}, timeoutMs: number = REQUEST_TIMEOUT_MS): Promise<Response> {
+  return fetch(input, { ...init, signal: AbortSignal.timeout(timeoutMs) });
+}
+
+/**
+ * Deadline for removing a worktree that has `sessionCount` sessions. The daemon
+ * ends them one by one (a chat process takes up to about 4 s to stop) and a
+ * large directory takes time to delete, so the usual deadline is too short.
+ */
+export function removeTimeoutMs(sessionCount: number): number {
+  return Math.min(60_000, 10_000 + 5_000 * sessionCount);
 }
 
 /**
@@ -53,6 +62,33 @@ export class VibeRemoteRest {
     }
   }
 
+  /**
+   * Fetch the project tree (v4). An old daemon has no such route and answers
+   * 404, which maps to null so the caller can fall back to session grouping;
+   * any other non-2xx throws a RestError. A 200 whose body has no `projects`
+   * array is not what the protocol defines and throws as well (a plain Error):
+   * read as an empty tree it would empty the sidebar. The caller treats it
+   * like any failed request and keeps what it had.
+   */
+  async listProjects(): Promise<Project[] | null> {
+    const res = await timedFetch(`${this.base()}/api/v1/projects`, { headers: this.headers() });
+    if (res.status === 404) return null;
+    if (!res.ok) throw await RestError.from(res);
+    const body = await res.json() as Partial<ProjectsResponse> | null;
+    if (!body || !Array.isArray(body.projects)) throw new Error('projects: the response has no project list');
+    return body.projects;
+  }
+
+  /** Remove a project from the list (the disk is untouched). */
+  async removeProject(id: string): Promise<void> {
+    const res = await timedFetch(`${this.base()}/api/v1/projects/remove`, {
+      method: 'POST',
+      headers: { ...this.headers(), 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id }),
+    });
+    if (!res.ok && res.status !== 204) throw await RestError.from(res);
+  }
+
   async renameSession(id: string, name: string): Promise<void> {
     const res = await timedFetch(`${this.base()}/api/v1/sessions/${id}/rename`, {
       method: 'POST',
@@ -79,6 +115,50 @@ export class VibeRemoteRest {
       } catch { /* non-JSON response */ }
       throw new ReloadSessionError(res.status, message, owner);
     }
+  }
+
+  /**
+   * Read-only pre-check for a new worktree named `name` created from `workdir`
+   * (v4). A name that cannot be used is a normal answer (`ok: false` with the
+   * reason); only an HTTP failure throws (RestError).
+   */
+  async planWorktree(workdir: string, name: string): Promise<WorktreePlan> {
+    const url = new URL(`${this.base()}/api/v1/worktrees/plan`);
+    url.searchParams.set('workdir', workdir);
+    url.searchParams.set('name', name);
+    const res = await timedFetch(url.toString(), { headers: this.headers() });
+    if (!res.ok) throw await RestError.from(res);
+    return res.json();
+  }
+
+  /**
+   * The state of a worktree (v4): what the delete confirmation shows. Throws a
+   * RestError; 404 `worktree_not_found` when it is no longer there.
+   */
+  async worktreeStatus(path: string): Promise<WorktreeStatus> {
+    const url = new URL(`${this.base()}/api/v1/worktrees/status`);
+    url.searchParams.set('path', path);
+    const res = await timedFetch(url.toString(), { headers: this.headers() });
+    if (!res.ok) throw await RestError.from(res);
+    return res.json();
+  }
+
+  /**
+   * Remove a worktree (v4). `req` carries what the user saw (head, sessions,
+   * branch) and agreed to. A refusal is a RestError whose body has `endedSessions`
+   * for 409 `worktree_changed` (with the current `status`) and 500
+   * `worktree_remove_failed`. A timeout or network failure is not a RestError:
+   * the daemon carries the removal through regardless, so the outcome is then
+   * unknown, not negative.
+   */
+  async removeWorktree(req: WorktreeRemoveRequest): Promise<WorktreeRemoveResult> {
+    const res = await timedFetch(`${this.base()}/api/v1/worktrees/remove`, {
+      method: 'POST',
+      headers: { ...this.headers(), 'Content-Type': 'application/json' },
+      body: JSON.stringify(req),
+    }, removeTimeoutMs(req.sessions.length));
+    if (!res.ok) throw await RestError.from(res);
+    return res.json();
   }
 
   /** List directory entries (directories only) for the remote picker. */
@@ -112,6 +192,30 @@ export class DeleteSessionError extends Error {
   constructor(public status: number, public code: string, public detail?: string, public worktreeRoot?: string, public branch?: string) {
     super(detail || code);
     this.name = 'DeleteSessionError';
+  }
+}
+
+/**
+ * A non-2xx response from a v4 project/worktree endpoint. `code` is the
+ * daemon's error code (e.g. project_has_sessions); timeouts and network
+ * failures are not RestErrors.
+ */
+export class RestError extends Error {
+  constructor(public status: number, public code: string, public body: unknown) {
+    super(code || `request failed: ${status}`);
+    this.name = 'RestError';
+  }
+
+  static async from(res: Response): Promise<RestError> {
+    let body: unknown = undefined;
+    let code = `request failed: ${res.status}`;
+    try {
+      body = await res.json();
+      if (body && typeof body === 'object' && typeof (body as { error?: unknown }).error === 'string') {
+        code = (body as { error: string }).error;
+      }
+    } catch { /* non-JSON response */ }
+    return new RestError(res.status, code, body);
   }
 }
 export interface ClaudeFlagInfo {
@@ -168,6 +272,10 @@ export interface DirListing {
    * compare them reliably. Absent on older daemons — treat as "unknown".
    */
   parent?: string;
-  /** Whether claude trusts `path` (v3). Only 'trusted' allows a chat session. */
+  /**
+   * Whether a chat session may start in `path` (v3): claude trusts it, or (v4)
+   * it is a worktree root of a repository whose main directory claude trusts.
+   * Only 'trusted' allows a chat session.
+   */
   chatTrust?: ChatTrust;
 }

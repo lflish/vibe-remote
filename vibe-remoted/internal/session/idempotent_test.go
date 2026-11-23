@@ -141,3 +141,56 @@ func TestAttachWithoutTmuxIsNotFound(t *testing.T) {
 		t.Fatalf("err = %v, want ErrSessionNotFound", err)
 	}
 }
+
+// The same replay rule with a named worktree: every attempt carrying the same
+// client-chosen id lands on the one session, and none of them trips over the
+// branch the first attempt created.
+func TestNamedWorktreeReplaySameID(t *testing.T) {
+	requireTmux(t)
+	repo := devflowRepo(t)
+	m := NewManager(true, "sleep 30", false, "")
+	id := fmt.Sprintf("named-%d", time.Now().UnixNano())
+	opts := CreateOptions{ID: id, Workdir: repo, Mode: protocol.SessionModeWorktree, WorktreeName: "fix-login", Cols: 80, Rows: 24}
+
+	first, err := m.Create(opts)
+	if err != nil {
+		t.Fatalf("first create: %v", err)
+	}
+	t.Cleanup(func() { m.Delete(id) })
+	second, err := m.Create(opts)
+	if err != nil || second != first {
+		t.Fatalf("replayed create: runner %p (first %p), err %v", second, first, err)
+	}
+
+	var wg sync.WaitGroup
+	got := make([]*Runner, 2)
+	errs := make([]error, 2)
+	for i := range got {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			got[i], errs[i] = m.Create(opts)
+		}(i)
+	}
+	wg.Wait()
+	for i := range got {
+		if errs[i] != nil || got[i] != first {
+			t.Fatalf("concurrent replay %d: runner %p (first %p), err %v", i, got[i], first, errs[i])
+		}
+	}
+	if n := strings.Count(runGit(t, repo, "worktree", "list", "--porcelain"), "branch refs/heads/fix-login"); n != 1 {
+		t.Fatalf("%d worktrees on fix-login, want 1", n)
+	}
+	if got := runGit(t, repo, "branch", "--list", "--format=%(refname:short)", "fix-login"); got != "fix-login" {
+		t.Fatalf("branches named fix-login: %q", got)
+	}
+	n := 0
+	for _, info := range m.List() {
+		if info.Branch == "fix-login" {
+			n++
+		}
+	}
+	if n != 1 {
+		t.Fatalf("%d sessions on fix-login, want 1", n)
+	}
+}

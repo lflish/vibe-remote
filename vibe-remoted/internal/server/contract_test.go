@@ -100,7 +100,7 @@ func TestReadyReportsProtocolVersion(t *testing.T) {
 
 // R18.1: the daemon speaks protocol 3 on both /api/v1/info and a terminal
 // attach's ready frame.
-func TestInfoAndReadyProto3(t *testing.T) {
+func TestInfoAndReadyProto4(t *testing.T) {
 	s, url := newWSTestServer(t)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/info", nil)
@@ -116,8 +116,8 @@ func TestInfoAndReadyProto3(t *testing.T) {
 	if err := json.Unmarshal(w.Body.Bytes(), &info); err != nil {
 		t.Fatal(err)
 	}
-	if info.Proto != 3 {
-		t.Fatalf("info.proto = %d, want 3", info.Proto)
+	if info.Proto != 4 {
+		t.Fatalf("info.proto = %d, want 4", info.Proto)
 	}
 
 	conn, ctx := authed(t, s, url)
@@ -128,8 +128,8 @@ func TestInfoAndReadyProto3(t *testing.T) {
 	if err := wsjson.Read(ctx, conn, &ready); err != nil || ready.Type != protocol.TypeReady {
 		t.Fatalf("expected ready, got %+v (err %v)", ready, err)
 	}
-	if ready.Proto != 3 {
-		t.Fatalf("ready.proto = %d, want 3", ready.Proto)
+	if ready.Proto != 4 {
+		t.Fatalf("ready.proto = %d, want 4", ready.Proto)
 	}
 }
 

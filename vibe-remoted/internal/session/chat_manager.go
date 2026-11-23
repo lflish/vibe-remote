@@ -160,6 +160,8 @@ type ChatCreateOptions struct {
 	Parsed  chat.Parsed // claude_cmd plus flags, parsed and checked by the caller
 	// ValidateWorkdir re-checks a worktree's path (see CreateOptions).
 	ValidateWorkdir func(string) (string, error)
+	// WorktreeName: see CreateOptions.
+	WorktreeName string
 }
 
 // ChatAttachment is the result of CreateChat.
@@ -230,6 +232,17 @@ func (m *Manager) CreateChat(opts ChatCreateOptions) (ChatAttachment, error) {
 	if mode != protocol.SessionModeNormal && mode != protocol.SessionModeWorktree {
 		return ChatAttachment{}, fmt.Errorf("unknown session mode %q", mode)
 	}
+	ownWorktree := mode == protocol.SessionModeWorktree
+	// started ends the registration of the workdir as "a session is starting
+	// here" (see createTerminalLocked); a new worktree's is made with it.
+	var started func()
+	if !ownWorktree {
+		var err error
+		if started, err = m.beginStart(opts.Workdir); err != nil {
+			return ChatAttachment{}, err
+		}
+		defer started()
+	}
 
 	// The conversation: -c continues the workdir's latest one (a new
 	// worktree has none), anything else starts a new one.
@@ -263,23 +276,20 @@ func (m *Manager) CreateChat(opts ChatCreateOptions) (ChatAttachment, error) {
 
 	workdir := opts.Workdir
 	var meta WorktreeMetadata
-	if mode == protocol.SessionModeWorktree {
+	var created CreatedWorktree
+	var ownHome *Home
+	if ownWorktree {
 		var err error
-		meta, workdir, err = CreateWorktree(opts.Workdir, id)
+		created, started, err = m.createOwnWorktree(opts.Workdir, id, opts.WorktreeName, opts.ValidateWorkdir)
 		if err != nil {
 			m.releaseClaude(u, id)
 			return ChatAttachment{}, err
 		}
-		if opts.ValidateWorkdir != nil {
-			if _, err := opts.ValidateWorkdir(workdir); err != nil {
-				m.releaseClaude(u, id)
-				err = fmt.Errorf("worktree workdir %q: %w", workdir, err)
-				if rollbackErr := RollbackWorktree(meta); rollbackErr != nil {
-					return ChatAttachment{}, fmt.Errorf("%v; rollback worktree: %w", err, rollbackErr)
-				}
-				return ChatAttachment{}, err
-			}
-		}
+		defer started()
+		meta, workdir, ownHome = created.Meta, created.Workdir, &created.Home
+	}
+	if m.testAfterBeginStart != nil {
+		m.testAfterBeginStart(workdir)
 	}
 	m.mu.RLock()
 	closing := m.closing
@@ -287,16 +297,16 @@ func (m *Manager) CreateChat(opts ChatCreateOptions) (ChatAttachment, error) {
 	if closing {
 		// Shutdown began while this create was on its way: start nothing.
 		m.releaseClaude(u, id)
-		if mode == protocol.SessionModeWorktree {
-			if rollbackErr := RollbackWorktree(meta); rollbackErr != nil {
-				return ChatAttachment{}, fmt.Errorf("%v; rollback worktree: %w", ErrShuttingDown, rollbackErr)
-			}
+		if ownWorktree {
+			return ChatAttachment{}, m.undoOwnWorktree(created, ErrShuttingDown)
 		}
 		return ChatAttachment{}, ErrShuttingDown
 	}
+	project, home, git := resolveSessionHome(nil, ownHome, workdir)
 	rec := chat.Record{
 		ID: id, Workdir: workdir, Mode: string(mode),
 		SourceWorkdir: meta.SourceWorkdir, SourceRepo: meta.SourceRepo, WorktreeRoot: meta.WorktreeRoot, Branch: meta.Branch,
+		Project: project, Home: home,
 		Flags: opts.Flags, Exe: opts.Parsed.Exe, Args: opts.Parsed.Args, ClaudeSessionID: u,
 		PermissionLocked: opts.Parsed.Bypass, PermissionMode: opts.Parsed.PermissionMode,
 		CreatedAt: time.Now().UTC().Format(time.RFC3339), Status: chat.StatusRunning,
@@ -305,10 +315,8 @@ func (m *Manager) CreateChat(opts ChatCreateOptions) (ChatAttachment, error) {
 	if err != nil {
 		m.releaseClaude(u, id)
 		err = fmt.Errorf("start claude: %w", err)
-		if mode == protocol.SessionModeWorktree {
-			if rollbackErr := RollbackWorktree(meta); rollbackErr != nil {
-				return ChatAttachment{}, fmt.Errorf("%v; rollback worktree: %w", err, rollbackErr)
-			}
+		if ownWorktree {
+			err = m.undoOwnWorktree(created, err)
 		}
 		return ChatAttachment{}, err
 	}
@@ -317,6 +325,7 @@ func (m *Manager) CreateChat(opts ChatCreateOptions) (ChatAttachment, error) {
 	m.gen++
 	m.persistLocked()
 	m.mu.Unlock()
+	m.recordCreated(project, git)
 	return ChatAttachment{Session: sess, ID: id}, nil
 }
 
@@ -436,8 +445,8 @@ func (m *Manager) renameChat(id, name string) bool {
 	return true
 }
 
-// deleteChat stops the process, removes the record and cleans the worktree
-// (unless a terminal session took it over). The transcript stays (R15.2).
+// deleteChat stops the process and removes the record. The transcript stays
+// (R15.2), and so do a worktree session's directory and branch (H16).
 func (m *Manager) deleteChat(id string, e *chatEntry) error {
 	var err error
 	e.sess.WithOp(func(ops chat.OpHandle) {
@@ -450,17 +459,12 @@ func (m *Manager) deleteChat(id string, e *chatEntry) error {
 		}
 		_ = ops.StopLocked(protocol.EndReasonStopped)
 		m.mu.Lock()
-		rec := e.rec
 		delete(m.chats, id)
 		m.releaseOwnerLocked(id)
 		m.gen++
 		m.persistLocked()
 		m.mu.Unlock()
 		e.sess.Close()
-		if protocol.SessionMode(rec.Mode) == protocol.SessionModeWorktree && !rec.WorktreeHandedOff {
-			err = CleanupWorktree(WorktreeMetadata{SourceWorkdir: rec.SourceWorkdir, SourceRepo: rec.SourceRepo,
-				WorktreeRoot: rec.WorktreeRoot, Branch: rec.Branch})
-		}
 	})
 	return err
 }
@@ -531,6 +535,17 @@ func (m *Manager) LoadChats(store *chat.Store) error {
 		return err
 	}
 	recs, orphans := m.orphanCleanup(recs)
+	// Backfill attribution for records that predate it (design 5.4). ResolveHome
+	// runs git, so do it before taking Manager.mu; persistLocked below saves the
+	// filled-in values.
+	for i := range recs {
+		if recs[i].Project == "" && recs[i].Home == "" {
+			rl := recLite{workdir: recs[i].Workdir, mode: recs[i].Mode, worktreeRoot: recs[i].WorktreeRoot, sourceRepo: recs[i].SourceRepo}
+			if p, h, ok := resolveRecordHome(rl); ok {
+				recs[i].Project, recs[i].Home = p, h
+			}
+		}
+	}
 	m.mu.Lock()
 	m.store = store
 	m.persist.start(store)
@@ -773,6 +788,16 @@ func (m *Manager) Handoff(chatID, newID string, cols, rows uint16) (*Runner, err
 				return
 			}
 		}
+		// Asked before the chat process is stopped: refused here (the worktree
+		// is being removed), the chat session simply keeps running. While this
+		// registration is held no removal can begin, so the one
+		// createTerminalLocked makes for the same directory cannot be refused.
+		started, serr := m.beginStart(rec.Workdir)
+		if serr != nil {
+			err = serr
+			return
+		}
+		defer started()
 		_ = ops.StopLocked(protocol.EndReasonStopped) // releases U before returning
 		u := rec.ClaudeSessionID
 		if err = m.claimClaude(u, newID); err != nil {
@@ -782,6 +807,7 @@ func (m *Manager) Handoff(chatID, newID string, cols, rows uint16) (*Runner, err
 		opts := CreateOptions{
 			Workdir: rec.Workdir, Mode: protocol.SessionMode(rec.Mode), Cols: cols, Rows: rows,
 			ClaudeArgv: chat.HandoffArgv(rec.Exe, rec.Args, u, found), ClaudeU: u,
+			Home: &Home{Project: rec.Project, Path: rec.Home},
 		}
 		worktree := protocol.SessionMode(rec.Mode) == protocol.SessionModeWorktree
 		if worktree {

@@ -207,6 +207,11 @@ func (s *Server) wsAttach(ctx context.Context, conn *websocket.Conn) *attachment
 			conn.Close(websocket.StatusPolicyViolation, "bad session id")
 			return nil
 		}
+		if err := checkWorktreeName(frame, mode); err != nil {
+			sendError(ctx, conn, protocol.ErrCodeInvalidWorktreeName, true, "create session: "+err.Error())
+			conn.Close(websocket.StatusPolicyViolation, "bad worktree name")
+			return nil
+		}
 
 		claudeCmd := s.cfg.ResolveClaudeCmd(frame.Flags)
 		runner, err = s.mgr.Create(session.CreateOptions{
@@ -216,7 +221,8 @@ func (s *Server) wsAttach(ctx context.Context, conn *websocket.Conn) *attachment
 			Cols:              frame.Cols,
 			Rows:              frame.Rows,
 			ClaudeCmdOverride: claudeCmd,
-			ValidateWorkdir:   s.cfg.ResolveAllowedWorkdir,
+			ValidateWorkdir:   s.cfg.ResolveAllowedNewPath,
+			WorktreeName:      worktreeName(frame, mode),
 		})
 		if err != nil {
 			// Create only attaches (instead of creating) when the id already
@@ -230,6 +236,10 @@ func (s *Server) wsAttach(ctx context.Context, conn *websocket.Conn) *attachment
 			case errors.Is(err, session.ErrClaudeSessionBusy):
 				// A -c terminal whose conversation runs in a chat session (d11).
 				code = protocol.ErrCodeClaudeSessionBusy
+			default:
+				if wt := worktreeErrorCode(err); wt != "" {
+					code = wt
+				}
 			}
 			sendError(ctx, conn, code, fatal, "create session: "+err.Error())
 			conn.Close(websocket.StatusInternalError, "create failed")
@@ -254,6 +264,42 @@ func (s *Server) wsAttach(ctx context.Context, conn *websocket.Conn) *attachment
 		}
 	}
 	return s.terminalReady(ctx, conn, runner, "")
+}
+
+// worktreeName is the attach frame's worktreeName where it applies: creating a
+// session in worktree mode. Everywhere else the field is ignored.
+func worktreeName(frame protocol.AttachFrame, mode protocol.SessionMode) string {
+	if mode != protocol.SessionModeWorktree {
+		return ""
+	}
+	return frame.WorktreeName
+}
+
+// checkWorktreeName refuses an attach whose worktreeName breaks the rules that
+// need no git, before anything on the way to creating the session runs git
+// (the chat trust check does, on the source directory).
+func checkWorktreeName(frame protocol.AttachFrame, mode protocol.SessionMode) error {
+	name := worktreeName(frame, mode)
+	if name == "" {
+		return nil
+	}
+	return session.CheckWorktreeNameLocal(name)
+}
+
+// worktreeErrorCode maps the errors of creating a worktree to their attach
+// error codes (all fatal: the same attach cannot succeed); "" for any other.
+func worktreeErrorCode(err error) string {
+	switch {
+	case errors.Is(err, session.ErrInvalidWorktreeName):
+		return protocol.ErrCodeInvalidWorktreeName
+	case errors.Is(err, session.ErrWorktreeBranchExists):
+		return protocol.ErrCodeWorktreeBranchExists
+	case errors.Is(err, session.ErrWorktreePathExists):
+		return protocol.ErrCodeWorktreePathExists
+	case errors.Is(err, session.ErrWorktreePathNotAllowed):
+		return protocol.ErrCodeWorktreePathNotAllowed
+	}
+	return ""
 }
 
 // terminalReady confirms a terminal attach. handoffFrom is echoed for a

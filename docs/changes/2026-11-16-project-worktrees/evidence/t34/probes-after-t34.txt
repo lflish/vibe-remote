@@ -1,0 +1,16 @@
+code under test 5fc55e1 (T34 in), 2026-11-20 18:42; one run; the two probes were put into a copy of gui-chat-smoke.mjs just before test('X10-rename-terminal', …) and run with VR_ONLY=P-rename-click,P-overview; the copy was deleted afterwards. They assert nothing: each returns what it saw.
+P-rename-click is the probe of evidence/merge-dual-mode/known-issues-probes.mjs.txt with a single real double click (no retry), 10 rounds instead of 5, and a log of the pointer events and list rebuilds from the press on (ms since the press was sent).
+P-overview: the machine overview of one machine is shown, nothing changes for 11 s; a MutationObserver counts how often #machine-overview got new children, another counts every change under #machine-list.
+
+PASS probe: while renaming, a real click on another session (no delay added to the rename request) — 2/10 clicks switched the session (name saved every time):
+    not switched/session-label [15 mousedown session-label | 64 list rebuilt | 78 mouseup session-label],
+    switched/chat-input [9 mousedown session-label | 72 mouseup session-label | 72 click session-label | 77 list rebuilt],
+    not switched/session-label [20 mousedown session-label | 76 list rebuilt | 81 mouseup session-label],
+    not switched/session-label [17 mousedown session-label | 77 list rebuilt | 79 mouseup session-label],
+    not switched/session-label [14 mousedown session-label | 63 list rebuilt | 77 mouseup session-label],
+    not switched/session-label [11 mousedown session-label | 59 list rebuilt | 74 mouseup session-label],
+    not switched/session-label [10 mousedown session-label | 73 list rebuilt | 73 mouseup session-label],
+    switched/chat-input [7 mousedown session-label | 69 mouseup session-label | 69 click session-label | 75 list rebuilt],
+    not switched/session-label [11 mousedown session-label | 58 list rebuilt | 74 mouseup session-label],
+    not switched/session-label [4 mousedown session-label | 57 list rebuilt | 67 mouseup session-label]
+PASS probe: rebuilds of the machine overview page over 11 s with nothing changing — in 11 s: the overview page was rebuilt 4 times, the sidebar list was changed 0 times

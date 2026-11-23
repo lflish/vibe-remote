@@ -112,7 +112,13 @@ function cleanEnv() {
 
 async function startDaemon(d) {
   writeFileSync(d.cfgPath, JSON.stringify(d.cfg), { mode: 0o600 });
-  d.proc = spawn(d.bin, ['--config', d.cfgPath], { env: { ...cleanEnv(), TMUX_TMPDIR: d.tmux, ...d.env }, stdio: ['ignore', 'pipe', 'pipe'] });
+  // A daemon reads claude's trust file for the directory picker (chatTrust),
+  // whatever it runs. One that was given no CLAUDE_CONFIG_DIR (the /bin/bash
+  // and the main-branch daemon) gets an empty directory of this run, so that
+  // it never reads the real ~/.claude.json.
+  const noClaude = join(dirname(d.cfgPath), 'claude-config-none');
+  mkdirSync(noClaude, { recursive: true, mode: 0o700 });
+  d.proc = spawn(d.bin, ['--config', d.cfgPath], { env: { ...cleanEnv(), TMUX_TMPDIR: d.tmux, CLAUDE_CONFIG_DIR: noClaude, ...d.env }, stdio: ['ignore', 'pipe', 'pipe'] });
   d.log = '';
   d.proc.stdout.on('data', (x) => { d.log += x; });
   d.proc.stderr.on('data', (x) => { d.log += x; });
@@ -276,11 +282,17 @@ async function pressKey(key, modifiers = 0) {
 // click / dblclick synthesis, wheel scrolling) — element.click() and setting
 // scrollTop skip all of that, which is how X7 and X8 went unnoticed.
 
-/** Centre of the element `expr` evaluates to; it must be what a pointer there hits. */
+/**
+ * Centre of the element `expr` evaluates to; it must be what a pointer there hits.
+ * A sidebar row that is scrolled out of the list is scrolled into it first: with
+ * project rows and two-line session rows the sessions of a run no longer fit in
+ * the window. Only the sidebar — the transcript is never scrolled from here.
+ */
 async function pointOf(expr, what) {
   const p = await ev(`(() => {
     const e = ${expr};
     if (!e) return null;
+    if (e.closest('#machine-list')) e.scrollIntoView({ block: 'nearest' });
     const r = e.getBoundingClientRect();
     const x = r.left + r.width / 2, y = r.top + r.height / 2;
     const hit = document.elementFromPoint(x, y);
@@ -637,6 +649,11 @@ test('X7-send', 'X7 scrolled up with the wheel: a typed message and its reply sh
     // (2) … and is there on reaching the bottom, with no further session update.
     await wheelTo(100000, (s) => s.gap < 2, 'wheel down to the bottom');
     await sleep(300);
+    // When the assertion below is about to fail, say where things are: it failed
+    // once in a run of several cases and in none of twelve runs alone.
+    if (!((await lastAssistant()).includes('x7 from elsewhere') && (await lastAssistantOnScreen()))) {
+      console.log(`NOTE X7-send, newest reply not on screen at the bottom: ${await ev(`(() => { const t = ${TRANSCRIPT}; const m = [...${VC}.querySelectorAll('[data-testid="chat-msg-assistant"]')].pop(); const r = m?.getBoundingClientRect(), b = t.getBoundingClientRect(); return JSON.stringify({ gap: Math.round(t.scrollHeight - t.scrollTop - t.clientHeight), height: t.scrollHeight, lastBottom: r ? Math.round(r.bottom) : null, viewport: [Math.round(b.top), Math.round(b.bottom)] }); })()`)}`);
+    }
     assert((await lastAssistant()).includes('x7 from elsewhere') && (await lastAssistantOnScreen()), `at the bottom the newest reply is missing; last message: ${await lastAssistant()}`);
   } finally {
     c.close();

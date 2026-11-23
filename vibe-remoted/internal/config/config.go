@@ -41,10 +41,14 @@ type Config struct {
 	LoginShell *bool `json:"login_shell,omitempty"`
 	// Shell to use for login-shell launch (default: $SHELL, else /bin/bash).
 	Shell string `json:"shell,omitempty"`
-	// Directory for daemon state (the chat session table). Empty =
-	// "vibe-remoted-state" next to the config file; a relative path is taken
-	// relative to the config file. Created 0700 on start; if it cannot be
-	// written the chat UI is unavailable and terminals work as before.
+	// Directory for daemon state: the chat session table (chat-sessions.json)
+	// and the project list with the worktrees vibe-remote created
+	// (projects.json). Empty = "vibe-remoted-state" next to the config file; a
+	// relative path is taken relative to the config file. Created 0700 on
+	// start. If it cannot be written, the chat UI is unavailable and terminals
+	// work as before; the project list is then kept in memory only, so after a
+	// restart the worktrees vibe-remote created count as external (their
+	// directory can still be removed from the desktop, their branch cannot).
 	StateDir string `json:"state_dir,omitempty"`
 	// Escape hatch: allow binding to a public (non-private) address. Off by
 	// default so a misconfig can't silently expose the daemon to the internet.
@@ -266,6 +270,43 @@ func (c *Config) ResolveAllowedWorkdir(dir string) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	return c.withinAllowedRoots(canonical)
+}
+
+// ResolveAllowedNewPath is ResolveAllowedWorkdir for a path that may not exist
+// yet (the directory of a worktree about to be created): the deepest existing
+// ancestor is canonicalized, the missing remainder appended, and the result
+// held to the same containment check. For a path that exists the two agree.
+func (c *Config) ResolveAllowedNewPath(path string) (string, error) {
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return "", err
+	}
+	existing, rest := abs, ""
+	for {
+		if _, err := os.Lstat(existing); err == nil {
+			break
+		} else if !os.IsNotExist(err) {
+			return "", err
+		}
+		parent := filepath.Dir(existing)
+		if parent == existing {
+			break
+		}
+		rest = filepath.Join(filepath.Base(existing), rest)
+		existing = parent
+	}
+	// A dangling symlink on the way fails here: nothing gets created through it.
+	canonical, err := filepath.EvalSymlinks(existing)
+	if err != nil {
+		return "", err
+	}
+	return c.withinAllowedRoots(filepath.Join(canonical, rest))
+}
+
+// withinAllowedRoots returns canonical when it lies in (the canonical form of)
+// an allowed root.
+func (c *Config) withinAllowedRoots(canonical string) (string, error) {
 	for _, root := range c.AllowedRoots {
 		rootAbs, err := filepath.Abs(root)
 		if err != nil {

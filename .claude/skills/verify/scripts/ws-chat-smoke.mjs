@@ -413,7 +413,7 @@ async function main() {
   }), { mode: 0o600 });
   await startDaemon();
   const info = await (await rest('GET', '/api/v1/info')).json();
-  if (info.proto !== 3 || !info.chat?.supported) throw new Error(`info ${JSON.stringify({ proto: info.proto, chat: info.chat })}`);
+  if (info.proto !== 4 || !info.chat?.supported) throw new Error(`info ${JSON.stringify({ proto: info.proto, chat: info.chat })}`);
   console.log(`daemon up on 127.0.0.1:${port}, claude ${info.chat.claudeVersion} (fake)`);
 
   for (const { name, fn } of cases) {

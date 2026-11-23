@@ -1,0 +1,145 @@
+# Full run after T34 (round 5)
+
+Code under test: b6dea2c (later commits only add this file and other files under docs/changes/).
+Every command: a TMUX_TMPDIR of its own under the run's temp directory, an empty CLAUDE_CONFIG_DIR of the run, one after the other.
+Daemons of older protocols: built from `git archive main` / `git archive 6d88e45` exported to the temp directory (VR_MAIN_DAEMON, VR_BASE_DAEMON).
+The machine was busy with other applications throughout; the load average is noted with each result.
+One line per run, written as the run ends; a commit per script.
+
+## make check   (HEAD b6dea2c, 2026-11-21 17:08, load before 22.07 23.54 21.26, after 30.67 26.30 23.60)
+$ TMUX_TMPDIR=<temp dir> CLAUDE_CONFIG_DIR=<empty temp dir> make check
+ok  	github.com/lflish/vibe-remote/vibe-remoted/internal/chat	20.519s
+ok  	github.com/lflish/vibe-remote/vibe-remoted/internal/config	2.419s
+ok  	github.com/lflish/vibe-remote/vibe-remoted/internal/protocol	1.930s
+ok  	github.com/lflish/vibe-remote/vibe-remoted/internal/server	78.599s
+ok  	github.com/lflish/vibe-remote/vibe-remoted/internal/session	395.930s
+exit=0
+files in the empty claude config dir afterwards: 0
+desktop: 384 lines 'ok - ', 0 lines 'not ok' / 'FAIL:'
+
+## Earlier attempts at make check and the Go suite on the same code (b6dea2c), 2026-11-20
+- 18:50, load 27–34: make check exit 2 — one Go test failed, the desktop half did not run:
+    --- FAIL: TestRemoveGitFailureKeepsState (6.44s)
+        worktree_remove_test.go:714: err = *fmt.wrapError read repository: git rev-parse --show-toplevel: no answer within 5s: context deadline exceeded, want *WorktreeRemoveError
+  The daemon's own 5 s limit on a git call ran out on the loaded machine. Nothing under vibe-remoted/ changed in this rework (git diff --stat 7b295b0..HEAD -- vibe-remoted is empty).
+  The same test alone right afterwards: go test -race -count=10 -run 'TestRemoveGitFailureKeepsState$' → 10 PASS (1.5–4.1 s each).
+- 18:58: go test -race -count=1 -v -timeout 25m ./... → exit 0; top-level tests PASS 468 / FAIL 0 / SKIP 0, subtests PASS 458 / FAIL 0 / SKIP 0 (that test PASS).
+- 19:06, load 38: a second make check was cut off when the session was interrupted (make: Terminated); chat, config, protocol, server were ok by then. No result.
+
+## gui-chat-smoke.mjs ×5   (HEAD d5a15c2, started 2026-11-21 17:09)
+$ TMUX_TMPDIR=<own temp dir> CLAUDE_CONFIG_DIR=<empty temp dir> VR_MAIN_DAEMON=<built from main> VR_BASE_DAEMON=<built from 6d88e45> node .claude/skills/verify/scripts/gui-chat-smoke.mjs --no-build
+run 1: exit 0, 37 PASS, 0 FAIL, 0 NOTE   (17:10, load 23.01 24.64 23.37)
+run 2: exit 0, 37 PASS, 0 FAIL, 0 NOTE   (17:11, load 18.67 23.05 22.85)
+run 3: exit 0, 37 PASS, 0 FAIL, 0 NOTE   (17:12, load 17.75 21.65 22.32)
+run 4: exit 0, 37 PASS, 0 FAIL, 0 NOTE   (17:13, load 24.01 22.52 22.58)
+run 5: exit 0, 37 PASS, 0 FAIL, 0 NOTE   (17:14, load 24.16 22.84 22.69)
+files in the empty claude config dir afterwards: 0
+
+## gui-worktree-smoke.mjs ×5   (HEAD 7715c26, started 2026-11-21 17:14)
+$ TMUX_TMPDIR=<own temp dir> CLAUDE_CONFIG_DIR=<empty temp dir> VR_MAIN_DAEMON=<built from main> VR_BASE_DAEMON=<built from 6d88e45> node .claude/skills/verify/scripts/gui-worktree-smoke.mjs --no-build
+run 1: exit 0, 75 PASS, 0 FAIL, 0 NOTE   (17:17, load 28.09 24.13 23.18)
+    72 cases: R1 8/8, R2 7/7, R3 11/11, R4 6/6, R5 12/12, R6 2/2, R7 5/5, R8 6/6, R9 2/2, other 13/13
+run 2: exit 0, 75 PASS, 0 FAIL, 0 NOTE   (17:20, load 25.95 23.01 22.75)
+    72 cases: R1 8/8, R2 7/7, R3 11/11, R4 6/6, R5 12/12, R6 2/2, R7 5/5, R8 6/6, R9 2/2, other 13/13
+run 3: exit 0, 75 PASS, 0 FAIL, 0 NOTE   (17:23, load 24.73 23.37 22.96)
+    72 cases: R1 8/8, R2 7/7, R3 11/11, R4 6/6, R5 12/12, R6 2/2, R7 5/5, R8 6/6, R9 2/2, other 13/13
+run 4: exit 0, 75 PASS, 0 FAIL, 0 NOTE   (17:26, load 33.69 26.03 23.97)
+    72 cases: R1 8/8, R2 7/7, R3 11/11, R4 6/6, R5 12/12, R6 2/2, R7 5/5, R8 6/6, R9 2/2, other 13/13
+run 5: exit 0, 75 PASS, 0 FAIL, 0 NOTE   (17:28, load 24.08 24.74 23.74)
+    72 cases: R1 8/8, R2 7/7, R3 11/11, R4 6/6, R5 12/12, R6 2/2, R7 5/5, R8 6/6, R9 2/2, other 13/13
+files in the empty claude config dir afterwards: 0
+
+## gui-smoke.mjs ×2   (HEAD 747b14c, started 2026-11-21 17:31)
+$ TMUX_TMPDIR=<own temp dir> CLAUDE_CONFIG_DIR=<empty temp dir> VR_MAIN_DAEMON=<built from main> VR_BASE_DAEMON=<built from 6d88e45> node .claude/skills/verify/scripts/gui-smoke.mjs --no-build
+run 1: exit 0, 46 PASS, 0 FAIL, 4 NOTE   (17:31, load 26.74 24.24 23.58)
+    NOTE notification outcome in this build: fallback
+    NOTE sidebar 284px wide: 18 rows (18 also measured under the mouse), 9 sessions; names ending in "…": project "billing" name (30 of 38px, 0px free) | project "billing" branch (170 of 220px, 0px free) | worktree "change/general-skills-and-a-long-tail" name (187 of 237px, 0px free) | session "a-session-with-a-rather-long-name" name (194 of 217px, 0px free)
+    NOTE row menus in an 800×500 window: project row "new-api": button bottom 495, menu 405.1..470 in 800×500 | worktree row "release/next": button bottom 498, menu 430.8..473 in 800×500
+    NOTE toolbar title in an 800×500 window: {"project":{"text":"devflow","shown":50,"needs":50},"branch":{"text":"change/general-skills-and-a-long-tail","shown":214,"needs":260},"session":{"text":"long","shown":49,"needs":49}}
+run 2: exit 0, 46 PASS, 0 FAIL, 4 NOTE   (17:31, load 25.65 24.16 23.57)
+    NOTE notification outcome in this build: fallback
+    NOTE sidebar 284px wide: 18 rows (18 also measured under the mouse), 9 sessions; names ending in "…": project "billing" name (30 of 38px, 0px free) | project "billing" branch (170 of 220px, 0px free) | worktree "change/general-skills-and-a-long-tail" name (187 of 237px, 0px free) | session "a-session-with-a-rather-long-name" name (194 of 217px, 0px free)
+    NOTE row menus in an 800×500 window: project row "new-api": button bottom 495, menu 405.1..470 in 800×500 | worktree row "release/next": button bottom 498, menu 430.8..473 in 800×500
+    NOTE toolbar title in an 800×500 window: {"project":{"text":"devflow","shown":50,"needs":50},"branch":{"text":"change/general-skills-and-a-long-tail","shown":214,"needs":260},"session":{"text":"long","shown":49,"needs":49}}
+files in the empty claude config dir afterwards: 0
+
+## ws-smoke.mjs   (2026-11-21 17:31, load 25.65 24.16 23.57)
+$ VR_TOKEN=<token> node .claude/skills/verify/scripts/ws-smoke.mjs 127.0.0.1:<random port> <own temp dir>   # throwaway daemon built from this code
+exit=0, 12 PASS, 0 FAIL; files in the daemon's claude config dir afterwards: 0
+
+## ws-chat-smoke.mjs   (2026-11-21 17:31, load 25.28 24.11 23.55)
+$ TMUX_TMPDIR=<own temp dir> CLAUDE_CONFIG_DIR=<empty temp dir> node .claude/skills/verify/scripts/ws-chat-smoke.mjs
+exit=0, 9 PASS, 0 FAIL, 0 NOTE
+
+## ws-worktree-smoke.mjs   (2026-11-21 17:32, load 23.83 23.84 23.47)
+$ TMUX_TMPDIR=<own temp dir> CLAUDE_CONFIG_DIR=<empty temp dir> node .claude/skills/verify/scripts/ws-worktree-smoke.mjs
+exit=0, 9 PASS, 0 FAIL, 0 NOTE
+
+## .devflow.yml invariants (command-type checks as written, GOFLAGS=-count=1)   (2026-11-21 17:46, load 18.99 20.95 22.31)
+1 exit=0  终端模式纯字节透传，客户端不解析 PTY 输出
+3 exit=0  终端会话的 v2 帧除 proto 外逐字节不变
+4 exit=0  同一 claude 会话 id 任何时刻最多一个 claude 进程（claudeOwners 先 claim 后 sp
+5 exit=0  客户端断开不停对话进程、不发 exit
+6 exit=0  待答请求只因回答/取消/中断/退出而消失，不被缓冲淘汰
+7 exit=0  「不再询问」规则只能来自 claude 的建议
+8 exit=0  启动命令只由服务端配置拼成，客户端只传 id
+9 exit=0  模型输出不以原始 HTML 进入 DOM；chat/ 下只有 markdown.ts 写 innerHTML
+10 exit=0  主 token 不进 claude 环境（对话进程同样只有 hook token）
+11 exit=0  不读取 claude 凭据
+12 exit=0  删会话不删 worktree 目录和分支，协议 4 的 daemon 不返回 worktree_preserved
+13 exit=0  只删 daemon 自己读到的、在 allowed_roots 内的、不是主目录的 worktree
+14 exit=0  不是 vibe-remote 创建的 worktree，分支永远不删
+15 exit=0  未经同意不丢文件和提交（删除前重查，结束会话之后重读它在 git 列表里的那一项，HEAD、分支、是否 detached
+16 exit=0  客户端传的 worktree 名字不经 shell；新建会话时本地规则不通过的名字在任何 git 调用之前被拒，预检时这
+17 exit=0  对话界面的信任只认目录本身，或「仓库自己列出的 worktree 根 + 主目录这一个路径被信任」（git 不认 wor
+18 exit=0  daemon 交给 git 的分支只写成完整引用名 refs/heads/<名字>，不调用 git branch、不用 
+19 exit=0  daemon 运行的 git 不运行 core.fsmonitor 指定的程序（查看状态、预检、被拒绝的删除请求的检查都
+cached results: 0; files in the empty claude config dir afterwards: 0
+
+# Round 6: after T35 (the machine overview is not redrawn for the project tree's answer)
+
+Code under test: 5c13e46 (the commits after it change CLAUDE.md and files under docs/changes/ only). Same rules as above: own TMUX_TMPDIR per command, one empty CLAUDE_CONFIG_DIR, one after the other.
+The three ws smokes were not run again: nothing under vibe-remoted/ and no protocol file changed since b6dea2c; their results above stand.
+
+## make check   (HEAD 86500bc, 2026-11-21 18:20, load before 25.00 23.72 23.17, after 17.79 21.72 22.80)
+ok  	github.com/lflish/vibe-remote/vibe-remoted/internal/chat	18.791s
+ok  	github.com/lflish/vibe-remote/vibe-remoted/internal/config	2.001s
+ok  	github.com/lflish/vibe-remote/vibe-remoted/internal/protocol	2.449s
+ok  	github.com/lflish/vibe-remote/vibe-remoted/internal/server	68.189s
+ok  	github.com/lflish/vibe-remote/vibe-remoted/internal/session	363.066s
+exit=0
+files in the empty claude config dir afterwards: 0
+desktop: 386 lines 'ok - ', 0 lines 'not ok' / 'FAIL:'
+
+## gui-smoke.mjs ×2   (started 2026-11-21 18:20)
+$ TMUX_TMPDIR=<own temp dir> CLAUDE_CONFIG_DIR=<empty temp dir> VR_MAIN_DAEMON=<built from main> VR_BASE_DAEMON=<built from 6d88e45> node .claude/skills/verify/scripts/gui-smoke.mjs --no-build
+run 1: exit 0, 46 PASS, 0 FAIL, 4 NOTE   (18:21, load 21.70 22.33 22.99)
+    NOTE notification outcome in this build: fallback
+    NOTE sidebar 284px wide: 18 rows (18 also measured under the mouse), 9 sessions; names ending in "…": project "billing" name (30 of 38px, 0px free) | project "billing" branch (170 of 220px, 0px free) | worktree "change/general-skills-and-a-long-tail" name (187 of 237px, 0px free) | session "a-session-with-a-rather-long-name" name (194 of 217px, 0px free)
+    NOTE row menus in an 800×500 window: project row "new-api": button bottom 495, menu 405.1..470 in 800×500 | worktree row "release/next": button bottom 498, menu 430.8..473 in 800×500
+    NOTE toolbar title in an 800×500 window: {"project":{"text":"devflow","shown":50,"needs":50},"branch":{"text":"change/general-skills-and-a-long-tail","shown":214,"needs":260},"session":{"text":"long","shown":49,"needs":49}}
+run 2: exit 0, 46 PASS, 0 FAIL, 4 NOTE   (18:21, load 21.97 22.36 22.98)
+    NOTE notification outcome in this build: fallback
+    NOTE sidebar 284px wide: 18 rows (18 also measured under the mouse), 9 sessions; names ending in "…": project "billing" name (30 of 38px, 0px free) | project "billing" branch (170 of 220px, 0px free) | worktree "change/general-skills-and-a-long-tail" name (187 of 237px, 0px free) | session "a-session-with-a-rather-long-name" name (194 of 217px, 0px free)
+    NOTE row menus in an 800×500 window: project row "new-api": button bottom 495, menu 405.1..470 in 800×500 | worktree row "release/next": button bottom 498, menu 430.8..473 in 800×500
+    NOTE toolbar title in an 800×500 window: {"project":{"text":"devflow","shown":50,"needs":50},"branch":{"text":"change/general-skills-and-a-long-tail","shown":214,"needs":260},"session":{"text":"long","shown":49,"needs":49}}
+files in the empty claude config dir afterwards: 0
+
+## gui-worktree-smoke.mjs ×2   (started 2026-11-21 18:21)
+$ TMUX_TMPDIR=<own temp dir> CLAUDE_CONFIG_DIR=<empty temp dir> VR_MAIN_DAEMON=<built from main> VR_BASE_DAEMON=<built from 6d88e45> node .claude/skills/verify/scripts/gui-worktree-smoke.mjs --no-build
+run 1: exit 0, 76 PASS, 0 FAIL, 0 NOTE   (18:24, load 19.08 22.13 22.89)
+    73 cases: R1 8/8, R2 7/7, R3 11/11, R4 6/6, R5 12/12, R6 2/2, R7 5/5, R8 6/6, R9 2/2, other 14/14
+run 2: exit 0, 76 PASS, 0 FAIL, 0 NOTE   (19:03–19:06, load 54.30 35.58 28.27 at the start; run by the coordinator, the developer session having been cut off after run 1; without --no-build, so desktop/dist was rebuilt from HEAD first)
+    73 cases: R1 8/8, R2 7/7, R3 11/11, R4 6/6, R5 12/12, R6 2/2, R7 5/5, R8 6/6, R9 2/2, other 14/14
+files in the empty claude config dir afterwards: 0
+
+## gui-chat-smoke.mjs ×2   (started 2026-11-21 19:06, HEAD 2913273; run by the coordinator)
+$ TMUX_TMPDIR=<own temp dir> CLAUDE_CONFIG_DIR=<empty temp dir> VR_MAIN_DAEMON=<built from origin/main by git archive> node .claude/skills/verify/scripts/gui-chat-smoke.mjs --no-build
+run 1: exit 0, 37 PASS, 0 FAIL, 0 NOTE   (19:06–19:07, load 29.15 31.43 27.88)
+run 2: exit 0, 37 PASS, 0 FAIL, 0 NOTE   (19:07, load 30.94 31.70 28.21)
+files in the empty claude config dir afterwards: 0
+
+## .devflow.yml invariants   (2026-11-21 19:07–19:12, HEAD 2913273; run by the coordinator)
+Each of the 18 command-type checks as written in .devflow.yml, with GOFLAGS=-count=1, its own TMUX_TMPDIR and the same empty CLAUDE_CONFIG_DIR, one after the other:
+checks 1–18: exit 0 each; no "(cached)" in any output; 0 files in the empty claude config dir after each.
+(The remaining rule, "/protocol-sync skill", is not a command; nothing it covers changed since b6dea2c: git diff --stat b6dea2c..HEAD -- vibe-remoted desktop/src/shared docs/protocol.md is empty.)

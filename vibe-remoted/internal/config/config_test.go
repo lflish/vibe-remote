@@ -353,3 +353,60 @@ func TestLoadDefaultsStateDir(t *testing.T) {
 		t.Fatalf("missing config: %q %v", missing.StateDir, err)
 	}
 }
+
+func TestResolveAllowedNewPath(t *testing.T) {
+	root, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	outside, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg := &Config{AllowedRoots: []string{root}}
+
+	// Not there yet, inside the root: allowed, and the path comes back canonical.
+	want := filepath.Join(root, "repo-worktrees", "fix-login")
+	if got, err := cfg.ResolveAllowedNewPath(want); err != nil || got != want {
+		t.Fatalf("new path inside the root: %q, %v; want %q", got, err, want)
+	}
+	// The root spelled through a symlink (allowed_roots: /tmp, real path /private/tmp).
+	alias := filepath.Join(outside, "alias")
+	if err := os.Symlink(root, alias); err != nil {
+		t.Skipf("symlinks unsupported: %v", err)
+	}
+	if got, err := cfg.ResolveAllowedNewPath(filepath.Join(alias, "new", "dir")); err != nil || got != filepath.Join(root, "new", "dir") {
+		t.Fatalf("new path through an alias of the root: %q, %v", got, err)
+	}
+	// Outside the roots.
+	if got, err := cfg.ResolveAllowedNewPath(filepath.Join(outside, "new")); err == nil {
+		t.Fatalf("new path outside the roots accepted as %q", got)
+	}
+	// An existing ancestor inside the root that points outside.
+	escape := filepath.Join(root, "escape")
+	if err := os.Symlink(outside, escape); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := cfg.ResolveAllowedNewPath(filepath.Join(escape, "a", "b")); err == nil {
+		t.Fatalf("path under a symlink leading outside accepted as %q", got)
+	}
+	// A dangling symlink in the way is not a place to create things.
+	if err := os.Symlink(filepath.Join(root, "missing-target"), filepath.Join(root, "dangling")); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := cfg.ResolveAllowedNewPath(filepath.Join(root, "dangling", "x")); err == nil {
+		t.Fatalf("path under a dangling symlink accepted as %q", got)
+	}
+	// For a path that exists the answer is ResolveAllowedWorkdir's.
+	existing := filepath.Join(root, "existing")
+	if err := os.Mkdir(existing, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, p := range []string{existing, root, escape, outside, filepath.Join(alias, "existing")} {
+		a, aErr := cfg.ResolveAllowedWorkdir(p)
+		b, bErr := cfg.ResolveAllowedNewPath(p)
+		if a != b || (aErr == nil) != (bErr == nil) {
+			t.Fatalf("%q: ResolveAllowedWorkdir = %q, %v; ResolveAllowedNewPath = %q, %v", p, a, aErr, b, bErr)
+		}
+	}
+}

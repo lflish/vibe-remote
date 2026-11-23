@@ -1,0 +1,134 @@
+ok - test-sidebar-rename: open chat session, current: double click renames it, nothing is sent to claude (human pace)
+ok - test-sidebar-rename: open chat session, in the background: double click switches to it and renames it (human pace)
+ok - test-sidebar-rename: open terminal session, current and background: double click renames it, no keys reach the terminal (human pace)
+ok - test-sidebar-rename: open chat session, current: double click renames it, nothing is sent to claude (instant)
+ok - test-sidebar-rename: open chat session, in the background: double click switches to it and renames it (instant)
+ok - test-sidebar-rename: open terminal session, current and background: double click renames it, no keys reach the terminal (instant)
+ok - test-sidebar-rename: Esc cancels, blur saves; the keyboard goes back to the session afterwards
+FAIL: test-sidebar-rename: a rename that cannot start (its label is no longer in the document) does not freeze the sidebar
+AssertionError [ERR_ASSERTION]: sidebar rebuilt
++ actual - expected
+
+  [
++   'conversation',
+-   'changed elsewhere',
+    'shell',
+    'other'
+  ]
+
+    at file:///Users/mac/github/vibe-remote/.devflow-tmp/worktrees/project-worktrees/desktop/scripts/test-sidebar-rename.mjs:249:10
+    at process.processTicksAndRejections (node:internal/process/task_queues:103:5)
+    at async run (file:///Users/mac/github/vibe-remote/.devflow-tmp/worktrees/project-worktrees/desktop/scripts/chat-test-util.mjs:129:9)
+    at async file:///Users/mac/github/vibe-remote/.devflow-tmp/worktrees/project-worktrees/desktop/scripts/test-sidebar-rename.mjs:445:1 {
+  generatedMessage: false,
+  code: 'ERR_ASSERTION',
+  actual: [Array],
+  expected: [Array],
+  operator: 'deepStrictEqual',
+  diff: 'simple'
+}
+FAIL: test-sidebar-rename: X10 rename ends with Enter or Esc: the keyboard is back in the current chat session
+AssertionError [ERR_ASSERTION]: Enter: the keyboard is in the chat input
++ actual - expected
+
++ HTMLBodyElement {
+- HTMLTextAreaElement {
+    [Symbol(SameObject caches)]: [Object: null prototype] {
+      classList: DOMTokenList {},
+-     dataset: DOMStringMap {}
+    }
+  }
+
+    at file:///Users/mac/github/vibe-remote/.devflow-tmp/worktrees/project-worktrees/desktop/scripts/test-sidebar-rename.mjs:269:12
+    at async run (file:///Users/mac/github/vibe-remote/.devflow-tmp/worktrees/project-worktrees/desktop/scripts/chat-test-util.mjs:129:9)
+    at async file:///Users/mac/github/vibe-remote/.devflow-tmp/worktrees/project-worktrees/desktop/scripts/test-sidebar-rename.mjs:445:1 {
+  generatedMessage: false,
+  code: 'ERR_ASSERTION',
+  actual: [HTMLBodyElement],
+  expected: [HTMLTextAreaElement],
+  operator: 'strictEqual',
+  diff: 'simple'
+}
+FAIL: test-sidebar-rename: X10 rename ends with Enter or Esc: the keyboard is back in the current terminal session
+AssertionError [ERR_ASSERTION]: Enter: the keyboard is in the terminal
++ actual - expected
+
++ HTMLBodyElement {
++   [Symbol(SameObject caches)]: [Object: null prototype] {
++     classList: DOMTokenList {}
++   }
++ }
+- HTMLTextAreaElement {}
+
+    at file:///Users/mac/github/vibe-remote/.devflow-tmp/worktrees/project-worktrees/desktop/scripts/test-sidebar-rename.mjs:287:12
+    at async run (file:///Users/mac/github/vibe-remote/.devflow-tmp/worktrees/project-worktrees/desktop/scripts/chat-test-util.mjs:129:9)
+    at async file:///Users/mac/github/vibe-remote/.devflow-tmp/worktrees/project-worktrees/desktop/scripts/test-sidebar-rename.mjs:445:1 {
+  generatedMessage: false,
+  code: 'ERR_ASSERTION',
+  actual: [HTMLBodyElement],
+  expected: HTMLTextAreaElement {},
+  operator: 'strictEqual',
+  diff: 'simple'
+}
+FAIL: test-sidebar-rename: X10 rename committed by clicking another session: the keyboard ends in that session
+AssertionError [ERR_ASSERTION]: the keyboard is in the session that was clicked
++ actual - expected
+
++ HTMLBodyElement {
+- HTMLTextAreaElement {
+    [Symbol(SameObject caches)]: [Object: null prototype] {
++     classList: DOMTokenList {}
+-     dataset: DOMStringMap {}
+    }
+  }
+
+    at file:///Users/mac/github/vibe-remote/.devflow-tmp/worktrees/project-worktrees/desktop/scripts/test-sidebar-rename.mjs:309:10
+    at async run (file:///Users/mac/github/vibe-remote/.devflow-tmp/worktrees/project-worktrees/desktop/scripts/chat-test-util.mjs:129:9)
+    at async file:///Users/mac/github/vibe-remote/.devflow-tmp/worktrees/project-worktrees/desktop/scripts/test-sidebar-rename.mjs:445:1 {
+  generatedMessage: false,
+  code: 'ERR_ASSERTION',
+  actual: [HTMLBodyElement],
+  expected: [HTMLTextAreaElement],
+  operator: 'strictEqual',
+  diff: 'simple'
+}
+ok - test-sidebar-rename: X10 rename committed by a click into a field elsewhere, or a dialog: the keyboard stays there
+[notify] shown: dev · repo / main · conversation
+[notify] shown: dev · repo / main · conversation
+ok - test-sidebar-rename: X10 opening a session whose prompt is waiting: the keyboard is on the card, 1 answers it and the input has it afterwards
+FAIL: test-sidebar-rename: X10 a prompt that arrives in the current session while it is being renamed leaves the keyboard in the rename input
+AssertionError [ERR_ASSERTION]: after the rename the card has the keyboard
++ actual - expected
+
++ HTMLBodyElement {
+- HTMLDivElement {
+    [Symbol(SameObject caches)]: [Object: null prototype] {
++     classList: DOMTokenList {}
+-     dataset: DOMStringMap {}
+    }
+  }
+
+    at file:///Users/mac/github/vibe-remote/.devflow-tmp/worktrees/project-worktrees/desktop/scripts/test-sidebar-rename.mjs:412:10
+    at async run (file:///Users/mac/github/vibe-remote/.devflow-tmp/worktrees/project-worktrees/desktop/scripts/chat-test-util.mjs:129:9)
+    at async file:///Users/mac/github/vibe-remote/.devflow-tmp/worktrees/project-worktrees/desktop/scripts/test-sidebar-rename.mjs:445:1 {
+  generatedMessage: false,
+  code: 'ERR_ASSERTION',
+  actual: [HTMLBodyElement],
+  expected: [HTMLDivElement],
+  operator: 'strictEqual',
+  diff: 'simple'
+}
+FAIL: test-sidebar-rename: delete confirmation: chat says the conversation stays in claude's history, terminal says the screen is lost (zh and en)
+AssertionError [ERR_ASSERTION]: zh: terminal text unchanged
+    at file:///Users/mac/github/vibe-remote/.devflow-tmp/worktrees/project-worktrees/desktop/scripts/test-sidebar-rename.mjs:428:12
+    at process.processTicksAndRejections (node:internal/process/task_queues:103:5)
+    at async run (file:///Users/mac/github/vibe-remote/.devflow-tmp/worktrees/project-worktrees/desktop/scripts/chat-test-util.mjs:129:9)
+    at async file:///Users/mac/github/vibe-remote/.devflow-tmp/worktrees/project-worktrees/desktop/scripts/test-sidebar-rename.mjs:445:1 {
+  generatedMessage: false,
+  code: 'ERR_ASSERTION',
+  actual: undefined,
+  expected: /当前画面会丢失|current screen lost/,
+  operator: 'match',
+  diff: 'simple'
+}
+test-sidebar-rename checks passed (15)

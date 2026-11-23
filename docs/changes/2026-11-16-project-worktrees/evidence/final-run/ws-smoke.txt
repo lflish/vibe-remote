@@ -1,0 +1,17 @@
+HEAD 87cb6e6  2026-11-21 17:31
+$ VR_TOKEN=<token> node .claude/skills/verify/scripts/ws-smoke.mjs 127.0.0.1:<port> <own temp dir>   # throwaway daemon built from this code: random port, /bin/bash, own TMUX_TMPDIR, state_dir and empty CLAUDE_CONFIG_DIR, allowed_roots = that dir
+PASS /healthz
+PASS /api/v1/info version=dev
+PASS session A ready id=1795253508436-1d640067
+PASS A sees its own VIBE_REMOTE_SESSION_ID
+PASS A got a hook token distinct from the main token
+PASS hook token → events 204
+PASS notify frame delivered to session A
+PASS hook token rejected for another sessionId
+PASS hook token rejected on /api/v1/info
+PASS B sees its own VIBE_REMOTE_SESSION_ID (no env bleed from A)
+PASS deleted 1795253508436-1d640067
+PASS deleted 1795253508588-ccecb30d
+
+all checks passed
+exit=0

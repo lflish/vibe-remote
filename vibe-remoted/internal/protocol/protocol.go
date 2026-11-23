@@ -16,7 +16,15 @@ import "encoding/json"
 //	   sessions[].ui/state/activitySeq/epoch/endReason, /api/v1/info.chat
 //	   (+?recheck=1), /api/v1/fs chatTrust, chat reload 202,
 //	   errors ui_mismatch/chat_unsupported/claude_session_busy)
-const Version = 3
+//	4: attach.worktreeName, errors invalid_worktree_name/
+//	   worktree_branch_exists/worktree_path_exists/worktree_path_not_allowed,
+//	   GET /api/v1/projects, POST /api/v1/projects/remove,
+//	   GET /api/v1/worktrees/plan, GET /api/v1/worktrees/status,
+//	   POST /api/v1/worktrees/remove, DELETE /api/v1/sessions/{id} leaves
+//	   the worktree alone (no 409 worktree_preserved), /api/v1/fs chatTrust
+//	   also "trusted" for a worktree root of a trusted main directory (all
+//	   S→C frames unchanged from v3)
+const Version = 4
 
 // Frame types exchanged between client and server.
 const (
@@ -108,6 +116,10 @@ type AttachFrame struct {
 	// HandoffFrom (create only, ui terminal) names the chat session to hand
 	// over to a new terminal session; workdir/flags/mode are then ignored.
 	HandoffFrom string `json:"handoffFrom,omitempty"`
+	// WorktreeName (v4; create with mode worktree only, ignored otherwise and
+	// with handoffFrom) is the new branch's name. Empty keeps the v3 naming,
+	// vibe/<session id>.
+	WorktreeName string `json:"worktreeName,omitempty"`
 }
 
 // ReadyFrame confirms attach success.
@@ -189,7 +201,7 @@ const (
 	ErrCodeInvalidWorkdir  = "invalid_workdir"    // fatal: outside allowed_roots
 	ErrCodeInvalidMode     = "invalid_mode"       // fatal: unknown session mode
 	ErrCodeInvalidID       = "invalid_session_id" // fatal: malformed newSessionId
-	ErrCodeCreateFailed    = "create_failed"      // fatal: e.g. worktree in a non-git dir
+	ErrCodeCreateFailed    = "create_failed"      // fatal: e.g. worktree in a non-git dir, or git failed
 	ErrCodeSessionNotFound = "session_not_found"  // fatal: the session is gone
 	ErrCodeAttachFailed    = "attach_failed"      // transient: PTY/tmux trouble, retry
 
@@ -198,6 +210,14 @@ const (
 	ErrCodeChatUnsupported   = "chat_unsupported"    // fatal: chat cannot run here (message carries the ChatReason*)
 	ErrCodeClaudeSessionBusy = "claude_session_busy" // fatal: that claude conversation runs in another session
 	ErrCodeShuttingDown      = "shutting_down"       // transient: the daemon is stopping, retry (it restarts)
+
+	// v4: creating a worktree (all fatal). The create is undone; what the undo
+	// could not or must not remove (git failed, or the branch or directory is
+	// no longer what this create made) stays and is named in the message.
+	ErrCodeInvalidWorktreeName    = "invalid_worktree_name"     // the name is not usable as a branch name
+	ErrCodeWorktreeBranchExists   = "worktree_branch_exists"    // that branch, or one git cannot keep next to it, exists
+	ErrCodeWorktreePathExists     = "worktree_path_exists"      // the target directory exists (even if empty)
+	ErrCodeWorktreePathNotAllowed = "worktree_path_not_allowed" // the target directory or final workdir is outside allowed_roots
 )
 
 // NotifyFrame carries an out-of-band session event to the client (e.g. from a
@@ -399,3 +419,105 @@ const (
 	TrustUntrusted = "untrusted"
 	TrustUnknown   = "unknown"
 )
+
+// ProjectsResponse is GET /api/v1/projects (v4, design 4.2): this machine's
+// project tree. Array fields serialize as [] rather than null.
+type ProjectsResponse struct {
+	Proto    int       `json:"proto"`
+	Projects []Project `json:"projects"`
+}
+
+// Project is one project in the tree. A non-git project has no worktrees; a
+// project with an error has none either and lists all its sessions at the
+// project level.
+type Project struct {
+	ID           string            `json:"id"`
+	Name         string            `json:"name"`
+	Git          bool              `json:"git"`
+	Error        string            `json:"error,omitempty"`        // repo_missing | git_failed
+	ErrorMessage string            `json:"errorMessage,omitempty"` // first line of git's output
+	Worktrees    []ProjectWorktree `json:"worktrees"`
+	Sessions     []string          `json:"sessions"`
+}
+
+// ProjectWorktree is one worktree row under a git project.
+type ProjectWorktree struct {
+	Path     string   `json:"path"`
+	Branch   string   `json:"branch,omitempty"` // omitted when detached
+	Head     string   `json:"head"`             // first 7 of the commit
+	Detached bool     `json:"detached,omitempty"`
+	Main     bool     `json:"main,omitempty"`
+	Managed  bool     `json:"managed,omitempty"`
+	Sessions []string `json:"sessions"`
+}
+
+// WorktreePlan is GET /api/v1/worktrees/plan (v4, design 4.4): what creating a
+// worktree named Branch from a directory would do, without doing it. OK means
+// every check made before anything is created passes right now.
+type WorktreePlan struct {
+	OK      bool   `json:"ok"`
+	Error   string `json:"error,omitempty"`   // not_git | unsupported_repo | no_commits | invalid_worktree_name | worktree_branch_exists | worktree_path_exists | worktree_path_not_allowed
+	Message string `json:"message,omitempty"` // human-readable reason when !OK
+	// Conflict (worktree_branch_exists only) is the existing branch in the way:
+	// equal to Branch, or one git cannot keep next to it.
+	Conflict    string        `json:"conflict,omitempty"`
+	Project     string        `json:"project,omitempty"`     // absent for not_git
+	ProjectName string        `json:"projectName,omitempty"` // absent for not_git
+	Base        *WorktreeBase `json:"base,omitempty"`        // absent for not_git
+	Branch      string        `json:"branch,omitempty"`      // present once the name is valid (and not for unsupported_repo, no_commits)
+	Path        string        `json:"path,omitempty"`        // present once the name is valid (and not for unsupported_repo, no_commits)
+}
+
+// WorktreeBase is what a new worktree would be based on: the branch and commit
+// currently checked out where the request comes from.
+type WorktreeBase struct {
+	Branch   string `json:"branch,omitempty"` // omitted when detached
+	Head     string `json:"head"`             // first 7 of the commit
+	Detached bool   `json:"detached,omitempty"`
+}
+
+// WorktreeStatus is GET /api/v1/worktrees/status (v4, design 4.5): what the
+// delete confirmation shows. Head is the full commit hash and is sent back
+// with the removal. IgnoredFiles only informs: -1 means it could not be
+// counted, and a removal never compares it.
+type WorktreeStatus struct {
+	Path            string `json:"path"`
+	Project         string `json:"project"`
+	Branch          string `json:"branch,omitempty"` // omitted when detached
+	Head            string `json:"head"`             // all zeros when the branch has no commit yet
+	Detached        bool   `json:"detached,omitempty"`
+	Main            bool   `json:"main"`
+	Managed         bool   `json:"managed"`
+	DirtyFiles      int    `json:"dirtyFiles"`      // uncommitted or untracked, ignored files excluded
+	UnmergedCommits int    `json:"unmergedCommits"` // on no other local branch or remote-tracking ref
+	IgnoredFiles    int    `json:"ignoredFiles"`    // ignored by git, removed with the directory
+	// Sessions end with the worktree: those attributed to it, and those that
+	// were started in a directory inside it. Both go by where the session was
+	// created, not by where its process is now.
+	Sessions []string `json:"sessions"`
+}
+
+// WorktreeRemoveRequest is the body of POST /api/v1/worktrees/remove (v4,
+// design 4.6): the worktree, what the user saw of it (Head, Sessions, Branch)
+// and what they agreed to lose. Path, Head and Sessions are required.
+type WorktreeRemoveRequest struct {
+	Path     string   `json:"path"`
+	Head     string   `json:"head"`
+	Sessions []string `json:"sessions"`
+	// Branch is the branch the confirmation showed (the status's branch);
+	// omitted when it showed none, and by clients that do not send it. When
+	// present it must still be the worktree's branch.
+	Branch       string `json:"branch,omitempty"`
+	DiscardFiles bool   `json:"discardFiles,omitempty"`
+	DeleteBranch bool   `json:"deleteBranch,omitempty"` // only for a worktree vibe-remote created, on a branch; otherwise the request is refused as changed
+	DropCommits  bool   `json:"dropCommits,omitempty"`
+}
+
+// WorktreeRemoveResult is the 200 answer to a removal: the directory is gone.
+// BranchError says why a branch that was to be deleted is still there.
+type WorktreeRemoveResult struct {
+	Removed       bool     `json:"removed"`
+	BranchDeleted bool     `json:"branchDeleted"`
+	BranchError   string   `json:"branchError,omitempty"`
+	EndedSessions []string `json:"endedSessions"`
+}

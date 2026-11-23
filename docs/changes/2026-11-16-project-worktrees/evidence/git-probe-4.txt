@@ -1,0 +1,331 @@
+# 补充探针 4（2026-11-19，第二轮工程评审 eng-review-2 之后）
+# 环境：macOS（Darwin 25.6），git 2.50.1 (Apple Git-155)。
+# 每一段都在 mktemp -d 的临时仓库里跑，跑完即删；GIT_CONFIG_GLOBAL / GIT_CONFIG_SYSTEM 指向 /dev/null，LC_ALL=C。
+# <tmp> 是临时目录。各段对应评审的 N1、N2、N3、N5、N7、N8、N12、N13，另有「第 9 步两条命令之间崩溃」和 c4（被忽略文件的数量）。
+# 仓库里的 worktree 都用 design 6.1 的新流程建：mkdir 占目录 → update-ref <引用> <OID> "" → worktree add --detach → symbolic-ref。
+
+######## N1　嵌在被忽略目录里的另一个 worktree
+
+$ git -C <tmp>/r1 worktree list --porcelain
+worktree <tmp>/r1
+HEAD 9ddce774e43b16ea5b702fb6b8511ef0f2b9daad
+branch refs/heads/main
+
+worktree <tmp>/r1-worktrees/outer
+HEAD 9ddce774e43b16ea5b702fb6b8511ef0f2b9daad
+branch refs/heads/outer
+
+worktree <tmp>/r1-worktrees/outer/.devflow-tmp/worktrees/inner
+HEAD a7107fb3fdfff6cdec8e1b8d557949dad20a4bc5
+branch refs/heads/inner
+
+[exit 0]
+
+outer 的 status --porcelain --untracked-files=all 行数: 0
+outer 的 rev-list --count refs/heads/outer --not --exclude=outer --branches --remotes: 0
+
+$ git -C <tmp>/r1-worktrees/outer -c core.fsmonitor=false status --porcelain --untracked-files=all --ignored
+!! .devflow-tmp/worktrees/inner/
+[exit 0]
+
+$ git -C <tmp>/r1 worktree remove <tmp>/r1-worktrees/outer
+[exit 0]
+
+$ ls <tmp>/r1-worktrees/outer
+ls: <tmp>/r1-worktrees/outer: No such file or directory
+[exit 1]
+
+$ git -C <tmp>/r1 worktree list --porcelain
+worktree <tmp>/r1
+HEAD 9ddce774e43b16ea5b702fb6b8511ef0f2b9daad
+branch refs/heads/main
+
+worktree <tmp>/r1-worktrees/outer/.devflow-tmp/worktrees/inner
+HEAD a7107fb3fdfff6cdec8e1b8d557949dad20a4bc5
+branch refs/heads/inner
+prunable gitdir file points to non-existent location
+
+[exit 0]
+# ↑ 不带 --force 就删掉了 outer；inner 的目录和 untracked.txt 一起没了，inner 变成 prunable。
+
+######## N2　detached 的 worktree：检查之后、删除之前提交了一次
+检查时：HEAD=d4492d0  rev-list --count HEAD --not --branches --remotes = 0
+会话在被结束前提交了一次：HEAD=d1fb1a6，工作区干净
+
+$ git -C <tmp>/r2-wt rev-parse HEAD
+d1fb1a6e315cdcc571c9822f653accc6f6a913b9
+[exit 0]
+
+$ git -C <tmp>/r2 worktree remove <tmp>/r2-wt
+[exit 0]
+
+$ git -C <tmp>/r2 branch --contains d1fb1a6e315cdcc571c9822f653accc6f6a913b9
+[exit 0]
+# ↑ 不带 --force 也成功；这个提交不在任何分支上。删除前再比一次 rev-parse HEAD 就能发现（上面第一条命令的输出已不等于检查时的 HEAD）。
+
+######## N3　索引里有 gitlink、目录里自带 .git 的嵌入式仓库
+
+$ ls <tmp>/r3/.git/worktrees/k/modules
+ls: <tmp>/r3/.git/worktrees/k/modules: No such file or directory
+[exit 1]
+
+$ git -C <tmp>/r3-worktrees/k -c core.fsmonitor=false status --porcelain --untracked-files=all
+[exit 0]
+
+$ git -C <tmp>/r3-worktrees/k ls-files --stage
+100644 78981922613b2afb6025042ff6bd878ac1994e85 0	a.txt
+160000 e1c015e859b18fddc28119ee6588850635ffe601 0	sub
+[exit 0]
+
+$ test -e <tmp>/r3-worktrees/k/sub/.git
+[exit 0]
+# 判定：ls-files --stage 里有模式 160000 的条目，且 <worktree>/<该路径>/.git 存在 → 嵌入式仓库
+
+$ git -C <tmp>/r3 worktree remove <tmp>/r3-worktrees/k
+fatal: working trees containing submodules cannot be moved or removed
+[exit 128]
+
+$ git -C <tmp>/r3 worktree remove --force <tmp>/r3-worktrees/k
+[exit 0]
+
+$ ls <tmp>/r3-worktrees/k
+ls: <tmp>/r3-worktrees/k: No such file or directory
+[exit 1]
+# 对照：只有 gitlink、目录里没有 .git（没初始化的子模块）
+
+$ git -C <tmp>/r3-worktrees/k2 ls-files --stage
+100644 78981922613b2afb6025042ff6bd878ac1994e85 0	a.txt
+160000 b80022c13d5c890538bba8fa2208d72d2939691a 0	sub2
+[exit 0]
+
+$ test -e <tmp>/r3-worktrees/k2/sub2/.git
+[exit 1]
+
+$ git -C <tmp>/r3 worktree remove <tmp>/r3-worktrees/k2
+[exit 0]
+
+######## N5　HEAD 里是符号链接、发起处工作区里同名处是目录
+发起处 <tmp>/r5/linkdir 是目录（未提交的改动），HEAD 里 linkdir 是指向 <out> 的符号链接
+mkdir -p <新>/linkdir → exit 0
+<out>
+# ↑ 会话的工作目录解析后在 worktree 之外。建好后对 <新>/linkdir 做 EvalSymlinks 再判断白名单就能拦住。
+
+######## N7　我方占到的空目录被外部的 git worktree add 用掉
+# 我方第 7、8 步完成；外部此时：
+
+$ git -C <tmp>/r7 worktree add -q <tmp>/r7-worktrees/race theirs
+[exit 0]
+# 我方第 9 步：
+
+$ git -C <tmp>/r7 worktree add --detach <tmp>/r7-worktrees/race cc3a6cd2c911a1c28d86a63a66735adb8861204a
+Preparing worktree (detached HEAD cc3a6cd)
+fatal: '<tmp>/r7-worktrees/race' already exists
+[exit 128]
+
+$ git -C <tmp>/r7 worktree list --porcelain
+worktree <tmp>/r7
+HEAD cc3a6cd2c911a1c28d86a63a66735adb8861204a
+branch refs/heads/main
+
+worktree <tmp>/r7-worktrees/race
+HEAD cc3a6cd2c911a1c28d86a63a66735adb8861204a
+branch refs/heads/theirs
+
+[exit 0]
+# ↑ 这个路径的项是 branch refs/heads/theirs：既不是「detached 且 HEAD 等于 OID」，也不是本次的分支 race → 不是本次的，Undo 不动它。
+
+$ rmdir <tmp>/r7-worktrees/race
+rmdir: <tmp>/r7-worktrees/race: Directory not empty
+[exit 1]
+
+$ git -C <tmp>/r7 update-ref -d refs/heads/race cc3a6cd2c911a1c28d86a63a66735adb8861204a
+[exit 0]
+
+$ cat <tmp>/r7-worktrees/race/precious.txt
+precious
+[exit 0]
+# 对照（旧的 Undo 第 1 条）：git worktree remove --force 会把对方的 worktree 删掉
+
+$ git -C <tmp>/r7 worktree remove --force <tmp>/r7-worktrees/race
+[exit 0]
+
+$ ls <tmp>/r7-worktrees/race
+ls: <tmp>/r7-worktrees/race: No such file or directory
+[exit 1]
+
+######## N8　分支名的「目录/文件」冲突
+
+== 名字 fix/login
+check-ref-format rc=0
+show-ref --verify refs/heads/fix/login rc=1
+前缀 refs/heads/fix: show-ref rc=0
+for-each-ref --count=1 --format=%(refname) refs/heads/fix/login/ → []
+fatal: update_ref failed for ref 'refs/heads/fix/login': 'refs/heads/fix' exists; cannot create 'refs/heads/fix/login'
+update-ref … "" rc=128
+
+== 名字 change
+check-ref-format rc=0
+show-ref --verify refs/heads/change rc=1
+for-each-ref --count=1 --format=%(refname) refs/heads/change/ → [refs/heads/change/foo]
+fatal: update_ref failed for ref 'refs/heads/change': 'refs/heads/change/foo' exists; cannot create 'refs/heads/change'
+update-ref … "" rc=128
+
+== 名字 fix/a/b
+check-ref-format rc=0
+show-ref --verify refs/heads/fix/a/b rc=1
+前缀 refs/heads/fix/a: show-ref rc=1
+前缀 refs/heads/fix: show-ref rc=0
+for-each-ref --count=1 --format=%(refname) refs/heads/fix/a/b/ → []
+fatal: update_ref failed for ref 'refs/heads/fix/a/b': 'refs/heads/fix' exists; cannot create 'refs/heads/fix/a/b'
+update-ref … "" rc=128
+
+== 名字 ok/name
+check-ref-format rc=0
+show-ref --verify refs/heads/ok/name rc=1
+前缀 refs/heads/ok: show-ref rc=1
+for-each-ref --count=1 --format=%(refname) refs/heads/ok/name/ → []
+update-ref … "" rc=0
+# 引用已打包（pack-refs --all）时两个只读检查同样有效。
+
+######## N12　名字是 @{-1} 的分支建不出来；以 - 开头的可以
+
+$ git -C <tmp>/r12 update-ref refs/heads/@{-1} adfc0e4f31bcb81f4ea6914afcd886e6e3a29b3f 
+fatal: update_ref failed for ref 'refs/heads/@{-1}': refusing to update ref with bad name 'refs/heads/@{-1}'
+[exit 128]
+
+$ git -C <tmp>/r12 update-ref refs/heads/-x adfc0e4f31bcb81f4ea6914afcd886e6e3a29b3f 
+[exit 0]
+
+$ git -C <tmp>/r12 worktree add -q --detach <tmp>/r12-worktrees/dash adfc0e4f31bcb81f4ea6914afcd886e6e3a29b3f
+[exit 0]
+
+$ git -C <tmp>/r12-worktrees/dash symbolic-ref HEAD refs/heads/-x
+[exit 0]
+
+$ git -C <tmp>/r12 rev-list --count refs/heads/-x --not --exclude=-x --branches --remotes
+1
+[exit 0]
+
+$ git -C <tmp>/r12 worktree remove <tmp>/r12-worktrees/dash
+[exit 0]
+
+$ git -C <tmp>/r12 update-ref -d refs/heads/-x 81126f7733a6c63696287470627d33919a7aa46a
+[exit 0]
+
+$ git -C <tmp>/r12 config --remove-section branch.-x
+[exit 0]
+
+$ git -C <tmp>/r12 for-each-ref --format=%(refname)
+refs/heads/main
+[exit 0]
+
+######## N13　与 worktree add -b 的差别；reflog 说明文字
+## 不带 -m 的新流程（fix）与 worktree add -b（ref）
+-- fix
+branch reflog: |
+HEAD reflog:   ||
+status -b:     # branch.head fix
+-- ref
+branch reflog: branch: Created from HEAD|
+HEAD reflog:   reset: moving to HEAD||
+status -b:     # branch.head ref
+## 带 -m 的两种写法：ma = 评审建议的 checkout: moving from …；mb = 不以 checkout: 开头
+-- ma
+branch reflog: branch: Created from main|
+HEAD reflog:   checkout: moving from adfc0e4f31bcb81f4ea6914afcd886e6e3a29b3f to ma||
+rev-parse @{-1}:  / adfc0e4f31bcb81f4ea6914afcd886e6e3a29b3f
+-- mb
+branch reflog: branch: Created from main|
+HEAD reflog:   worktree: attached to mb||
+rev-parse @{-1}: fatal: ambiguous argument '@{-1}': unknown revision or path not in the working tree. / fatal: ambiguous argument '@{-1}': unknown revision or path 
+-- ref
+branch reflog: branch: Created from HEAD|
+HEAD reflog:   reset: moving to HEAD||
+rev-parse @{-1}: fatal: ambiguous argument '@{-1}': unknown revision or path not in the working tree. / fatal: ambiguous argument '@{-1}': unknown revision or path 
+## branch.autoSetupMerge=always
+新流程: []
+-b:     [branch.asm-ref.remote .|branch.asm-ref.merge refs/heads/main|]
+## post-checkout 钩子里看到的 HEAD
+新流程 → hook: HEAD=[]
+-b     → hook: HEAD=[hk-ref]
+
+######## 第 9 步两条命令之间崩溃
+
+$ git -C <tmp>/r9 worktree list --porcelain
+worktree <tmp>/r9
+HEAD aec1bf079dc5b7dd53152bb3323f5066e06ce732
+branch refs/heads/main
+
+worktree <tmp>/r9-worktrees/half
+HEAD aec1bf079dc5b7dd53152bb3323f5066e06ce732
+detached
+
+[exit 0]
+
+$ git -C <tmp>/r9 for-each-ref --format=%(refname) %(worktreepath) refs/heads/
+refs/heads/half 
+refs/heads/main <tmp>/r9
+[exit 0]
+
+######## c4　被忽略文件的数量怎么数
+
+$ git -C <tmp>/rc-worktrees/c -c core.fsmonitor=false status --porcelain --untracked-files=all
+?? tracked-new.txt
+[exit 0]
+
+$ git -C <tmp>/rc-worktrees/c -c core.fsmonitor=false status --porcelain --ignored
+?? tracked-new.txt
+!! .env
+!! build.log
+!! node_modules/
+!! vendor/
+!! "we ird\nname.log"
+[exit 0]
+
+$ git -C <tmp>/rc-worktrees/c -c core.fsmonitor=false status --porcelain --untracked-files=all --ignored
+?? tracked-new.txt
+!! .env
+!! build.log
+!! node_modules/a/1.js
+!! node_modules/a/b/2.js
+!! node_modules/c/3.js
+!! vendor/lib/
+!! "we ird\nname.log"
+[exit 0]
+
+$ git -C <tmp>/rc-worktrees/c -c core.fsmonitor=false ls-files --others --ignored --exclude-standard
+.env
+build.log
+node_modules/a/1.js
+node_modules/a/b/2.js
+node_modules/c/3.js
+vendor/lib/
+"we ird\nname.log"
+[exit 0]
+
+$ git -C <tmp>/rc-worktrees/c -c core.fsmonitor=false ls-files --others --ignored --exclude-standard --directory
+.env
+build.log
+node_modules/
+vendor/
+"we ird\nname.log"
+[exit 0]
+# 口径：N = ls-files --others --ignored --exclude-standard 的行数（逐个文件，目录不折叠；嵌在被忽略目录里的另一个 git 仓库算 1 行；文件名里的换行被转义，仍是一行）
+N = 7；dirtyFiles = 1
+## 耗时：node_modules 下 30000 个被忽略的文件（300 个目录 × 100 个）
+第 1 次：ls-files --others --ignored → N=30007，134 ms；status --porcelain -uall → 1 行，79 ms
+第 2 次：ls-files --others --ignored → N=30007，94 ms；status --porcelain -uall → 1 行，64 ms
+第 3 次：ls-files --others --ignored → N=30007，90 ms；status --porcelain -uall → 1 行，61 ms
+## 只剩被忽略的文件时，不带 --force 就能删（R5.4 的前提：这些文件会一并消失）
+
+$ git -C <tmp>/rc-worktrees/c -c core.fsmonitor=false status --porcelain --untracked-files=all
+[exit 0]
+
+$ git -C <tmp>/rc worktree remove <tmp>/rc-worktrees/c
+[exit 0]
+
+$ ls <tmp>/rc-worktrees/c
+ls: <tmp>/rc-worktrees/c: No such file or directory
+[exit 1]
+
+# 临时目录已删除。

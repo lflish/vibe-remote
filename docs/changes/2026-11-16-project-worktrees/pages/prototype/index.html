@@ -1,0 +1,687 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>vibe-remote · 按项目和 worktree 组织会话：选定方案 M1 的效果</title>
+<style>
+/* ---------- outer page (neutral, deliberately unlike the app) ---------- */
+*{box-sizing:border-box}
+html{-webkit-text-size-adjust:100%}
+body{margin:0;background:#f6f8fb;color:#1e293b;font:15px/1.6 -apple-system,BlinkMacSystemFont,"PingFang SC","Helvetica Neue","Segoe UI",sans-serif;-webkit-font-smoothing:antialiased}
+.pg{max-width:1264px;margin:0 auto;padding:16px 24px 56px}
+.vh{position:absolute;width:1px;height:1px;margin:-1px;overflow:hidden;clip-path:inset(50%);white-space:nowrap}
+.pg-note{margin:0 0 6px;font-size:13px;color:#55627a}
+.vbar{position:sticky;top:0;z-index:30;margin:0 -24px;padding:9px 24px;background:rgba(246,248,251,.96);border-bottom:1px solid #e2e8f0}
+.snav{display:flex;flex-wrap:wrap;gap:4px 16px;font-size:13px}
+.snav span{color:#55627a}
+.snav a{color:#1d4ed8;text-decoration:none;white-space:nowrap}
+.snav a:hover{text-decoration:underline}
+.snav a:focus-visible{outline:2px solid #2563eb;outline-offset:2px;border-radius:3px}
+.sc{margin-top:34px;scroll-margin-top:56px}
+.sc h2{margin:0 0 2px;font-size:17px;font-weight:650}
+.sc h2 i{font-style:normal;color:#1d4ed8;margin-right:6px}
+.sc h2 em{margin-left:8px;padding:1px 7px;border:1px solid #cbd5e1;border-radius:5px;font-style:normal;font-size:11.5px;font-weight:500;color:#475569;vertical-align:2px}
+.sc .lead{margin:0 0 12px;font-size:13.5px;color:#55627a;max-width:980px}
+.sc .lead b{font-weight:600;color:#334155}
+.sc .lead code{padding:1px 5px;border-radius:4px;background:#e2e8f0;font:12.5px ui-monospace,Menlo,monospace;color:#334155}
+.fn{margin:10px 0 0;font-size:12.5px;color:#55627a;max-width:980px}
+.fn kbd{display:inline-block;padding:0 5px;border:1px solid #cbd5e1;border-radius:4px;background:#fff;font:600 11.5px/17px -apple-system,"SF Pro Text",sans-serif;color:#334155}
+.pg-foot{margin-top:40px;padding:14px 16px;border:1px solid #cbd5e1;border-radius:10px;background:#fff;font-size:14.5px}
+body.solo .sc{display:none}
+body.solo .sc.cur{display:block}
+.winwrap{overflow-x:auto;padding:2px 2px 36px;margin:0 -2px -18px}
+@media (max-width:760px){
+  .pg{padding:14px 14px 40px}
+  .vbar{position:static;margin:0 -14px;padding:8px 14px}
+  .snav{gap:2px 14px}
+}
+
+/* ---------- app theme: M1 (values per design.md 7.5) ---------- */
+.app{
+  --app:#EFEFF4;--sb:#EFEFF4;--surface:#FFFFFF;--sunk:#F6F6FA;--hover:#E5E4EE;
+  --text:#1C1B22;--text2:#565365;--text3:#6A6779;
+  --accent:#6B54D3;--accent-h:#5942BF;
+  --soft:#E3DEF7;--softer:#F3F0FC;--sel:#DDD7F5;
+  --border:#E4E3EB;--border2:#D2D0DC;
+  --ok:#1B7F52;--warn:#9A5A0A;--err:#BB382E;
+  --dot-new:#6F6C86;--dot-idle:#1A8F58;--dot-wait:#C2710A;--link:#6B54D3;
+  --add-bg:#E3F4EA;--add-fg:#155C3A;--del-bg:#FBE7E4;--del-fg:#972A22;
+  --term-bg:#FFFFFF;--term-fg:#1C1B22;--term-cur:#6B54D3;--term-sel:#D9D2F4;
+  --scrim:rgba(28,27,44,.24);--on-accent:#FFFFFF;--glow:#C3B8EC;
+  --tag-bg-s:62%;--tag-bg-l:90%;--tag-fg-s:48%;--tag-fg-l:30%;
+  --r-card:14px;--r-item:9px;--r-ctl:10px;
+  --sh:0 1px 2px rgba(24,20,48,.04),0 10px 28px rgba(24,20,48,.07);
+  --sh-lift:0 2px 6px rgba(20,18,40,.08),0 22px 54px rgba(20,18,40,.2);
+  font:14px/1.5 -apple-system,BlinkMacSystemFont,"SF Pro Text","PingFang SC","Helvetica Neue",sans-serif;color:var(--text);-webkit-font-smoothing:antialiased;text-align:left
+}
+.app *{box-sizing:border-box}
+:where(.app) button{font:inherit;color:inherit;background:none;border:0;padding:0;margin:0;cursor:pointer;text-align:inherit}
+.app code,.app pre,.app kbd,.mono{font-family:"SF Mono",ui-monospace,Menlo,Monaco,Consolas,monospace}
+.i{width:16px;height:16px;fill:none;stroke:currentColor;stroke-width:1.5;stroke-linecap:round;stroke-linejoin:round;flex-shrink:0}
+.sp{flex:1}
+
+/* window frame */
+.win{position:relative;display:flex;width:1200px;height:780px;border-radius:12px;overflow:hidden;background:var(--app);box-shadow:0 0 0 1px rgba(15,23,42,.16),0 8px 22px rgba(15,23,42,.1);zoom:var(--z,1)}
+.lights{position:absolute;left:18px;top:19px;display:flex;gap:8px;z-index:3}
+.lights i{width:12px;height:12px;border-radius:50%;background:#FF5F57;box-shadow:inset 0 0 0 .5px rgba(0,0,0,.2)}
+.lights i:nth-child(2){background:#FEBC2E}
+.lights i:nth-child(3){background:#28C840}
+
+/* ---------- sidebar ---------- */
+.sb{position:relative;display:flex;flex-direction:column;width:284px;flex-shrink:0;min-height:0;background:var(--sb)}
+.sb::before{content:"";position:absolute;inset:0 0 auto 0;height:124px;background:linear-gradient(180deg,var(--glow) 0%,color-mix(in srgb,var(--glow) 50%,transparent) 42%,transparent 100%);pointer-events:none}
+.sb-head{position:relative;display:flex;align-items:center;gap:6px;height:50px;padding:0 10px 0 84px;flex-shrink:0}
+.brand{display:flex;align-items:center;gap:8px;min-width:0;font-size:13.5px;font-weight:600;letter-spacing:-.1px}
+.hb{display:inline-flex;align-items:center;justify-content:center;width:26px;height:26px;border-radius:7px;color:var(--text2);font-size:11.5px;font-weight:600}
+.hb:hover,.ab:hover{background:var(--hover);color:var(--text)}
+.sb-list{position:relative;flex:1;min-height:0;overflow:hidden auto;padding:4px 10px 12px}
+.row{position:relative;display:flex;align-items:center;gap:6px;min-width:0;border-radius:var(--r-item)}
+.row[data-tog]{cursor:pointer}
+.nm{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.chev{width:12px;height:12px;color:var(--text3);transform:rotate(90deg);transition:transform .14s}
+.chev.ph{visibility:hidden}
+.grp.collapsed>.kids{display:none}
+.grp.collapsed>.row .chev{transform:none}
+
+.mach{margin-top:6px}
+.mach-row{height:28px;padding:0 6px 0 4px;font-size:12px;font-weight:600;color:var(--text2)}
+.mach-row .i:not(.chev){width:14px;height:14px}
+.mstate{font-size:11px;font-weight:400;color:var(--ok);flex-shrink:0}
+.mach.off .mach-row{color:var(--text3)}
+.mach.off .mstate{color:var(--text3)}
+.cnt{font-size:11px;font-weight:500;color:var(--text3);font-variant-numeric:tabular-nums;padding-right:4px}
+.degr{display:flex;gap:7px;margin:2px 4px 6px 22px;padding:7px 9px;border-radius:var(--r-item);background:color-mix(in srgb,var(--warn) 11%,var(--surface));font-size:11.5px;line-height:1.5;color:var(--text)}
+.degr .i{width:14px;height:14px;margin-top:1px;color:var(--warn)}
+
+.proj{margin-top:4px}
+.proj-row{height:32px;padding:0 4px;font-size:13px;font-weight:600}
+.ptag{display:inline-flex;align-items:center;justify-content:center;width:20px;height:20px;flex-shrink:0;border-radius:6px;font-size:9.5px;font-weight:700;letter-spacing:.02em;background:hsl(var(--tag-hue) var(--tag-bg-s) var(--tag-bg-l));color:hsl(var(--tag-hue) var(--tag-fg-s) var(--tag-fg-l))}
+.pbr{display:inline-flex;align-items:center;gap:3px;flex-shrink:0;font-size:11.5px;font-weight:400;color:var(--text3)}
+.pbr .i{width:12px;height:12px}
+.pst{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:11.5px;font-weight:400;color:var(--err)}
+.acts{display:none;align-items:center;gap:1px;flex-shrink:0}
+.row:hover>.acts,.acts.on{display:flex}
+.ab{display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;border-radius:6px;color:var(--text3)}
+.ab .i{width:14px;height:14px}
+.ab[disabled]{opacity:.38;cursor:not-allowed}
+.ab[disabled]:hover{background:none;color:var(--text3)}
+
+.wt-row{height:26px;padding:0 4px 0 30px;font-size:12px;font-weight:500;color:var(--text2)}
+.wt-row>.chev{display:none}
+.wt-row .bi{width:13px;height:13px;color:var(--text3)}
+.tagx{flex-shrink:0;padding:0 4px;border:1px solid var(--border2);border-radius:4px;font-size:10.5px;font-weight:400;line-height:15px;color:var(--text3)}
+.wt-empty{display:flex;align-items:center;gap:10px;height:28px;padding:0 8px 0 50px;font-size:12px;color:var(--text3)}
+.lnk{display:inline-flex;align-items:center;gap:3px;color:var(--link);font-weight:500;font-size:12px}
+.lnk .i{width:12px;height:12px}
+
+.sess{display:grid;grid-template-columns:14px minmax(0,1fr) auto;column-gap:8px;row-gap:0;align-items:center;margin:1px 0;padding:6px 12px 6px 30px;cursor:pointer}
+.sess:hover{background:color-mix(in srgb,var(--hover) 60%,transparent)}
+.sess .ki{grid-area:1/1;width:14px;height:14px;color:var(--text3)}
+.sess .nm{grid-area:1/2;font-size:13px;line-height:18px;color:var(--text)}
+.sess .mt{grid-area:2/2;font-size:11.5px;line-height:17px;color:var(--text3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.sess .mt.w,.sess .mt.gone{color:var(--warn)}
+.sess .dot{grid-area:1/3/3/4;justify-self:end;align-self:center}
+.sess.on{background:var(--sel)}
+.sess.on .nm{font-weight:600}
+.sess.on .ki{color:var(--accent)}
+.dot{width:8px;height:8px;border-radius:50%;flex-shrink:0}
+.dot.new{border:2px solid var(--dot-new)}
+.dot.idle{background:var(--dot-idle)}
+.dot.wait{background:var(--dot-wait);box-shadow:0 0 0 3px color-mix(in srgb,var(--dot-wait) 26%,transparent);margin-right:3px}
+
+/* ---------- main area ---------- */
+.main{position:relative;display:flex;flex-direction:column;flex:1;min-width:0;margin:10px 10px 10px 0;background:var(--surface);border:1px solid var(--border);border-radius:var(--r-card);box-shadow:var(--sh);overflow:hidden}
+.body{display:flex;flex-direction:column;flex:1;min-height:0}
+.tb{display:flex;align-items:center;gap:12px;height:50px;padding:0 20px;flex-shrink:0}
+.crumb{display:flex;align-items:center;gap:8px;min-width:0;font-size:14px;color:var(--text2);white-space:nowrap}
+.crumb .sl{color:var(--border2)}
+.crumb .br{display:inline-flex;align-items:center;gap:4px}
+.crumb .br .i{width:13px;height:13px;color:var(--text3)}
+.crumb .cur{display:inline-flex;align-items:center;gap:6px;color:var(--text);font-weight:600}
+.crumb .cur .i{width:14px;height:14px;color:var(--text3)}
+.conn{display:inline-flex;align-items:center;gap:6px;margin-left:auto;padding:3px 10px;border:1px solid var(--border);border-radius:999px;font-size:12px;color:var(--text2);white-space:nowrap}
+.conn i{width:7px;height:7px;border-radius:50%;background:var(--dot-idle)}
+.tl{flex:1;min-height:0;overflow:hidden auto;scrollbar-width:none;padding:0 24px 8px}
+.tl::-webkit-scrollbar{display:none}
+.tl.clip{-webkit-mask-image:linear-gradient(transparent,#000 26px);mask-image:linear-gradient(transparent,#000 26px)}
+.col{max-width:748px;margin:0 auto}
+.u{display:flex;justify-content:flex-end;margin:14px 0 12px}
+.ub{max-width:80%;padding:9px 14px;border-radius:17px;background:var(--soft);font-size:14px;line-height:1.55}
+.md{font-size:14px;line-height:1.65}
+.md p{margin:0 0 8px}
+.md code{white-space:nowrap;padding:1px 5px;border:1px solid var(--border);border-radius:5px;background:var(--sunk);font-size:12.5px}
+.cb{position:relative;margin:6px 0 10px;border:1px solid var(--border);border-radius:10px;background:var(--sunk)}
+.cb pre{margin:0;padding:9px 84px 9px 14px;font-size:12.5px;line-height:1.5;white-space:pre;overflow:hidden}
+.cb pre code{padding:0;border:0;background:none}
+.cb-copy{position:absolute;right:7px;top:6px;display:inline-flex;align-items:center;gap:4px;padding:2px 7px;border-radius:6px;font-size:11.5px;color:var(--text2)}
+.cb-copy:hover{background:var(--hover)}
+.cb-copy .i{width:13px;height:13px}
+.tool{display:flex;align-items:center;gap:8px;height:30px;min-width:0;font-size:13px;color:var(--text2);cursor:pointer}
+.tool>.i{width:15px;height:15px;color:var(--text3)}
+.tool .tn{font-weight:600;color:var(--text)}
+.tool .t2{font-size:12px}
+.tool .t3{font-size:12px;color:var(--text3)}
+.tool .st{display:inline-flex;gap:6px;font-size:11.5px;font-weight:600}
+.tool .st .a{color:var(--ok)}
+.tool .st .d{color:var(--err)}
+.tool .tc{width:12px;height:12px;margin-left:auto;color:var(--text3)}
+.tool.open .tc{transform:rotate(90deg)}
+.diff{margin:2px 0 8px 23px;border:1px solid var(--border);border-radius:10px;overflow:hidden;background:var(--surface);font-size:12px;line-height:18px}
+.dln{display:grid;grid-template-columns:36px 16px minmax(0,1fr);white-space:pre}
+.dln .n{padding-right:8px;text-align:right;color:var(--text3)}
+.dln .s{text-align:center}
+.dln.add{background:var(--add-bg);color:var(--add-fg)}
+.dln.del{background:var(--del-bg);color:var(--del-fg)}
+.dln.add .n,.dln.del .n{color:inherit;opacity:.8}
+
+.dock{flex-shrink:0;padding:0 24px 9px}
+.perm{margin-bottom:9px;padding:11px 12px 12px;border:1px solid var(--border2);border-radius:var(--r-card);background:var(--surface);box-shadow:0 1px 2px rgba(24,20,48,.04),0 6px 18px rgba(24,20,48,.07)}
+.perm-h{display:flex;align-items:center;gap:8px;margin:0 2px 8px;font-size:13.5px;font-weight:600}
+.perm-h .i{color:var(--warn)}
+.perm-h small{margin-left:auto;font-size:11.5px;font-weight:400;color:var(--text3)}
+.perm-cmd{margin-bottom:8px;padding:6px 10px;border:1px solid var(--border);border-radius:8px;background:var(--sunk);font-size:12.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.opts{display:flex;flex-direction:column;gap:4px}
+.opt{display:flex;align-items:center;gap:8px;height:30px;min-width:0;padding:0 10px;border:1px solid var(--border);border-radius:8px;font-size:13px;white-space:nowrap}
+.opt:hover{border-color:var(--border2);background:var(--sunk)}
+.opt kbd{width:12px;font-size:11px;font-weight:600;color:var(--text3)}
+.opt code{font-size:12px}
+.opt.pri,.opt.pri:hover{border-color:var(--accent);background:var(--accent);color:var(--on-accent)}
+.opt.pri kbd{color:rgba(255,255,255,.82)}
+.opt .rin{flex:1;margin-left:4px;padding-left:10px;border-left:1px solid var(--border);font-size:12.5px;color:var(--text3)}
+.comp{padding:10px 10px 9px 14px;border:1px solid var(--border2);border-radius:17px;background:var(--surface);box-shadow:0 1px 2px rgba(24,20,48,.04),0 4px 14px rgba(24,20,48,.05)}
+.comp-in{padding:1px 0 9px;font-size:14px;color:var(--text3)}
+.comp-bar{display:flex;align-items:center;gap:6px}
+.chip{display:inline-flex;align-items:center;gap:5px;height:26px;padding:0 10px;border:1px solid var(--border);border-radius:999px;font-size:12px;color:var(--text2);white-space:nowrap}
+.chip .i{width:13px;height:13px}
+.ib{display:inline-flex;align-items:center;justify-content:center;width:26px;height:26px;border-radius:8px;color:var(--text2);font:600 14px "SF Mono",ui-monospace,Menlo,monospace}
+.chip:hover,.ib:hover{background:var(--sunk)}
+.send{display:inline-flex;align-items:center;justify-content:center;width:32px;height:32px;margin-left:auto;border-radius:50%;background:var(--accent);color:var(--on-accent)}
+.send:hover{background:var(--accent-h)}
+.hint{display:flex;justify-content:space-between;gap:12px;padding:6px 6px 0;font-size:11.5px;color:var(--text3);white-space:nowrap}
+.hint span:last-child{overflow:hidden;text-overflow:ellipsis}
+
+.term{flex:1;min-height:0;padding:10px 22px 0;background:var(--term-bg);color:var(--term-fg);overflow:hidden}
+.term pre{margin:0;font-size:13px;line-height:18px;white-space:pre}
+.term .dm{color:#8B8880}
+.term .gr{color:#4F8049}
+.term .rd{color:#B34A40}
+.term .bl{color:#4A72B0}
+.term .selx{background:var(--term-sel)}
+.term .cur{background:var(--term-cur);color:var(--term-bg)}
+.stb{display:flex;align-items:center;justify-content:space-between;gap:12px;height:32px;padding:0 22px;flex-shrink:0;font-size:11.5px;color:var(--text3);white-space:nowrap}
+
+/* ---------- dialogs ---------- */
+.board{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,400px),1fr));gap:26px 28px;align-items:start;padding:26px 28px 30px;border-radius:12px;background:linear-gradient(var(--scrim),var(--scrim)),var(--app);box-shadow:0 0 0 1px rgba(15,23,42,.12)}
+.cell{min-width:0}
+.cap{margin:0 0 9px;font-size:12.5px;font-weight:600;color:#1e293b}
+.cap small{font-weight:400;font-size:12px;color:#334155}
+.dlg{max-width:520px;border:1px solid var(--border);border-radius:18px;background:var(--surface);box-shadow:var(--sh-lift);overflow:hidden}
+.dlg-h{padding:20px 24px 2px}
+.dlg-h h3{margin:0;font-size:17px;font-weight:600;letter-spacing:-.1px;line-height:1.35}
+.dlg-h p{margin:3px 0 0;font-size:12.5px;color:var(--text3);overflow-wrap:anywhere}
+.dlg-b{padding:10px 24px 4px;font-size:13px;line-height:1.6}
+.dlg-b>p{margin:0 0 8px}
+.lb{margin:12px 0 6px;font-size:12px;font-weight:500;color:var(--text2)}
+.inp{display:flex;align-items:center;gap:8px;height:38px;padding:0 12px;border:1px solid var(--border2);border-radius:var(--r-ctl);background:var(--surface);font-size:13px}
+.inp .i{width:14px;height:14px;color:var(--text3)}
+.inp.focus{border-color:var(--accent);box-shadow:0 0 0 3px color-mix(in srgb,var(--accent) 18%,transparent)}
+.inp.bad{border-color:var(--err);box-shadow:0 0 0 3px color-mix(in srgb,var(--err) 15%,transparent)}
+.caret{width:1.5px;height:17px;margin-left:-7px;background:var(--text)}
+.emsg{display:flex;align-items:center;gap:6px;margin-top:6px;font-size:12.5px;color:var(--err)}
+.emsg .i{width:14px;height:14px}
+.info{display:flex;gap:7px;margin-top:9px;font-size:12.5px;color:var(--text2)}
+.info .i{width:14px;height:14px;margin-top:3px;color:var(--text3)}
+.info code,.dlg-b p code,.kv code,.ro code,.warnb code{font-size:12px}
+.pathp{margin-top:8px;padding:7px 12px 8px;border-radius:var(--r-ctl);background:var(--sunk)}
+.pathp span{display:block;font-size:11.5px;color:var(--text3)}
+.pathp code{font-size:12px;overflow-wrap:anywhere}
+.cards{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.mc{display:block;padding:10px 12px;border:1px solid var(--border2);border-radius:12px;background:var(--surface)}
+.mc b{display:flex;flex-wrap:wrap;align-items:center;gap:4px 6px;font-size:13.5px;font-weight:600;white-space:nowrap}
+.mc b .i{width:14px;height:14px;color:var(--text3)}
+.mc>span{display:block;margin-top:3px;font-size:12px;line-height:1.45;color:var(--text2)}
+.mc.sel{border-color:var(--accent);background:var(--softer);box-shadow:0 0 0 1px var(--accent)}
+.mc.sel b .i{color:var(--accent)}
+.mc.dis{border-style:dashed;background:var(--sunk);cursor:not-allowed}
+.mc.dis b,.mc.dis>span{color:var(--text3)}
+.only{padding:0 5px;border:1px solid var(--border);border-radius:5px;background:var(--sunk);font-size:10.5px;font-weight:500;color:var(--text2)}
+.whyno{display:flex;gap:7px;margin-top:8px;font-size:12.5px;line-height:1.55;color:var(--warn)}
+.whyno .i{width:14px;height:14px;margin-top:3px}
+.ck{display:flex;align-items:center;gap:8px;padding:3px 0;font-size:13px}
+.box{display:inline-flex;align-items:center;justify-content:center;width:16px;height:16px;flex-shrink:0;border:1.5px solid var(--border2);border-radius:5px;background:var(--surface);color:var(--on-accent)}
+.box .i{width:11px;height:11px;stroke-width:2.2;display:none}
+.box.on{border-color:var(--accent);background:var(--accent)}
+.box.on .i{display:block}
+.note{margin-top:6px;padding:8px 12px;border-radius:var(--r-ctl);background:var(--softer);font-size:12.5px;line-height:1.6;color:var(--text)}
+.dlg-f{display:flex;justify-content:flex-end;gap:10px;padding:14px 24px 20px}
+.btn{height:34px;padding:0 16px;border:1px solid var(--border2);border-radius:var(--r-ctl);background:var(--surface);font-size:13px;font-weight:500;white-space:nowrap}
+.app .btn.pri{border-color:var(--accent);background:var(--accent);color:var(--on-accent)}
+.app .btn.dng{border-color:var(--err);background:var(--err);color:var(--on-accent)}
+.app .btn.dngo{border-color:color-mix(in srgb,var(--err) 45%,var(--border2));color:var(--err)}
+.app .btn[disabled]{opacity:.42;cursor:not-allowed}
+.app .btn.neu{border-color:var(--text);background:var(--text);color:var(--on-accent)}
+.btn.def{box-shadow:0 0 0 2px var(--surface),0 0 0 4px color-mix(in srgb,var(--text) 55%,transparent)}
+.dfl{margin-right:auto;align-self:center;font-size:11.5px;color:var(--text3)}
+.warnb{display:flex;gap:9px;padding:9px 12px;border-radius:var(--r-ctl);background:color-mix(in srgb,var(--err) 9%,var(--surface));font-size:13px;line-height:1.55}
+.warnb .i{margin-top:2px;color:var(--err)}
+.kv{display:grid;grid-template-columns:auto minmax(0,1fr);gap:3px 12px;margin:8px 0 2px;font-size:12.5px}
+.kv dt{color:var(--text3)}
+.kv dd{margin:0;overflow-wrap:anywhere}
+.ro{display:flex;gap:10px;margin-top:8px;padding:9px 12px;border:1px solid var(--border2);border-radius:12px}
+.ro b{display:block;font-size:13px;font-weight:600}
+.ro span{display:block;font-size:12px;color:var(--text2)}
+.rad{width:16px;height:16px;margin-top:2px;flex-shrink:0;border:1.5px solid var(--border2);border-radius:50%;background:var(--surface)}
+.ro.sel{border-color:var(--accent);background:var(--softer)}
+.ro.sel .rad{border:5px solid var(--accent)}
+
+/* dialog extras: default-focus ring, session list, error bar, leftover state */
+.btn.foc{box-shadow:0 0 0 2px var(--surface),0 0 0 4px color-mix(in srgb,var(--accent) 60%,transparent)}
+.slist{margin:6px 0 2px;padding:0;list-style:none}
+.slist li{display:flex;align-items:center;gap:7px;padding:2px 0;font-size:13px}
+.slist .i{width:14px;height:14px;color:var(--text3)}
+.slist small{font-size:11.5px;color:var(--text3)}
+.dlg-b>p.sect{margin-top:10px}
+.errb{display:flex;gap:9px;margin-bottom:10px;padding:9px 12px;border:1px solid color-mix(in srgb,var(--err) 38%,var(--surface));border-radius:var(--r-ctl);background:color-mix(in srgb,var(--err) 8%,var(--surface));font-size:13px;line-height:1.55}
+.errb .i{margin-top:2px;color:var(--err)}
+.errb b{color:var(--err);font-weight:600}
+.errb code{display:block;margin-top:3px;font-size:12px;overflow-wrap:anywhere;color:var(--text)}
+.left{margin:8px 0 2px;padding:0;list-style:none;font-size:12.5px}
+.left li{display:flex;gap:8px;padding:2px 0}
+.left li>span:first-child{flex-shrink:0;width:64px;color:var(--text3)}
+.left code{font-size:12px;overflow-wrap:anywhere}
+.dlg-b>p.same{margin:0 0 10px;font-size:12.5px;color:var(--text2)}
+.erow{margin-top:14px}
+.cell.wide{grid-column:1/-1}
+.cell.wide .dlg{max-width:none}
+.egrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,300px),1fr));gap:16px 28px;align-items:start}
+.egrid.two{grid-template-columns:repeat(auto-fit,minmax(min(100%,420px),1fr))}
+.egrid .erow,.egrid .erow:first-child{margin-top:0}
+.erow:first-child{margin-top:2px}
+.ecap{margin:0 0 5px;font-size:11.5px;color:var(--text2)}
+.emsg{align-items:flex-start}
+.emsg .i{margin-top:2px}
+.emsg span{overflow-wrap:anywhere}
+.dlg-b>p.more{margin:14px 0 4px;padding-top:10px;border-top:1px solid var(--border);font-size:12px;line-height:1.7;color:var(--text2)}
+.notice{display:flex;align-items:flex-start;gap:8px;margin-top:8px;padding:8px 12px;border:1px solid var(--border);border-radius:var(--r-ctl);background:var(--surface);font-size:12.5px;line-height:1.55;box-shadow:var(--sh)}
+.notice:first-child{margin-top:0}
+.notice .i{width:14px;height:14px;margin-top:2px;color:var(--warn)}
+.notice code{font-size:12px;overflow-wrap:anywhere}
+
+/* sidebar fragments (scene 3 and the old-daemon scene) */
+.gal{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,300px),1fr));gap:28px 32px;align-items:start}
+.gal .cap{margin-bottom:8px}
+.sbfrag{position:relative;width:284px;max-width:100%;padding:6px 10px 14px;border-radius:12px;background:var(--sb);box-shadow:0 0 0 1px rgba(15,23,42,.14),0 6px 16px rgba(15,23,42,.07)}
+.sbfrag+.sbfrag{margin-top:14px}
+.sbfrag .mach{margin-top:0}
+.gnote{margin:10px 0 0;padding-left:18px;font-size:13px;line-height:1.65;color:#334155;max-width:360px}
+.gnote li{margin-bottom:5px}
+.gnote code{white-space:nowrap}
+.gnote code,.expl code{padding:1px 5px;border-radius:4px;background:#e2e8f0;font:12.5px ui-monospace,Menlo,monospace}
+.ab.act{background:var(--hover);color:var(--text)}
+.menu{position:absolute;right:2px;top:calc(100% + 3px);z-index:6;width:236px;padding:5px;border:1px solid var(--border);border-radius:10px;background:var(--surface);box-shadow:0 2px 6px rgba(20,18,40,.08),0 12px 30px rgba(20,18,40,.16);font-weight:400;cursor:default}
+.mi{display:block;padding:6px 10px;border-radius:6px;font-size:13px;line-height:1.4;color:var(--text)}
+.mi.dng{color:var(--err)}
+.mi.dis{color:var(--text3);cursor:not-allowed}
+.mi small{display:block;margin-top:2px;font-size:11.5px;line-height:1.45;color:var(--text3)}
+.wt-row .nm.mono{font-size:11.5px}
+
+/* old-daemon scene */
+.split{display:flex;flex-wrap:wrap;gap:22px 36px;align-items:flex-start}
+.tip{position:absolute;right:22px;top:29px;z-index:4;padding:5px 9px;border-radius:7px;background:var(--text);color:var(--on-accent);font-size:11.5px;font-weight:400;line-height:1.4;white-space:nowrap;box-shadow:0 4px 12px rgba(0,0,0,.18)}
+.proj-row:has(.tip){margin-bottom:32px}
+.tip::before{content:"";position:absolute;right:13px;top:-4px;width:8px;height:8px;background:inherit;transform:rotate(45deg)}
+.expl{flex:1;min-width:260px;max-width:520px;font-size:14px;line-height:1.7;color:#1e293b}
+.expl ul{margin:0 0 14px;padding-left:20px}
+.expl li{margin:0 0 8px}
+.expl .dlg{margin-top:4px}
+@media (max-width:760px){.board{padding:16px 14px 20px}}
+</style>
+</head>
+<body>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <defs>
+    <symbol id="i-chev" viewBox="0 0 20 20"><path d="M7.5 5l5 5-5 5"/></symbol>
+    <symbol id="i-chat" viewBox="0 0 20 20"><path d="M3.5 5h13v8.5h-7L6 16.5v-3H3.5z"/></symbol>
+    <symbol id="i-term" viewBox="0 0 20 20"><path d="M4.5 6l4 4-4 4M10.5 14h5"/></symbol>
+    <symbol id="i-branch" viewBox="0 0 20 20"><circle cx="6" cy="4.8" r="2"/><circle cx="6" cy="15.2" r="2"/><circle cx="14" cy="7" r="2"/><path d="M6 6.8v6.4M14 9c0 3.6-8 1.4-8 4.2"/></symbol>
+    <symbol id="i-branchplus" viewBox="0 0 20 20"><circle cx="5" cy="4.5" r="1.8"/><circle cx="5" cy="15.5" r="1.8"/><circle cx="11.5" cy="5.5" r="1.8"/><path d="M5 6.3v7.4M11.5 7.3c0 3-6.5 1.4-6.5 4.4M15 11.5v6M12 14.5h6"/></symbol>
+    <symbol id="i-plus" viewBox="0 0 20 20"><path d="M10 4.5v11M4.5 10h11"/></symbol>
+    <symbol id="i-more" viewBox="0 0 20 20"><g fill="currentColor" stroke="none"><circle cx="5" cy="10" r="1.3"/><circle cx="10" cy="10" r="1.3"/><circle cx="15" cy="10" r="1.3"/></g></symbol>
+    <symbol id="i-gear" viewBox="0 0 20 20"><circle cx="10" cy="10" r="2.6"/><path d="M10 2.8v2M10 15.2v2M2.8 10h2M15.2 10h2M4.9 4.9l1.4 1.4M13.7 13.7l1.4 1.4M4.9 15.1l1.4-1.4M13.7 6.3l1.4-1.4"/></symbol>
+    <symbol id="i-copy" viewBox="0 0 20 20"><rect x="7" y="7" width="9" height="9" rx="2"/><path d="M13 7V5.5A1.5 1.5 0 0 0 11.5 4h-6A1.5 1.5 0 0 0 4 5.5v6A1.5 1.5 0 0 0 5.5 13H7"/></symbol>
+    <symbol id="i-up" viewBox="0 0 20 20"><path d="M10 15.5v-11M5.5 9L10 4.5 14.5 9"/></symbol>
+    <symbol id="i-file" viewBox="0 0 20 20"><path d="M5.5 3.5h6L15 7v9.5H5.5zM11.5 3.5V7H15"/></symbol>
+    <symbol id="i-pen" viewBox="0 0 20 20"><path d="M12.5 4.5l3 3L8 15l-3.6.6.6-3.6z"/></symbol>
+    <symbol id="i-warn" viewBox="0 0 20 20"><path d="M10 3.5l7 12.5H3zM10 8.5v3.5M10 14.2v.3"/></symbol>
+    <symbol id="i-info" viewBox="0 0 20 20"><circle cx="10" cy="10" r="7"/><path d="M10 9.2v4.3M10 6.5v.3"/></symbol>
+    <symbol id="i-shield" viewBox="0 0 20 20"><path d="M10 3l5.5 2v4.5c0 3.4-2.3 5.9-5.5 7.5-3.2-1.6-5.5-4.1-5.5-7.5V5z"/></symbol>
+    <symbol id="i-host" viewBox="0 0 20 20"><rect x="3" y="4.5" width="14" height="9" rx="1.5"/><path d="M7 16.5h6M10 13.5v3"/></symbol>
+    <symbol id="i-folder" viewBox="0 0 20 20"><path d="M3 6.5A1.5 1.5 0 0 1 4.5 5h3.3l1.7 2h6A1.5 1.5 0 0 1 17 8.5v6a1.5 1.5 0 0 1-1.5 1.5h-11A1.5 1.5 0 0 1 3 14.5z"/></symbol>
+    <symbol id="i-check" viewBox="0 0 20 20"><path d="M4.5 10.5l3.5 3.5 7.5-8"/></symbol>
+    <symbol id="i-commit" viewBox="0 0 20 20"><circle cx="10" cy="10" r="3.2"/><path d="M2.5 10h4.3M13.2 10h4.3"/></symbol>
+  </defs>
+</svg>
+
+<div class="pg">
+  <h1 class="vh">vibe-remote：按项目和 worktree 组织会话，选定方案 M1 的效果</h1>
+  <p class="pg-note">效果示意，非最终实现 · 按项目和 worktree 组织会话 · 视觉方案 M1（已选定）</p>
+  <div class="vbar">
+    <nav class="snav" aria-label="画面"><span>画面</span>
+      <a href="#s1">1 对话会话</a><a href="#s2">2 终端会话</a><a href="#s3">3 侧边栏状态一览</a><a href="#s4">4 新建 worktree</a><a href="#s5">5 在 worktree 里新建会话</a><a href="#s6">6 删除确认</a><a href="#s7">7 删除失败</a><a href="#s8">8 连着旧版 daemon</a>
+    </nav>
+  </div>
+
+  <section class="sc" id="s1">
+    <h2><i>1</i>对话会话（主画面）</h2>
+    <p class="lead">对应 <b>R1.1–R1.3、R1.6、R1.7、R7、R8.1</b>。侧边栏：机器 → 项目 → worktree → 会话。只有一个 worktree 的项目（new-api）和不在 git 里的目录（notes）不显示 worktree 层；折叠的项目（vibeview）把「等你处理」的点显示在项目行上。顶部标题是「项目 / 分支 / 会话名」。状态点：空心灰 = 有新消息，实心绿 = 回合结束，带光圈的黄 = 等你处理。点项目行可以折叠。</p>
+    <div class="winwrap"><div class="app win" id="w1"></div></div>
+    <p class="fn">快捷键（R7，界面上不显示序号）：<kbd>⌘1</kbd>–<kbd>⌘9</kbd> 打开侧边栏从上到下的第 1–9 个可见会话，图里「重排 skill 目录」是 ⌘1、「登录修复」是 ⌘3、「周报整理」是 ⌘6；<kbd>⌘⇧[</kbd> / <kbd>⌘⇧]</kbd> 切到上一个 / 下一个，到头循环。折叠的项目（vibeview）里的会话会被跳过；有对话框开着时不切换；焦点在终端或输入框里也照常切换。</p>
+    <p class="fn">实际界面里，权限卡片出现时会替换输入框（现有行为不变）；这里为了一张图看全，把两者都画了出来。当前打开的会话不显示状态点（现有行为）。</p>
+  </section>
+
+  <section class="sc" id="s2">
+    <h2><i>2</i>终端会话</h2>
+    <p class="lead">对应 <b>R8.2、R1.7</b>。只换外壳：侧边栏、标题、状态栏，以及终端的底色、前景色、光标和选区颜色。终端里的文字、框线和颜色是远程输出的原样显示，客户端不解析。</p>
+    <div class="winwrap"><div class="app win" id="w2"></div></div>
+  </section>
+
+  <section class="sc" id="s3">
+    <h2><i>3</i>侧边栏状态一览<em>新增</em></h2>
+    <p class="lead">对应 <b>R1.4、R1.8、R2.1、R2.4、R2.5、R2.7、R5.7</b>，以及「主目录」「外部」两个小标签。下面是侧边栏的局部，每块下方说明它画的是什么。</p>
+    <div class="gal" id="b3"></div>
+  </section>
+
+  <section class="sc" id="s4">
+    <h2><i>4</i>新建 worktree</h2>
+    <p class="lead">对应 <b>R3.1–R3.6、R3.10</b>。从 devflow 的 main 发起。名字就是新分支名，基于发起处当前的提交；名字里的斜杠在目录名里换成连字符（<code>change/foo</code> → 目录 <code>change-foo</code>）。出错时原因显示在名字下方，不创建任何东西。</p>
+    <div class="app board" id="b4"></div>
+  </section>
+
+  <section class="sc" id="s5">
+    <h2><i>5</i>在已有 worktree 里新建会话</h2>
+    <p class="lead">对应 <b>R4.1、R4.4、R6.1</b>。目录固定为这个 worktree，所以只选界面和启动选项，没有目录列表和会话模式。</p>
+    <div class="app board" id="b5"></div>
+  </section>
+
+  <section class="sc" id="s6">
+    <h2><i>6</i>删除 worktree 和删除会话的确认</h2>
+    <p class="lead">对应 <b>R5.1–R5.6、R5.8、R5.11</b>。删除 worktree 按会不会丢东西分情形确认，(d)(e)(f) 和 (a) 里被忽略文件的那一句是新增的；几种情形同时成立时，各自的那一段都会显示。删除会话不再顺带删除 worktree 和分支。</p>
+    <div class="app board" id="b6"></div>
+  </section>
+
+  <section class="sc" id="s7">
+    <h2><i>7</i>删除 worktree 失败时的提示<em>新增</em></h2>
+    <p class="lead">对应 <b>R5.9</b> 和 R5.6。失败时回到同一个确认框，原因显示在最上面。分两种：还没动手就发现删不了（什么都没变），和已经结束会话或开始删除之后才失败（如实写出现在剩下什么）。</p>
+    <div class="app board" id="b7"></div>
+  </section>
+
+  <section class="sc" id="s8">
+    <h2><i>8</i>连着旧版 daemon 的机器</h2>
+    <p class="lead">对应 <b>R9.1</b>。新桌面端连上还没升级的 vibe-remoted：照常工作，只是少了需要新接口的入口。</p>
+    <div class="split" id="b8"></div>
+  </section>
+
+  <div class="pg-foot">这是选定的 M1 方案。有想调整的地方，在终端里直接说，例如：会话行再紧凑一点、气泡颜色淡一点。</div>
+</div>
+
+<script>
+(function(){
+'use strict';
+var ic=function(n,c){return '<svg class="i'+(c?' '+c:'')+'" aria-hidden="true"><use href="#i-'+n+'"/></svg>'};
+var esc=function(s){return s.replace(/&/g,'&amp;').replace(/</g,'&lt;')};
+
+/* ---------- sidebar ---------- */
+var ST={idle:'回合结束',wait:'等你处理','new':'有新消息'};
+/* order as the daemon sends it: projects by name; main worktree first, then by branch, detached last; sessions by creation time */
+var DEVFLOW={name:'devflow',tag:'DE',hue:222,keep:1,wts:[
+  {br:'main',main:1,s:[
+    {id:'s1',ui:'chat',name:'重排 skill 目录'},
+    {id:'s2',ui:'chat',name:'devflow 2',st:'idle'}]},
+  {br:'change/general-skills',ext:1,s:[]},
+  {br:'fix-login',s:[{id:'s3',ui:'term',name:'登录修复',st:'wait'}]}]};
+var MACHINES=[
+  {name:'this-mac',n:8,projects:[
+    DEVFLOW,
+    {name:'new-api',tag:'NE',hue:158,br:'main',s:[
+      {id:'s4',ui:'term',name:'new-api',st:'new'},
+      {id:'s5',ui:'term',name:'new-api 2'}]},
+    {name:'notes',tag:'NO',hue:28,nogit:1,s:[{id:'s6',ui:'chat',name:'周报整理'}]},
+    {name:'vibeview',tag:'VI',hue:332,br:'main',collapsed:1,agg:'wait',s:[
+      {id:'s7',ui:'chat',name:'配额页',st:'wait'},{id:'s8',ui:'term',name:'vibeview'}]}
+  ]},
+  {name:'dev',off:1,projects:[]}
+];
+function sess(s,o){
+  var on=o.active===s.id, st=on?null:(o.st&&(s.id in o.st)?o.st[s.id]:s.st), kind=s.ui==='chat'?'对话':'终端';
+  var meta=s.gone?'<span class="mt gone">'+kind+' · 目录已不存在</span>':'<span class="mt'+(st==='wait'?' w':'')+'">'+kind+(st?' · '+ST[st]:'')+'</span>';
+  return '<div class="row sess'+(on?' on':'')+'">'+ic(s.ui==='chat'?'chat':'term','ki')+'<span class="nm">'+s.name+'</span>'+meta+(st?'<span class="dot '+st+'" title="'+ST[st]+'"></span>':'')+'</div>';
+}
+function wt(w,o){
+  var empty=!w.s.length, label=w.det||w.br;
+  /* the main worktree has no menu (R5.7) */
+  var acts='<button class="ab" title="新建会话">'+ic('plus')+'</button>'+(w.main?'':'<button class="ab'+(w.menu?' act':'')+'" title="更多">'+ic('more')+'</button>');
+  return '<div class="grp wt"><div class="row wt-row"'+(empty?'':' data-tog')+(w.space?' style="margin-bottom:'+w.space+'px"':'')+'>'+ic('chev','chev'+(empty?' ph':''))+ic(w.det?'commit':'branch','bi')+
+    '<span class="nm'+(w.det?' mono':'')+'" title="'+(w.det?'不在任何分支上，显示提交的短哈希':label)+'">'+label+'</span>'+
+    (w.main?'<span class="tagx home">主目录</span>':'')+(w.ext?'<span class="tagx ext" title="不是由 vibe-remote 创建">外部</span>':'')+'<span class="sp"></span>'+
+    '<span class="acts'+(w.show?' on':'')+'">'+acts+'</span>'+(w.menu||'')+'</div><div class="kids">'+
+    (empty?'<div class="wt-empty">没有会话<button class="lnk">'+ic('plus')+'新建会话</button></div>':w.s.map(function(s){return sess(s,o)}).join(''))+'</div></div>';
+}
+function proj(p,o,deg){
+  var flat=!p.wts, git=!p.nogit, off=deg||p.err;
+  var newWt='<button class="ab" title="'+(deg?'新建 worktree：需要升级这台机器的 vibe-remoted':'新建 worktree')+'"'+(off?' disabled':'')+'>'+ic('branchplus')+'</button>';
+  /* flat: new session; git: new worktree + menu; a non-git folder has neither (R1.3) */
+  var acts=(flat&&!p.err?'<button class="ab" title="新建会话">'+ic('plus')+'</button>':'')+(git?newWt+'<button class="ab'+(p.menu?' act':'')+'" title="更多">'+ic('more')+'</button>':'');
+  var kids=(p.wts?p.wts.map(function(w){return wt(w,o)}).join(''):'')+(p.s?p.s.map(function(s){return sess(s,o)}).join(''):'');
+  return '<div class="grp proj'+(p.collapsed?' collapsed':'')+'"><div class="row proj-row" data-tog'+(p.space?' style="margin-bottom:'+p.space+'px"':'')+'>'+ic('chev','chev')+'<span class="ptag" style="--tag-hue:'+p.hue+'">'+p.tag+'</span><span class="nm"'+(p.err?' style="flex-shrink:0"':'')+'>'+p.name+'</span>'+
+    (p.br?'<span class="pbr">'+ic('branch')+p.br+'</span>':'')+(p.err?'<span class="pst" title="'+p.err+'">'+p.err+'</span>':'')+'<span class="sp"></span><span class="acts'+(p.keep?' on':'')+'">'+acts+'</span>'+
+    (p.collapsed&&p.agg?'<span class="dot '+p.agg+'" title="里面有会话'+ST[p.agg]+'"></span>':'')+(deg&&p.keep?'<span class="tip">需要升级这台机器的 vibe-remoted</span>':'')+(p.menu||'')+'</div><div class="kids">'+kids+'</div></div>';
+}
+function machines(list,o){
+  return list.map(function(m){
+    return '<div class="grp mach'+(m.off?' off collapsed':'')+'"><div class="row mach-row" data-tog>'+ic('chev','chev')+ic('host')+'<span class="nm">'+m.name+'</span><span class="mstate">'+(m.off?'离线':'已连接')+'</span><span class="sp"></span>'+(m.off?'':'<span class="cnt" title="会话数">'+m.n+'</span>')+'</div>'+
+      (m.deg?'<div class="degr">'+ic('warn')+'<span>vibe-remoted 版本较旧：不能新建或删除 worktree，没有会话的 worktree 不会列出。升级 vibe-remoted 后可用。</span></div>':'')+
+      '<div class="kids">'+m.projects.map(function(p){return proj(p,o,m.deg)}).join('')+'</div></div>';
+  }).join('');
+}
+function sidebar(list,o){
+  return '<div class="lights"><i></i><i></i><i></i></div><aside class="sb"><div class="sb-head"><div class="brand">vibe-remote</div><span class="sp"></span><button class="hb" title="切换语言">EN</button><button class="hb" title="管理机器">'+ic('gear')+'</button></div><div class="sb-list">'+machines(list,o)+'</div></aside>';
+}
+/* a piece of the sidebar, without the window frame */
+function frag(list){return '<div class="app sbfrag">'+machines(list,{active:null})+'</div>'}
+function crumb(tag,hue,p,br,name,ui){
+  return '<header class="tb"><div class="crumb"><span class="ptag" style="--tag-hue:'+hue+'">'+tag+'</span><span>'+p+'</span><span class="sl">/</span><span class="br">'+ic('branch')+br+'</span><span class="sl">/</span><span class="cur">'+ic(ui)+name+'</span></div><div class="conn"><i></i>已连接</div></header><div class="body">';
+}
+
+/* ---------- scene 1: chat ---------- */
+var DIFF=[[' ',19,'# 通用 skill'],['-',20,'for dir in skills/dview-upload skills/find-skills skills/check; do'],['-',21,'  name=$(basename "$dir")'],['+',20,'for dir in skills/general/*/; do'],['+',21,'  name=$(basename "${dir%/}")'],[' ',22,'  cp -R "$dir" "$TARGET/$name"']];
+var chat=crumb('DE',222,'devflow','main','重排 skill 目录','chat')+
+'<div class="tl"><div class="col">'+
+  '<div class="u"><div class="ub">先看一下 skills/ 现在是怎么分的</div></div>'+
+  '<div class="tool">'+ic('term')+'<span class="tn">Bash</span><span class="t3">列出 skills/ 下的目录</span>'+ic('chev','tc')+'</div>'+
+  '<div class="tool">'+ic('file')+'<span class="tn">Read</span><span class="t2 mono">README.md</span>'+ic('chev','tc')+'</div>'+
+  '<div class="md"><p>现在 8 个 skill 平铺在 <code>skills/</code> 下：5 个是 <code>dev-*</code> 流程 skill，3 个是通用的（<code>dview-upload</code>、<code>find-skills</code>、<code>check</code>）。<code>install.sh</code> 按名字逐个复制，没有分组。</p></div>'+
+  '<div class="u"><div class="ub">把通用的 skill 挪到 skills/general/，install.sh 里的路径跟着改，dev-* 那几个别动。</div></div>'+
+  '<div class="md"><p>我把 3 个通用的移到 <code>skills/general/</code>，<code>install.sh</code> 改成遍历这个目录。移动用 <code>git mv</code>，保留历史：</p>'+
+  '<div class="cb"><pre><code>git mv skills/dview-upload skills/find-skills skills/check skills/general/</code></pre><button class="cb-copy">'+ic('copy')+'复制</button></div></div>'+
+  '<div class="tool">'+ic('file')+'<span class="tn">Read</span><span class="t2 mono">install.sh</span><span class="t3">第 1–64 行</span>'+ic('chev','tc')+'</div>'+
+  '<div class="tool">'+ic('term')+'<span class="tn">Bash</span><span class="t3">查找 install.sh 里引用 skills/ 的地方</span>'+ic('chev','tc')+'</div>'+
+  '<div class="tool open">'+ic('pen')+'<span class="tn">Edit</span><span class="t2 mono">install.sh</span><span class="st mono"><span class="a">+2</span><span class="d">−2</span></span>'+ic('chev','tc')+'</div>'+
+  '<div class="diff mono">'+DIFF.map(function(d){return '<div class="dln'+(d[0]==='+'?' add':d[0]==='-'?' del':'')+'"><span class="n">'+d[1]+'</span><span class="s">'+(d[0]==='-'?'−':d[0])+'</span><span>'+esc(d[2])+'</span></div>'}).join('')+'</div>'+
+'</div></div>'+
+'<div class="dock"><div class="col">'+
+  '<div class="perm"><div class="perm-h">'+ic('warn')+'允许运行这条 Bash 命令？<small>Esc 中断</small></div>'+
+    '<div class="perm-cmd mono">git mv skills/dview-upload skills/find-skills skills/check skills/general/</div>'+
+    '<div class="opts"><button class="opt pri"><kbd>1</kbd>是</button><button class="opt"><kbd>2</kbd>是，并且对本项目里的 <code>Bash(git mv:*)</code> 不再询问</button><div class="opt rej"><kbd>3</kbd>否<span class="rin">告诉 Claude 换个做法</span></div></div></div>'+
+  '<div class="comp"><div class="comp-in">给 Claude 发消息，/ 查看命令</div><div class="comp-bar"><button class="chip" title="权限模式：编辑前询问（Shift+Tab 切换）">'+ic('shield')+'编辑前询问</button><button class="ib" title="斜杠命令">/</button><button class="send" title="发送（Enter）">'+ic('up')+'</button></div></div>'+
+  '<div class="hint"><span>Enter 发送 · Shift+Enter 换行</span><span>devflow · /Users/mac/github/devflow</span></div>'+
+'</div></div>';
+
+/* ---------- scene 2: terminal ---------- */
+var RULE='<span class="dm">'+Array(97).join('─')+'</span>\n';
+var T='<span class="dm">&gt; 跑一下 auth 的测试，看现在是什么状态</span>\n\n'+
+'<span class="gr">⏺</span> <b>Bash</b>(go test ./auth/...)\n  <span class="dm">⎿</span>  <span class="rd">--- FAIL: TestLoginSetsCookie (0.01s)</span>\n'+
+'         session_test.go:48: no "sid" cookie in response\n     FAIL    devflow/auth    0.398s\n\n'+
+'<span class="dm">&gt; 登录后跳回首页，但 session cookie 没写上，查一下</span>\n\n'+
+'<span class="gr">⏺</span> 我先看 auth/session.go 里写 cookie 的地方。\n\n'+
+'<span class="gr">⏺</span> <b>Read</b>(auth/session.go)\n  <span class="dm">⎿</span>  Read 142 lines\n\n'+
+'<span class="gr">⏺</span> 本地是 http，Secure 写死成 true，浏览器直接丢弃了这个 cookie。\n\n'+
+'<span class="gr">⏺</span> <b>Update</b>(auth/session.go)\n  <span class="dm">⎿</span>  Updated <span class="selx">auth/session.go</span> with 2 additions and 1 removal\n'+
+'       <span class="dm">61</span>      http.SetCookie(w, &amp;http.Cookie{\n'+
+'       <span class="dm">62</span>          Name:     "sid",\n'+
+'       <span class="dm">63</span> <span class="rd">-        Secure:   true,</span>\n'+
+'       <span class="dm">63</span> <span class="gr">+        Secure:   r.TLS != nil,</span>\n'+
+'       <span class="dm">64</span> <span class="gr">+        SameSite: http.SameSiteLaxMode,</span>\n'+
+'       <span class="dm">65</span>      })\n\n'+
+'<span class="gr">⏺</span> <b>Bash</b>(go test ./auth/...)\n  <span class="dm">⎿</span>  ok      devflow/auth    0.412s\n\n'+
+'<span class="gr">⏺</span> 改好了：本地 http 下不再带 Secure，cookie 能写上；线上 https 行为不变。\n\n'+
+RULE+'&gt; <span class="cur">&nbsp;</span>\n'+RULE+
+'<span class="dm">  ? for shortcuts</span>                                                    <span class="bl">⏵⏵ accept edits on</span> <span class="dm">(shift+tab to cycle)</span>';
+var term=crumb('DE',222,'devflow','fix-login','登录修复','term')+'<div class="term"><pre>'+T+'</pre></div><footer class="stb"><span>this-mac · /Users/mac/github/devflow-worktrees/fix-login</span><span>终端 · tmux 保活</span></footer>';
+
+/* ---------- scene 3: sidebar states ---------- */
+var S_MAIN={id:'g1',ui:'chat',name:'重排 skill 目录'};
+function gcell(cap,h,notes){return '<div><p class="cap">'+cap+'</p>'+h+'<ul class="gnote">'+notes.map(function(n){return '<li>'+n+'</li>'}).join('')+'</ul></div>'}
+var MENU_P='<div class="menu" role="menu"><div class="mi dis" aria-disabled="true">从侧边栏移除<small>这个项目下还有会话，先结束会话才能移除</small></div></div>';
+var MENU_W='<div class="menu" role="menu"><div class="mi dng">删除 worktree</div></div>';
+var b3=
+gcell('worktree 行：小标签、序号、不在分支上',frag([{name:'this-mac',n:3,projects:[{name:'devflow',tag:'DE',hue:222,wts:[
+    {br:'main',main:1,s:[S_MAIN]},
+    {br:'change/general-skills',ext:1,s:[]},
+    {br:'fix-login',s:[{id:'g2',ui:'term',name:'fix-login',st:'idle'},{id:'g3',ui:'chat',name:'fix-login 2',st:'new'}]},
+    {det:'5a6b7c8',ext:1,s:[]}]}]}]),[
+  '「主目录」标在项目主目录那一行（它的分支不一定叫 main）；「外部」表示这个 worktree 不是由 vibe-remote 创建。',
+  '没有会话的 worktree 也会列出，行内有「新建会话」（R2.1）。',
+  '同一个 worktree 下没改过名的会话，从第二个起带序号：<code>fix-login</code>、<code>fix-login 2</code>（R1.4）。',
+  '不在任何分支上的 worktree 显示提交的短哈希 <code>5a6b7c8</code>，排在有分支的之后（R1.8）。'])+
+gcell('目录已不存在、项目读取失败',frag([{name:'this-mac',n:4,projects:[
+    {name:'devflow',tag:'DE',hue:222,wts:[{br:'main',main:1,s:[S_MAIN]}],s:[{id:'g4',ui:'term',name:'登录修复',gone:1}]},
+    {name:'new-api',tag:'NE',hue:158,err:'读取失败：仓库目录不存在',s:[{id:'g5',ui:'term',name:'new-api',st:'idle'},{id:'g6',ui:'term',name:'new-api 2'}]}]}]),[
+  'worktree 在别处被删掉（例如在终端里执行了 <code>git worktree remove</code>）：<code>fix-login</code> 那一行消失，它下面的会话「登录修复」留在项目下，第二行写「目录已不存在」（R2.5）。',
+  '仓库目录被删除或 git 执行失败：项目行显示「读取失败」和原因，已有会话照常显示、照常可用（R2.7）。'])+
+gcell('项目和 worktree 的操作菜单',frag([{name:'this-mac',n:1,projects:[{name:'devflow',tag:'DE',hue:222,keep:1,menu:MENU_P,space:86,wts:[{br:'main',main:1,s:[S_MAIN]}]}]}])+
+  frag([{name:'this-mac',n:2,projects:[{name:'devflow',tag:'DE',hue:222,wts:[
+    {br:'main',main:1,show:1,s:[S_MAIN]},
+    {br:'fix-login',show:1,menu:MENU_W,space:48,s:[{id:'g7',ui:'term',name:'登录修复'}]}]}]}]),[
+  '项目菜单只有「从侧边栏移除」。项目下还有会话时不可用，并写明要先结束会话（R2.4）；没有会话时可用，移除只是不再显示，磁盘上什么都不删（R2.3）。',
+  'worktree 菜单只有「删除 worktree」。主目录那一行只有「新建会话」，没有「更多」按钮，所以不能删除（R5.7）。']);
+
+/* ---------- dialogs ---------- */
+function uiCards(sel,dis){
+  var t='<button class="mc'+(sel==='term'?' sel':'')+'"><b>'+ic('term')+'终端</b><span>原样运行任意命令行工具（claude、codex…）</span></button>';
+  var c='<button class="mc'+(sel==='chat'?' sel':'')+(dis?' dis':'')+'"'+(dis?' aria-disabled="true"':'')+'><b>'+ic('chat')+'对话<span class="only">仅 claude</span></b><span>消息、工具块、diff、权限确认</span></button>';
+  return '<div class="lb">界面</div><div class="cards">'+t+c+'</div>'+(dis?'<div class="whyno">'+ic('info')+'<span>'+dis+'</span></div>':'');
+}
+function flags(c){return '<div class="lb">启动选项</div><label class="ck"><i class="box'+(c?' on':'')+'">'+ic('check')+'</i>续上次会话 (-c)</label><label class="ck"><i class="box">'+ic('check')+'</i>跳过权限确认</label>'}
+function nameInp(v,err,focus){
+  return '<div class="inp mono '+(err?'bad':focus?'focus':'')+'">'+ic('branch')+esc(v)+(err||focus?'<span class="caret"></span>':'')+'</div>'+(err?'<div class="emsg">'+ic('warn')+'<span>'+err+'</span></div>':'');
+}
+var WT_PATH='/Users/mac/github/devflow-worktrees/fix-login';
+function newWt(err){
+  return '<div class="dlg"><div class="dlg-h"><h3>在 devflow 新建 worktree</h3><p>this-mac · 从 main 发起</p></div><div class="dlg-b">'+
+  '<div class="lb" style="margin-top:4px">名字（就是新分支名）</div>'+nameInp('fix-login',err,1)+
+  '<div class="info">'+ic('info')+'<span>基于 <code>main @ a1b2c3d</code>，不包含未提交的改动</span></div>'+
+  '<div class="pathp"><span>将创建目录</span><code>'+WT_PATH+'</code></div>'+
+  uiCards('chat')+flags(0)+
+  '</div><div class="dlg-f"><button class="btn">取消</button><button class="btn pri"'+(err?' disabled':'')+'>创建并打开</button></div></div>';
+}
+function erow(cap,v,err){return '<div class="erow"><p class="ecap">'+cap+'</p>'+nameInp(v,err)+'</div>'}
+var ERRS='<div class="dlg"><div class="dlg-b" style="padding-top:18px;padding-bottom:16px"><div class="egrid two">'+
+  erow('名字含空格（R3.3，边输入边提示）','fix login','名字不能包含空格')+
+  erow('分支已存在（R3.4）','fix-login','分支 fix-login 已存在')+
+  erow('目标目录已存在（R3.5），不创建、不覆盖','fix-login','目录已存在：'+WT_PATH)+
+  erow('目标目录不在 daemon 允许的目录范围内（R3.10）','fix-login','目录不在允许的范围内：'+WT_PATH)+
+  '</div><p class="more">其余名字校验（R3.3）：请填写名字 · 名字不能包含 .. · 名字不能以 - 开头 · git 不接受这个分支名</p></div></div>';
+function newSess(o){
+  return '<div class="dlg"><div class="dlg-h"><h3>在 '+o.br+' 新建会话</h3><p>'+o.sub+'</p></div><div class="dlg-b">'+uiCards(o.sel,o.dis)+flags(o.c)+
+  (o.note?'<div class="note">这个 worktree 已有会话正在用最近那段对话：对话界面会切到已有的那个会话，终端界面可能无法启动。不勾选即可开一段新对话。</div>':'')+
+  '</div><div class="dlg-f"><button class="btn">取消</button><button class="btn pri">新建会话</button></div></div>';
+}
+function cell(cap,sub,h,wide){return '<div class="cell'+(wide?' wide':'')+'"><p class="cap">'+cap+(sub?' <small>'+sub+'</small>':'')+'</p>'+h+'</div>'}
+var b4=cell('填好名字','R3.1 / R3.6',newWt(''))+cell('出错：分支已存在','R3.4，对话框保持打开，改名后可重试',newWt('分支 fix-login 已存在'))+
+  cell('各种出错时名字下方的那一行','出错时「创建并打开」不可用',ERRS,1);
+var b5=cell('勾了「续上次会话」，而这里已有会话','R4.1 / R6.1，只提示、不拦确认',newSess({br:'fix-login',sub:'devflow · '+WT_PATH,sel:'chat',c:1,note:1}))+
+  cell('「对话」不可用：项目主目录还没被 claude 信任','R4.4',newSess({br:'feat/quota',sub:'vibeview · /Users/mac/github/vibeview-worktrees/feat-quota',sel:'term',c:0,dis:'先用终端界面在项目主目录 /Users/mac/github/vibeview 打开一次 claude，信任这个项目后才能用对话界面。'}));
+/* ---------- scene 6: delete confirmations (design.md 6.2 table) ---------- */
+function dlg(title,body,foot){return '<div class="dlg"><div class="dlg-h"><h3>'+title+'</h3></div><div class="dlg-b">'+body+'</div><div class="dlg-f">'+foot+'</div></div>'}
+function kv(dir,br){return '<dl class="kv"><dt>目录</dt><dd><code>'+dir+'</code></dd>'+(br?'<dt>分支</dt><dd><code>'+br+'</code></dd>':'')+'</dl>'}
+var F_DEL='<button class="btn">取消</button><button class="btn dng">删除</button>';
+var F_FORCE='<span class="dfl">回车 = 取消</span><button class="btn dngo">仍然删除</button><button class="btn neu def">取消</button>';
+var CLEAN='工作区是干净的，分支上的提交都已包含在其他分支里。目录和分支都会删除。';
+var KV=kv(WT_PATH,'fix-login');
+var ENDS='<p>会先结束这 2 个会话。</p><ul class="slist"><li>'+ic('term')+'登录修复<small>终端</small></li><li>'+ic('chat')+'fix-login 2<small>对话</small></li></ul>';
+var EXT_DIR='/Users/mac/github/devflow/.devflow-tmp/worktrees/';
+var b6=
+cell('(a) 干净，提交都已合并','R5.2 / R5.4。被忽略文件那一句不拦截，数量为 0 时不显示',dlg('删除 worktree fix-login？','<p>'+CLEAN+'</p><div class="info" style="margin:0 0 8px">'+ic('info')+'<span>另有 2 个被 git 忽略的文件会一并删除。</span></div>'+KV,F_DEL))+
+cell('(b) 有 3 个未提交或未跟踪的文件','R5.3，默认按钮是取消',dlg('fix-login 里有还没提交的文件','<div class="warnb">'+ic('warn')+'<span>有 <b>3 个文件</b>未提交或未跟踪。删除 worktree 会丢弃它们，无法恢复。</span></div>'+KV,F_FORCE))+
+cell('(c) 有 2 个未合并的提交','R5.5，预选保留分支，回车执行的也是它',dlg('fix-login 有 2 个未合并的提交','<p>这 2 个提交不在其他任何本地分支或远程分支上。</p>'+
+  '<div class="ro sel"><i class="rad"></i><div><b>只删目录、保留分支</b><span>提交还在分支 <code>fix-login</code> 上，以后可以再检出</span></div></div>'+
+  '<div class="ro"><i class="rad"></i><div><b>目录和分支都删</b><span>这 2 个提交将不再属于任何分支</span></div></div>',F_DEL))+
+cell('(d) 不是 vibe-remote 创建的 worktree','R5.8，只删目录、分支一律保留；有未提交文件时同样先出 (b) 的警告',dlg('删除 worktree change/general-skills？','<p>这个 worktree 不是由 vibe-remote 创建：只删目录，分支 <code>change/general-skills</code> 保留。</p>'+kv(EXT_DIR+'general-skills','change/general-skills'),F_DEL))+
+cell('(e) 下面还有 2 个会话在运行','R5.6，这一段叠加在其余任一种情形上',dlg('删除 worktree fix-login？',ENDS+'<p class="sect">'+CLEAN+'</p>'+KV,F_DEL))+
+cell('(f) 不在任何分支上，有 2 个提交不属于任何分支','R5.11，默认按钮是取消',dlg('5a6b7c8 有 2 个不属于任何分支的提交','<div class="warnb">'+ic('warn')+'<span>这 <b>2 个提交</b>删除后不再属于任何分支，无法恢复。</span></div><p class="sect">这个 worktree 不是由 vibe-remote 创建。</p>'+kv(EXT_DIR+'bisect'),F_FORCE))+
+cell('删除会话','R5.1，worktree 和分支保留；初始焦点在「取消」',dlg('删除会话「登录修复」？','<p>会话会结束，远程进程会被终止，无法撤销。</p><p>worktree <code>fix-login</code> 的目录和分支都会保留，之后可以在侧边栏继续使用，或者单独删除。</p>','<button class="btn foc">取消</button><button class="btn dng">删除会话</button>'));
+
+/* ---------- scene 7: delete failures ---------- */
+function nrow(cap,msg){return '<div class="erow"><p class="ecap">'+cap+'</p><div class="notice">'+ic('warn')+'<span>'+msg+'</span></div></div>'}
+var b7=
+cell('还没动手就发现删不了：什么都没变','worktree 被锁定；里面有初始化过的子模块时同理',dlg('删除 worktree fix-login？',
+  '<div class="errb">'+ic('warn')+'<div><b>删除失败：</b>这个 worktree 已被 git worktree lock 锁定（原因：正在跑基准测试）。先解锁再删除：<code>git worktree unlock '+WT_PATH+'</code></div></div>'+
+  '<p class="same">什么都没有改动：2 个会话仍在运行，worktree 的目录和分支都在。</p>'+ENDS+'<p class="sect">'+CLEAN+'</p>'+KV,F_DEL))+
+cell('已经结束会话、开始删除之后才失败：如实写出现状','R5.9',dlg('删除 worktree fix-login？',
+  '<div class="errb">'+ic('warn')+'<div><b>删除失败：</b>git 返回了错误<code>error: failed to delete \''+WT_PATH+'\': Directory not empty</code></div></div>'+
+  '<p style="margin-bottom:2px">现在的状态：</p><ul class="left"><li><span>会话</span><span>2 个会话已经结束（登录修复、fix-login 2）</span></li>'+
+  '<li><span>目录</span><span>还剩一部分：<code>'+WT_PATH+'</code></span></li><li><span>分支</span><span><code>fix-login</code> 保留，提交都在</span></li></ul>',F_DEL))+
+cell('其余几种结果：状态栏里的一行提示','不弹框','<div class="dlg"><div class="dlg-b egrid" style="padding-top:18px;padding-bottom:18px">'+
+  nrow('点删除时，它已经在别处被删掉','这个 worktree 已经不存在')+
+  nrow('目录删掉了，分支没删成','目录已删除，分支没删掉：分支 fix-login 还被 <code>/Users/mac/github/devflow-hotfix</code> 检出')+
+  nrow('请求超时或断网，不知道结果','删除请求没有收到结果，这个 worktree 可能还在删除中，稍后以侧边栏显示的为准')+'</div></div>',1);
+
+/* ---------- scene 8: old daemon ---------- */
+var OLD=[
+  {name:'gpu-box',n:3,deg:1,projects:[
+    {name:'devflow',tag:'DE',hue:222,keep:1,wts:[
+      {br:'main',main:1,s:[{id:'o1',ui:'chat',name:'重排 skill 目录',st:'idle'}]},
+      {br:'vibe/1794824025040-12b763ac',s:[{id:'o2',ui:'term',name:'接口限流'}]}]},
+    {name:'new-api',tag:'NE',hue:158,br:'main',s:[{id:'o3',ui:'term',name:'new-api'}]}
+  ]}
+];
+var b8=frag(OLD)+
+'<div class="expl"><ul><li>已有会话仍然按项目和 worktree 分组（用会话自带的仓库和分支信息）。旧版建的 worktree 分支名是 <code>vibe/&lt;会话 id&gt;</code>，原样显示。</li><li>项目行上的「新建 worktree」按钮置灰，鼠标移上去提示要升级这台机器的 vibe-remoted（图里画出了提示）。worktree 菜单里的「删除 worktree」同样置灰。</li><li>没有会话的 worktree 不会列出（旧版没有这个接口）。</li><li>机器概览里的 Worktree 模式保持旧行为：不出现名字输入框，分支自动命名。</li><li>新建会话、打开、重命名、删除会话都照常。删除 worktree 里的会话时，确认框如实写明旧版的行为（旁边的确认框）。</li></ul></div>'+
+'<div class="app" style="flex:0 1 430px;min-width:0"><p class="cap">在旧版 daemon 的机器上删除 worktree 里的会话</p>'+dlg('删除会话「接口限流」？','<p>会话会结束，远程进程会被终止，无法撤销。</p><p>这台机器的 vibe-remoted 是旧版：工作区干净时，worktree 的目录和分支会被一并删除；有未提交改动时会保留。</p>','<button class="btn foc">取消</button><button class="btn dng">删除会话</button>')+'</div>';
+
+document.getElementById('w1').innerHTML=sidebar(MACHINES,{active:'s1'})+'<section class="main">'+chat+'</div></section>';
+document.getElementById('w2').innerHTML=sidebar(MACHINES,{active:'s3',st:{s1:'wait'}})+'<section class="main">'+term+'</div></section>';
+[['b3',b3],['b4',b4],['b5',b5],['b6',b6],['b7',b7],['b8',b8]].forEach(function(x){document.getElementById(x[0]).innerHTML=x[1]});
+
+/* ---------- behaviour ---------- */
+/* the transcript sits scrolled to the bottom, like the real view; it stays scrollable */
+function pin(){[].forEach.call(document.querySelectorAll('.tl'),function(t){t.scrollTop=t.scrollHeight;t.classList.toggle('clip',t.scrollTop>0)})}
+document.addEventListener('scroll',function(e){var t=e.target;if(t&&t.classList&&t.classList.contains('tl'))t.classList.toggle('clip',t.scrollTop>0)},true);
+/* project and machine rows fold, as in the app */
+document.addEventListener('click',function(e){
+  if(!e.target.closest||e.target.closest('.ab,.lnk,.menu'))return;
+  var r=e.target.closest('[data-tog]');
+  if(r)r.parentNode.classList.toggle('collapsed');
+});
+function fit(){
+  [].forEach.call(document.querySelectorAll('.winwrap'),function(w){
+    var z=Math.max(.62,Math.min(1,(w.clientWidth-4)/1200));
+    w.firstElementChild.style.setProperty('--z',z.toFixed(3));
+  });
+}
+window.addEventListener('resize',function(){fit();pin()});fit();pin();
+/* #s3 jumps to scene 3 · #s3-solo shows only that scene */
+function fromHash(){
+  var m=/^#(?:m1-)?s([1-8])(-solo)?$/.exec(location.hash||'');
+  document.body.classList.toggle('solo',!!(m&&m[2]));
+  if(!m)return;
+  [].forEach.call(document.querySelectorAll('.sc'),function(s){s.classList.toggle('cur',s.id==='s'+m[1])});
+  fit();pin();
+  if(!m[2]){var s=document.getElementById('s'+m[1]);if(s)s.scrollIntoView()}
+}
+window.addEventListener('hashchange',fromHash);fromHash();
+})();
+</script>
+</body>
+</html>

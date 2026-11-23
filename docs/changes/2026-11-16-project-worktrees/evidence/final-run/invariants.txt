@@ -1,0 +1,74 @@
+commit bcd499f0c56ec30efb0b4e8a72147e8055d88144
+Each command-type check of .devflow.yml as written, handed to zsh, with GOFLAGS=-count=1, a TMUX_TMPDIR of its own and the empty CLAUDE_CONFIG_DIR in the environment. 2026-11-21 17:32:07 start, load 23.83 23.84 23.47
+1 exit=0  终端模式纯字节透传，客户端不解析 PTY 输出
+     $ cd desktop && npm test
+     ok - test-sidebar-refresh: switching the language redraws the sidebar in the other language
+     ok - test-sidebar-refresh: a machine edited in the manager: its new name shows, and a session opened from the sidebar uses the new settings
+     ok - test-sidebar-refresh: a rename ended with Esc puts the name back, though nothing the sidebar shows has changed
+     ok - test-sidebar-refresh: nothing is rebuilt while a rename is open; what changed meanwhile shows once it is over
+     ok - test-sidebar-refresh: a refresh that leaves the sidebar alone still redraws the overview page
+     test-sidebar-refresh checks passed (17)
+3 exit=0  终端会话的 v2 帧除 proto 外逐字节不变
+     $ cd vibe-remoted && go test -race ./internal/server -run TestTerminalFramesUnchangedV3
+     ok  	github.com/lflish/vibe-remote/vibe-remoted/internal/server	3.039s
+4 exit=0  同一 claude 会话 id 任何时刻最多一个 claude 进程（claudeOwners 先 claim 后 sp
+     $ cd vibe-remoted && go test -race ./internal/chat -run 'TestSingleProcess|TestOrphanCleanup|TestLatestSessionChecksTranscriptCwd|TestLatestSessionReads…
+     ok  	github.com/lflish/vibe-remote/vibe-remoted/internal/chat	5.528s
+     ok  	github.com/lflish/vibe-remote/vibe-remoted/internal/session	7.630s
+     ok  	github.com/lflish/vibe-remote/vibe-remoted/internal/server	11.761s
+5 exit=0  客户端断开不停对话进程、不发 exit
+     $ cd vibe-remoted && go test -race ./internal/server -run TestChatDisconnectKeepsProcess
+     ok  	github.com/lflish/vibe-remote/vibe-remoted/internal/server	4.499s
+6 exit=0  待答请求只因回答/取消/中断/退出而消失，不被缓冲淘汰
+     $ cd vibe-remoted && go test -race ./internal/chat -run TestPendingSurvivesRingEviction
+     ok  	github.com/lflish/vibe-remote/vibe-remoted/internal/chat	2.290s
+7 exit=0  「不再询问」规则只能来自 claude 的建议
+     $ cd vibe-remoted && go test -race ./internal/chat -run TestRespondRejectsForeignRule
+     ok  	github.com/lflish/vibe-remote/vibe-remoted/internal/chat	2.311s
+8 exit=0  启动命令只由服务端配置拼成，客户端只传 id
+     $ cd vibe-remoted && go test ./internal/chat -run TestCommandFromConfigOnly && go test ./internal/server -run TestAttachIgnoresCommandFields
+     ok  	github.com/lflish/vibe-remote/vibe-remoted/internal/chat	0.514s
+     ok  	github.com/lflish/vibe-remote/vibe-remoted/internal/server	1.372s
+9 exit=0  模型输出不以原始 HTML 进入 DOM；chat/ 下只有 markdown.ts 写 innerHTML
+     $ cd desktop && npm run test:chat-markdown && npm run test:chat-render-guard
+     ok - test-chat-markdown: gfm
+     ok - test-chat-markdown: code block copy button
+     ok - test-chat-markdown: raw html escaped
+     ok - test-chat-markdown: sanitizer drops what markdown-it might let through
+     ok - test-chat-markdown: links get no target and are intercepted
+     test-chat-markdown checks passed (6)
+10 exit=0  主 token 不进 claude 环境（对话进程同样只有 hook token）
+     $ cd vibe-remoted && go test ./internal/session -run TestChatEnvHookTokenOnly
+     ok  	github.com/lflish/vibe-remote/vibe-remoted/internal/session	1.451s
+11 exit=0  不读取 claude 凭据
+     $ cd vibe-remoted && go test ./internal/chat -run TestNoCredentialAccess
+     ok  	github.com/lflish/vibe-remote/vibe-remoted/internal/chat	0.525s
+12 exit=0  删会话不删 worktree 目录和分支，协议 4 的 daemon 不返回 worktree_preserved
+     $ cd vibe-remoted && TMUX_TMPDIR=$(mktemp -d) go test -race -timeout 10m ./internal/session ./internal/server -run 'TestDeleteSessionKeepsWorktreeAndBra…
+     ok  	github.com/lflish/vibe-remote/vibe-remoted/internal/session	3.016s
+     ok  	github.com/lflish/vibe-remote/vibe-remoted/internal/server	3.584s
+13 exit=0  只删 daemon 自己读到的、在 allowed_roots 内的、不是主目录的 worktree
+     $ cd vibe-remoted && TMUX_TMPDIR=$(mktemp -d) go test -race -timeout 10m ./internal/session ./internal/server -run 'TestRemoveOnlyListedWorktrees|TestRe…
+     ok  	github.com/lflish/vibe-remote/vibe-remoted/internal/session	9.531s
+     ok  	github.com/lflish/vibe-remote/vibe-remoted/internal/server	1.851s [no tests to run]
+14 exit=0  不是 vibe-remote 创建的 worktree，分支永远不删
+     $ cd vibe-remoted && TMUX_TMPDIR=$(mktemp -d) go test -race -timeout 10m ./internal/session -run 'TestRemoveExternalNeverDeletesBranch|TestManagedRequir…
+     ok  	github.com/lflish/vibe-remote/vibe-remoted/internal/session	3.801s
+15 exit=0  未经同意不丢文件和提交（删除前重查，结束会话之后重读它在 git 列表里的那一项，HEAD、分支、是否 detached
+     $ cd vibe-remoted && TMUX_TMPDIR=$(mktemp -d) go test -race -timeout 10m ./internal/session -run 'TestRemoveDirtyNeedsConsent|TestRemoveUnmergedNeedsCon…
+     ok  	github.com/lflish/vibe-remote/vibe-remoted/internal/session	65.877s
+16 exit=0  客户端传的 worktree 名字不经 shell；新建会话时本地规则不通过的名字在任何 git 调用之前被拒，预检时这
+     $ cd vibe-remoted && TMUX_TMPDIR=$(mktemp -d) go test -race -timeout 10m ./internal/session ./internal/server -run 'TestWorktreeNameNeverReachesShell|Te…
+     ok  	github.com/lflish/vibe-remote/vibe-remoted/internal/session	5.738s
+     ok  	github.com/lflish/vibe-remote/vibe-remoted/internal/server	5.573s
+17 exit=0  对话界面的信任只认目录本身，或「仓库自己列出的 worktree 根 + 主目录这一个路径被信任」（git 不认 wor
+     $ cd vibe-remoted && TMUX_TMPDIR=$(mktemp -d) go test -race -timeout 10m ./internal/session -run 'TestChatTrust|TestFallbackListNeverInventsAWorktree|Te…
+     ok  	github.com/lflish/vibe-remote/vibe-remoted/internal/session	21.319s
+18 exit=0  daemon 交给 git 的分支只写成完整引用名 refs/heads/<名字>，不调用 git branch、不用 
+     $ cd vibe-remoted && TMUX_TMPDIR=$(mktemp -d) go test -race -timeout 10m ./internal/session -run 'TestGitNeverGetsShortBranchName|TestValidateWorktreeNa…
+     ok  	github.com/lflish/vibe-remote/vibe-remoted/internal/session	33.670s
+19 exit=0  daemon 运行的 git 不运行 core.fsmonitor 指定的程序（查看状态、预检、被拒绝的删除请求的检查都
+     $ cd vibe-remoted && TMUX_TMPDIR=$(mktemp -d) go test -race -timeout 10m ./internal/session -run 'TestReadOnlyGitRunsNoRepositoryProgram|TestCreateAndRe…
+     ok  	github.com/lflish/vibe-remote/vibe-remoted/internal/session	11.806s
+2026-11-21 17:46:01 end, load 18.99 20.95 22.31
+files in the empty claude config dir afterwards: 0

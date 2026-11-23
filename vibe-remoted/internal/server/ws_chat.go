@@ -44,6 +44,9 @@ func sessionErrorCode(err error) string {
 	case errors.Is(err, session.ErrInvalidSessionID):
 		return protocol.ErrCodeInvalidID
 	}
+	if code := worktreeErrorCode(err); code != "" {
+		return code
+	}
 	return protocol.ErrCodeCreateFailed
 }
 
@@ -71,14 +74,19 @@ func (s *Server) wsCreateChat(ctx context.Context, conn *websocket.Conn, frame p
 	if frame.NewSessionID != "" && !session.ValidSessionID(frame.NewSessionID) {
 		return fail(ctx, conn, protocol.ErrCodeInvalidID, "invalid newSessionId")
 	}
+	if err := checkWorktreeName(frame, mode); err != nil {
+		return fail(ctx, conn, protocol.ErrCodeInvalidWorktreeName, "create session: "+err.Error())
+	}
 	parsed, reason := chat.ParseClaudeCmd(s.cfg.ResolveClaudeCmd(frame.Flags))
 	if reason == "" {
 		reason = s.chatAvailability(ctx, false).Reason
 	}
 	// claude -p does not ask about workspace trust and runs a project's hooks
 	// regardless (probe V23): only directories the user already trusted in
-	// claude itself (c3). Worktree mode checks the directory it comes from.
-	if reason == "" && chat.WorkdirTrusted(workdir) != chat.TrustTrusted {
+	// claude itself (c3), or worktree roots of a repository whose main
+	// directory is (session.ChatTrust). Worktree mode checks the directory it
+	// comes from.
+	if reason == "" && session.ChatTrust(workdir) != chat.TrustTrusted {
 		reason = protocol.ChatReasonWorkdirUntrusted
 	}
 	if reason != "" {
@@ -86,7 +94,7 @@ func (s *Server) wsCreateChat(ctx context.Context, conn *websocket.Conn, frame p
 	}
 	att, err := s.mgr.CreateChat(session.ChatCreateOptions{
 		ID: frame.NewSessionID, Workdir: workdir, Mode: mode, Flags: frame.Flags, Parsed: parsed,
-		ValidateWorkdir: s.cfg.ResolveAllowedWorkdir,
+		ValidateWorkdir: s.cfg.ResolveAllowedNewPath, WorktreeName: worktreeName(frame, mode),
 	})
 	if err != nil {
 		return failSession(ctx, conn, err, "create session: ")

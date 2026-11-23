@@ -1,0 +1,60 @@
+=== RUN   TestCodexMissingSocketBetweenConfirmAndEnd
+2026/11/20 06:56:17 tmux list-sessions failed: exit status 1 (stderr="error connecting to /private/tmp/vr-tmux-4176525476/tmux-501/vibe-remote (No such file or directory)\n"): tmux's socket file /private/tmp/vr-tmux-4176525476/tmux-501/vibe-remote is gone while the daemon remembers terminal sessions. If tmux is still running, sending SIGUSR1 to the tmux server process makes it create the socket again; otherwise restart the daemon
+2026/11/20 06:56:17 tmux list-sessions failed: exit status 1 (stderr="error connecting to /private/tmp/vr-tmux-4176525476/tmux-501/vibe-remote (No such file or directory)\n"): tmux's socket file /private/tmp/vr-tmux-4176525476/tmux-501/vibe-remote is gone while the daemon remembers terminal sessions. If tmux is still running, sending SIGUSR1 to the tmux server process makes it create the socket again; otherwise restart the daemon
+2026/11/20 06:56:17 tmux list-sessions failed: exit status 1 (stderr="error connecting to /private/tmp/vr-tmux-4176525476/tmux-501/vibe-remote (No such file or directory)\n"): tmux's socket file /private/tmp/vr-tmux-4176525476/tmux-501/vibe-remote is gone while the daemon remembers terminal sessions. If tmux is still running, sending SIGUSR1 to the tmux server process makes it create the socket again; otherwise restart the daemon
+2026/11/20 06:56:17 tmux list-sessions failed: exit status 1 (stderr="error connecting to /private/tmp/vr-tmux-4176525476/tmux-501/vibe-remote (No such file or directory)\n"): tmux's socket file /private/tmp/vr-tmux-4176525476/tmux-501/vibe-remote is gone while the daemon remembers terminal sessions. If tmux is still running, sending SIGUSR1 to the tmux server process makes it create the socket again; otherwise restart the daemon
+    codex_probe_test.go:32: RemoveWorktree result={Removed:false BranchDeleted:false BranchError: EndedSessions:[]} error=*session.WorktreeRemoveError could not end session 1795128976646-b0b5034c: tmux kill-session failed (exit status 1), and tmux could not be read to see whether the session is still running: tmux's socket file /private/tmp/vr-tmux-4176525476/tmux-501/vibe-remote is gone while the daemon remembers terminal sessions. If tmux is still running, sending SIGUSR1 to the tmux server process makes it create the socket again; otherwise restart the daemon. The worktree was not removed directoryExists=true
+    codex_probe_test.go:35: after SIGUSR1 to own server, tmux session alive=true; reported ended=[]
+--- PASS: TestCodexMissingSocketBetweenConfirmAndEnd (1.00s)
+=== RUN   TestCodexParserWithControlsInWorkingDirectory
+=== RUN   TestCodexParserWithControlsInWorkingDirectory/line_wrap
+    codex_probe_test.go:51: parsedSessionCount=1 ok=true
+    codex_probe_test.go:55: status.sessions=[1795128977639-054a7b0d]; expected creation-root session 1795128977639-054a7b0d
+2026/11/20 06:56:18 tmux list-sessions failed: exit status 1 (stderr="server exited unexpectedly\n")
+    codex_probe_test.go:58: removal={Removed:true BranchDeleted:false BranchError: EndedSessions:[1795128977639-054a7b0d]} error=<nil> directoryExists=false tmuxAlive=false
+2026/11/20 06:56:18 warning: failed to kill tmux session vibe-remote-1795128977639-054a7b0d: exit status 1
+=== RUN   TestCodexParserWithControlsInWorkingDirectory/tab_wrap
+    codex_probe_test.go:51: parsedSessionCount=1 ok=true
+    codex_probe_test.go:55: status.sessions=[1795128979163-816d5dd1]; expected creation-root session 1795128979163-816d5dd1
+2026/11/20 06:56:20 tmux list-sessions failed: exit status 1 (stderr="server exited unexpectedly\n")
+    codex_probe_test.go:58: removal={Removed:true BranchDeleted:false BranchError: EndedSessions:[1795128979163-816d5dd1]} error=<nil> directoryExists=false tmuxAlive=false
+2026/11/20 06:56:20 warning: failed to kill tmux session vibe-remote-1795128979163-816d5dd1: exit status 1
+--- PASS: TestCodexParserWithControlsInWorkingDirectory (3.06s)
+    --- PASS: TestCodexParserWithControlsInWorkingDirectory/line_wrap (1.52s)
+    --- PASS: TestCodexParserWithControlsInWorkingDirectory/tab_wrap (1.54s)
+=== RUN   TestCodexOldSessionNoMetadataDirectStatus
+    codex_probe_test.go:74: status.sessions=[abcdef123456]
+    codex_probe_test.go:77: result={Removed:true BranchDeleted:false BranchError: EndedSessions:[abcdef123456]} err=<nil>
+--- PASS: TestCodexOldSessionNoMetadataDirectStatus (0.69s)
+=== RUN   TestCodexErrorPathContainingNoSessions
+2026/11/20 06:56:21 tmux list-sessions failed: exit status 1 (stderr="error connecting to /private/tmp/vr-no sessions-3954736979/tmux-501/vibe-remote (No such file or directory)\n"): tmux's socket file /private/tmp/vr-no sessions-3954736979/tmux-501/vibe-remote is gone while the daemon remembers terminal sessions. If tmux is still running, sending SIGUSR1 to the tmux server process makes it create the socket again; otherwise restart the daemon
+    codex_probe_test.go:94: liveTmux count=0 ok=false while server alive and socket absent
+2026/11/20 06:56:21 tmux list-sessions failed: exit status 1 (stderr="error connecting to /private/tmp/vr-no sessions-3954736979/tmux-501/vibe-remote (No such file or directory)\n"): tmux's socket file /private/tmp/vr-no sessions-3954736979/tmux-501/vibe-remote is gone while the daemon remembers terminal sessions. If tmux is still running, sending SIGUSR1 to the tmux server process makes it create the socket again; otherwise restart the daemon
+2026/11/20 06:56:21 tmux list-sessions failed: exit status 1 (stderr="error connecting to /private/tmp/vr-no sessions-3954736979/tmux-501/vibe-remote (No such file or directory)\n"): tmux's socket file /private/tmp/vr-no sessions-3954736979/tmux-501/vibe-remote is gone while the daemon remembers terminal sessions. If tmux is still running, sending SIGUSR1 to the tmux server process makes it create the socket again; otherwise restart the daemon
+    codex_probe_test.go:98: removal={Removed:false BranchDeleted:false BranchError: EndedSessions:[]} error=could not read the running sessions from tmux, so the sessions in this worktree are not known; nothing was removed: tmux's socket file /private/tmp/vr-no sessions-3954736979/tmux-501/vibe-remote is gone while the daemon remembers terminal sessions. If tmux is still running, sending SIGUSR1 to the tmux server process makes it create the socket again; otherwise restart the daemon directoryExists=true sessionAlive=true
+--- PASS: TestCodexErrorPathContainingNoSessions (0.66s)
+=== RUN   TestCodexSameOIDBranchChangeAfterSessionsEnded
+=== RUN   TestCodexSameOIDBranchChangeAfterSessionsEnded/other
+    codex_probe_test.go:110: changed branch after sessions ended: branch="other" HEAD=a2f1198598f36ceddee1c29c9e4bfef3a442c87f
+    codex_probe_test.go:115: confirmedBranch=fix-login confirmedHEAD=a2f1198598f36ceddee1c29c9e4bfef3a442c87f removal={Removed:false BranchDeleted:false BranchError: EndedSessions:[]} error=*session.WorktreeChangedError worktree /private/tmp/TestCodexSameOIDBranchChangeAfterSessionsEndedother962147577/001/devflow-worktrees/fix-login changed since it was confirmed dir=true originalBranch="a2f1198598f36ceddee1c29c9e4bfef3a442c87f" otherBranch="a2f1198598f36ceddee1c29c9e4bfef3a442c87f"
+=== RUN   TestCodexSameOIDBranchChangeAfterSessionsEnded/detached
+    codex_probe_test.go:113: changed to detached after sessions ended: HEAD=90e7afa4a6635c0e7ee3c97b6c704a64ddf87e1f
+    codex_probe_test.go:115: confirmedBranch=fix-login confirmedHEAD=90e7afa4a6635c0e7ee3c97b6c704a64ddf87e1f removal={Removed:false BranchDeleted:false BranchError: EndedSessions:[]} error=*session.WorktreeChangedError worktree /private/tmp/TestCodexSameOIDBranchChangeAfterSessionsEndeddetached3709116759/001/devflow-worktrees/fix-login changed since it was confirmed dir=true originalBranch="90e7afa4a6635c0e7ee3c97b6c704a64ddf87e1f" otherBranch="90e7afa4a6635c0e7ee3c97b6c704a64ddf87e1f"
+--- PASS: TestCodexSameOIDBranchChangeAfterSessionsEnded (2.07s)
+    --- PASS: TestCodexSameOIDBranchChangeAfterSessionsEnded/other (1.03s)
+    --- PASS: TestCodexSameOIDBranchChangeAfterSessionsEnded/detached (1.04s)
+=== RUN   TestIndependentNewlineWorktreePath
+    independent_diff_test.go:16: actual directory="/private/tmp/TestIndependentNewlineWorktreePath2320934318/001/external\nworktree" list=[{Path:/private/tmp/TestIndependentNewlineWorktreePath2320934318/001/devflow Branch:main Head:67cb6fee5d44e6aea16b557d7ef1b71d35a56098 Detached:false Bare:false Prunable:false Locked:false LockReason:} {Path:/private/tmp/TestIndependentNewlineWorktreePath2320934318/001/external
+        worktree Branch:newline Head:67cb6fee5d44e6aea16b557d7ef1b71d35a56098 Detached:false Bare:false Prunable:false Locked:false LockReason:}]
+    independent_diff_test.go:21: WorktreeStatus=<nil>
+--- PASS: TestIndependentNewlineWorktreePath (0.38s)
+=== RUN   TestIndependentRollbackOtherSameBranch
+    independent_diff_test.go:36: CreateWorktree error=create worktree: git worktree add --detach /private/tmp/TestIndependentRollbackOtherSameBranch2377378013/001/devflow-worktrees/fix-login 02fd59bb13c6bed4e999eafca32716d5cf4301cf: exit status 128: Preparing worktree (detached HEAD 02fd59b)
+        fatal: '/private/tmp/TestIndependentRollbackOtherSameBranch2377378013/001/devflow-worktrees/fix-login' already exists; cleanup: directory /private/tmp/TestIndependentRollbackOtherSameBranch2377378013/001/devflow-worktrees/fix-login not removed: git lists a worktree in it, and this create, whose own git worktree add did not go through, cannot take it for its own; branch fix-login kept: the worktree in /private/tmp/TestIndependentRollbackOtherSameBranch2377378013/001/devflow-worktrees/fix-login is on it; external file data="someone else's work" read_error=<nil>; branch="02fd59bb13c6bed4e999eafca32716d5cf4301cf"
+--- PASS: TestIndependentRollbackOtherSameBranch (0.42s)
+=== RUN   TestIndependentRollbackOtherDetached
+    independent_diff_test.go:51: CreateWorktree error=create worktree: git worktree add --detach /private/tmp/TestIndependentRollbackOtherDetached2487263392/001/devflow-worktrees/fix-login 02fd59bb13c6bed4e999eafca32716d5cf4301cf: exit status 128: Preparing worktree (detached HEAD 02fd59b)
+        fatal: '/private/tmp/TestIndependentRollbackOtherDetached2487263392/001/devflow-worktrees/fix-login' already exists; cleanup: directory /private/tmp/TestIndependentRollbackOtherDetached2487263392/001/devflow-worktrees/fix-login not removed: git lists a worktree in it, and this create, whose own git worktree add did not go through, cannot take it for its own; external file data="someone else's work" read_error=<nil>
+--- PASS: TestIndependentRollbackOtherDetached (0.43s)
+PASS
+ok  	github.com/lflish/vibe-remote/vibe-remoted/internal/session	9.722s

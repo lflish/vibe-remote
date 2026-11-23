@@ -1,0 +1,9 @@
+?   	github.com/lflish/vibe-remote/vibe-remoted/cmd/vibe-remoted	[no test files]
+ok  	github.com/lflish/vibe-remote/vibe-remoted/internal/chat	18.743s
+?   	github.com/lflish/vibe-remote/vibe-remoted/internal/chat/chattest	[no test files]
+?   	github.com/lflish/vibe-remote/vibe-remoted/internal/chat/fakeclaude	[no test files]
+ok  	github.com/lflish/vibe-remote/vibe-remoted/internal/config	3.129s
+ok  	github.com/lflish/vibe-remote/vibe-remoted/internal/protocol	2.666s
+ok  	github.com/lflish/vibe-remote/vibe-remoted/internal/server	63.417s
+ok  	github.com/lflish/vibe-remote/vibe-remoted/internal/session	316.561s
+exit=0

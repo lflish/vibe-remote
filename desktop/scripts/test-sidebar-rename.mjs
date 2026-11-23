@@ -1,9 +1,10 @@
 // Inline rename from the sidebar (R15.1, X8): double-clicking the name of a
 // session that is already open must end in a focused rename input — for chat
 // and terminal sessions, current or in the background — and Enter saves the
-// name. The renderer entry (index.ts) runs on jsdom with real ChatViews; the
-// terminal view is a stand-in whose terminal.focus() takes the keyboard like
-// xterm's helper textarea does.
+// name. The renderer entry (index.ts, with the three-level sidebar of
+// sidebar.ts) runs on jsdom with real ChatViews; the terminal view is a
+// stand-in whose terminal.focus() takes the keyboard like xterm's helper
+// textarea does.
 //
 // A real double click is click → click → dblclick. The pointer does not move,
 // so the second click lands on whatever label is under it by then, and
@@ -12,7 +13,18 @@
 import { strict as assert } from 'node:assert';
 import { indexDom, load, loadIndex, runner } from './chat-test-util.mjs';
 
-const { test, run } = runner('test-sidebar-rename');
+const { test: register, run } = runner('test-sidebar-rename');
+
+// Where the three sessions sit in the three-level sidebar. 'project': a
+// project that only has its main directory, so the session rows hang directly
+// under the project row. 'worktree': the same project with a second worktree
+// `fix-login`, and the sessions are the rows under that worktree's row.
+// Every case runs once in each.
+const LAYOUTS = ['project', 'worktree'];
+let layout = 'project';
+const test = (name, fn) => {
+  for (const l of LAYOUTS) register(`${name} [sessions under the ${l} row]`, async () => { layout = l; await fn(); });
+};
 
 // For the views opened through index.ts (openChat below): a socket that opens
 // when told to and records what the client sends.
@@ -30,6 +42,15 @@ const machine = { name: 'dev', addr: '127.0.0.1', port: 1234, token: 't' };
 const mk = '127.0.0.1:1234';
 const chatState = { type: 'chat_state', status: 'idle', permissionMode: 'default', permissionLocked: false, pending: [], slashCommands: [], claudeVersion: '2.1.210', claudeSessionId: 'u', ended: null };
 
+/** The daemon's project tree for the current layout. */
+function projectTree(ids) {
+  const main = { path: '/w/repo', branch: 'main', head: 'a'.repeat(40), main: true, sessions: layout === 'project' ? ids : [] };
+  const worktrees = layout === 'project'
+    ? [main]
+    : [main, { path: '/w/repo-worktrees/fix-login', branch: 'fix-login', head: 'b'.repeat(40), managed: true, sessions: ids }];
+  return [{ id: '/w/repo', name: 'repo', git: true, worktrees, sessions: [] }];
+}
+
 async function setup() {
   const page = await indexDom();
   const app = await loadIndex();
@@ -39,12 +60,16 @@ async function setup() {
     { id: 'c2', title: 'other', workdir: '/w/c2', created: '2026-11-20', mode: 'normal', ui: 'chat', state: 'idle' },
   ];
   const renames = [];
+  const projects = projectTree(sessions.map((s) => s.id));
   app.setMachines([machine]);
   app.machineOnline.set(mk, true);
   app.machineSessions.set(mk, sessions);
+  app.machineProjects.set(mk, projects);
+  app.machineCaps.set(mk, 'v4');
   app.rests.set(mk, {
     async renameSession(id, name) { renames.push([id, name]); sessions.find((s) => s.id === id).title = name; },
     async listSessions() { return sessions.map((s) => ({ ...s })); },
+    async listProjects() { return structuredClone(projects); },
   });
   const host = document.getElementById('terminal-container');
 
@@ -71,6 +96,8 @@ async function setup() {
     const view = {
       ui: 'terminal', key: `${mk}::${id}`, sessionId: id, machine, container, activity: 'none', client: { state: 'connected' },
       terminal: { focus: () => helper.focus() }, fitAddon: { fit() {} },
+      // What setActive tells a terminal view on this sidebar: forget the screen it compared against.
+      screen: { forget() {} },
     };
     app.views.set(view.key, view);
     return { view, helper, typed };
@@ -99,6 +126,11 @@ async function setup() {
   };
   const opened = [];
   const close = () => { for (const v of opened) v.client.disconnect(); page.dom.window.close(); };
+
+  // The rows are where this layout puts them.
+  app.renderSidebar();
+  const rowParents = new Set([...document.querySelectorAll('.session-item')].map((i) => i.parentElement.className));
+  assert.deepEqual([...rowParents], [layout === 'worktree' ? 'worktree-group' : 'project-group'], 'session rows sit under the row this case is about');
 
   const label = (title) => [...document.querySelectorAll('.session-item')].find((i) => i.querySelector('.session-label-text')?.textContent === title)?.querySelector('.session-label') ?? null;
   const titles = () => [...document.querySelectorAll('.session-item')].map((i) => i.querySelector('.session-label-text')?.textContent ?? '(renaming)');
@@ -216,7 +248,11 @@ test('a rename that cannot start (its label is no longer in the document) does n
   const c1 = t.chat('c1');
   t.app.setActive(c1.view.key);
   const stale = t.label('conversation');
-  t.app.renderSidebar(); // e.g. the 5 s poll rebuilt the list under the pointer
+  // The list is rebuilt under the pointer: the 5 s poll brought something the
+  // sidebar shows (the shell session moved to another directory).
+  t.sessions[1].workdir = '/w/t1/src';
+  t.app.machineSessions.set(mk, t.sessions.map((s) => ({ ...s })));
+  t.app.renderSidebar();
   assert.equal(stale.isConnected, false);
   stale.dispatchEvent(new MouseEvent('dblclick', { bubbles: true, detail: 2 }));
   t.page.flushFrames();
@@ -290,6 +326,49 @@ test('X10 rename committed by clicking another session: the keyboard ends in tha
   t.close();
 });
 
+// The same with what the browser does on the press: the pressed name is a
+// button and takes the focus itself. The sidebar gives the focus back to "the
+// same control" whenever it is rebuilt, so when the rename is over the focus is
+// on that name, not nowhere — and the keys must still reach the session.
+test('X10 rename committed by pressing another session\'s name (which takes the focus): the keyboard ends in that session', async () => {
+  const t = await setup();
+  const c1 = t.openChat('c1');
+  const c2 = t.openChat('c2'); // current
+  t.page.flushFrames();
+  t.doubleClick('other', { humanPace: true }); // rename the current session c2
+  t.renameInput().value = 'kept';
+  const pressed = t.label('conversation');
+  pressed.focus(); // the press: the button takes the focus, the input loses it (blur commits)
+  pressed.dispatchEvent(new MouseEvent('click', { bubbles: true, detail: 1 }));
+  t.page.flushFrames();
+  await t.settle();
+  t.page.flushFrames();
+  assert.deepEqual(t.renames, [['c2', 'kept']]);
+  assert.equal(t.app.activeKey, c1.view.key, 'the clicked session is the current one');
+  assert.equal(document.activeElement, c1.input, 'the keyboard is in the session that was clicked');
+  assert.equal(c2.input.value, '', 'nothing went into the renamed session');
+  t.close();
+});
+
+// Leaving the rename with Tab is not asking for a session: the focus stays on
+// the sidebar control it moved to, also after the list was rebuilt.
+test('rename left with Tab: the keyboard stays on the sidebar control it moved to', async () => {
+  const t = await setup();
+  const c1 = t.openChat('c1');
+  t.page.flushFrames();
+  t.doubleClick('conversation', { humanPace: true });
+  t.renameInput().value = 'tabbed';
+  const next = t.label('shell');
+  next.focus(); // Tab: the next control of the sidebar takes the focus, blur commits
+  await t.settle();
+  t.page.flushFrames();
+  assert.deepEqual(t.renames, [['c1', 'tabbed']]);
+  assert.equal(t.renameInput(), null, 'the rename is over');
+  assert.equal(document.activeElement, t.label('shell'), 'the focus is on the name it moved to (the rebuilt one)');
+  assert.notEqual(document.activeElement, c1.input);
+  t.close();
+});
+
 test('X10 rename committed by a click into a field elsewhere, or a dialog: the keyboard stays there', async () => {
   const t = await setup();
   const c1 = t.openChat('c1', [bash('r1')]); // a prompt is waiting in the current session
@@ -326,6 +405,60 @@ test('X10 rename committed by a click into a field elsewhere, or a dialog: the k
   t.page.flushFrames();
   assert.equal(document.activeElement, document.body, 'nothing behind an open dialog takes the keyboard');
   assert.deepEqual(c1.responses(), []);
+  t.close();
+});
+
+// A session opened from the sidebar has the keyboard: its input, its prompt
+// card, the terminal. The sidebar hands the focus back to "the same control"
+// when it is rebuilt, and that is for a focus that was in the sidebar: a
+// rebuild that comes after the session took the keyboard must leave it there.
+// (M.X7 of gui-worktree-smoke once ended with the keyboard nowhere after a
+// session was opened from its row; this is the path that was suspected.)
+test('a sidebar rebuild after a session was opened from its name leaves the keyboard in the session (input, prompt card, terminal)', async () => {
+  const t = await setup();
+  const c1 = t.openChat('c1');
+  const c2 = t.openChat('c2', [bash('p1')]); // a prompt is waiting in it
+  const term = t.terminal('t1');
+  t.page.flushFrames();
+  /** Something the sidebar shows changes (the shell moved to another directory): the list is rebuilt. */
+  let moves = 0;
+  const rebuild = () => {
+    const old = t.label('shell');
+    t.sessions[1].workdir = `/w/t1/dir-${++moves}`;
+    t.app.machineSessions.set(mk, t.sessions.map((s) => ({ ...s })));
+    t.app.renderSidebar();
+    assert.equal(old.isConnected, false, 'fixture: the list was rebuilt');
+  };
+  /** A press on a session's name: the button takes the focus, then the click. */
+  const press = (title) => {
+    const l = t.label(title);
+    l.focus();
+    l.dispatchEvent(new MouseEvent('click', { bubbles: true, detail: 1 }));
+  };
+
+  press('conversation');
+  // A rebuild before the session has taken the keyboard: the focus is still on
+  // the name, and stays on it (the rebuilt one) — the session takes it next.
+  rebuild();
+  assert.equal(document.activeElement, t.label('conversation'), 'before the session takes it, the focus is on the pressed name');
+  t.page.flushFrames();
+  assert.equal(document.activeElement, c1.input, 'the chat session opened from its name has the keyboard in its input');
+  rebuild();
+  rebuild();
+  assert.equal(document.activeElement, c1.input, 'rebuilds afterwards leave the keyboard in the input');
+
+  press('other');
+  t.page.flushFrames();
+  t.page.flushFrames();
+  assert.equal(document.activeElement, c2.card(), 'a session with a prompt waiting has the keyboard on the card');
+  rebuild();
+  assert.equal(document.activeElement, c2.card(), 'a rebuild leaves the keyboard on the card');
+
+  press('shell');
+  t.page.flushFrames();
+  assert.equal(document.activeElement, term.helper, 'the terminal session has the keyboard');
+  rebuild();
+  assert.equal(document.activeElement, term.helper, 'a rebuild leaves the keyboard in the terminal');
   t.close();
 });
 
@@ -393,30 +526,51 @@ test('X10 a prompt that arrives in the current session while it is being renamed
 });
 
 // Same sidebar, the delete button: a chat session's conversation is kept in
-// claude's own history (R15.2), a terminal session's screen is not. The
-// confirmation must say which.
-test('delete confirmation: chat says the conversation stays in claude\'s history, terminal says the screen is lost (zh and en)', async () => {
+// claude's own history (R15.2), a terminal session is gone for good. The
+// confirmation must say which. On the three-level sidebar the confirmation is
+// the app's own dialog (title = the question with the name, body = what
+// happens), not window.confirm.
+test('delete confirmation: chat says the conversation stays in claude\'s history, terminal keeps its own text (zh and en)', async () => {
   const t = await setup();
   const { dictionaries } = await load('src/renderer/i18n.ts');
   for (const locale of ['zh', 'en']) {
-    const chat = dictionaries[locale]['chat.delete.confirm'];
-    assert.ok(chat, `chat.delete.confirm (${locale})`);
+    const chat = dictionaries[locale]['session.delete.chatBody'];
+    assert.ok(chat, `session.delete.chatBody (${locale})`);
     assert.match(chat, /JSONL/, `${locale}: says where the conversation stays`);
-    assert.match(chat, /\{name\}/);
-    assert.doesNotMatch(chat, /当前画面会丢失|current screen lost/, `${locale}: no "screen is lost" for a chat session`);
-    assert.match(dictionaries[locale]['session.deleteConfirm'], /当前画面会丢失|current screen lost/, `${locale}: terminal text unchanged`);
+    assert.match(dictionaries[locale]['session.delete.title'], /\{name\}/);
+    assert.doesNotMatch(chat, /当前画面会丢失|current screen lost|无法撤销|cannot be undone/, `${locale}: no "lost for good" for a chat session`);
+    assert.match(dictionaries[locale]['session.delete.body'], /无法撤销|cannot be undone/, `${locale}: terminal text unchanged`);
+    assert.doesNotMatch(dictionaries[locale]['session.delete.body'], /JSONL/, `${locale}: terminal text unchanged`);
   }
 
   t.chat('c1');
   t.app.renderSidebar();
-  const asked = [];
-  window.confirm = (msg) => { asked.push(msg); return false; };
+  const systemPrompts = [];
+  window.confirm = (msg) => { systemPrompts.push(msg); return false; };
   const item = (title) => t.label(title).closest('.session-item');
-  item('conversation').querySelector('.session-close').dispatchEvent(new MouseEvent('click', { bubbles: true }));
-  item('shell').querySelector('.session-close').dispatchEvent(new MouseEvent('click', { bubbles: true }));
+  /** Presses the delete button of a row, reads what the dialog asks, declines. */
+  const ask = async (title) => {
+    item(title).querySelector('.session-close').dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    t.page.flushFrames();
+    const dialog = document.querySelector('.modal-overlay [data-testid="delete-session-dialog"]');
+    assert.ok(dialog, `the delete confirmation of "${title}" is open`);
+    const said = { title: dialog.querySelector('.modal-title').textContent, body: dialog.querySelector('.modal-body p').textContent };
+    dialog.querySelector('[data-testid="dialog-cancel"]').dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    await t.settle();
+    assert.equal(document.querySelector('.modal-overlay'), null, 'declined: the dialog is closed');
+    return said;
+  };
+  const asked = [await ask('conversation'), await ask('shell')];
   assert.equal(asked.length, 2);
-  assert.equal(asked[0], dictionaries.en['chat.delete.confirm'].replace('{name}', 'conversation'));
-  assert.equal(asked[1], dictionaries.en['session.deleteConfirm'].replace('{name}', 'shell'));
+  assert.deepEqual(asked[0], {
+    title: dictionaries.en['session.delete.title'].replace('{name}', 'conversation'),
+    body: dictionaries.en['session.delete.chatBody'],
+  });
+  assert.deepEqual(asked[1], {
+    title: dictionaries.en['session.delete.title'].replace('{name}', 'shell'),
+    body: dictionaries.en['session.delete.body'],
+  });
+  assert.deepEqual(systemPrompts, [], 'one confirmation per delete, the dialog');
   assert.deepEqual(t.titles(), ['conversation', 'shell', 'other'], 'declined: nothing deleted');
   t.page.dom.window.close();
 });

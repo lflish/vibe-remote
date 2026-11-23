@@ -1,0 +1,56 @@
+## A. protocol-3 daemon (built from this branch before any change)
+info.proto = 3
+GET /api/v1/projects -> 404 404 page not found
+GET /api/v1/worktrees/plan?workdir=/x&name=y -> 404 404 page not found
+GET /api/v1/worktrees/status?path=/x -> 404 404 page not found
+POST /api/v1/worktrees/remove -> 404 404 page not found
+POST /api/v1/projects/remove -> 404 404 page not found
+GET /api/v1/sessions, 0 sessions: min 6.6 ms, median 7.5 ms, max 11.6 ms (n=30)
+GET /api/v1/sessions, 1 session:  min 6.4 ms, median 7.6 ms, max 14.8 ms (n=30)
+
+## B. key events with xterm focused
+focus: xterm-helper-textarea
+B1 not intercepted (today): listener saw 5 [Digit1, Digit3, Digit9, ⇧BracketLeft, ⇧BracketRight], target=xterm-helper-textarea; bytes to PTY: []
+B2 intercepted in capture phase: listener saw 5 [Digit1, Digit3, Digit9, ⇧BracketLeft, ⇧BracketRight], target=xterm-helper-textarea; bytes to PTY: []
+B3 control, plain "a": listener saw 0 [], target=undefined; bytes to PTY: ["a"]
+B4 textarea focused, intercepted: listener saw 5 [Digit1, Digit3, Digit9, ⇧BracketLeft, ⇧BracketRight], target=TEXTAREA; bytes to PTY: []
+B4 textarea value after the keys: ""
+
+## C. application menu accelerators (main process)
+menu items with a role or accelerator: 36
+  /vibe-remote role=appmenu accel=
+  /vibe-remote/About vibe-remote role=about accel=
+  /vibe-remote/Services role=services accel=
+  /vibe-remote/Hide vibe-remote role=hide accel=Command+H
+  /vibe-remote/Hide Others role=hideothers accel=Command+Alt+H
+  /vibe-remote/Show All role=unhide accel=
+  /vibe-remote/Quit vibe-remote role=quit accel=CommandOrControl+Q
+  /File role=filemenu accel=
+  /File/Close Window role=close accel=CommandOrControl+W
+  /Edit role=editmenu accel=
+  /Edit/Undo role=undo accel=CommandOrControl+Z
+  /Edit/Redo role=redo accel=Shift+CommandOrControl+Z
+  /Edit/Cut role=cut accel=CommandOrControl+X
+  /Edit/Copy role=copy accel=CommandOrControl+C
+  /Edit/Paste role=paste accel=CommandOrControl+V
+  /Edit/Paste and Match Style role=pasteandmatchstyle accel=Cmd+Option+Shift+V
+  /Edit/Delete role=delete accel=
+  /Edit/Select All role=selectall accel=CommandOrControl+A
+  /Edit/Substitutions/Show Substitutions role=showsubstitutions accel=
+  /Edit/Substitutions/Smart Quotes role=togglesmartquotes accel=
+  /Edit/Substitutions/Smart Dashes role=togglesmartdashes accel=
+  /Edit/Substitutions/Text Replacement role=toggletextreplacement accel=
+  /Edit/Speech/Start Speaking role=startspeaking accel=
+  /Edit/Speech/Stop Speaking role=stopspeaking accel=
+  /View role=viewmenu accel=
+  /View/Reload role=reload accel=CmdOrCtrl+R
+  /View/Force Reload role=forcereload accel=Shift+CmdOrCtrl+R
+  /View/Toggle Developer Tools role=toggledevtools accel=Alt+Command+I
+  /View/Actual Size role=resetzoom accel=CommandOrControl+0
+  /View/Zoom In role=zoomin accel=CommandOrControl+Plus
+  /View/Zoom Out role=zoomout accel=CommandOrControl+-
+  /View/Toggle Full Screen role=togglefullscreen accel=Control+Command+F
+  /Window role=windowmenu accel=
+  /Window/Minimize role=minimize accel=CommandOrControl+M
+  /Window/Zoom role=zoom accel=
+  /Window/Bring All to Front role=front accel=

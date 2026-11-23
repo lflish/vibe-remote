@@ -584,6 +584,81 @@ func TestCreateChatUntrustedWorkdir(t *testing.T) {
 	}
 }
 
+// trustedRepoWithWorktrees builds <root>/devflow (trusted by claude) with two
+// worktrees claude has no record of: one next to the repository and one in a
+// hidden directory inside it.
+func trustedRepoWithWorktrees(t *testing.T, c *chatServer) (repo, wt, hidden string) {
+	t.Helper()
+	repo = filepath.Join(c.root, "devflow")
+	gitInit(t, repo)
+	chattest.TrustDir(t, c.env.ConfigDir, repo)
+	wt = filepath.Join(c.root, "devflow-worktrees", "fix-login")
+	hidden = filepath.Join(repo, ".devflow-tmp", "worktrees", "general-skills")
+	serverGit(t, repo, "worktree", "add", "-b", "fix-login", wt)
+	serverGit(t, repo, "worktree", "add", "-b", "change/general-skills", hidden)
+	return repo, wt, hidden
+}
+
+// R4.3: a chat session starts in a worktree whose path claude has no trust
+// record for, because the repository's main directory is trusted.
+func TestWSCreateChatInWorktreeOfTrustedMain(t *testing.T) {
+	c := newChatServer(t)
+	_, wt, hidden := trustedRepoWithWorktrees(t, c)
+	for _, dir := range []string{wt, hidden} {
+		w := c.connect()
+		ready := c.attachChat(w, protocol.AttachFrame{NewSessionID: newSID("wt"), Workdir: dir})
+		if ready.UI != protocol.UIChat || ready.Workdir != dir {
+			t.Fatalf("ready in %s: %+v", dir, ready)
+		}
+		id := ready.SessionID
+		t.Cleanup(func() { c.mgr.Delete(id) })
+	}
+}
+
+// R4.4: neither the main directory nor the worktree is trusted; and a
+// directory that only claims to be a worktree of a trusted repository.
+func TestWSCreateChatWorktreeUntrusted(t *testing.T) {
+	c := newChatServer(t)
+	repo := filepath.Join(c.root, "vibeview")
+	gitInit(t, repo)
+	wt := filepath.Join(c.root, "vibeview-worktrees", "feat-quota")
+	serverGit(t, repo, "worktree", "add", "-b", "feat/quota", wt)
+	refused := func(dir string) {
+		t.Helper()
+		w := c.connect()
+		e := expectAttachError(t, w, protocol.AttachFrame{UI: protocol.UIChat, NewSessionID: newSID("ut"), Workdir: dir})
+		if e.Code != protocol.ErrCodeChatUnsupported || !e.Fatal || !strings.Contains(e.Message, protocol.ChatReasonWorkdirUntrusted) {
+			t.Fatalf("chat in %s: %+v", dir, e)
+		}
+		if _, body := c.rest("GET", "/api/v1/fs?path="+dir); body["chatTrust"] != protocol.TrustUntrusted {
+			t.Fatalf("fs chatTrust for %s = %v", dir, body["chatTrust"])
+		}
+	}
+	refused(wt)
+
+	// Trusting the main directory opens its worktree roots, not directories in them.
+	chattest.TrustDir(t, c.env.ConfigDir, repo)
+	sub := filepath.Join(wt, "src")
+	if err := os.Mkdir(sub, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	refused(sub)
+
+	// A forged .git file naming the trusted repository's worktree entry.
+	forged := filepath.Join(c.root, "forged")
+	if err := os.Mkdir(forged, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	gitfile := "gitdir: " + filepath.Join(repo, ".git", "worktrees", "feat-quota") + "\n"
+	if err := os.WriteFile(filepath.Join(forged, ".git"), []byte(gitfile), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	refused(forged)
+	if list := c.mgr.List(); len(list) != 0 {
+		t.Fatalf("sessions were created: %+v", list)
+	}
+}
+
 func gitInit(t *testing.T, dir string) {
 	t.Helper()
 	if err := os.MkdirAll(dir, 0o755); err != nil {

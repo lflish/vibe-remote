@@ -1,0 +1,17 @@
+work dir /private/tmp/vr-wt-NDo6GA
+PASS 5 daemons up (this-mac:25693 proto 4, lab-mac:21731 proto 4, keep-mac:22057 proto 4, narrow-mac:25402 proto 4, old-mac:22393 proto 3)
+
+(!) Some chunks are larger than 500 kB after minification. Consider:
+- Using dynamic import() to code-split the application
+- Use build.rollupOptions.output.manualChunks to improve chunking: https://rollupjs.org/configuration-options/#output-manualchunks
+- Adjust chunk size limit for this warning via build.chunkSizeWarningLimit.
+PASS app started with 5 machines (zh), hooks installed
+PASS under a worktree row: double click renames a chat and a terminal session, the name is not typed into the session, and the next keys go into it without a click (chat sessions X8, X10) — chat: renamed with Enter (nothing sent to claude), next message typed without a click, Esc keeps the name; terminal: renamed, next command typed without a click
+PASS under a worktree row: a background chat session asks for permission (yellow dot on its row), a real click opens it, 1 answers without clicking the card, then the input has the keyboard (chat sessions X10) — row under fix-login: waiting dot → real click → keyboard on the card → 1 answered → keyboard in the input
+PASS under a worktree row: the chat session shown asks for permission while the window is in the background: its row shows the yellow dot until the window is focused again (chat sessions X6) — window in the background: yellow dot and "等你处理" on the row of the session shown; focused again: gone
+PASS under a worktree row: a chat session that got more than a screen in the background is at the bottom with the newest message when opened again, and a message typed then shows (chat sessions X7) — back at the bottom (gap 0px of 1397px) after 40 messages in the background; a typed message and its reply show
+PASS no uncaught renderer exceptions
+
+4 cases: other 4/4
+
+all GUI worktree checks passed

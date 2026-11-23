@@ -1,0 +1,18 @@
+$ cd desktop && node scripts/test-sidebar-refresh.mjs   # on beccc60 + the new test, before the fix in index.ts
+FAIL: test-sidebar-refresh: the same data again — polls, a refresh asked for by an action, a render — leaves every element in place
+AssertionError [ERR_ASSERTION]: after a poll: elements of the sidebar were replaced
+    at Object.sameNodes (file://<repo>/desktop/scripts/test-sidebar-refresh.mjs:90:12)
+    at file://<repo>/desktop/scripts/test-sidebar-refresh.mjs:127:5
+    at process.processTicksAndRejections (node:internal/process/task_queues:103:5)
+    at async run (file://<repo>/desktop/scripts/chat-test-util.mjs:130:9)
+    at async file://<repo>/desktop/scripts/test-sidebar-refresh.mjs:470:1 {
+  generatedMessage: false,
+  code: 'ERR_ASSERTION',
+  actual: false,
+  expected: true,
+  operator: '==',
+  diff: 'simple'
+}
+exit=1
+
+# The same file with the three "nothing is rebuilt" cases taken out, still before the fix: the 14 cases about changes that must show all pass (they describe what the sidebar already did).

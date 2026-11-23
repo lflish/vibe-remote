@@ -74,10 +74,13 @@ type AttachIntent = {
   ui?: SessionUI;
   // Create-only: the chat session this new terminal session takes over.
   handoffFrom?: string;
+  // Create-only (worktree mode): the new branch's name. A replay before
+  // `ready` must carry it again, with the same newSessionId.
+  worktreeName?: string;
 };
 
 /** Options for attach() beyond the terminal-era positional arguments. */
-export type AttachOptions = { ui?: SessionUI; handoffFrom?: string };
+export type AttachOptions = { ui?: SessionUI; handoffFrom?: string; worktreeName?: string };
 
 /** Last fully-synced chat position: the epoch and the highest seq received in it. */
 export type ChatPosition = { epoch: string; seq: number };
@@ -285,6 +288,7 @@ export class VibeRemoteClient {
           mode,
           ui: opts?.ui,
           handoffFrom: opts?.handoffFrom,
+          worktreeName: opts?.worktreeName,
         };
 
     if (this.state === ConnectionState.Connected && this.ws) {
@@ -317,6 +321,7 @@ export class VibeRemoteClient {
       epoch: pos ? pos.epoch : undefined,
       since: pos ? pos.seq : undefined,
       handoffFrom: intent.handoffFrom,
+      worktreeName: intent.worktreeName,
     });
   }
 
@@ -330,7 +335,7 @@ export class VibeRemoteClient {
       return { ...this.unconfirmedAttach, cols: this.lastCols, rows: this.lastRows };
     }
     if (this.currentSessionId) {
-      // handoffFrom belongs to the create only; ui stays with the session.
+      // handoffFrom and worktreeName belong to the create only; ui stays with the session.
       return { sessionId: this.currentSessionId, cols: this.lastCols, rows: this.lastRows, ui: this.currentUI };
     }
     return null;

@@ -3,6 +3,7 @@ package session
 import (
 	"os"
 	"os/exec"
+	"strings"
 	"testing"
 	"time"
 )
@@ -41,4 +42,33 @@ func startTmuxSession(t *testing.T, sessionName string, command ...string) {
 		time.Sleep(150 * time.Millisecond)
 	}
 	t.Fatalf("create tmux session %s: %v: %s", sessionName, lastErr, lastOut)
+}
+
+// liveTmuxSessions is the reading of tmux of a caller whose session table has
+// no terminal session: only what tmux and its socket file say counts.
+func liveTmuxSessions() (map[string]tmuxSessionInfo, bool) {
+	live, ok, _ := readTmuxSessions(func() bool { return false })
+	return live, ok
+}
+
+// testMarks stand in for the marks a reading makes up (newTmuxListMarks).
+var testMarks = tmuxListMarks{sep: "<vr-test>", end: "<vr-test-end>"}
+
+// tmuxAnswer is what `tmux list-sessions -F testMarks.format()` prints for the
+// given sessions, each a list of fields in tmuxListColumns order.
+func tmuxAnswer(records ...[]string) string {
+	var b strings.Builder
+	for _, fields := range records {
+		b.WriteString(strings.Join(fields, testMarks.sep) + testMarks.end + "\n")
+	}
+	return b.String()
+}
+
+// tmuxFields pads fields with empty ones up to the columns list-sessions is
+// asked for.
+func tmuxFields(fields ...string) []string {
+	for len(fields) < len(tmuxListColumns) {
+		fields = append(fields, "")
+	}
+	return fields
 }

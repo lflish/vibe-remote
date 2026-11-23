@@ -38,8 +38,8 @@ func wantKeys(t *testing.T, name string, v any, want ...string) {
 // The JSON names of every v3 frame are the wire contract with the TS client
 // and docs/protocol.md (design 4.2–4.10); a renamed tag would break silently.
 func TestProtocolChatFramesJSON(t *testing.T) {
-	if Version != 3 {
-		t.Fatalf("Version = %d, want 3", Version)
+	if Version != 4 {
+		t.Fatalf("Version = %d, want 4", Version)
 	}
 	since := uint64(41)
 	code := 1

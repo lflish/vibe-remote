@@ -1,0 +1,22 @@
+$ gui-worktree-smoke.mjs --no-build --only=M.X7, 20 runs one after the other on 5fc55e1 (each: TMUX_TMPDIR of its own, the empty CLAUDE_CONFIG_DIR, VR_BASE_DAEMON)
+run 1: exit 0, 4 PASS, 0 FAIL, 0 NOTE
+run 2: exit 0, 4 PASS, 0 FAIL, 0 NOTE
+run 3: exit 0, 4 PASS, 0 FAIL, 0 NOTE
+run 4: exit 0, 4 PASS, 0 FAIL, 0 NOTE
+run 5: exit 0, 4 PASS, 0 FAIL, 0 NOTE
+run 6: exit 0, 4 PASS, 0 FAIL, 0 NOTE
+run 7: exit 0, 4 PASS, 0 FAIL, 0 NOTE
+run 8: exit 0, 4 PASS, 0 FAIL, 0 NOTE
+run 9: exit 0, 4 PASS, 0 FAIL, 0 NOTE
+run 10: exit 0, 4 PASS, 0 FAIL, 0 NOTE
+run 11: exit 0, 4 PASS, 0 FAIL, 0 NOTE
+run 12: exit 0, 4 PASS, 0 FAIL, 0 NOTE
+run 13: exit 0, 4 PASS, 0 FAIL, 0 NOTE
+run 14: exit 0, 4 PASS, 0 FAIL, 0 NOTE
+run 15: exit 0, 4 PASS, 0 FAIL, 0 NOTE
+run 16: exit 0, 4 PASS, 0 FAIL, 0 NOTE
+run 17: exit 0, 4 PASS, 0 FAIL, 0 NOTE
+run 18: exit 0, 4 PASS, 0 FAIL, 0 NOTE
+run 19: exit 0, 4 PASS, 0 FAIL, 0 NOTE
+run 20: exit 0, 4 PASS, 0 FAIL, 0 NOTE
+done

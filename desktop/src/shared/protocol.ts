@@ -9,8 +9,129 @@
  *      sessions[].ui/state/activitySeq/epoch/endReason, info.chat (+?recheck=1),
  *      fs chatTrust, chat reload 202, errors ui_mismatch/chat_unsupported/
  *      claude_session_busy (fatal), shutting_down (transient: retry))
+ *   4: attach.worktreeName, errors invalid_worktree_name/worktree_branch_exists/
+ *      worktree_path_exists/worktree_path_not_allowed (fatal),
+ *      GET /api/v1/projects, POST /api/v1/projects/remove,
+ *      GET /api/v1/worktrees/plan, GET /api/v1/worktrees/status,
+ *      POST /api/v1/worktrees/remove, DELETE /api/v1/sessions/{id} leaves the
+ *      worktree alone (no 409 worktree_preserved), fs chatTrust also 'trusted'
+ *      for a worktree root of a trusted main directory (S→C frames unchanged)
  */
-export const PROTOCOL_VERSION = 3;
+export const PROTOCOL_VERSION = 4;
+
+/**
+ * Minimum daemon proto for the chat UI. Chat availability is gated on this, not
+ * on PROTOCOL_VERSION, so bumping the latter for an unrelated feature does not
+ * grey out chat against a proto-3 daemon.
+ */
+export const CHAT_MIN_PROTO = 3;
+
+/** One worktree row under a git project (GET /api/v1/projects, design 4.2). */
+export interface ProjectWorktree {
+  path: string;
+  branch?: string;
+  head: string;
+  detached?: boolean;
+  main?: boolean;
+  managed?: boolean;
+  sessions: string[];
+}
+
+// v4, GET /api/v1/worktrees/plan: what creating a worktree named `branch` from
+// a directory would do, without doing it. `ok` = every check made before
+// anything is created passes right now.
+export interface WorktreePlan {
+  ok: boolean;
+  // not_git | unsupported_repo | no_commits | invalid_worktree_name |
+  // worktree_branch_exists | worktree_path_exists | worktree_path_not_allowed.
+  // The first three are not about the name: no other name would do.
+  error?: string;
+  message?: string;
+  // worktree_branch_exists only: the existing branch in the way — equal to
+  // `branch`, or one git cannot keep next to it (fix blocks fix/login).
+  conflict?: string;
+  project?: string; // absent for not_git
+  projectName?: string; // absent for not_git
+  base?: WorktreeBase; // absent for not_git; for no_commits its head is 0000000
+  branch?: string; // present once the name is valid (and not for unsupported_repo, no_commits)
+  path?: string; // present once the name is valid (and not for unsupported_repo, no_commits)
+}
+
+// The branch and commit a new worktree would be based on.
+export interface WorktreeBase {
+  branch?: string; // omitted when detached
+  head: string; // first 7 of the commit
+  detached?: boolean;
+}
+
+// v4, GET /api/v1/worktrees/status: what the delete confirmation shows.
+export interface WorktreeStatus {
+  path: string;
+  project: string;
+  branch?: string; // omitted when detached
+  // The full commit hash; sent back with the removal. All zeros when the
+  // branch has no commit yet (unmergedCommits is 0 then; it can be removed).
+  head: string;
+  detached?: boolean;
+  main: boolean;
+  managed: boolean; // created by vibe-remote
+  dirtyFiles: number; // uncommitted or untracked; ignored files excluded
+  unmergedCommits: number; // on no other local branch or remote-tracking ref
+  // Ignored by git, removed with the directory. Only a note: -1 = could not
+  // be counted; a removal never compares it.
+  ignoredFiles: number;
+  // The sessions that end with this worktree: those attributed to it, and
+  // those that were started in a directory inside it wherever the tree lists
+  // them. Both go by where the session was created, not by where its process
+  // is now.
+  sessions: string[];
+}
+
+// v4, body of POST /api/v1/worktrees/remove: the worktree, what the user saw
+// of it (head, sessions, branch) and what they agreed to lose. path, head and
+// sessions are required (sessions is [] when there are none): without one of
+// them the daemon answers 400 invalid_request.
+export interface WorktreeRemoveRequest {
+  path: string;
+  head: string;
+  sessions: string[];
+  // The branch the confirmation showed; left out for a detached worktree. A
+  // daemon that checks it answers 409 worktree_changed when the worktree is
+  // on another branch by now; one that does not know the field ignores it.
+  branch?: string;
+  discardFiles?: boolean;
+  // Only for a worktree vibe-remote created that is on a branch. Sent for any
+  // other (it was switched or detached since the confirmation), the daemon
+  // answers 409 worktree_changed and removes nothing.
+  deleteBranch?: boolean;
+  dropCommits?: boolean;
+}
+
+// v4, the 200 answer to a removal: the directory is gone. `branchError` says
+// why a branch that was to be deleted is still there.
+export interface WorktreeRemoveResult {
+  removed: boolean;
+  branchDeleted: boolean;
+  branchError?: string;
+  endedSessions: string[];
+}
+
+/** The 200 answer of GET /api/v1/projects (v4): this machine's project tree. */
+export interface ProjectsResponse {
+  proto: number;
+  projects: Project[]; // always an array, [] when there is none
+}
+
+/** One project in the tree (GET /api/v1/projects). */
+export interface Project {
+  id: string;
+  name: string;
+  git: boolean;
+  error?: string;
+  errorMessage?: string;
+  worktrees: ProjectWorktree[];
+  sessions: string[];
+}
 
 export const FrameType = {
   Auth: 'auth',
@@ -72,6 +193,10 @@ export interface AttachFrame {
   // v3, create with ui terminal only: hand this chat session over to the new
   // terminal session (workdir/flags/mode are then ignored).
   handoffFrom?: string;
+  // v4, create with mode worktree only (ignored otherwise and with
+  // handoffFrom): the new branch's name. Omitted = the v3 naming,
+  // vibe/<session id>. A v3 daemon ignores it silently, so check proto first.
+  worktreeName?: string;
 }
 
 export interface DataFrameC2S {

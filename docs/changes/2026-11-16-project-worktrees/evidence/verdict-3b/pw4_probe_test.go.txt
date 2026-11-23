@@ -1,0 +1,152 @@
+package session
+
+import (
+	"net"
+	"os"
+	"os/exec"
+	"strings"
+	"testing"
+ "time"
+)
+
+// Independent experiment, only in /tmp: no production code changes.
+func TestPW4LiveServerBehindReplacedSocket(t *testing.T) {
+	requireTmux(t)
+	dir := freshTmuxDir(t)
+	repo := devflowRepo(t)
+	root := externalWorktree(t, repo, "feat")
+	m := NewManager(true, "sleep 120", false, "")
+	m.SetProjectStore(NewMemoryProjectStore())
+	id := terminalSessionIn(t, m, root)
+	const conversation = "11111111-2222-4333-8444-555555555555"
+	if err := m.claimClaude(conversation, id); err != nil { t.Fatal(err) }
+	before, err := m.WorktreeStatus(root, allowAny)
+	if err != nil || len(before.Sessions) != 1 { t.Fatalf("initial status: %+v, %v", before, err) }
+	pid := ownTmuxServerPID(t)
+	sock := ownTmuxSocket(t, dir)
+	saved := sock + ".old"
+	if err := os.Rename(sock, saved); err != nil { t.Fatal(err) }
+	// Restore before terminalSessionIn and freshTmuxDir cleanups; only our socket.
+	t.Cleanup(func() {
+		_ = os.Remove(sock)
+		if err := os.Rename(saved, sock); err != nil { t.Errorf("restore own socket: %v", err) }
+	})
+	listener, err := net.ListenUnix("unix", &net.UnixAddr{Name:sock, Net:"unix"})
+	if err != nil { t.Fatal(err) }
+	listener.SetUnlinkOnClose(false)
+	if err := listener.Close(); err != nil { t.Fatal(err) }
+	info, err := os.Stat(sock)
+	if err != nil || info.Mode() & os.ModeSocket == 0 { t.Fatalf("replacement not a stale socket: %v, %v", info, err) }
+	oldQuery := func(args ...string) ([]byte, error) {
+		cmd := exec.Command("tmux", append([]string{"-S", saved},args...)...)
+		cmd.Env = utf8Env()
+		return cmd.CombinedOutput()
+	}
+	if out, err := oldQuery("has-session", "-t", "vibe-remote-"+id); err != nil { t.Fatalf("live session inaccessible on saved socket: %s, %v", out, err) }
+	out, err := tmuxCmd("list-sessions").CombinedOutput()
+	t.Logf("server_pid=%d; replacement exists as socket; list-sessions=%q err=%v",pid,out,err)
+	if err == nil || !isNoTmuxServer(out) { t.Fatalf("ECONNREFUSED experiment did not hold: %q, %v",out,err) }
+	live, ok := m.liveTmuxSessions()
+	t.Logf("read: sessions=%v ok=%v; table had %d session",live,ok,len(before.Sessions))
+	list := m.List()
+	m.mu.RLock(); owner := m.claudeOwners[conversation]; m.mu.RUnlock()
+	_, remembered := m.Get(id)
+	t.Logf("after List: count=%d remembered=%v owner=%q",len(list),remembered,owner)
+	after, err := m.WorktreeStatus(root,allowAny)
+	if err != nil { t.Fatal(err) }
+	res, err := m.RemoveWorktree(request(after),allowAny)
+	proof, proofErr := oldQuery("display-message","-p","-t","vibe-remote-"+id,"#{pid} #{session_name} pane_dead=#{pane_dead}")
+	t.Logf("RemoveWorktree: removed=%v ended=%v err=%v directory_exists=%v; original server/session after removal: %q err=%v",res.Removed,res.EndedSessions,err,pathExists(root),strings.TrimSpace(string(proof)),proofErr)
+	if proofErr != nil || !strings.Contains(string(proof),"pane_dead=0") { t.Fatalf("session liveness proof failed: %q, %v",proof,proofErr) }
+	if !remembered || owner != id || (err == nil && res.Removed) {
+		t.Error("活着的 tmux 会话被清表、释放占用，且 worktree 被删除；应保留会话/占用并拒绝删除")
+	}
+}
+
+func TestPW4UnusableFixtureSelfCheckAndCleanup(t *testing.T) {
+	requireTmux(t)
+	dir := freshTmuxDir(t)
+	unusableTmuxSocket(t,dir)
+	out, err := tmuxCmd("list-sessions").CombinedOutput()
+	t.Logf("0707 fixture: out=%q err=%v",out,err)
+	// Owner retains rwx even with 0707, so recursive removal remains possible.
+	if err := os.RemoveAll(dir); err != nil { t.Fatal(err) }
+	if _, err := os.Stat(dir); !os.IsNotExist(err) { t.Fatalf("directory was not cleaned: %v",err) }
+}
+func TestPW4LiveServerBehindSecondServerStaleSocket(t *testing.T) {
+	requireTmux(t)
+	dir := freshTmuxDir(t)
+	repo := devflowRepo(t)
+	root := externalWorktree(t, repo, "feat")
+	m := NewManager(true, "sleep 120", false, "")
+	m.SetProjectStore(NewMemoryProjectStore())
+	id := terminalSessionIn(t, m, root)
+	const conversation = "11111111-2222-4333-8444-555555555555"
+	if err := m.claimClaude(conversation, id); err != nil { t.Fatal(err) }
+	before, err := m.WorktreeStatus(root, allowAny)
+	if err != nil || len(before.Sessions) != 1 { t.Fatalf("initial status: %+v, %v", before, err) }
+	pid := ownTmuxServerPID(t)
+	sock := ownTmuxSocket(t, dir)
+	saved := sock + ".old"
+	if err := os.Rename(sock, saved); err != nil { t.Fatal(err) }
+	// Restore before terminalSessionIn and freshTmuxDir cleanups; only our socket.
+	t.Cleanup(func() {
+		_ = os.Remove(sock)
+		if err := os.Rename(saved, sock); err != nil { t.Errorf("restore own socket: %v", err) }
+	})
+	if out, err := tmuxCmd("new-session", "-d", "-s", "pw4-replacement", "--", "sleep", "120").CombinedOutput(); err != nil { t.Fatalf("second server: %q, %v", out, err) }
+	secondPID := ownTmuxServerPID(t)
+	if secondPID == pid { t.Fatal("second server did not start") }
+	t.Logf("original server_pid=%d second server_pid=%d", pid, secondPID)
+	t.Cleanup(func() { _ = tmuxCmd("kill-server").Run() })
+	if out, err := tmuxCmd("kill-session", "-t", "pw4-replacement").CombinedOutput(); err != nil { t.Fatalf("end second session: %q, %v", out, err) }
+	deadline := time.Now().Add(5*time.Second)
+	for {
+		out, err := tmuxCmd("list-sessions").CombinedOutput()
+		if err != nil && isNoTmuxServer(out) { break }
+		if time.Now().After(deadline) { t.Fatalf("second server did not leave a stale socket: %q, %v", out, err) }
+		time.Sleep(20*time.Millisecond)
+	}
+	info, err := os.Stat(sock)
+	if err != nil || info.Mode() & os.ModeSocket == 0 { t.Fatalf("replacement not a stale socket: %v, %v", info, err) }
+	oldQuery := func(args ...string) ([]byte, error) {
+		cmd := exec.Command("tmux", append([]string{"-S", saved},args...)...)
+		cmd.Env = utf8Env()
+		return cmd.CombinedOutput()
+	}
+	if out, err := oldQuery("has-session", "-t", "vibe-remote-"+id); err != nil { t.Fatalf("live session inaccessible on saved socket: %s, %v", out, err) }
+	out, err := tmuxCmd("list-sessions").CombinedOutput()
+	t.Logf("server_pid=%d; replacement exists as socket; list-sessions=%q err=%v",pid,out,err)
+	if err == nil || !isNoTmuxServer(out) { t.Fatalf("ECONNREFUSED experiment did not hold: %q, %v",out,err) }
+	live, ok := m.liveTmuxSessions()
+	t.Logf("read: sessions=%v ok=%v; table had %d session",live,ok,len(before.Sessions))
+	list := m.List()
+	m.mu.RLock(); owner := m.claudeOwners[conversation]; m.mu.RUnlock()
+	_, remembered := m.Get(id)
+	t.Logf("after List: count=%d remembered=%v owner=%q",len(list),remembered,owner)
+	after, err := m.WorktreeStatus(root,allowAny)
+	if err != nil { t.Fatal(err) }
+	res, err := m.RemoveWorktree(request(after),allowAny)
+	proof, proofErr := oldQuery("display-message","-p","-t","vibe-remote-"+id,"#{pid} #{session_name} pane_dead=#{pane_dead}")
+	t.Logf("RemoveWorktree: removed=%v ended=%v err=%v directory_exists=%v; original server/session after removal: %q err=%v",res.Removed,res.EndedSessions,err,pathExists(root),strings.TrimSpace(string(proof)),proofErr)
+	if proofErr != nil || !strings.Contains(string(proof),"pane_dead=0") { t.Fatalf("session liveness proof failed: %q, %v",proof,proofErr) }
+	if !remembered || owner != id || (err == nil && res.Removed) {
+		t.Error("活着的 tmux 会话被清表、释放占用，且 worktree 被删除；应保留会话/占用并拒绝删除")
+	}
+}
+
+
+func TestPW4FixturePreflightRejectsNoServer(t *testing.T) {
+ dir := freshTmuxDir(t)
+ bin := t.TempDir()
+ if err := os.WriteFile(bin+"/tmux", []byte("#!/bin/sh\nprintf 'no server running on fixture\\n' >&2\nexit 1\n"),0700); err != nil { t.Fatal(err) }
+ t.Setenv("PATH",bin)
+ unusableTmuxSocket(t,dir)
+}
+func TestPW4FixturePreflightRejectsSuccess(t *testing.T) {
+ dir := freshTmuxDir(t)
+ bin := t.TempDir()
+ if err := os.WriteFile(bin+"/tmux", []byte("#!/bin/sh\nexit 0\n"),0700); err != nil { t.Fatal(err) }
+ t.Setenv("PATH",bin)
+ unusableTmuxSocket(t,dir)
+}
